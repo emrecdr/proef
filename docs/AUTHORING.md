@@ -126,11 +126,28 @@ The header's `# replay:` line is a complete stock-hurl command, including
   (`PROEF_HARNESS_SUITE=<dir> cargo nextest run -p proef-harness`) exposes
   one test per scenario to IDEs.
 
+### Secrets in CI
+
+Two working setups:
+
+- **Values via env** (simplest): set `PROEF_SECRET_<NAME>` from your CI's
+  secret storage — no store, no key, nothing on disk.
+- **Committed ciphertext store**: commit `.proef-secrets.json` (it holds
+  ciphertext only) and supply the project key as the `PROEF_KEY` CI secret
+  (`base64 < ~/.config/proef/keys/default.key`). A set-but-invalid
+  `PROEF_KEY` is always an error, never a silent fallthrough.
+
+Note: `.proef-state.json` (the persistent World) is plaintext and therefore
+gitignored — captures promoted with `saveAs: global` land there. A capture
+whose value equals a known secret is refused with a warning; it never
+persists (`proef doctor` also reports store/key health).
+
 ## Environment variables
 
 | Variable | Read by | Purpose |
 |---|---|---|
 | `PROEF_SECRET_<NAME>` | `proef test` | Secret value override (beats the encrypted store) |
+| `PROEF_KEY` | `proef test`/`secret` | Base64 project key override — decrypt a committed store without the key file |
 | `PROEF_CONFIG_DIR` | `proef secret` | Key-file location (default: XDG config dir) |
 | `PROEF_HARNESS_SUITE` | nextest harness | Suite directory the harness lists and runs |
 | `PROEF_BIN` | nextest harness | Path to the `proef` binary the harness invokes |

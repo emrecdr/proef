@@ -10,6 +10,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 - `proef secret rm NAME` removes a stored secret (locked atomic rewrite;
   removing an absent name exits 2).
+- `PROEF_KEY` env override supplies the project key directly (base64) — a
+  committed ciphertext store now decrypts in CI without shipping the key
+  file; a set-but-invalid key errors instead of silently falling through.
+- `proef doctor` reports secret store/key health (readable, parseable,
+  private permissions); a corrupt `.proef-secrets.json` no longer bricks
+  `secret set` — it is moved aside to `.corrupt` and a fresh store begins.
+
+### Fixed
+
+- **Secret-valued captures never reach `.proef-state.json`**: a
+  `saveAs: global` capture whose value equals a known secret is refused —
+  the owning step warns with the reason — closing the one sink the
+  redaction invariant (ADR-0005) did not cover.
+- Secret resolution reads the store and key once per run instead of once
+  per secret (no torn view against a concurrent `secret set`).
+- Warned steps now print their reason on the console (`↳ …`) — a bare ⚠
+  glyph explained nothing, for `optional:` failures too.
 
 ## [0.3.0] - 2026-07-29 (data-safety blockers, Then visibility, taxonomy)
 

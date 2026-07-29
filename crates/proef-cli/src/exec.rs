@@ -28,26 +28,56 @@ use crate::{registry, render};
 const RUN_RETENTION: usize = 200;
 
 /// Secret resolution order (US-10): `PROEF_SECRET_<NAME>` environment
-/// override → the encrypted store (`proef secret set`).
+/// override → the encrypted store (`proef secret set`). The store and key
+/// are read **once** for the whole run — a per-name re-read would be O(N)
+/// IO and hand a concurrent `secret set` a torn view.
 fn collect_secrets(names: &BTreeSet<String>) -> Result<BTreeMap<String, String>, Vec<String>> {
     let mut secrets = BTreeMap::new();
     let mut missing = Vec::new();
+    let mut from_store: Vec<&String> = Vec::new();
     for name in names {
         let env_key = format!("PROEF_SECRET_{}", name.to_uppercase());
         if let Ok(value) = std::env::var(&env_key) {
             secrets.insert(name.clone(), value);
-            continue;
-        }
-        match crate::secretstore::resolve(name) {
-            Ok(Some(value)) => {
-                secrets.insert(name.clone(), value);
-            }
-            Ok(None) => missing.push(format!(
-                "`{name}` (run `proef secret set {name}`, or set {env_key})"
-            )),
-            Err(message) => missing.push(format!("`{name}` ({message})")),
+        } else {
+            from_store.push(name);
         }
     }
+
+    if !from_store.is_empty() {
+        match crate::secretstore::load_store() {
+            Ok(store) => {
+                // The key loads lazily: a run whose remaining names are all
+                // absent must not create a key file as a side effect.
+                let mut key: Option<Result<[u8; 32], String>> = None;
+                for name in from_store {
+                    let Some(token) = store.get(name.as_str()) else {
+                        let env_key = format!("PROEF_SECRET_{}", name.to_uppercase());
+                        missing.push(format!(
+                            "`{name}` (run `proef secret set {name}`, or set {env_key})"
+                        ));
+                        continue;
+                    };
+                    let key = key.get_or_insert_with(crate::secretstore::load_or_create_key);
+                    match key {
+                        Ok(key) => match crate::secretstore::decrypt(token, key) {
+                            Ok(value) => {
+                                secrets.insert(name.clone(), value);
+                            }
+                            Err(message) => missing.push(format!("`{name}` ({message})")),
+                        },
+                        Err(message) => missing.push(format!("`{name}` ({message})")),
+                    }
+                }
+            }
+            Err(message) => {
+                for name in from_store {
+                    missing.push(format!("`{name}` ({message})"));
+                }
+            }
+        }
+    }
+
     if missing.is_empty() {
         Ok(secrets)
     } else {

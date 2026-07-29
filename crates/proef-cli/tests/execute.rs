@@ -635,3 +635,49 @@ fn parallel_runs_are_deterministic_under_normalization() {
     }
     assert_eq!(normalized[0], normalized[1]);
 }
+
+/// ADR-0005 extended to the state sink: a `saveAs: global` capture whose
+/// value equals a known secret is refused (the step warns) — secret-derived
+/// material never reaches `.proef-state.json` in plaintext.
+#[test]
+fn secret_valued_captures_never_promote_to_global_state() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: leak guard\n    When the client is fetched\n",
+    )
+    .unwrap();
+    // `clientRef`'s secret value is `c-1` — exactly what the endpoint echoes
+    // back as `$.id`, so the capture is secret-valued by construction.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "templates:\n  fetch:\n    match: the client is fetched\n    steps:\n      - saveAs: { leaked: global }\n        hurl: |\n          GET ${baseURL}/api/v1/clients/${secret:clientRef}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          leaked: jsonpath \"$.id\"\n",
+    )
+    .unwrap();
+
+    let mut run = Command::cargo_bin("proef").unwrap();
+    let assert = run
+        .current_dir(cwd.path())
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .env("PROEF_SECRET_APITOKEN", API_TOKEN)
+        .env("PROEF_SECRET_CLIENTREF", "c-1")
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("saveAs: global refused for `leaked`"),
+        "the refusal must surface on the owning step: {stdout}"
+    );
+
+    let state = cwd.path().join(".proef-state.json");
+    if state.exists() {
+        let text = std::fs::read_to_string(&state).unwrap();
+        assert!(
+            !text.contains("leaked") && !text.contains("c-1"),
+            "secret-valued capture persisted: {text}"
+        );
+    }
+}

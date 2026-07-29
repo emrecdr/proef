@@ -35,6 +35,19 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
         }
     }
 
+    // CLI-owned checks: the secret machinery is not engine-contributed but
+    // its health gates runs just the same (corrupt store, unreadable key).
+    crate::render::outln!("\nsecrets:");
+    for (status, name, detail) in crate::secretstore::doctor_checks() {
+        let glyph = match status {
+            DoctorStatus::Pass => "ok  ",
+            DoctorStatus::Warn => "warn",
+            DoctorStatus::Fail => "FAIL",
+        };
+        crate::render::outln!("  [{glyph}] {name:<24} {detail}");
+        worst = worst.max(status);
+    }
+
     match worst {
         DoctorStatus::Pass => {
             crate::render::outln!("\nall checks passed");

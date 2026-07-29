@@ -193,6 +193,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 status,
                 attempts,
                 duration_ms,
+                detail,
                 ..
             } => {
                 let attempts_note = if *attempts > 1 {
@@ -208,7 +209,17 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                     step.text
                 );
                 let line = self.redactions.apply(&line);
-                self.buffer_for(scenario).push(line);
+                // A warning with no reason is unusable — say why. (Failures
+                // get the richer end-of-run list instead.)
+                let warn_detail = (*status == Status::Warned)
+                    .then_some(detail.as_deref())
+                    .flatten()
+                    .map(|d| self.redactions.apply(&format!("      ↳ {d}")));
+                let buffer = self.buffer_for(scenario);
+                buffer.push(line);
+                if let Some(warn_detail) = warn_detail {
+                    buffer.push(warn_detail);
+                }
             }
             Event::ScenarioFinished { scenario, status } => {
                 let lines = self

@@ -65,8 +65,25 @@ fn key_path() -> PathBuf {
     config_dir.join("proef").join("keys").join("default.key")
 }
 
-/// Load the project key, creating a fresh random one on first use (`0600`).
+/// Decode a base64 `PROEF_KEY` value into a project key. A set-but-invalid
+/// key is always an error — silently falling through to the file would
+/// decrypt with the wrong key and report tampering instead of the real cause.
+fn key_from_env(value: &str) -> Result<[u8; 32], String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(value.trim())
+        .map_err(|err| format!("PROEF_KEY is not base64: {err}"))?;
+    bytes
+        .try_into()
+        .map_err(|_| "PROEF_KEY must decode to exactly 32 bytes".to_owned())
+}
+
+/// Load the project key: `PROEF_KEY` env override (CI / shared stores —
+/// the ciphertext store can be committed and the key supplied out of band),
+/// else the key file, creating a fresh random one on first use (`0600`).
 pub fn load_or_create_key() -> Result<[u8; 32], String> {
+    if let Ok(value) = std::env::var("PROEF_KEY") {
+        return key_from_env(&value);
+    }
     let path = key_path();
     match std::fs::read_to_string(&path) {
         Ok(text) => decode_key(&path, &text),
@@ -179,6 +196,32 @@ fn save_store(store: &BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
+/// Like [`load_store`], but a *corrupt* store (unparseable JSON) is moved
+/// aside to `.corrupt` and treated as empty — `secret set` must always have
+/// a way forward, and the sidelined file keeps the evidence. Read paths
+/// (`list`, `rm`, resolution) still fail loudly instead of destroying state.
+fn load_store_or_recover() -> Result<BTreeMap<String, String>, String> {
+    match std::fs::read_to_string(STORE_FILE) {
+        Ok(text) => match serde_json::from_str(&text) {
+            Ok(store) => Ok(store),
+            Err(err) => {
+                let backup = format!("{STORE_FILE}.corrupt");
+                std::fs::rename(STORE_FILE, &backup).map_err(|rename_err| {
+                    format!(
+                        "{STORE_FILE} is invalid ({err}) and cannot be moved aside: {rename_err}"
+                    )
+                })?;
+                eprintln!(
+                    "warning: {STORE_FILE} was corrupt ({err}) — moved to {backup}, starting fresh"
+                );
+                Ok(BTreeMap::new())
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(err) => Err(format!("cannot read {STORE_FILE}: {err}")),
+    }
+}
+
 /// `proef secret set NAME [--value V]` — value via hidden prompt when absent.
 pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
     let value = match value {
@@ -190,7 +233,7 @@ pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
     // The whole read-modify-write is one critical section: concurrent
     // `secret set` calls must all land (released on drop).
     let _lock = lock_store()?;
-    let mut store = load_store()?;
+    let mut store = load_store_or_recover()?;
     store.insert(name.to_owned(), encrypt(&value, &key));
     save_store(&store)?;
     crate::render::outln!("secret `{name}` stored in {STORE_FILE} (ciphertext only)");
@@ -225,14 +268,93 @@ pub fn list() -> Result<(), String> {
     Ok(())
 }
 
-/// Decrypt the stored value for `name`, if present.
-pub fn resolve(name: &str) -> Result<Option<String>, String> {
-    let store = load_store()?;
-    let Some(token) = store.get(name) else {
-        return Ok(None);
-    };
-    let key = load_or_create_key()?;
-    decrypt(token, &key).map(Some)
+/// `proef doctor` health report for the secret machinery — cheap, read-only
+/// checks over the key source and the store file.
+pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, String)> {
+    use proef_core::engine::DoctorStatus as S;
+    let mut checks = Vec::new();
+
+    if let Ok(value) = std::env::var("PROEF_KEY") {
+        match key_from_env(&value) {
+            Ok(_) => checks.push((
+                S::Pass,
+                "secret key",
+                "PROEF_KEY env override (32 bytes)".to_owned(),
+            )),
+            Err(err) => checks.push((S::Fail, "secret key", err)),
+        }
+    } else {
+        {
+            let path = key_path();
+            if path.is_file() {
+                let outcome = std::fs::read_to_string(&path)
+                    .map_err(|err| format!("cannot read {}: {err}", path.display()))
+                    .and_then(|text| decode_key(&path, &text));
+                match outcome {
+                    Ok(_) => checks.push((
+                        permissive_mode_status(&path),
+                        "secret key",
+                        format!("{} (32 bytes)", path.display()),
+                    )),
+                    Err(err) => checks.push((S::Fail, "secret key", err)),
+                }
+            } else {
+                checks.push((
+                    S::Pass,
+                    "secret key",
+                    format!(
+                        "absent — created on first `proef secret set` ({})",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+    }
+
+    match std::fs::read_to_string(STORE_FILE) {
+        Ok(text) => match serde_json::from_str::<BTreeMap<String, String>>(&text) {
+            Ok(store) => checks.push((
+                permissive_mode_status(Path::new(STORE_FILE)),
+                "secret store",
+                format!("{STORE_FILE}: {} secret(s), ciphertext only", store.len()),
+            )),
+            Err(err) => checks.push((
+                S::Fail,
+                "secret store",
+                format!(
+                    "{STORE_FILE} is corrupt: {err} (the next `proef secret set` moves it aside)"
+                ),
+            )),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => checks.push((
+            S::Pass,
+            "secret store",
+            format!("no store — created on first `proef secret set` ({STORE_FILE})"),
+        )),
+        Err(err) => checks.push((
+            S::Fail,
+            "secret store",
+            format!("cannot read {STORE_FILE}: {err}"),
+        )),
+    }
+
+    checks
+}
+
+/// `Pass` when the file is private to the owner, `Warn` when group/other
+/// bits are set (unix only — elsewhere always `Pass`).
+fn permissive_mode_status(path: &Path) -> proef_core::engine::DoctorStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.permissions().mode() & 0o077 != 0
+        {
+            return proef_core::engine::DoctorStatus::Warn;
+        }
+    }
+    let _ = path;
+    proef_core::engine::DoctorStatus::Pass
 }
 
 #[cfg(test)]

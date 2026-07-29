@@ -322,6 +322,10 @@ impl EngineSession for HurlSession {
             }
 
             // Merge captures into the World (typed), honoring saveAs: global.
+            // A capture whose value IS a secret never promotes: promotions
+            // persist to `.proef-state.json` in plaintext, and secrets reach
+            // no sink (ADR-0005) — the refusal warns on the owning step.
+            let mut refused_promotions: BTreeMap<usize, Vec<String>> = BTreeMap::new();
             for entry_result in &result.entries {
                 for capture in &entry_result.captures {
                     let value = from_hurl_value(&capture.value);
@@ -334,12 +338,19 @@ impl EngineSession for HurlSession {
                                 })
                             })
                         })
-                        .map(|(_, step, _)| *step);
+                        .map(|(index, step, _)| (*index, *step));
                     world.set(capture.name.clone(), value.clone());
-                    if let Some(step) = target_step
+                    if let Some((step_index, step)) = target_step
                         && step.save_as.contains_key(&capture.name)
                     {
-                        world.set_global(capture.name.clone(), value);
+                        if is_secret_value(&value, &self.secrets) {
+                            refused_promotions
+                                .entry(step_index)
+                                .or_default()
+                                .push(capture.name.clone());
+                        } else {
+                            world.set_global(capture.name.clone(), value);
+                        }
                     }
                 }
             }
@@ -502,6 +513,33 @@ impl EngineSession for HurlSession {
                 } else {
                     None
                 };
+                // A refused saveAs promotion upgrades a green step to a
+                // warning: the author must see the value never persisted.
+                let (status, detail) = match refused_promotions.get(index) {
+                    Some(names) => {
+                        let refusal = format!(
+                            "saveAs: global refused for {}: captured value equals a secret — secrets never persist to .proef-state.json (ADR-0005)",
+                            names
+                                .iter()
+                                .map(|n| format!("`{n}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        let status = if status == Status::Passed {
+                            Status::Warned
+                        } else {
+                            status
+                        };
+                        let detail = Some(match detail {
+                            Some(existing) if !existing.is_empty() => {
+                                format!("{existing}; {refusal}")
+                            }
+                            _ => refusal,
+                        });
+                        (status, detail)
+                    }
+                    None => (status, detail),
+                };
                 if status == Status::Failed {
                     failed = true;
                     let message = detail.clone().unwrap_or_default();
@@ -639,6 +677,15 @@ fn line_in_entry(parsed_entry: &hurl_core::ast::Entry, result_line: usize) -> bo
 
 /// Detail attached to a step whose payload lowered to zero hurl entries.
 const NO_ENTRIES_DETAIL: &str = "no hurl entries to execute (comment-only payload?)";
+
+/// Would persisting this capture write a secret to disk? Secrets are
+/// strings; only a non-empty string capture can equal one.
+fn is_secret_value(value: &WorldValue, secrets: &BTreeMap<String, String>) -> bool {
+    match value {
+        WorldValue::String(s) => !s.is_empty() && secrets.values().any(|secret| secret == s),
+        _ => false,
+    }
+}
 
 fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
     StepOutcome {

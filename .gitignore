@@ -9,6 +9,7 @@
 .proef-secrets.json
 .proef-secrets.json.lock
 .proef-secrets.json.*.tmp
+.proef-secrets.json.corrupt
 
 # cargo-fuzz outputs
 fuzz/target/
