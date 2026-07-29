@@ -201,7 +201,7 @@ impl EngineSession for HurlSession {
             let guarded_off = step
                 .when
                 .as_ref()
-                .is_some_and(|guard| guard.0.trim().is_empty());
+                .is_some_and(proef_core::step::Guard::skips);
             if guarded_off {
                 outcomes.push(StepOutcome {
                     step: step.step.clone(),

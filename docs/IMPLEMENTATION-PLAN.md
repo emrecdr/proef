@@ -35,8 +35,7 @@ Tasks:
 3. Core scaffolding: `ExitCode` enum + `CoreError`/`EngineError` taxonomy (ADR-0009);
    `Event` enum v1 + `EventSink` (ADR-0008); `World`/`Value` types + `GlobalStore`
    (atomic temp+rename) (ADR-0005); `EngineFactory`/`EngineSession`/`StepKindSpec`/
-   `DoctorCheck` traits (ADR-0002); `CancellationToken` plumbing (ADR-0007);
-   tracing setup + rolling file appender.
+   `DoctorCheck` traits (ADR-0002); `CancellationToken` plumbing (ADR-0007).
 4. CI: gates workflow + a **stub canary job** (builds `proef-engine-hurl` against hurl
    `=8.0.1` — becomes the real canary in M4); Renovate config (pins grouped; hurl
    excluded from auto-bump).
@@ -106,7 +105,7 @@ Tasks:
    Ctrl-C graceful/hard paths.
 5. Reporters v1: console BDD tree (attempts/timings), JSONL event record, run-record
    rotation; `--output json`.
-6. Fixture server (axum dev-dep) + integration suite: success/4xx/retry-delay/auth/
+6. Fixture server (`tiny_http`, ADR-0011) + integration suite: success/4xx/retry-delay/auth/
    malformed-JSON/optional/World-chaining/cancellation-budget cases.
 
 **Acceptance:** ported 50x features run green against the fixture with prose unchanged

@@ -75,10 +75,21 @@ pub struct Retry {
     pub interval_ms: u64,
 }
 
-/// A `when:` skip guard: the step runs iff the expression is non-empty after
-/// `${…}` resolution (TECH-SPEC §6).
+/// A `when:` skip guard: the step runs unless the resolved expression is
+/// empty or a literal false (TECH-SPEC §6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Guard(pub String);
+
+impl Guard {
+    /// Should the guarded step be skipped? Empty means "no condition met",
+    /// and a literal `false`/`0` (case-insensitive) skips too — an author
+    /// writing `when: ${flag}` with `flag=false` means *skip*, not "the
+    /// string is non-empty, run anyway".
+    pub fn skips(&self) -> bool {
+        let value = self.0.trim();
+        value.is_empty() || value.eq_ignore_ascii_case("false") || value == "0"
+    }
+}
 
 /// One step after macro expansion and `${…}` lowering — engine-agnostic.
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +103,7 @@ pub struct LoweredStep {
     /// `optional:` steps warn instead of failing (and segment the batch).
     pub optional: bool,
     /// Skip guard, when configured (resolved text; the runtime skips the step
-    /// when it is empty).
+    /// per [`Guard::skips`]).
     pub when: Option<Guard>,
     /// Pack-step entry label (events/console), when authored.
     pub label: Option<String>,
@@ -149,4 +160,21 @@ pub struct BatchResult {
     pub steps: Vec<StepOutcome>,
     /// A batch-level failure, if the batch stopped early.
     pub error: Option<EngineError>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Guard;
+
+    /// `when:` semantics (TECH-SPEC §6): empty and literal-false skip; any
+    /// other non-empty text runs.
+    #[test]
+    fn guard_skips_on_empty_and_literal_false() {
+        for skipping in ["", "  ", "false", "FALSE", "0"] {
+            assert!(Guard(skipping.to_owned()).skips(), "{skipping:?}");
+        }
+        for running in ["true", "yes", "1", "anything"] {
+            assert!(!Guard(running.to_owned()).skips(), "{running:?}");
+        }
+    }
 }

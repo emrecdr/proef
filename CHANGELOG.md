@@ -6,6 +6,56 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed (v0.2.1 review — every finding reproduced before fixing)
+
+- **Asset copy destroyed user files**: `proef artifacts -o` pointing at the
+  suite truncated referenced assets to 0 bytes, and `..` references escaped
+  the output directory. Copies now refuse absolute/`..` references (exit 2),
+  never copy a file onto itself, and surface IO errors (exit 3).
+- **Run rotation deleted arbitrary directories**: with `runs-dir` shared with
+  user content, rotation could recursively delete user directories — and its
+  own in-flight run. Only uuid-named run records rotate now, never the live
+  run, and rotation happens before the new run dir exists.
+- **Zero-entry payloads passed silently**: a comment-only `hurl:` block ran
+  nothing while the scenario reported green. Load-time lint rejects it;
+  the engine backstop emits Skipped outcomes for anything that slips through.
+- `proef flows … | head` (and every other command) tolerates a closed pipe;
+  a non-UTF-8 environment variable no longer aborts any command.
+- Raw `[Options] retry:`/`repeat:` values are parsed and capped (10000), and
+  `delay:` is capped at 1 hour in both typed and raw forms; `repeat:` now
+  counts toward the batch budget so long repeats aren't blamed on the
+  environment.
+- Concurrent `proef secret set` calls no longer lose keys (advisory-locked,
+  atomic 0600 temp+rename store; the key-creation race resolves to the
+  winner's key). `proef fmt` and `schema --add-to` write atomically.
+- `proef fmt` keeps fenced body bytes verbatim (blank lines and trailing
+  whitespace inside ``` fences are the bytes the test sends).
+- Nested suites now load their packs: pack discovery recurses like feature
+  discovery (`packs/` directories at any depth); `proef fmt` shares the rule.
+- Duplicate/empty Examples header columns are a named error instead of a
+  silent last-value-wins; an empty `.feature` gets a plain-language error;
+  a UTF-8 BOM is stripped instead of shifting every diagnostic span.
+
+### Changed
+
+- **Then steps are visible everywhere**: `expect:` macros now surface as
+  their own step rows in console, events, JUnit, and `explain`, with assert
+  failures attributed to the authored `Then` line — the host request no
+  longer inherits its followers' assert failures. Artifact bytes are
+  unchanged; sidecars gain one row per `Then` (schema-compatible).
+- **Error taxonomy**: mistakes in the test's own text (undefined `{{var}}`,
+  bad JSONPath/regex/URL/options, unreadable body file) exit 2 instead
+  of 3, anchored on hurl's own assert-context flag.
+- `when:` guards skip on a literal `false`/`0` as well as empty — an author
+  writing `when: ${flag}` with `flag=false` means skip.
+- `proef.toml` is no longer gitignored (it is documented, committed project
+  config).
+- proef-core public API: removed dead surface (`NormalizeReporter`, the
+  never-populated `config` resolution tier, `StepOutcome.artifact_span`,
+  `LoweredStep.retry`, `StepKeyword`, and friends); added
+  `EngineErrorClass::UserInput`, `StepPayload::MergedAsserts`,
+  `ScenarioOutcome.artifact_slug`, `Guard::skips`.
+
 ## [0.2.1] - 2026-07-29 (review P0 + failure UX)
 
 ### Fixed

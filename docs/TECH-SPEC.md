@@ -39,7 +39,7 @@ proef/
   deny.toml  .config/nextest.toml  proef.toml.example
   .github/workflows/ci.yml           # fmt, clippy -D warnings, nextest, doc -D warnings,
                                      # deny, audit, canary (ADR-0003)
-  xtask/                   # automation as Rust (dist, fixture codegen, canary driver); just aliases
+  xtask/                   # automation as Rust (fixture, canary, docs-check, public-api); just aliases
   crates/
     proef-core/            # engine-agnostic: gherkin parse, packs, binding, lowering, IR,
       helpers/             #   emit, dispatch, World/state, events, errors, reporters
@@ -64,27 +64,30 @@ false` initially (reserve names with 0.0.0 placeholders), MIT OR Apache-2.0.
 // world.rs — typed variable scope (ADR-0005)
 pub enum Value { String(String), Number(f64|i64…), Bool(bool), Null }   // mirrors hurl Value subset
 pub struct World { scenario: BTreeMap<String, Value>,
-                   global: GlobalStore /* .proef-state.json, atomic, snapshot/restore */ }
+                   global: GlobalStore /* .proef-state.json, atomic temp+rename save */ }
 
 // step.rs — lowered, engine-agnostic
 pub struct StepRef { pub file: Arc<str>, pub line: usize, pub text: Arc<str> }  // feature anchor
 pub struct LoweredStep { pub step: StepRef, pub kind: StepKindId, pub payload: StepPayload,
-                         pub optional: bool, pub retry: Option<Retry>, pub when: Option<Guard> }
-pub enum StepPayload { HurlEntries(String /* lowered hurl text */), Structured(serde_json::Value) }
-pub struct StepBatch { pub engine: EngineId, pub steps: Vec<LoweredStep> }
+                         pub optional: bool, pub when: Option<Guard> }   // retry travels as baked [Options]
+pub enum StepPayload { HurlEntries(String /* lowered hurl text */),
+                       MergedAsserts { lines: usize /* expect: rows own the appended assert lines */ },
+                       Structured(serde_json::Value) }
+pub struct StepBatch { pub index: usize /* scenario-wide ordinal */, pub engine: EngineId,
+                       pub steps: Vec<LoweredStep> }
 
 // engine.rs — the seam (ADR-0002); see ADR text for EngineFactory/EngineSession
-pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* JSON-Schema frag */ }
+pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* JSON-Schema frag */,
+                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>> }
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,
-                         pub duration: Duration, pub detail: Option<String>,
-                         pub artifact_span: Option<(u32, u32)> }
+                         pub duration: Duration, pub detail: Option<String> }
 
 // events.rs — the spine (ADR-0008); serde, versioned
 #[serde(tag = "event", rename_all = "snake_case")]
-pub enum Event { RunStarted{..}, ScenarioStarted{..}, BatchStarted{..},
-                 StepFinished{..}, ScenarioFinished{..}, RunFinished{..} }
+pub enum Event { RunStarted{..}, ScenarioStarted{..}, BatchStarted{..}, EntryRunning{..},
+                 StepFinished{..}, ScenarioFinished{..}, RunFinished{.., cancelled} }
 pub struct EventSink(Arc<dyn Fn(&Event) + Send + Sync>);   // borrowed events
 ```
 
@@ -124,7 +127,7 @@ changes, ADR-0010).
 **4.5 Emit.** Canonical `.hurl` per scenario (stable formatting, snapshot-tested):
 header comment per entry `# <file>:<line> — <step text>`; `# optional` markers; sidecar
 `<slug>.map.json` (schema: `{ entries: [{hurl_lines: [a,b], feature: {file,line,text},
-optional, captures: [names], batch: n}], schema: 1 }`); `<slug>.vars` when `${global:}`
+optional, captures: [names], batch: n, step: n}], schema: 1 }`); `<slug>.vars` when `${global:}`
 or `${secret:}` referenced (secrets as names only). Artifact dirs: `.proef-runs/<id>/
 artifacts/` (per-run) and `proef artifacts -o <dir>` (stable hand-off).
 
@@ -186,7 +189,7 @@ templates:
     steps:                    # request steps (each lowers to ≥1 hurl entry)
       - name: "…"             # entry label (events/console)
         optional: true|false  # failure → warning (segments the batch)
-        when: "${expr}"       # skip guard: step runs iff non-empty after resolution
+        when: "${expr}"       # skip guard: skips when empty or literal false/0 after resolution
         retry: { count: N, interval_ms: M }   # finite only (lint); → [Options] retry
         saveAs: { captureName: global }        # promote capture(s) into the World
         hurl: |               # PRIMARY form (ADR-0004): raw hurl, ${…} lowered first,
@@ -221,7 +224,7 @@ Author-time (`${…}`, resolved in §4.4, recursive ≤ 8): `${param}` · `${env
 `{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id; port
 deterministic NL generators) · `$${…}` literal escape. Run-time (`{{…}}`): hurl captures and
 secret placeholders — resolved by the engine. Resolution order within a scope: step args
-> macro defaults > directives > flow config.
+> macro defaults > directives.
 
 ## 9. Diagnostics (ADR-0009)
 
@@ -255,15 +258,15 @@ parse-validation; no engine sessions, no network.
 
 `.proef-runs/<run-id>/` → `events.jsonl` (the record, ADR-0008), `run.log` (console tee),
 `artifacts/*.hurl|.map.json|.vars`, `report.junit.xml` (when requested); 200-run
-rotation. `.proef-state.json` — persistent World: atomic temp+rename,
-snapshot/restore around scenario retries, 0600. `proef.toml` — project config
+rotation (only uuid-named run records rotate; the in-flight run never does).
+`.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config
 (base timeouts, jobs default, artifact dir, engine settings).
 
 ## 12. Parallelism & cancellation
 
 Scenario-per-OS-thread, `--jobs` bounded (default: available_parallelism, capped by
-scenario count); events funneled through the sink (Normalize reporter repairs
-interleaving); one CancellationToken per run, child per scenario; Ctrl-C graceful /
+scenario count); events funneled through the sink (the console reporter buffers per
+scenario and replays contiguously); one CancellationToken per run, child per scenario; Ctrl-C graceful /
 second Ctrl-C hard (ADR-0007). Global-World writes serialize through the store lock;
 scenario ordering within a file is preserved for artifact naming, not execution order.
 
@@ -282,6 +285,7 @@ Engine: `hurl =8.0.1`, `hurl_core =8.0.1` (`--locked`; ADR-0003). Core: `gherkin
 (derive, env), `miette 7` (fancy), `uuid 1` (v7), `notify =8.2.0`, `ctrlc`,
 `chacha20poly1305 rpassword base64`, `quick-junit`, `toml`. Fixture/harness (dev):
 `tiny_http` (ADR-0011 — axum conflicts with the tokio-runtime ban), `libtest-mimic`.
+Engine runtime: `tempfile` (Netscape cookie round-trip between batches, §5).
 Dev: `insta assert_cmd predicates proptest tempfile quick-xml` + `cargo-fuzz`
 targets; `openssl-sys` rides as the engine's `vendored-openssl` feature carrier. Synthetic
 data (`${fake:*}`) is a dependency-free SplitMix64/FNV implementation in-core — the
@@ -294,7 +298,8 @@ macOS: Xcode CLT.
 ## 15. Conventions
 
 Toolchain pinned latest stable (1.97.1 at writing); edition 2024; resolver 3; workspace
-lints (the legacy suite table); CI gates: `cargo fmt --check`, `clippy --all-targets
+lints (the legacy suite table); CI gates (PR): `cargo fmt --check`, `clippy --all-targets
 --all-features -D warnings`, `cargo nextest run`, `cargo test --doc`,
-`RUSTDOCFLAGS="-D warnings" cargo doc`, `cargo deny check`, `cargo audit`; commit gates
-mirror CI. Automation in `xtask` (+ `just` aliases); no shell scripts for logic.
+`RUSTDOCFLAGS="-D warnings" cargo doc`, `cargo deny check`, `cargo machete`, `zizmor`,
+`xtask docs-check`, `proef doctor`, fuzz smoke + `xtask public-api` (nightly rustdoc);
+`cargo audit` runs on the nightly schedule. Automation in `xtask` (+ `just` aliases); no shell scripts for logic.

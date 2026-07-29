@@ -21,8 +21,8 @@ scope per scenario plus a persistent global store (`.proef-state.json`, atomic
 temp+rename). Engine
 bridging: seed hurl's `VariableSet` from the World before each batch; merge
 `HurlResult.variables` back after; `saveAs: global` promotes a capture into the
-persistent store. **Secrets:** `${secret:NAME}` resolves from the encrypted `.env` store
-(chacha20poly1305 + rpassword); values are injected via
+persistent store. **Secrets:** `${secret:NAME}` resolves from the `PROEF_SECRET_<NAME>` environment
+override, else the encrypted store `.proef-secrets.json` (chacha20poly1305 + rpassword); values are injected via
 `VariableSet::insert_secret` (hurl redacts them in logs/reports); artifacts carry
 `{{secret_name}}` placeholders, never values; our reporters additionally redact by value
 (property-tested invariant).

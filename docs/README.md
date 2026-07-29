@@ -46,13 +46,13 @@ repo-root `CLAUDE.md` carry the live status.
 Project/binary **`proef`** · crates **`proef-core`**, **`proef-engine-hurl`**, **`proef-cli`**,
 **`proef-fixture`**, **`proef-harness`**
 · run records **`.proef-runs/`** · persistent
-World **`.proef-state.json`** · config **`proef.toml`**. Reserve the crates.io names early
-(placeholder `0.0.0` publish is customary; all verified free 2026-07-28).
+World **`.proef-state.json`** · config **`proef.toml`**. The crates.io names
+`proef`, `proef-core`, and `proef-engine-hurl` are published and owned.
 
 ## Provenance
 
 Grounded in two verified sources: (1) **hurl
 master** (Orange-OpenSource) — source-level verification of every library seam used, with
-file:line citations in TECH-SPEC §5; (3) a **working spike** proving the front end and
+file:line citations in TECH-SPEC §5; (2) a **working spike** proving the front end and
 artifact contract end to end (the spike predates this repo). Ecosystem practices are drawn from
 cargo-nextest, cucumber-rs, sqlx, rustls, probe-rs, and current (2026) Rust guidance.

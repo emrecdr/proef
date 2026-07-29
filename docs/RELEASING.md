@@ -50,8 +50,6 @@ milestone or a coherent series lands — not on a calendar.
   in the same commit series that lands it.
 - On release, `Unreleased` content moves under `## [X.Y.Z] - YYYY-MM-DD` (with a
   short parenthetical theme) and a fresh empty `Unreleased` is left behind.
-- The compare-link references at the bottom of the file are updated every release
-  (`[Unreleased]` compares `vX.Y.Z...HEAD`).
 
 ## Release runbook
 
@@ -95,9 +93,9 @@ automated.
 ## History
 
 - `v0.1.0` — initial release (fresh history baseline, 2026-07-29)
-- `v0.2.1` — review P0 (header grammar, pipe, filters, name dedup, secrets
-  perms) + failure UX (hurl expected/actual, true error-line anchoring)
 - `v0.2.0` — deep-review correctness blockers (duplicate-request, body
   corruption, delay budget), panic containment, the output contract, and the
   author guides — breaking: `--output json` stream split, empty selections
   exit 2, event schema grew additively
+- `v0.2.1` — review P0 (header grammar, pipe, filters, name dedup, secrets
+  perms) + failure UX (hurl expected/actual, true error-line anchoring)

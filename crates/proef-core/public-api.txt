@@ -1161,6 +1161,8 @@ impl core::marker::UnsafeUnpin for proef_core::step::BatchResult
 impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::step::BatchResult
 impl !core::panic::unwind_safe::UnwindSafe for proef_core::step::BatchResult
 pub struct proef_core::step::Guard(pub alloc::string::String)
+impl proef_core::step::Guard
+pub fn proef_core::step::Guard::skips(&self) -> bool
 impl core::clone::Clone for proef_core::step::Guard
 pub fn proef_core::step::Guard::clone(&self) -> proef_core::step::Guard
 impl core::cmp::Eq for proef_core::step::Guard

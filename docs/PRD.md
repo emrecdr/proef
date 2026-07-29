@@ -112,7 +112,8 @@ batch defaults (verified); World seeding/merge-back; cooperative cancellation + 
 event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotation.
 **CLI:** `test` (`--dry-run --tags --jobs --junit --output json --watch`), `flows`,
 `artifacts`, `schema [--add-to]`, `secret set|list`, `explain`, `doctor`. **Config:**
-defaults < `proef.toml` < env < flags; `.env` + encrypted secrets.
+defaults < `proef.toml` < flags; secrets via `PROEF_SECRET_<NAME>` env override →
+the encrypted store (`proef secret set [--value]`).
 
 ## 7. Non-functional requirements
 
@@ -124,9 +125,10 @@ dynamically-linked dist binaries (hurl's own model). **Performance:** startup ov
 scenario-level parallelism with worker threads. **Reliability:** deterministic lowering
 (injected clock/run-id, sans-IO-lite core); bounded runtime under cancellation budgets;
 state writes atomic (temp+rename). **Security:** secret redaction invariants
-property-tested; artifacts guaranteed secret-free; encrypted-at-rest `.env` values;
+property-tested; artifacts guaranteed secret-free; encrypted-at-rest secret store;
 0600 on sensitive outputs. **Maintainability:** exact pins + canary + thin-fork policy;
-CI gates: fmt, clippy `-D warnings`, nextest, doc `-D warnings`, deny, audit.
+CI gates: fmt, clippy `-D warnings`, nextest, doc `-D warnings`, deny, machete,
+zizmor, docs-check, public-api (audit nightly).
 **Extensibility:** new engine = new crate implementing `EngineFactory`/`EngineSession` +
 one registry line; step-kind schema contributed by the engine; **zero core changes**
 (the M6 acceptance test).

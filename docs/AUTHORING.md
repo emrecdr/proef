@@ -49,8 +49,8 @@ steps:
   - name: human label (${…} resolves here too)
     optional: true                    # failure warns instead of failing
     retry: { count: 10, interval_ms: 300 }   # finite; 1..=10000
-    delay: 250                        # ms before the request
-    when: "${env:RUN_SLOW:-}"         # skip when empty after resolution
+    delay: 250                        # ms before the request (capped at 1 hour)
+    when: "${env:RUN_SLOW:-}"         # skips when empty or false/0 after resolution
     saveAs: { clientId: global }      # promote a capture to the global store
     hurl: |                           # the payload — raw hurl, one or more entries
       GET ${baseURL}/api/v1/clients/{{clientId}}
@@ -92,7 +92,8 @@ within a run, fresh across runs: `firstName`, `lastName`, `name`, `fullName`,
 ## Secrets
 
 Reference with `${secret:NAME}`. Values come from `PROEF_SECRET_<NAME>`
-environment variables first, then the encrypted store (`proef secret set NAME`
+environment variables first, then the encrypted store (`proef secret set NAME`,
+or `proef secret set NAME --value V` for scripts
 — XChaCha20-Poly1305, key auto-created `0600` under `~/.config/proef/`).
 Values never appear in artifacts, events, logs, or reports; events carry
 capture *names* only. The store file (`.proef-secrets.json`, mode `0600`)
@@ -123,6 +124,18 @@ The header's `# replay:` line is a complete stock-hurl command, including
   `proef flows` lists scenarios; the nextest harness
   (`PROEF_HARNESS_SUITE=<dir> cargo nextest run -p proef-harness`) exposes
   one test per scenario to IDEs.
+
+## Environment variables
+
+| Variable | Read by | Purpose |
+|---|---|---|
+| `PROEF_SECRET_<NAME>` | `proef test` | Secret value override (beats the encrypted store) |
+| `PROEF_CONFIG_DIR` | `proef secret` | Key-file location (default: XDG config dir) |
+| `PROEF_HARNESS_SUITE` | nextest harness | Suite directory the harness lists and runs |
+| `PROEF_BIN` | nextest harness | Path to the `proef` binary the harness invokes |
+
+Suite-defined variables (like `PROEF_BASE_URL` in the guides) are a
+convention of `${env:…}` directives, not built-ins — name yours freely.
 
 ## Style
 

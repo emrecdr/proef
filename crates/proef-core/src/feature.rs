@@ -67,11 +67,22 @@ pub struct StepDefn {
 /// Parse one feature file into concrete scenarios. All diagnostics carry the
 /// normalized source and byte spans.
 pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
-    let mut normalized = text.to_owned();
+    // A UTF-8 BOM would shift every byte span (and confuse the gherkin
+    // parser's first line) — normalization strips it.
+    let mut normalized = text.strip_prefix('\u{feff}').unwrap_or(text).to_owned();
     if !normalized.ends_with('\n') {
         normalized.push('\n');
     }
     let source: Arc<str> = Arc::from(normalized.as_str());
+    if normalized.trim().is_empty() {
+        return Err(vec![
+            Diag::error(
+                "proef::feature::empty_file",
+                "the feature file is empty — a `Feature:` header and at least one scenario are required",
+            )
+            .with_source(path.to_owned(), Arc::clone(&source)),
+        ]);
+    }
 
     let feature = match gherkin::Feature::parse(&*source, GherkinEnv::default()) {
         Ok(feature) => feature,
@@ -224,6 +235,35 @@ fn expand_scenario(
                 .with_source(path.to_owned(), Arc::clone(source))
                 .with_span(clamp(examples.span, source)),
             );
+            continue;
+        }
+        // Duplicate or empty header names would silently drop columns (the
+        // substitution map keeps only the last) — reject them loudly.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut header_broken = false;
+        for name in header {
+            let name = name.trim();
+            if name.is_empty() || !seen.insert(name) {
+                let what = if name.is_empty() {
+                    "an empty column name".to_owned()
+                } else {
+                    format!("duplicate column `{name}`")
+                };
+                diags.push(
+                    Diag::error(
+                        "proef::feature::bad_examples_header",
+                        format!(
+                            "scenario outline `{}`: the Examples header has {what} — every column needs a unique, non-empty name",
+                            scenario.name
+                        ),
+                    )
+                    .with_source(path.to_owned(), Arc::clone(source))
+                    .with_span(clamp(examples.span, source)),
+                );
+                header_broken = true;
+            }
+        }
+        if header_broken {
             continue;
         }
         let mut example_tags = tags.clone();
@@ -475,6 +515,36 @@ mod tests {
         let text = "Feature: F\n  Scenario Outline: S\n    When I check things\n";
         let errs = parse("f.feature", text).unwrap_err();
         assert_eq!(errs[0].code, "proef::feature::no_examples");
+    }
+
+    #[test]
+    fn duplicate_examples_header_column_is_an_error() {
+        // Without the check the substitution map keeps only the last column
+        // and the first silently vanishes.
+        let text = "Feature: F\n  Scenario Outline: S\n    When I check <path>\n\n    Examples:\n      | path | path |\n      | /a   | /b   |\n";
+        let errs = parse("f.feature", text).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|d| d.code == "proef::feature::bad_examples_header"),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn empty_feature_file_gets_a_named_error() {
+        let errs = parse("f.feature", "  \n\n").unwrap_err();
+        assert_eq!(errs[0].code, "proef::feature::empty_file");
+    }
+
+    #[test]
+    fn utf8_bom_is_stripped_before_parsing_and_spans() {
+        let text = "\u{feff}Feature: F\n  Scenario: S\n    When I do a thing\n";
+        let feature = parse("f.feature", text).unwrap();
+        assert_eq!(feature.name, "F");
+        assert!(
+            !feature.source.starts_with('\u{feff}'),
+            "normalized source must not carry the BOM (it would shift spans)"
+        );
     }
 
     #[test]
