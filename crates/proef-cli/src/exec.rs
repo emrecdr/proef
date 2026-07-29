@@ -118,9 +118,16 @@ pub fn execute(
     };
     let log_file = std::fs::File::create(run_dir.join("run.log")).ok();
     let redactions = Redactions::new(secrets.values().cloned());
+    // Machine output owns stdout exclusively (`--output json` must be
+    // pipeable into jq); the human report moves to stderr in that mode.
+    let console_out: Box<dyn Write + Send> = if output_json {
+        Box::new(std::io::stderr())
+    } else {
+        Box::new(std::io::stdout())
+    };
     let reporters: Vec<Box<dyn Reporter>> = vec![
         Box::new(ConsoleReporter::new(
-            Tee(std::io::stdout(), log_file),
+            Tee(console_out, log_file),
             redactions.clone(),
         )),
         Box::new(JsonlReporter::new(events_file)),
@@ -158,14 +165,21 @@ pub fn execute(
     let specs = build_specs(&front, tags, scenario_filter, &artifacts_dir);
     let selected = specs.len();
     if selected == 0 {
-        println!("no scenarios selected");
-        return ExitCode::Success;
+        // A typo'd --tags/--scenario passing CI with zero tests run is the
+        // silent-green failure mode; make it loud (ADR-0009: user error).
+        eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
+        return ExitCode::UserError;
     }
-    println!(
+    let status_line = format!(
         "running {selected} scenario(s) with {} job(s) — run {}",
         config.jobs(jobs),
         front.run_id
     );
+    if output_json {
+        eprintln!("{status_line}");
+    } else {
+        println!("{status_line}");
+    }
 
     let run_config = RunConfig {
         run_id: Arc::clone(&front.run_id),
@@ -219,6 +233,24 @@ pub fn execute(
                 );
             }
         }
+        // The artifact is re-executable — hand the exact command over.
+        if outcome.status == proef_core::step::Status::Failed {
+            let stem = Path::new(outcome.file.as_ref()).file_stem().map_or_else(
+                || "feature".to_owned(),
+                |s| s.to_string_lossy().into_owned(),
+            );
+            let slug = format!("{}--{}", emit::slugify(&stem), emit::slugify(&outcome.name));
+            let artifact = artifacts_dir.join(format!("{slug}.hurl"));
+            if artifact.exists() {
+                let vars = artifacts_dir.join(format!("{slug}.vars"));
+                let vars_arg = if vars.exists() {
+                    format!(" --variables-file {}", vars.display())
+                } else {
+                    String::new()
+                };
+                eprintln!("  reproduce: hurl --test {}{vars_arg}", artifact.display());
+            }
+        }
     }
 
     // CI reports (US-8): JUnit XML + GitHub job summary.
@@ -231,7 +263,7 @@ pub fn execute(
     };
     if let Some(junit_path) = junit_path {
         match crate::ci_reports::write_junit(&summary, &front.run_id, &junit_path, &redactions) {
-            Ok(()) => println!("junit report: {}", junit_path.display()),
+            Ok(()) => eprintln!("junit report: {}", junit_path.display()),
             Err(message) => eprintln!("warning: {message}"),
         }
     }
@@ -383,7 +415,7 @@ fn rotate_runs(runs_dir: &Path) {
 }
 
 /// Console output tee'd into `run.log` (§11 — the human-readable run record).
-struct Tee(std::io::Stdout, Option<std::fs::File>);
+struct Tee(Box<dyn Write + Send>, Option<std::fs::File>);
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {

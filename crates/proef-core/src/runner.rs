@@ -173,6 +173,12 @@ pub fn run(
     });
 
     let (tx, rx) = mpsc::channel::<Msg>();
+    // Identities survive the specs' move into the queue, so an abandoned
+    // scenario is reported as itself, never as a synthetic placeholder.
+    let identities: Vec<(Arc<str>, Arc<str>, usize)> = specs
+        .iter()
+        .map(|spec| (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line))
+        .collect();
     let mut queue: std::collections::VecDeque<(usize, ScenarioSpec)> =
         specs.into_iter().enumerate().collect();
     let total = queue.len();
@@ -246,7 +252,7 @@ pub fn run(
         // Sweep expired deadlines on *every* turn of the loop — a steady
         // stream of messages from healthy scenarios must not keep a hung
         // one alive past its budget.
-        sweep_expired(&mut active, &mut outcomes, events);
+        sweep_expired(&mut active, &mut outcomes, events, &identities);
     }
 
     let passed = outcomes
@@ -283,6 +289,7 @@ fn sweep_expired(
     active: &mut BTreeMap<usize, Instant>,
     outcomes: &mut Vec<ScenarioOutcome>,
     events: &EventSink,
+    identities: &[(Arc<str>, Arc<str>, usize)],
 ) {
     let now = Instant::now();
     let expired: Vec<usize> = active
@@ -292,10 +299,20 @@ fn sweep_expired(
         .collect();
     for index in expired {
         active.remove(&index);
+        let (file, name, line) = identities.get(index).map_or_else(
+            || {
+                (
+                    Arc::from("(unknown)"),
+                    Arc::from(format!("scenario #{index}")),
+                    0,
+                )
+            },
+            |(f, n, l)| (Arc::clone(f), Arc::clone(n), *l),
+        );
         let outcome = ScenarioOutcome {
-            file: Arc::from("(abandoned)"),
-            name: Arc::from(format!("scenario #{index}")),
-            line: 0,
+            file,
+            name,
+            line,
             status: Status::Failed,
             steps: Vec::new(),
             fault: Some(Fault::System(
@@ -322,20 +339,44 @@ fn spawn_scenario(
     tx: mpsc::Sender<Msg>,
 ) {
     std::thread::spawn(move || {
-        let outcome = run_scenario(
-            spec,
-            &engines,
-            &store,
-            &config,
-            &events,
-            &cancel,
-            |budget| {
-                let _ = tx.send(Msg::BatchBegin {
-                    scenario: index,
-                    deadline: Instant::now() + budget,
-                });
-            },
-        );
+        let identity = (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line);
+        let heartbeat_tx = tx.clone();
+        // A panicking engine or prepare closure must never look like a hang:
+        // contain it, report a System fault under the real identity, and let
+        // the dispatcher move on immediately instead of waiting out the budget.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_scenario(
+                spec,
+                &engines,
+                &store,
+                &config,
+                &events,
+                &cancel,
+                |budget| {
+                    let _ = heartbeat_tx.send(Msg::BatchBegin {
+                        scenario: index,
+                        deadline: Instant::now() + budget,
+                    });
+                },
+            )
+        }));
+        let outcome = result.unwrap_or_else(|panic| {
+            let message = panic
+                .downcast_ref::<&str>()
+                .map(ToString::to_string)
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "opaque panic payload".to_owned());
+            ScenarioOutcome {
+                file: identity.0,
+                name: identity.1,
+                line: identity.2,
+                status: Status::Failed,
+                steps: Vec::new(),
+                fault: Some(Fault::System(format!(
+                    "scenario thread panicked: {message}"
+                ))),
+            }
+        });
         let _ = tx.send(Msg::Done {
             scenario: index,
             outcome,
@@ -399,6 +440,7 @@ fn run_scenario(
     let mut failed = false;
 
     let mut interrupted = false;
+    let mut processed = 0usize;
     for batch in &prepared.batches {
         if failed {
             break;
@@ -471,6 +513,38 @@ fn run_scenario(
                 }
             }
             failed = true;
+        }
+        processed += 1;
+    }
+
+    // Every authored step gets an outcome: batches never dispatched (earlier
+    // failure or cancellation) report their steps as Skipped instead of
+    // silently vanishing from console, record, and JUnit alike.
+    let unreached_reason = if interrupted {
+        "not run (run cancelled)"
+    } else {
+        "not run (an earlier step failed)"
+    };
+    for batch in prepared.batches.iter().skip(processed) {
+        for step in &batch.steps {
+            events.emit(&Event::StepFinished {
+                scenario: Arc::clone(&spec.name),
+                engine: Arc::from(batch.engine.as_str()),
+                step: step.step.clone(),
+                status: Status::Skipped,
+                attempts: 0,
+                duration_ms: 0,
+                captures: Vec::new(),
+                detail: Some(unreached_reason.to_owned()),
+            });
+            steps.push(StepOutcome {
+                step: step.step.clone(),
+                status: Status::Skipped,
+                attempts: 0,
+                duration: std::time::Duration::ZERO,
+                detail: Some(unreached_reason.to_owned()),
+                artifact_span: None,
+            });
         }
     }
 

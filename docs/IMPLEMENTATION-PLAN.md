@@ -159,7 +159,7 @@ exercised by tests; no core work is expected.)
 
 M0 → M1 → M2 → M3 strictly ordered (each consumes the previous stage's types). Within
 M1, tasks 1–3 parallelize with 4; M2.4 can start as soon as M2.1 emits. M4.3 reporters
-can start during M3.5. Docs (`packs authoring guide`, `writing-tests`) draft during M2–3
+can start during M3.5. Docs (GETTING-STARTED + AUTHORING, delivered 2026-07-29) draft during M2–3
 and finalize at M5 (deliberately after the schema stabilizes).
 
 ## 6. Risk register

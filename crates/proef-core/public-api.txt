@@ -1,0 +1,1426 @@
+pub mod proef_core
+pub mod proef_core::bind
+pub struct proef_core::bind::BoundScenario
+pub proef_core::bind::BoundScenario::line: usize
+pub proef_core::bind::BoundScenario::name: alloc::string::String
+pub proef_core::bind::BoundScenario::steps: alloc::vec::Vec<proef_core::bind::BoundStep>
+pub proef_core::bind::BoundScenario::tags: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::bind::BoundScenario
+pub fn proef_core::bind::BoundScenario::clone(&self) -> proef_core::bind::BoundScenario
+impl core::fmt::Debug for proef_core::bind::BoundScenario
+pub fn proef_core::bind::BoundScenario::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::bind::BoundScenario
+impl core::marker::Send for proef_core::bind::BoundScenario
+impl core::marker::Sync for proef_core::bind::BoundScenario
+impl core::marker::Unpin for proef_core::bind::BoundScenario
+impl core::marker::UnsafeUnpin for proef_core::bind::BoundScenario
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::bind::BoundScenario
+impl core::panic::unwind_safe::UnwindSafe for proef_core::bind::BoundScenario
+pub struct proef_core::bind::BoundStep
+pub proef_core::bind::BoundStep::args: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::bind::BoundStep::defn: proef_core::feature::StepDefn
+pub proef_core::bind::BoundStep::macro_name: alloc::string::String
+impl core::clone::Clone for proef_core::bind::BoundStep
+pub fn proef_core::bind::BoundStep::clone(&self) -> proef_core::bind::BoundStep
+impl core::fmt::Debug for proef_core::bind::BoundStep
+pub fn proef_core::bind::BoundStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::bind::BoundStep
+impl core::marker::Send for proef_core::bind::BoundStep
+impl core::marker::Sync for proef_core::bind::BoundStep
+impl core::marker::Unpin for proef_core::bind::BoundStep
+impl core::marker::UnsafeUnpin for proef_core::bind::BoundStep
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::bind::BoundStep
+impl core::panic::unwind_safe::UnwindSafe for proef_core::bind::BoundStep
+pub fn proef_core::bind::bind(&proef_core::feature::FeatureFile, &proef_core::pack::PackSet) -> core::result::Result<alloc::vec::Vec<proef_core::bind::BoundScenario>, alloc::vec::Vec<proef_core::diag::Diag>>
+pub mod proef_core::cancel
+pub use proef_core::cancel::CancellationToken
+pub mod proef_core::diag
+pub enum proef_core::diag::FrontError
+pub proef_core::diag::FrontError::Core(proef_core::error::CoreError)
+pub proef_core::diag::FrontError::Diagnostics(alloc::vec::Vec<proef_core::diag::Diag>)
+impl proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::exit_code(&self) -> proef_core::error::ExitCode
+impl core::convert::From<proef_core::error::CoreError> for proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::from(proef_core::error::CoreError) -> Self
+impl core::error::Error for proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::diag::FrontError
+impl core::marker::Send for proef_core::diag::FrontError
+impl core::marker::Sync for proef_core::diag::FrontError
+impl core::marker::Unpin for proef_core::diag::FrontError
+impl core::marker::UnsafeUnpin for proef_core::diag::FrontError
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::FrontError
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::diag::FrontError
+pub enum proef_core::diag::Severity
+pub proef_core::diag::Severity::Error
+pub proef_core::diag::Severity::Warning
+impl core::clone::Clone for proef_core::diag::Severity
+pub fn proef_core::diag::Severity::clone(&self) -> proef_core::diag::Severity
+impl core::cmp::Eq for proef_core::diag::Severity
+impl core::cmp::PartialEq for proef_core::diag::Severity
+pub fn proef_core::diag::Severity::eq(&self, &proef_core::diag::Severity) -> bool
+impl core::fmt::Debug for proef_core::diag::Severity
+pub fn proef_core::diag::Severity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::diag::Severity
+impl core::marker::StructuralPartialEq for proef_core::diag::Severity
+impl core::marker::Freeze for proef_core::diag::Severity
+impl core::marker::Send for proef_core::diag::Severity
+impl core::marker::Sync for proef_core::diag::Severity
+impl core::marker::Unpin for proef_core::diag::Severity
+impl core::marker::UnsafeUnpin for proef_core::diag::Severity
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Severity
+impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Severity
+pub struct proef_core::diag::Diag
+pub proef_core::diag::Diag::code: &'static str
+pub proef_core::diag::Diag::help: core::option::Option<alloc::string::String>
+pub proef_core::diag::Diag::message: alloc::string::String
+pub proef_core::diag::Diag::severity: proef_core::diag::Severity
+pub proef_core::diag::Diag::source_name: core::option::Option<alloc::string::String>
+pub proef_core::diag::Diag::source_text: core::option::Option<alloc::sync::Arc<str>>
+pub proef_core::diag::Diag::span: core::option::Option<proef_core::diag::Span>
+impl proef_core::diag::Diag
+pub fn proef_core::diag::Diag::error(&'static str, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::diag::Diag::warning(&'static str, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::diag::Diag::with_help(self, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::diag::Diag::with_source(self, impl core::convert::Into<alloc::string::String>, alloc::sync::Arc<str>) -> Self
+pub fn proef_core::diag::Diag::with_span(self, proef_core::diag::Span) -> Self
+impl core::clone::Clone for proef_core::diag::Diag
+pub fn proef_core::diag::Diag::clone(&self) -> proef_core::diag::Diag
+impl core::cmp::Eq for proef_core::diag::Diag
+impl core::cmp::PartialEq for proef_core::diag::Diag
+pub fn proef_core::diag::Diag::eq(&self, &proef_core::diag::Diag) -> bool
+impl core::fmt::Debug for proef_core::diag::Diag
+pub fn proef_core::diag::Diag::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::diag::Diag
+impl core::marker::Freeze for proef_core::diag::Diag
+impl core::marker::Send for proef_core::diag::Diag
+impl core::marker::Sync for proef_core::diag::Diag
+impl core::marker::Unpin for proef_core::diag::Diag
+impl core::marker::UnsafeUnpin for proef_core::diag::Diag
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Diag
+impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Diag
+pub struct proef_core::diag::Span
+pub proef_core::diag::Span::end: usize
+pub proef_core::diag::Span::start: usize
+impl proef_core::diag::Span
+pub fn proef_core::diag::Span::clamped(usize, usize, usize) -> Self
+pub fn proef_core::diag::Span::is_empty(&self) -> bool
+pub fn proef_core::diag::Span::len(&self) -> usize
+impl core::clone::Clone for proef_core::diag::Span
+pub fn proef_core::diag::Span::clone(&self) -> proef_core::diag::Span
+impl core::cmp::Eq for proef_core::diag::Span
+impl core::cmp::PartialEq for proef_core::diag::Span
+pub fn proef_core::diag::Span::eq(&self, &proef_core::diag::Span) -> bool
+impl core::fmt::Debug for proef_core::diag::Span
+pub fn proef_core::diag::Span::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::diag::Span
+impl core::marker::StructuralPartialEq for proef_core::diag::Span
+impl core::marker::Freeze for proef_core::diag::Span
+impl core::marker::Send for proef_core::diag::Span
+impl core::marker::Sync for proef_core::diag::Span
+impl core::marker::Unpin for proef_core::diag::Span
+impl core::marker::UnsafeUnpin for proef_core::diag::Span
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Span
+impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Span
+pub mod proef_core::emit
+pub struct proef_core::emit::Artifact
+pub proef_core::emit::Artifact::hurl_text: alloc::string::String
+pub proef_core::emit::Artifact::map: proef_core::emit::SidecarMap
+pub proef_core::emit::Artifact::slug: alloc::string::String
+pub proef_core::emit::Artifact::vars: core::option::Option<alloc::string::String>
+impl core::clone::Clone for proef_core::emit::Artifact
+pub fn proef_core::emit::Artifact::clone(&self) -> proef_core::emit::Artifact
+impl core::fmt::Debug for proef_core::emit::Artifact
+pub fn proef_core::emit::Artifact::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::emit::Artifact
+impl core::marker::Send for proef_core::emit::Artifact
+impl core::marker::Sync for proef_core::emit::Artifact
+impl core::marker::Unpin for proef_core::emit::Artifact
+impl core::marker::UnsafeUnpin for proef_core::emit::Artifact
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::Artifact
+impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::Artifact
+pub struct proef_core::emit::FeatureAnchor
+pub proef_core::emit::FeatureAnchor::file: alloc::string::String
+pub proef_core::emit::FeatureAnchor::line: usize
+pub proef_core::emit::FeatureAnchor::text: alloc::string::String
+impl core::clone::Clone for proef_core::emit::FeatureAnchor
+pub fn proef_core::emit::FeatureAnchor::clone(&self) -> proef_core::emit::FeatureAnchor
+impl core::fmt::Debug for proef_core::emit::FeatureAnchor
+pub fn proef_core::emit::FeatureAnchor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for proef_core::emit::FeatureAnchor
+pub fn proef_core::emit::FeatureAnchor::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for proef_core::emit::FeatureAnchor
+impl core::marker::Send for proef_core::emit::FeatureAnchor
+impl core::marker::Sync for proef_core::emit::FeatureAnchor
+impl core::marker::Unpin for proef_core::emit::FeatureAnchor
+impl core::marker::UnsafeUnpin for proef_core::emit::FeatureAnchor
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::FeatureAnchor
+impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::FeatureAnchor
+pub struct proef_core::emit::MapEntry
+pub proef_core::emit::MapEntry::batch: usize
+pub proef_core::emit::MapEntry::captures: alloc::vec::Vec<alloc::string::String>
+pub proef_core::emit::MapEntry::feature: proef_core::emit::FeatureAnchor
+pub proef_core::emit::MapEntry::hurl_lines: [usize; 2]
+pub proef_core::emit::MapEntry::optional: bool
+pub proef_core::emit::MapEntry::step: usize
+impl core::clone::Clone for proef_core::emit::MapEntry
+pub fn proef_core::emit::MapEntry::clone(&self) -> proef_core::emit::MapEntry
+impl core::fmt::Debug for proef_core::emit::MapEntry
+pub fn proef_core::emit::MapEntry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for proef_core::emit::MapEntry
+pub fn proef_core::emit::MapEntry::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for proef_core::emit::MapEntry
+impl core::marker::Send for proef_core::emit::MapEntry
+impl core::marker::Sync for proef_core::emit::MapEntry
+impl core::marker::Unpin for proef_core::emit::MapEntry
+impl core::marker::UnsafeUnpin for proef_core::emit::MapEntry
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::MapEntry
+impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::MapEntry
+pub struct proef_core::emit::SidecarMap
+pub proef_core::emit::SidecarMap::entries: alloc::vec::Vec<proef_core::emit::MapEntry>
+pub proef_core::emit::SidecarMap::schema: u32
+impl core::clone::Clone for proef_core::emit::SidecarMap
+pub fn proef_core::emit::SidecarMap::clone(&self) -> proef_core::emit::SidecarMap
+impl core::fmt::Debug for proef_core::emit::SidecarMap
+pub fn proef_core::emit::SidecarMap::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for proef_core::emit::SidecarMap
+pub fn proef_core::emit::SidecarMap::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for proef_core::emit::SidecarMap
+impl core::marker::Send for proef_core::emit::SidecarMap
+impl core::marker::Sync for proef_core::emit::SidecarMap
+impl core::marker::Unpin for proef_core::emit::SidecarMap
+impl core::marker::UnsafeUnpin for proef_core::emit::SidecarMap
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::SidecarMap
+impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::SidecarMap
+pub const proef_core::emit::MAP_SCHEMA_VERSION: u32
+pub fn proef_core::emit::emit(&proef_core::lower::LoweredScenario, &str, &proef_core::world::World) -> core::option::Option<proef_core::emit::Artifact>
+pub fn proef_core::emit::file_references(&str) -> alloc::vec::Vec<alloc::string::String>
+pub fn proef_core::emit::slugify(&str) -> alloc::string::String
+pub mod proef_core::engine
+pub enum proef_core::engine::DoctorStatus
+pub proef_core::engine::DoctorStatus::Fail
+pub proef_core::engine::DoctorStatus::Pass
+pub proef_core::engine::DoctorStatus::Warn
+impl core::clone::Clone for proef_core::engine::DoctorStatus
+pub fn proef_core::engine::DoctorStatus::clone(&self) -> proef_core::engine::DoctorStatus
+impl core::cmp::Eq for proef_core::engine::DoctorStatus
+impl core::cmp::Ord for proef_core::engine::DoctorStatus
+pub fn proef_core::engine::DoctorStatus::cmp(&self, &proef_core::engine::DoctorStatus) -> core::cmp::Ordering
+impl core::cmp::PartialEq for proef_core::engine::DoctorStatus
+pub fn proef_core::engine::DoctorStatus::eq(&self, &proef_core::engine::DoctorStatus) -> bool
+impl core::cmp::PartialOrd for proef_core::engine::DoctorStatus
+pub fn proef_core::engine::DoctorStatus::partial_cmp(&self, &proef_core::engine::DoctorStatus) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for proef_core::engine::DoctorStatus
+pub fn proef_core::engine::DoctorStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::DoctorStatus
+impl core::marker::StructuralPartialEq for proef_core::engine::DoctorStatus
+impl core::marker::Freeze for proef_core::engine::DoctorStatus
+impl core::marker::Send for proef_core::engine::DoctorStatus
+impl core::marker::Sync for proef_core::engine::DoctorStatus
+impl core::marker::Unpin for proef_core::engine::DoctorStatus
+impl core::marker::UnsafeUnpin for proef_core::engine::DoctorStatus
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::DoctorStatus
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::DoctorStatus
+pub struct proef_core::engine::ArtifactRef
+pub proef_core::engine::ArtifactRef::map: alloc::sync::Arc<proef_core::emit::SidecarMap>
+pub proef_core::engine::ArtifactRef::slug: alloc::sync::Arc<str>
+pub proef_core::engine::ArtifactRef::text: alloc::sync::Arc<str>
+impl core::clone::Clone for proef_core::engine::ArtifactRef
+pub fn proef_core::engine::ArtifactRef::clone(&self) -> proef_core::engine::ArtifactRef
+impl core::fmt::Debug for proef_core::engine::ArtifactRef
+pub fn proef_core::engine::ArtifactRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::engine::ArtifactRef
+impl core::marker::Send for proef_core::engine::ArtifactRef
+impl core::marker::Sync for proef_core::engine::ArtifactRef
+impl core::marker::Unpin for proef_core::engine::ArtifactRef
+impl core::marker::UnsafeUnpin for proef_core::engine::ArtifactRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ArtifactRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ArtifactRef
+pub struct proef_core::engine::DoctorCheck
+pub proef_core::engine::DoctorCheck::name: &'static str
+pub proef_core::engine::DoctorCheck::run: fn() -> proef_core::engine::DoctorResult
+impl core::fmt::Debug for proef_core::engine::DoctorCheck
+pub fn proef_core::engine::DoctorCheck::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::engine::DoctorCheck
+impl core::marker::Send for proef_core::engine::DoctorCheck
+impl core::marker::Sync for proef_core::engine::DoctorCheck
+impl core::marker::Unpin for proef_core::engine::DoctorCheck
+impl core::marker::UnsafeUnpin for proef_core::engine::DoctorCheck
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::DoctorCheck
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::DoctorCheck
+pub struct proef_core::engine::DoctorResult
+pub proef_core::engine::DoctorResult::detail: alloc::string::String
+pub proef_core::engine::DoctorResult::status: proef_core::engine::DoctorStatus
+impl proef_core::engine::DoctorResult
+pub fn proef_core::engine::DoctorResult::fail(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::engine::DoctorResult::pass(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::engine::DoctorResult::warn(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for proef_core::engine::DoctorResult
+pub fn proef_core::engine::DoctorResult::clone(&self) -> proef_core::engine::DoctorResult
+impl core::cmp::Eq for proef_core::engine::DoctorResult
+impl core::cmp::PartialEq for proef_core::engine::DoctorResult
+pub fn proef_core::engine::DoctorResult::eq(&self, &proef_core::engine::DoctorResult) -> bool
+impl core::fmt::Debug for proef_core::engine::DoctorResult
+pub fn proef_core::engine::DoctorResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::DoctorResult
+impl core::marker::Freeze for proef_core::engine::DoctorResult
+impl core::marker::Send for proef_core::engine::DoctorResult
+impl core::marker::Sync for proef_core::engine::DoctorResult
+impl core::marker::Unpin for proef_core::engine::DoctorResult
+impl core::marker::UnsafeUnpin for proef_core::engine::DoctorResult
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::DoctorResult
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::DoctorResult
+pub struct proef_core::engine::EngineId(_)
+impl proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::as_str(&self) -> &str
+impl core::clone::Clone for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::clone(&self) -> proef_core::engine::EngineId
+impl core::cmp::Eq for proef_core::engine::EngineId
+impl core::cmp::PartialEq for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::eq(&self, &proef_core::engine::EngineId) -> bool
+impl core::convert::From<&str> for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::from(&str) -> Self
+impl core::fmt::Debug for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for proef_core::engine::EngineId
+pub fn proef_core::engine::EngineId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for proef_core::engine::EngineId
+impl core::marker::Freeze for proef_core::engine::EngineId
+impl core::marker::Send for proef_core::engine::EngineId
+impl core::marker::Sync for proef_core::engine::EngineId
+impl core::marker::Unpin for proef_core::engine::EngineId
+impl core::marker::UnsafeUnpin for proef_core::engine::EngineId
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::EngineId
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::EngineId
+pub struct proef_core::engine::HttpDefaults
+pub proef_core::engine::HttpDefaults::follow_location: bool
+pub proef_core::engine::HttpDefaults::timeout_ms: u64
+impl core::clone::Clone for proef_core::engine::HttpDefaults
+pub fn proef_core::engine::HttpDefaults::clone(&self) -> proef_core::engine::HttpDefaults
+impl core::default::Default for proef_core::engine::HttpDefaults
+pub fn proef_core::engine::HttpDefaults::default() -> Self
+impl core::fmt::Debug for proef_core::engine::HttpDefaults
+pub fn proef_core::engine::HttpDefaults::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::HttpDefaults
+impl core::marker::Freeze for proef_core::engine::HttpDefaults
+impl core::marker::Send for proef_core::engine::HttpDefaults
+impl core::marker::Sync for proef_core::engine::HttpDefaults
+impl core::marker::Unpin for proef_core::engine::HttpDefaults
+impl core::marker::UnsafeUnpin for proef_core::engine::HttpDefaults
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::HttpDefaults
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::HttpDefaults
+pub struct proef_core::engine::PayloadProbeError
+pub proef_core::engine::PayloadProbeError::column: usize
+pub proef_core::engine::PayloadProbeError::line: usize
+pub proef_core::engine::PayloadProbeError::message: alloc::string::String
+impl core::clone::Clone for proef_core::engine::PayloadProbeError
+pub fn proef_core::engine::PayloadProbeError::clone(&self) -> proef_core::engine::PayloadProbeError
+impl core::cmp::Eq for proef_core::engine::PayloadProbeError
+impl core::cmp::PartialEq for proef_core::engine::PayloadProbeError
+pub fn proef_core::engine::PayloadProbeError::eq(&self, &proef_core::engine::PayloadProbeError) -> bool
+impl core::fmt::Debug for proef_core::engine::PayloadProbeError
+pub fn proef_core::engine::PayloadProbeError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::PayloadProbeError
+impl core::marker::Freeze for proef_core::engine::PayloadProbeError
+impl core::marker::Send for proef_core::engine::PayloadProbeError
+impl core::marker::Sync for proef_core::engine::PayloadProbeError
+impl core::marker::Unpin for proef_core::engine::PayloadProbeError
+impl core::marker::UnsafeUnpin for proef_core::engine::PayloadProbeError
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::PayloadProbeError
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeError
+pub struct proef_core::engine::ScenarioCtx
+pub proef_core::engine::ScenarioCtx::artifact: core::option::Option<proef_core::engine::ArtifactRef>
+pub proef_core::engine::ScenarioCtx::file_root: core::option::Option<std::path::PathBuf>
+pub proef_core::engine::ScenarioCtx::http: proef_core::engine::HttpDefaults
+pub proef_core::engine::ScenarioCtx::run_id: alloc::sync::Arc<str>
+pub proef_core::engine::ScenarioCtx::scenario: alloc::sync::Arc<str>
+pub proef_core::engine::ScenarioCtx::secrets: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+impl core::clone::Clone for proef_core::engine::ScenarioCtx
+pub fn proef_core::engine::ScenarioCtx::clone(&self) -> proef_core::engine::ScenarioCtx
+impl core::fmt::Debug for proef_core::engine::ScenarioCtx
+pub fn proef_core::engine::ScenarioCtx::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::engine::ScenarioCtx
+impl core::marker::Send for proef_core::engine::ScenarioCtx
+impl core::marker::Sync for proef_core::engine::ScenarioCtx
+impl core::marker::Unpin for proef_core::engine::ScenarioCtx
+impl core::marker::UnsafeUnpin for proef_core::engine::ScenarioCtx
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScenarioCtx
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScenarioCtx
+pub struct proef_core::engine::StepKindSpec
+pub proef_core::engine::StepKindSpec::prefix: &'static str
+pub proef_core::engine::StepKindSpec::schema: &'static str
+pub proef_core::engine::StepKindSpec::validate: core::option::Option<proef_core::engine::PayloadValidator>
+impl core::clone::Clone for proef_core::engine::StepKindSpec
+pub fn proef_core::engine::StepKindSpec::clone(&self) -> proef_core::engine::StepKindSpec
+impl core::fmt::Debug for proef_core::engine::StepKindSpec
+pub fn proef_core::engine::StepKindSpec::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::StepKindSpec
+impl core::marker::Freeze for proef_core::engine::StepKindSpec
+impl core::marker::Send for proef_core::engine::StepKindSpec
+impl core::marker::Sync for proef_core::engine::StepKindSpec
+impl core::marker::Unpin for proef_core::engine::StepKindSpec
+impl core::marker::UnsafeUnpin for proef_core::engine::StepKindSpec
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::StepKindSpec
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::StepKindSpec
+pub trait proef_core::engine::EngineFactory: core::marker::Send + core::marker::Sync
+pub fn proef_core::engine::EngineFactory::doctor(&self) -> alloc::vec::Vec<proef_core::engine::DoctorCheck>
+pub fn proef_core::engine::EngineFactory::id(&self) -> &'static str
+pub fn proef_core::engine::EngineFactory::open(&self, &proef_core::engine::ScenarioCtx) -> core::result::Result<alloc::boxed::Box<dyn proef_core::engine::EngineSession>, proef_core::error::EngineError>
+pub fn proef_core::engine::EngineFactory::step_kinds(&self) -> &'static [proef_core::engine::StepKindSpec]
+pub trait proef_core::engine::EngineSession: core::marker::Send
+pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::step::StepBatch) -> core::option::Option<core::time::Duration>
+pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
+pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
+pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
+pub mod proef_core::error
+pub enum proef_core::error::CoreError
+pub proef_core::error::CoreError::System
+pub proef_core::error::CoreError::System::message: alloc::string::String
+pub proef_core::error::CoreError::System::source: core::option::Option<alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>>
+pub proef_core::error::CoreError::TestFailure(alloc::string::String)
+pub proef_core::error::CoreError::User(alloc::string::String)
+impl proef_core::error::CoreError
+pub fn proef_core::error::CoreError::exit_code(&self) -> proef_core::error::ExitCode
+pub fn proef_core::error::CoreError::system(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::CoreError::system_with(impl core::convert::Into<alloc::string::String>, impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn proef_core::error::CoreError::test_failure(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::CoreError::user(impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<&proef_core::error::CoreError> for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::from(&proef_core::error::CoreError) -> Self
+impl core::convert::From<proef_core::error::CoreError> for proef_core::diag::FrontError
+pub fn proef_core::diag::FrontError::from(proef_core::error::CoreError) -> Self
+impl core::convert::From<proef_core::error::EngineError> for proef_core::error::CoreError
+pub fn proef_core::error::CoreError::from(proef_core::error::EngineError) -> Self
+impl core::error::Error for proef_core::error::CoreError
+pub fn proef_core::error::CoreError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for proef_core::error::CoreError
+pub fn proef_core::error::CoreError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::error::CoreError
+pub fn proef_core::error::CoreError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::error::CoreError
+impl core::marker::Send for proef_core::error::CoreError
+impl core::marker::Sync for proef_core::error::CoreError
+impl core::marker::Unpin for proef_core::error::CoreError
+impl core::marker::UnsafeUnpin for proef_core::error::CoreError
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::error::CoreError
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::error::CoreError
+pub enum proef_core::error::EngineErrorClass
+pub proef_core::error::EngineErrorClass::AssertFailed
+pub proef_core::error::EngineErrorClass::Infra
+pub proef_core::error::EngineErrorClass::Setup
+impl core::clone::Clone for proef_core::error::EngineErrorClass
+pub fn proef_core::error::EngineErrorClass::clone(&self) -> proef_core::error::EngineErrorClass
+impl core::cmp::Eq for proef_core::error::EngineErrorClass
+impl core::cmp::PartialEq for proef_core::error::EngineErrorClass
+pub fn proef_core::error::EngineErrorClass::eq(&self, &proef_core::error::EngineErrorClass) -> bool
+impl core::fmt::Debug for proef_core::error::EngineErrorClass
+pub fn proef_core::error::EngineErrorClass::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::error::EngineErrorClass
+impl core::marker::StructuralPartialEq for proef_core::error::EngineErrorClass
+impl core::marker::Freeze for proef_core::error::EngineErrorClass
+impl core::marker::Send for proef_core::error::EngineErrorClass
+impl core::marker::Sync for proef_core::error::EngineErrorClass
+impl core::marker::Unpin for proef_core::error::EngineErrorClass
+impl core::marker::UnsafeUnpin for proef_core::error::EngineErrorClass
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::error::EngineErrorClass
+impl core::panic::unwind_safe::UnwindSafe for proef_core::error::EngineErrorClass
+#[repr(u8)] pub enum proef_core::error::ExitCode
+pub proef_core::error::ExitCode::Success = 0
+pub proef_core::error::ExitCode::SystemError = 3
+pub proef_core::error::ExitCode::TestFailure = 1
+pub proef_core::error::ExitCode::UserError = 2
+impl proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::code(self) -> u8
+impl core::clone::Clone for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::clone(&self) -> proef_core::error::ExitCode
+impl core::cmp::Eq for proef_core::error::ExitCode
+impl core::cmp::PartialEq for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::eq(&self, &proef_core::error::ExitCode) -> bool
+impl core::convert::From<&proef_core::error::CoreError> for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::from(&proef_core::error::CoreError) -> Self
+impl core::fmt::Debug for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for proef_core::error::ExitCode
+pub fn proef_core::error::ExitCode::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for proef_core::error::ExitCode
+impl core::marker::StructuralPartialEq for proef_core::error::ExitCode
+impl core::marker::Freeze for proef_core::error::ExitCode
+impl core::marker::Send for proef_core::error::ExitCode
+impl core::marker::Sync for proef_core::error::ExitCode
+impl core::marker::Unpin for proef_core::error::ExitCode
+impl core::marker::UnsafeUnpin for proef_core::error::ExitCode
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::error::ExitCode
+impl core::panic::unwind_safe::UnwindSafe for proef_core::error::ExitCode
+pub struct proef_core::error::EngineError
+pub proef_core::error::EngineError::class: proef_core::error::EngineErrorClass
+pub proef_core::error::EngineError::message: alloc::string::String
+pub proef_core::error::EngineError::source: core::option::Option<alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>>
+impl proef_core::error::EngineError
+pub fn proef_core::error::EngineError::assert_failed(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::EngineError::infra(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::EngineError::setup(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::EngineError::with_source(self, impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
+impl core::convert::From<proef_core::error::EngineError> for proef_core::error::CoreError
+pub fn proef_core::error::CoreError::from(proef_core::error::EngineError) -> Self
+impl core::error::Error for proef_core::error::EngineError
+pub fn proef_core::error::EngineError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for proef_core::error::EngineError
+pub fn proef_core::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::error::EngineError
+pub fn proef_core::error::EngineError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::error::EngineError
+impl core::marker::Send for proef_core::error::EngineError
+impl core::marker::Sync for proef_core::error::EngineError
+impl core::marker::Unpin for proef_core::error::EngineError
+impl core::marker::UnsafeUnpin for proef_core::error::EngineError
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::error::EngineError
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::error::EngineError
+pub mod proef_core::event
+pub enum proef_core::event::Event
+pub proef_core::event::Event::BatchStarted
+pub proef_core::event::Event::BatchStarted::engine: alloc::sync::Arc<str>
+pub proef_core::event::Event::BatchStarted::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::BatchStarted::steps: usize
+pub proef_core::event::Event::EntryRunning
+pub proef_core::event::Event::EntryRunning::engine: alloc::sync::Arc<str>
+pub proef_core::event::Event::EntryRunning::entry: usize
+pub proef_core::event::Event::EntryRunning::retry: u32
+pub proef_core::event::Event::EntryRunning::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::RunFinished
+pub proef_core::event::Event::RunFinished::cancelled: bool
+pub proef_core::event::Event::RunFinished::failed: usize
+pub proef_core::event::Event::RunFinished::passed: usize
+pub proef_core::event::Event::RunFinished::skipped: usize
+pub proef_core::event::Event::RunStarted
+pub proef_core::event::Event::RunStarted::run_id: alloc::sync::Arc<str>
+pub proef_core::event::Event::RunStarted::schema: u32
+pub proef_core::event::Event::ScenarioFinished
+pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
+pub proef_core::event::Event::ScenarioStarted
+pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::StepFinished
+pub proef_core::event::Event::StepFinished::attempts: u32
+pub proef_core::event::Event::StepFinished::captures: alloc::vec::Vec<alloc::string::String>
+pub proef_core::event::Event::StepFinished::detail: core::option::Option<alloc::string::String>
+pub proef_core::event::Event::StepFinished::duration_ms: u64
+pub proef_core::event::Event::StepFinished::engine: alloc::sync::Arc<str>
+pub proef_core::event::Event::StepFinished::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::StepFinished::status: proef_core::step::Status
+pub proef_core::event::Event::StepFinished::step: proef_core::step::StepRef
+impl core::clone::Clone for proef_core::event::Event
+pub fn proef_core::event::Event::clone(&self) -> proef_core::event::Event
+impl core::cmp::PartialEq for proef_core::event::Event
+pub fn proef_core::event::Event::eq(&self, &proef_core::event::Event) -> bool
+impl core::fmt::Debug for proef_core::event::Event
+pub fn proef_core::event::Event::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::event::Event
+impl serde_core::ser::Serialize for proef_core::event::Event
+pub fn proef_core::event::Event::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::event::Event
+pub fn proef_core::event::Event::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::event::Event
+impl core::marker::Send for proef_core::event::Event
+impl core::marker::Sync for proef_core::event::Event
+impl core::marker::Unpin for proef_core::event::Event
+impl core::marker::UnsafeUnpin for proef_core::event::Event
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::event::Event
+impl core::panic::unwind_safe::UnwindSafe for proef_core::event::Event
+pub struct proef_core::event::EventSink(_)
+impl proef_core::event::EventSink
+pub fn proef_core::event::EventSink::emit(&self, &proef_core::event::Event)
+pub fn proef_core::event::EventSink::new(impl core::ops::function::Fn(&proef_core::event::Event) + core::marker::Send + core::marker::Sync + 'static) -> Self
+pub fn proef_core::event::EventSink::null() -> Self
+impl core::clone::Clone for proef_core::event::EventSink
+pub fn proef_core::event::EventSink::clone(&self) -> proef_core::event::EventSink
+impl core::fmt::Debug for proef_core::event::EventSink
+pub fn proef_core::event::EventSink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::event::EventSink
+impl core::marker::Send for proef_core::event::EventSink
+impl core::marker::Sync for proef_core::event::EventSink
+impl core::marker::Unpin for proef_core::event::EventSink
+impl core::marker::UnsafeUnpin for proef_core::event::EventSink
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::event::EventSink
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::event::EventSink
+pub const proef_core::event::EVENT_SCHEMA_VERSION: u32
+pub mod proef_core::fake
+pub const proef_core::fake::GENERATORS: &[&str]
+pub fn proef_core::fake::generate(&str, usize, &str) -> core::option::Option<alloc::string::String>
+pub fn proef_core::fake::is_known_generator(&str) -> bool
+pub mod proef_core::feature
+pub enum proef_core::feature::StepKeyword
+pub proef_core::feature::StepKeyword::Given
+pub proef_core::feature::StepKeyword::Then
+pub proef_core::feature::StepKeyword::When
+impl core::clone::Clone for proef_core::feature::StepKeyword
+pub fn proef_core::feature::StepKeyword::clone(&self) -> proef_core::feature::StepKeyword
+impl core::cmp::Eq for proef_core::feature::StepKeyword
+impl core::cmp::PartialEq for proef_core::feature::StepKeyword
+pub fn proef_core::feature::StepKeyword::eq(&self, &proef_core::feature::StepKeyword) -> bool
+impl core::fmt::Debug for proef_core::feature::StepKeyword
+pub fn proef_core::feature::StepKeyword::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::feature::StepKeyword
+impl core::marker::StructuralPartialEq for proef_core::feature::StepKeyword
+impl core::marker::Freeze for proef_core::feature::StepKeyword
+impl core::marker::Send for proef_core::feature::StepKeyword
+impl core::marker::Sync for proef_core::feature::StepKeyword
+impl core::marker::Unpin for proef_core::feature::StepKeyword
+impl core::marker::UnsafeUnpin for proef_core::feature::StepKeyword
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::StepKeyword
+impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepKeyword
+pub struct proef_core::feature::FeatureFile
+pub proef_core::feature::FeatureFile::directives: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::feature::FeatureFile::name: alloc::string::String
+pub proef_core::feature::FeatureFile::path: alloc::string::String
+pub proef_core::feature::FeatureFile::scenarios: alloc::vec::Vec<proef_core::feature::ScenarioDef>
+pub proef_core::feature::FeatureFile::source: alloc::sync::Arc<str>
+pub proef_core::feature::FeatureFile::tags: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::feature::FeatureFile
+pub fn proef_core::feature::FeatureFile::clone(&self) -> proef_core::feature::FeatureFile
+impl core::fmt::Debug for proef_core::feature::FeatureFile
+pub fn proef_core::feature::FeatureFile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::feature::FeatureFile
+impl core::marker::Send for proef_core::feature::FeatureFile
+impl core::marker::Sync for proef_core::feature::FeatureFile
+impl core::marker::Unpin for proef_core::feature::FeatureFile
+impl core::marker::UnsafeUnpin for proef_core::feature::FeatureFile
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::FeatureFile
+impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::FeatureFile
+pub struct proef_core::feature::ScenarioDef
+pub proef_core::feature::ScenarioDef::line: usize
+pub proef_core::feature::ScenarioDef::name: alloc::string::String
+pub proef_core::feature::ScenarioDef::span: proef_core::diag::Span
+pub proef_core::feature::ScenarioDef::steps: alloc::vec::Vec<proef_core::feature::StepDefn>
+pub proef_core::feature::ScenarioDef::tags: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::feature::ScenarioDef
+pub fn proef_core::feature::ScenarioDef::clone(&self) -> proef_core::feature::ScenarioDef
+impl core::fmt::Debug for proef_core::feature::ScenarioDef
+pub fn proef_core::feature::ScenarioDef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::feature::ScenarioDef
+impl core::marker::Send for proef_core::feature::ScenarioDef
+impl core::marker::Sync for proef_core::feature::ScenarioDef
+impl core::marker::Unpin for proef_core::feature::ScenarioDef
+impl core::marker::UnsafeUnpin for proef_core::feature::ScenarioDef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::ScenarioDef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::ScenarioDef
+pub struct proef_core::feature::StepDefn
+pub proef_core::feature::StepDefn::docstring: core::option::Option<alloc::string::String>
+pub proef_core::feature::StepDefn::keyword: alloc::string::String
+pub proef_core::feature::StepDefn::line: usize
+pub proef_core::feature::StepDefn::span: proef_core::diag::Span
+pub proef_core::feature::StepDefn::table: core::option::Option<alloc::vec::Vec<alloc::vec::Vec<alloc::string::String>>>
+pub proef_core::feature::StepDefn::text: alloc::string::String
+pub proef_core::feature::StepDefn::ty: proef_core::feature::StepKeyword
+impl core::clone::Clone for proef_core::feature::StepDefn
+pub fn proef_core::feature::StepDefn::clone(&self) -> proef_core::feature::StepDefn
+impl core::fmt::Debug for proef_core::feature::StepDefn
+pub fn proef_core::feature::StepDefn::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::feature::StepDefn
+impl core::marker::Send for proef_core::feature::StepDefn
+impl core::marker::Sync for proef_core::feature::StepDefn
+impl core::marker::Unpin for proef_core::feature::StepDefn
+impl core::marker::UnsafeUnpin for proef_core::feature::StepDefn
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::StepDefn
+impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepDefn
+pub fn proef_core::feature::parse(&str, &str) -> core::result::Result<proef_core::feature::FeatureFile, alloc::vec::Vec<proef_core::diag::Diag>>
+pub mod proef_core::lower
+pub struct proef_core::lower::LowerCtx<'a>
+pub proef_core::lower::LowerCtx::config: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::lower::LowerCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::lower::LowerCtx::feature: &'a proef_core::feature::FeatureFile
+pub proef_core::lower::LowerCtx::kind_to_engine: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::lower::LowerCtx::mode: proef_core::resolve::ResolveMode
+pub proef_core::lower::LowerCtx::packs: &'a proef_core::pack::PackSet
+pub proef_core::lower::LowerCtx::run_id: &'a str
+pub proef_core::lower::LowerCtx::world: &'a proef_core::world::World
+impl<'a> core::clone::Clone for proef_core::lower::LowerCtx<'a>
+pub fn proef_core::lower::LowerCtx<'a>::clone(&self) -> proef_core::lower::LowerCtx<'a>
+impl<'a> core::fmt::Debug for proef_core::lower::LowerCtx<'a>
+pub fn proef_core::lower::LowerCtx<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for proef_core::lower::LowerCtx<'a>
+impl<'a> core::marker::Freeze for proef_core::lower::LowerCtx<'a>
+impl<'a> core::marker::Send for proef_core::lower::LowerCtx<'a>
+impl<'a> core::marker::Sync for proef_core::lower::LowerCtx<'a>
+impl<'a> core::marker::Unpin for proef_core::lower::LowerCtx<'a>
+impl<'a> core::marker::UnsafeUnpin for proef_core::lower::LowerCtx<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for proef_core::lower::LowerCtx<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for proef_core::lower::LowerCtx<'a>
+pub struct proef_core::lower::LoweredScenario
+pub proef_core::lower::LoweredScenario::batches: alloc::vec::Vec<proef_core::step::StepBatch>
+pub proef_core::lower::LoweredScenario::globals: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::lower::LoweredScenario::line: usize
+pub proef_core::lower::LoweredScenario::name: alloc::string::String
+pub proef_core::lower::LoweredScenario::secrets: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::lower::LoweredScenario::tags: alloc::vec::Vec<alloc::string::String>
+pub proef_core::lower::LoweredScenario::warnings: alloc::vec::Vec<proef_core::diag::Diag>
+impl core::fmt::Debug for proef_core::lower::LoweredScenario
+pub fn proef_core::lower::LoweredScenario::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::lower::LoweredScenario
+impl core::marker::Send for proef_core::lower::LoweredScenario
+impl core::marker::Sync for proef_core::lower::LoweredScenario
+impl core::marker::Unpin for proef_core::lower::LoweredScenario
+impl core::marker::UnsafeUnpin for proef_core::lower::LoweredScenario
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::lower::LoweredScenario
+impl core::panic::unwind_safe::UnwindSafe for proef_core::lower::LoweredScenario
+pub fn proef_core::lower::lower(&proef_core::bind::BoundScenario, &proef_core::lower::LowerCtx<'_>) -> core::result::Result<proef_core::lower::LoweredScenario, alloc::vec::Vec<proef_core::diag::Diag>>
+pub mod proef_core::matcher
+pub enum proef_core::matcher::PatternProblem
+pub proef_core::matcher::PatternProblem::AdjacentCaptures
+pub proef_core::matcher::PatternProblem::AdjacentCaptures::first: alloc::string::String
+pub proef_core::matcher::PatternProblem::AdjacentCaptures::second: alloc::string::String
+pub proef_core::matcher::PatternProblem::EmptyCapture
+pub proef_core::matcher::PatternProblem::NoAnchor
+pub proef_core::matcher::PatternProblem::UnknownCapture
+pub proef_core::matcher::PatternProblem::UnknownCapture::name: alloc::string::String
+pub proef_core::matcher::PatternProblem::UnknownCapture::suggestion: core::option::Option<alloc::string::String>
+pub proef_core::matcher::PatternProblem::UnsupportedBraces
+pub proef_core::matcher::PatternProblem::UnsupportedBraces::near: alloc::string::String
+impl proef_core::matcher::PatternProblem
+pub fn proef_core::matcher::PatternProblem::code(&self) -> &'static str
+impl core::clone::Clone for proef_core::matcher::PatternProblem
+pub fn proef_core::matcher::PatternProblem::clone(&self) -> proef_core::matcher::PatternProblem
+impl core::cmp::Eq for proef_core::matcher::PatternProblem
+impl core::cmp::PartialEq for proef_core::matcher::PatternProblem
+pub fn proef_core::matcher::PatternProblem::eq(&self, &proef_core::matcher::PatternProblem) -> bool
+impl core::fmt::Debug for proef_core::matcher::PatternProblem
+pub fn proef_core::matcher::PatternProblem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::matcher::PatternProblem
+pub fn proef_core::matcher::PatternProblem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::matcher::PatternProblem
+impl core::marker::Freeze for proef_core::matcher::PatternProblem
+impl core::marker::Send for proef_core::matcher::PatternProblem
+impl core::marker::Sync for proef_core::matcher::PatternProblem
+impl core::marker::Unpin for proef_core::matcher::PatternProblem
+impl core::marker::UnsafeUnpin for proef_core::matcher::PatternProblem
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::matcher::PatternProblem
+impl core::panic::unwind_safe::UnwindSafe for proef_core::matcher::PatternProblem
+pub enum proef_core::matcher::Token
+pub proef_core::matcher::Token::Capture(alloc::string::String)
+pub proef_core::matcher::Token::Literal(alloc::string::String)
+impl core::clone::Clone for proef_core::matcher::Token
+pub fn proef_core::matcher::Token::clone(&self) -> proef_core::matcher::Token
+impl core::cmp::Eq for proef_core::matcher::Token
+impl core::cmp::PartialEq for proef_core::matcher::Token
+pub fn proef_core::matcher::Token::eq(&self, &proef_core::matcher::Token) -> bool
+impl core::fmt::Debug for proef_core::matcher::Token
+pub fn proef_core::matcher::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::matcher::Token
+impl core::marker::Freeze for proef_core::matcher::Token
+impl core::marker::Send for proef_core::matcher::Token
+impl core::marker::Sync for proef_core::matcher::Token
+impl core::marker::Unpin for proef_core::matcher::Token
+impl core::marker::UnsafeUnpin for proef_core::matcher::Token
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::matcher::Token
+impl core::panic::unwind_safe::UnwindSafe for proef_core::matcher::Token
+pub fn proef_core::matcher::closest<'a>(&str, impl core::iter::traits::iterator::Iterator<Item = &'a str>) -> core::option::Option<&'a str>
+pub fn proef_core::matcher::levenshtein(&str, &str) -> usize
+pub fn proef_core::matcher::literal_skeleton(&str) -> alloc::string::String
+pub fn proef_core::matcher::match_pattern(&str, &str) -> core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+pub fn proef_core::matcher::pattern_problems(&str, &[alloc::string::String]) -> alloc::vec::Vec<proef_core::matcher::PatternProblem>
+pub fn proef_core::matcher::tokenize(&str) -> alloc::vec::Vec<proef_core::matcher::Token>
+pub mod proef_core::pack
+pub enum proef_core::pack::MacroBody
+pub proef_core::pack::MacroBody::Expect(alloc::vec::Vec<proef_core::pack::ExpectItem>)
+pub proef_core::pack::MacroBody::Steps(alloc::vec::Vec<proef_core::pack::MacroStep>)
+impl core::clone::Clone for proef_core::pack::MacroBody
+pub fn proef_core::pack::MacroBody::clone(&self) -> proef_core::pack::MacroBody
+impl core::fmt::Debug for proef_core::pack::MacroBody
+pub fn proef_core::pack::MacroBody::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::MacroBody
+impl core::marker::Send for proef_core::pack::MacroBody
+impl core::marker::Sync for proef_core::pack::MacroBody
+impl core::marker::Unpin for proef_core::pack::MacroBody
+impl core::marker::UnsafeUnpin for proef_core::pack::MacroBody
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroBody
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroBody
+pub enum proef_core::pack::MacroStepKind
+pub proef_core::pack::MacroStepKind::Payload
+pub proef_core::pack::MacroStepKind::Payload::kind: alloc::string::String
+pub proef_core::pack::MacroStepKind::Payload::payload: proef_core::pack::PayloadForm
+pub proef_core::pack::MacroStepKind::Use
+pub proef_core::pack::MacroStepKind::Use::target: alloc::string::String
+pub proef_core::pack::MacroStepKind::Use::with: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+impl core::clone::Clone for proef_core::pack::MacroStepKind
+pub fn proef_core::pack::MacroStepKind::clone(&self) -> proef_core::pack::MacroStepKind
+impl core::fmt::Debug for proef_core::pack::MacroStepKind
+pub fn proef_core::pack::MacroStepKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::MacroStepKind
+impl core::marker::Send for proef_core::pack::MacroStepKind
+impl core::marker::Sync for proef_core::pack::MacroStepKind
+impl core::marker::Unpin for proef_core::pack::MacroStepKind
+impl core::marker::UnsafeUnpin for proef_core::pack::MacroStepKind
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroStepKind
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroStepKind
+pub enum proef_core::pack::PayloadForm
+pub proef_core::pack::PayloadForm::Raw(alloc::string::String)
+pub proef_core::pack::PayloadForm::Structured(serde_json::value::Value)
+impl core::clone::Clone for proef_core::pack::PayloadForm
+pub fn proef_core::pack::PayloadForm::clone(&self) -> proef_core::pack::PayloadForm
+impl core::fmt::Debug for proef_core::pack::PayloadForm
+pub fn proef_core::pack::PayloadForm::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::PayloadForm
+impl core::marker::Send for proef_core::pack::PayloadForm
+impl core::marker::Sync for proef_core::pack::PayloadForm
+impl core::marker::Unpin for proef_core::pack::PayloadForm
+impl core::marker::UnsafeUnpin for proef_core::pack::PayloadForm
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PayloadForm
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PayloadForm
+pub struct proef_core::pack::ExpectItem
+pub proef_core::pack::ExpectItem::fragment: core::option::Option<alloc::string::String>
+pub proef_core::pack::ExpectItem::status: core::option::Option<alloc::string::String>
+impl core::clone::Clone for proef_core::pack::ExpectItem
+pub fn proef_core::pack::ExpectItem::clone(&self) -> proef_core::pack::ExpectItem
+impl core::fmt::Debug for proef_core::pack::ExpectItem
+pub fn proef_core::pack::ExpectItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::ExpectItem
+impl core::marker::Send for proef_core::pack::ExpectItem
+impl core::marker::Sync for proef_core::pack::ExpectItem
+impl core::marker::Unpin for proef_core::pack::ExpectItem
+impl core::marker::UnsafeUnpin for proef_core::pack::ExpectItem
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::ExpectItem
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::ExpectItem
+pub struct proef_core::pack::Macro
+pub proef_core::pack::Macro::body: proef_core::pack::MacroBody
+pub proef_core::pack::Macro::defaults: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::pack::Macro::description: core::option::Option<alloc::string::String>
+pub proef_core::pack::Macro::name: alloc::string::String
+pub proef_core::pack::Macro::pack: alloc::string::String
+pub proef_core::pack::Macro::params: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Macro::pattern: core::option::Option<alloc::string::String>
+pub proef_core::pack::Macro::source: alloc::sync::Arc<str>
+pub proef_core::pack::Macro::span: core::option::Option<proef_core::diag::Span>
+pub proef_core::pack::Macro::tags: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::pack::Macro
+pub fn proef_core::pack::Macro::clone(&self) -> proef_core::pack::Macro
+impl core::fmt::Debug for proef_core::pack::Macro
+pub fn proef_core::pack::Macro::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::Macro
+impl core::marker::Send for proef_core::pack::Macro
+impl core::marker::Sync for proef_core::pack::Macro
+impl core::marker::Unpin for proef_core::pack::Macro
+impl core::marker::UnsafeUnpin for proef_core::pack::Macro
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Macro
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Macro
+pub struct proef_core::pack::MacroStep
+pub proef_core::pack::MacroStep::delay_ms: core::option::Option<u64>
+pub proef_core::pack::MacroStep::kind: proef_core::pack::MacroStepKind
+pub proef_core::pack::MacroStep::name: core::option::Option<alloc::string::String>
+pub proef_core::pack::MacroStep::optional: bool
+pub proef_core::pack::MacroStep::retry: core::option::Option<proef_core::step::Retry>
+pub proef_core::pack::MacroStep::save_as: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::pack::MacroStep::when: core::option::Option<alloc::string::String>
+impl core::clone::Clone for proef_core::pack::MacroStep
+pub fn proef_core::pack::MacroStep::clone(&self) -> proef_core::pack::MacroStep
+impl core::fmt::Debug for proef_core::pack::MacroStep
+pub fn proef_core::pack::MacroStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::MacroStep
+impl core::marker::Send for proef_core::pack::MacroStep
+impl core::marker::Sync for proef_core::pack::MacroStep
+impl core::marker::Unpin for proef_core::pack::MacroStep
+impl core::marker::UnsafeUnpin for proef_core::pack::MacroStep
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroStep
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroStep
+pub struct proef_core::pack::PackSet
+pub proef_core::pack::PackSet::macros: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Macro>
+impl proef_core::pack::PackSet
+pub fn proef_core::pack::PackSet::find_use_target(&self, &str) -> core::option::Option<&proef_core::pack::Macro>
+pub fn proef_core::pack::PackSet::step_defs(&self) -> alloc::vec::Vec<(&str, &str)>
+impl core::default::Default for proef_core::pack::PackSet
+pub fn proef_core::pack::PackSet::default() -> proef_core::pack::PackSet
+impl core::fmt::Debug for proef_core::pack::PackSet
+pub fn proef_core::pack::PackSet::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::PackSet
+impl core::marker::Send for proef_core::pack::PackSet
+impl core::marker::Sync for proef_core::pack::PackSet
+impl core::marker::Unpin for proef_core::pack::PackSet
+impl core::marker::UnsafeUnpin for proef_core::pack::PackSet
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PackSet
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSet
+pub struct proef_core::pack::PackSource
+pub proef_core::pack::PackSource::name: alloc::string::String
+pub proef_core::pack::PackSource::text: alloc::sync::Arc<str>
+impl core::clone::Clone for proef_core::pack::PackSource
+pub fn proef_core::pack::PackSource::clone(&self) -> proef_core::pack::PackSource
+impl core::fmt::Debug for proef_core::pack::PackSource
+pub fn proef_core::pack::PackSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::PackSource
+impl core::marker::Send for proef_core::pack::PackSource
+impl core::marker::Sync for proef_core::pack::PackSource
+impl core::marker::Unpin for proef_core::pack::PackSource
+impl core::marker::UnsafeUnpin for proef_core::pack::PackSource
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PackSource
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSource
+pub fn proef_core::pack::builtin_sources() -> alloc::vec::Vec<proef_core::pack::PackSource>
+pub fn proef_core::pack::json_schema(&[proef_core::engine::StepKindSpec]) -> serde_json::value::Value
+pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
+pub mod proef_core::report
+pub struct proef_core::report::ConsoleReporter<W: core::io::write::Write + core::marker::Send>
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::ConsoleReporter<W>
+pub fn proef_core::report::ConsoleReporter<W>::new(W, proef_core::report::Redactions) -> Self
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::ConsoleReporter<W>
+pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
+impl<W> core::marker::Freeze for proef_core::report::ConsoleReporter<W> where W: core::marker::Freeze
+impl<W> core::marker::Send for proef_core::report::ConsoleReporter<W>
+impl<W> core::marker::Sync for proef_core::report::ConsoleReporter<W> where W: core::marker::Sync
+impl<W> core::marker::Unpin for proef_core::report::ConsoleReporter<W> where W: core::marker::Unpin
+impl<W> core::marker::UnsafeUnpin for proef_core::report::ConsoleReporter<W> where W: core::marker::UnsafeUnpin
+impl<W> core::panic::unwind_safe::RefUnwindSafe for proef_core::report::ConsoleReporter<W> where W: core::panic::unwind_safe::RefUnwindSafe
+impl<W> core::panic::unwind_safe::UnwindSafe for proef_core::report::ConsoleReporter<W> where W: core::panic::unwind_safe::UnwindSafe
+pub struct proef_core::report::JsonlReporter<W: core::io::write::Write + core::marker::Send>
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::JsonlReporter<W>
+pub fn proef_core::report::JsonlReporter<W>::new(W) -> Self
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::JsonlReporter<W>
+pub fn proef_core::report::JsonlReporter<W>::on_event(&mut self, &proef_core::event::Event)
+impl<W> core::marker::Freeze for proef_core::report::JsonlReporter<W> where W: core::marker::Freeze
+impl<W> core::marker::Send for proef_core::report::JsonlReporter<W>
+impl<W> core::marker::Sync for proef_core::report::JsonlReporter<W> where W: core::marker::Sync
+impl<W> core::marker::Unpin for proef_core::report::JsonlReporter<W> where W: core::marker::Unpin
+impl<W> core::marker::UnsafeUnpin for proef_core::report::JsonlReporter<W> where W: core::marker::UnsafeUnpin
+impl<W> core::panic::unwind_safe::RefUnwindSafe for proef_core::report::JsonlReporter<W> where W: core::panic::unwind_safe::RefUnwindSafe
+impl<W> core::panic::unwind_safe::UnwindSafe for proef_core::report::JsonlReporter<W> where W: core::panic::unwind_safe::UnwindSafe
+pub struct proef_core::report::NormalizeReporter
+impl proef_core::report::NormalizeReporter
+pub fn proef_core::report::NormalizeReporter::new(alloc::boxed::Box<dyn proef_core::report::Reporter>) -> Self
+impl proef_core::report::Reporter for proef_core::report::NormalizeReporter
+pub fn proef_core::report::NormalizeReporter::on_event(&mut self, &proef_core::event::Event)
+impl core::marker::Freeze for proef_core::report::NormalizeReporter
+impl core::marker::Send for proef_core::report::NormalizeReporter
+impl !core::marker::Sync for proef_core::report::NormalizeReporter
+impl core::marker::Unpin for proef_core::report::NormalizeReporter
+impl core::marker::UnsafeUnpin for proef_core::report::NormalizeReporter
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::report::NormalizeReporter
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::report::NormalizeReporter
+pub struct proef_core::report::Redactions(_)
+impl proef_core::report::Redactions
+pub fn proef_core::report::Redactions::apply(&self, &str) -> alloc::string::String
+pub fn proef_core::report::Redactions::apply_event(&self, &proef_core::event::Event) -> proef_core::event::Event
+pub fn proef_core::report::Redactions::is_empty(&self) -> bool
+pub fn proef_core::report::Redactions::new(impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
+impl core::clone::Clone for proef_core::report::Redactions
+pub fn proef_core::report::Redactions::clone(&self) -> proef_core::report::Redactions
+impl core::default::Default for proef_core::report::Redactions
+pub fn proef_core::report::Redactions::default() -> proef_core::report::Redactions
+impl core::fmt::Debug for proef_core::report::Redactions
+pub fn proef_core::report::Redactions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::report::Redactions
+impl core::marker::Send for proef_core::report::Redactions
+impl core::marker::Sync for proef_core::report::Redactions
+impl core::marker::Unpin for proef_core::report::Redactions
+impl core::marker::UnsafeUnpin for proef_core::report::Redactions
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::report::Redactions
+impl core::panic::unwind_safe::UnwindSafe for proef_core::report::Redactions
+pub struct proef_core::report::RunTotals
+pub proef_core::report::RunTotals::attempts: u64
+pub proef_core::report::RunTotals::failed: usize
+pub proef_core::report::RunTotals::passed: usize
+pub proef_core::report::RunTotals::skipped: usize
+pub proef_core::report::RunTotals::steps: usize
+impl proef_core::report::RunTotals
+pub fn proef_core::report::RunTotals::observe(&mut self, &proef_core::event::Event)
+impl core::clone::Clone for proef_core::report::RunTotals
+pub fn proef_core::report::RunTotals::clone(&self) -> proef_core::report::RunTotals
+impl core::cmp::Eq for proef_core::report::RunTotals
+impl core::cmp::PartialEq for proef_core::report::RunTotals
+pub fn proef_core::report::RunTotals::eq(&self, &proef_core::report::RunTotals) -> bool
+impl core::default::Default for proef_core::report::RunTotals
+pub fn proef_core::report::RunTotals::default() -> proef_core::report::RunTotals
+impl core::fmt::Debug for proef_core::report::RunTotals
+pub fn proef_core::report::RunTotals::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::report::RunTotals
+impl core::marker::StructuralPartialEq for proef_core::report::RunTotals
+impl core::marker::Freeze for proef_core::report::RunTotals
+impl core::marker::Send for proef_core::report::RunTotals
+impl core::marker::Sync for proef_core::report::RunTotals
+impl core::marker::Unpin for proef_core::report::RunTotals
+impl core::marker::UnsafeUnpin for proef_core::report::RunTotals
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::report::RunTotals
+impl core::panic::unwind_safe::UnwindSafe for proef_core::report::RunTotals
+pub trait proef_core::report::Reporter: core::marker::Send
+pub fn proef_core::report::Reporter::on_event(&mut self, &proef_core::event::Event)
+impl proef_core::report::Reporter for proef_core::report::NormalizeReporter
+pub fn proef_core::report::NormalizeReporter::on_event(&mut self, &proef_core::event::Event)
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::ConsoleReporter<W>
+pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
+impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::JsonlReporter<W>
+pub fn proef_core::report::JsonlReporter<W>::on_event(&mut self, &proef_core::event::Event)
+pub fn proef_core::report::sink(alloc::vec::Vec<alloc::boxed::Box<dyn proef_core::report::Reporter>>, proef_core::report::Redactions) -> proef_core::event::EventSink
+pub mod proef_core::resolve
+pub enum proef_core::resolve::ResolveError
+pub proef_core::resolve::ResolveError::DepthExceeded
+pub proef_core::resolve::ResolveError::DepthExceeded::name: alloc::string::String
+pub proef_core::resolve::ResolveError::EmptyReference
+pub proef_core::resolve::ResolveError::FakeUnknown
+pub proef_core::resolve::ResolveError::FakeUnknown::kind: alloc::string::String
+pub proef_core::resolve::ResolveError::FakeUnknown::suggestion: core::option::Option<alloc::string::String>
+pub proef_core::resolve::ResolveError::MissingEnv
+pub proef_core::resolve::ResolveError::MissingEnv::name: alloc::string::String
+pub proef_core::resolve::ResolveError::MissingGlobal
+pub proef_core::resolve::ResolveError::MissingGlobal::key: alloc::string::String
+pub proef_core::resolve::ResolveError::UnknownNamespace
+pub proef_core::resolve::ResolveError::UnknownNamespace::namespace: alloc::string::String
+pub proef_core::resolve::ResolveError::UnknownRunField
+pub proef_core::resolve::ResolveError::UnknownRunField::field: alloc::string::String
+pub proef_core::resolve::ResolveError::UnknownVariable
+pub proef_core::resolve::ResolveError::UnknownVariable::name: alloc::string::String
+pub proef_core::resolve::ResolveError::UnknownVariable::suggestion: core::option::Option<alloc::string::String>
+impl proef_core::resolve::ResolveError
+pub fn proef_core::resolve::ResolveError::code(&self) -> &'static str
+impl core::clone::Clone for proef_core::resolve::ResolveError
+pub fn proef_core::resolve::ResolveError::clone(&self) -> proef_core::resolve::ResolveError
+impl core::cmp::Eq for proef_core::resolve::ResolveError
+impl core::cmp::PartialEq for proef_core::resolve::ResolveError
+pub fn proef_core::resolve::ResolveError::eq(&self, &proef_core::resolve::ResolveError) -> bool
+impl core::error::Error for proef_core::resolve::ResolveError
+impl core::fmt::Debug for proef_core::resolve::ResolveError
+pub fn proef_core::resolve::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::resolve::ResolveError
+pub fn proef_core::resolve::ResolveError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::resolve::ResolveError
+impl core::marker::Freeze for proef_core::resolve::ResolveError
+impl core::marker::Send for proef_core::resolve::ResolveError
+impl core::marker::Sync for proef_core::resolve::ResolveError
+impl core::marker::Unpin for proef_core::resolve::ResolveError
+impl core::marker::UnsafeUnpin for proef_core::resolve::ResolveError
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveError
+impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveError
+pub enum proef_core::resolve::ResolveMode
+pub proef_core::resolve::ResolveMode::DryRun
+pub proef_core::resolve::ResolveMode::Probe
+pub proef_core::resolve::ResolveMode::Strict
+impl core::clone::Clone for proef_core::resolve::ResolveMode
+pub fn proef_core::resolve::ResolveMode::clone(&self) -> proef_core::resolve::ResolveMode
+impl core::cmp::Eq for proef_core::resolve::ResolveMode
+impl core::cmp::PartialEq for proef_core::resolve::ResolveMode
+pub fn proef_core::resolve::ResolveMode::eq(&self, &proef_core::resolve::ResolveMode) -> bool
+impl core::fmt::Debug for proef_core::resolve::ResolveMode
+pub fn proef_core::resolve::ResolveMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::resolve::ResolveMode
+impl core::marker::StructuralPartialEq for proef_core::resolve::ResolveMode
+impl core::marker::Freeze for proef_core::resolve::ResolveMode
+impl core::marker::Send for proef_core::resolve::ResolveMode
+impl core::marker::Sync for proef_core::resolve::ResolveMode
+impl core::marker::Unpin for proef_core::resolve::ResolveMode
+impl core::marker::UnsafeUnpin for proef_core::resolve::ResolveMode
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveMode
+impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveMode
+pub struct proef_core::resolve::Resolution
+pub proef_core::resolve::Resolution::fakes: usize
+pub proef_core::resolve::Resolution::globals: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::resolve::Resolution::secrets: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::resolve::Resolution::text: alloc::string::String
+pub proef_core::resolve::Resolution::warnings: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::resolve::Resolution
+pub fn proef_core::resolve::Resolution::clone(&self) -> proef_core::resolve::Resolution
+impl core::cmp::Eq for proef_core::resolve::Resolution
+impl core::cmp::PartialEq for proef_core::resolve::Resolution
+pub fn proef_core::resolve::Resolution::eq(&self, &proef_core::resolve::Resolution) -> bool
+impl core::default::Default for proef_core::resolve::Resolution
+pub fn proef_core::resolve::Resolution::default() -> proef_core::resolve::Resolution
+impl core::fmt::Debug for proef_core::resolve::Resolution
+pub fn proef_core::resolve::Resolution::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::resolve::Resolution
+impl core::marker::Freeze for proef_core::resolve::Resolution
+impl core::marker::Send for proef_core::resolve::Resolution
+impl core::marker::Sync for proef_core::resolve::Resolution
+impl core::marker::Unpin for proef_core::resolve::Resolution
+impl core::marker::UnsafeUnpin for proef_core::resolve::Resolution
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::Resolution
+impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::Resolution
+pub struct proef_core::resolve::ResolveCtx<'a>
+pub proef_core::resolve::ResolveCtx::args: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::config: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::defaults: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::directives: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::mode: proef_core::resolve::ResolveMode
+pub proef_core::resolve::ResolveCtx::run_id: &'a str
+pub proef_core::resolve::ResolveCtx::world: &'a proef_core::world::World
+impl<'a> core::clone::Clone for proef_core::resolve::ResolveCtx<'a>
+pub fn proef_core::resolve::ResolveCtx<'a>::clone(&self) -> proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::fmt::Debug for proef_core::resolve::ResolveCtx<'a>
+pub fn proef_core::resolve::ResolveCtx<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::marker::Freeze for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::marker::Send for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::marker::Sync for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::marker::Unpin for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::marker::UnsafeUnpin for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveCtx<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveCtx<'a>
+pub const proef_core::resolve::MAX_DEPTH: usize
+pub fn proef_core::resolve::resolve(&str, &proef_core::resolve::ResolveCtx<'_>) -> core::result::Result<proef_core::resolve::Resolution, proef_core::resolve::ResolveError>
+pub mod proef_core::runner
+pub enum proef_core::runner::Fault
+pub proef_core::runner::Fault::System(alloc::string::String)
+pub proef_core::runner::Fault::User(alloc::string::String)
+impl core::fmt::Debug for proef_core::runner::Fault
+pub fn proef_core::runner::Fault::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::runner::Fault
+impl core::marker::Send for proef_core::runner::Fault
+impl core::marker::Sync for proef_core::runner::Fault
+impl core::marker::Unpin for proef_core::runner::Fault
+impl core::marker::UnsafeUnpin for proef_core::runner::Fault
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::Fault
+impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::Fault
+pub struct proef_core::runner::Prepared
+pub proef_core::runner::Prepared::artifact: core::option::Option<proef_core::engine::ArtifactRef>
+pub proef_core::runner::Prepared::batches: alloc::vec::Vec<proef_core::step::StepBatch>
+impl core::marker::Freeze for proef_core::runner::Prepared
+impl core::marker::Send for proef_core::runner::Prepared
+impl core::marker::Sync for proef_core::runner::Prepared
+impl core::marker::Unpin for proef_core::runner::Prepared
+impl core::marker::UnsafeUnpin for proef_core::runner::Prepared
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::Prepared
+impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::Prepared
+pub struct proef_core::runner::RunConfig
+pub proef_core::runner::RunConfig::default_batch_budget: core::time::Duration
+pub proef_core::runner::RunConfig::http: proef_core::engine::HttpDefaults
+pub proef_core::runner::RunConfig::jobs: usize
+pub proef_core::runner::RunConfig::run_id: alloc::sync::Arc<str>
+pub proef_core::runner::RunConfig::secrets: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+impl core::clone::Clone for proef_core::runner::RunConfig
+pub fn proef_core::runner::RunConfig::clone(&self) -> proef_core::runner::RunConfig
+impl core::marker::Freeze for proef_core::runner::RunConfig
+impl core::marker::Send for proef_core::runner::RunConfig
+impl core::marker::Sync for proef_core::runner::RunConfig
+impl core::marker::Unpin for proef_core::runner::RunConfig
+impl core::marker::UnsafeUnpin for proef_core::runner::RunConfig
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::RunConfig
+impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::RunConfig
+pub struct proef_core::runner::RunSummary
+pub proef_core::runner::RunSummary::cancelled: bool
+pub proef_core::runner::RunSummary::failed: usize
+pub proef_core::runner::RunSummary::outcomes: alloc::vec::Vec<proef_core::runner::ScenarioOutcome>
+pub proef_core::runner::RunSummary::passed: usize
+pub proef_core::runner::RunSummary::skipped: usize
+impl proef_core::runner::RunSummary
+pub fn proef_core::runner::RunSummary::exit_code(&self) -> proef_core::error::ExitCode
+impl core::fmt::Debug for proef_core::runner::RunSummary
+pub fn proef_core::runner::RunSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::runner::RunSummary
+impl core::marker::Send for proef_core::runner::RunSummary
+impl core::marker::Sync for proef_core::runner::RunSummary
+impl core::marker::Unpin for proef_core::runner::RunSummary
+impl core::marker::UnsafeUnpin for proef_core::runner::RunSummary
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::RunSummary
+impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::RunSummary
+pub struct proef_core::runner::ScenarioOutcome
+pub proef_core::runner::ScenarioOutcome::fault: core::option::Option<proef_core::runner::Fault>
+pub proef_core::runner::ScenarioOutcome::file: alloc::sync::Arc<str>
+pub proef_core::runner::ScenarioOutcome::line: usize
+pub proef_core::runner::ScenarioOutcome::name: alloc::sync::Arc<str>
+pub proef_core::runner::ScenarioOutcome::status: proef_core::step::Status
+pub proef_core::runner::ScenarioOutcome::steps: alloc::vec::Vec<proef_core::step::StepOutcome>
+impl core::fmt::Debug for proef_core::runner::ScenarioOutcome
+pub fn proef_core::runner::ScenarioOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::runner::ScenarioOutcome
+impl core::marker::Send for proef_core::runner::ScenarioOutcome
+impl core::marker::Sync for proef_core::runner::ScenarioOutcome
+impl core::marker::Unpin for proef_core::runner::ScenarioOutcome
+impl core::marker::UnsafeUnpin for proef_core::runner::ScenarioOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::ScenarioOutcome
+impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::ScenarioOutcome
+pub struct proef_core::runner::ScenarioSpec
+pub proef_core::runner::ScenarioSpec::file: alloc::sync::Arc<str>
+pub proef_core::runner::ScenarioSpec::file_root: core::option::Option<std::path::PathBuf>
+pub proef_core::runner::ScenarioSpec::line: usize
+pub proef_core::runner::ScenarioSpec::name: alloc::sync::Arc<str>
+pub proef_core::runner::ScenarioSpec::prepare: proef_core::runner::PrepareFn
+pub proef_core::runner::ScenarioSpec::tags: alloc::vec::Vec<alloc::string::String>
+impl core::marker::Freeze for proef_core::runner::ScenarioSpec
+impl core::marker::Send for proef_core::runner::ScenarioSpec
+impl !core::marker::Sync for proef_core::runner::ScenarioSpec
+impl core::marker::Unpin for proef_core::runner::ScenarioSpec
+impl core::marker::UnsafeUnpin for proef_core::runner::ScenarioSpec
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::ScenarioSpec
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::runner::ScenarioSpec
+pub fn proef_core::runner::run(alloc::vec::Vec<proef_core::runner::ScenarioSpec>, &alloc::sync::Arc<alloc::vec::Vec<alloc::boxed::Box<dyn proef_core::engine::EngineFactory>>>, &alloc::sync::Arc<std::sync::poison::mutex::Mutex<proef_core::world::GlobalStore>>, &proef_core::runner::RunConfig, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::runner::RunSummary
+pub type proef_core::runner::PrepareFn = alloc::boxed::Box<(dyn core::ops::function::FnOnce(&proef_core::world::World) -> core::result::Result<proef_core::runner::Prepared, alloc::vec::Vec<proef_core::diag::Diag>> + core::marker::Send)>
+pub mod proef_core::step
+pub enum proef_core::step::Status
+pub proef_core::step::Status::Failed
+pub proef_core::step::Status::Passed
+pub proef_core::step::Status::Skipped
+pub proef_core::step::Status::Warned
+impl core::clone::Clone for proef_core::step::Status
+pub fn proef_core::step::Status::clone(&self) -> proef_core::step::Status
+impl core::cmp::Eq for proef_core::step::Status
+impl core::cmp::PartialEq for proef_core::step::Status
+pub fn proef_core::step::Status::eq(&self, &proef_core::step::Status) -> bool
+impl core::fmt::Debug for proef_core::step::Status
+pub fn proef_core::step::Status::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::step::Status
+impl core::marker::StructuralPartialEq for proef_core::step::Status
+impl serde_core::ser::Serialize for proef_core::step::Status
+pub fn proef_core::step::Status::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::step::Status
+pub fn proef_core::step::Status::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::step::Status
+impl core::marker::Send for proef_core::step::Status
+impl core::marker::Sync for proef_core::step::Status
+impl core::marker::Unpin for proef_core::step::Status
+impl core::marker::UnsafeUnpin for proef_core::step::Status
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Status
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Status
+pub enum proef_core::step::StepPayload
+pub proef_core::step::StepPayload::HurlEntries(alloc::string::String)
+pub proef_core::step::StepPayload::Structured(serde_json::value::Value)
+impl core::clone::Clone for proef_core::step::StepPayload
+pub fn proef_core::step::StepPayload::clone(&self) -> proef_core::step::StepPayload
+impl core::cmp::PartialEq for proef_core::step::StepPayload
+pub fn proef_core::step::StepPayload::eq(&self, &proef_core::step::StepPayload) -> bool
+impl core::fmt::Debug for proef_core::step::StepPayload
+pub fn proef_core::step::StepPayload::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::step::StepPayload
+impl core::marker::Freeze for proef_core::step::StepPayload
+impl core::marker::Send for proef_core::step::StepPayload
+impl core::marker::Sync for proef_core::step::StepPayload
+impl core::marker::Unpin for proef_core::step::StepPayload
+impl core::marker::UnsafeUnpin for proef_core::step::StepPayload
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepPayload
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepPayload
+pub struct proef_core::step::BatchResult
+pub proef_core::step::BatchResult::error: core::option::Option<proef_core::error::EngineError>
+pub proef_core::step::BatchResult::steps: alloc::vec::Vec<proef_core::step::StepOutcome>
+impl core::fmt::Debug for proef_core::step::BatchResult
+pub fn proef_core::step::BatchResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::step::BatchResult
+impl core::marker::Send for proef_core::step::BatchResult
+impl core::marker::Sync for proef_core::step::BatchResult
+impl core::marker::Unpin for proef_core::step::BatchResult
+impl core::marker::UnsafeUnpin for proef_core::step::BatchResult
+impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::step::BatchResult
+impl !core::panic::unwind_safe::UnwindSafe for proef_core::step::BatchResult
+pub struct proef_core::step::Guard(pub alloc::string::String)
+impl core::clone::Clone for proef_core::step::Guard
+pub fn proef_core::step::Guard::clone(&self) -> proef_core::step::Guard
+impl core::cmp::Eq for proef_core::step::Guard
+impl core::cmp::PartialEq for proef_core::step::Guard
+pub fn proef_core::step::Guard::eq(&self, &proef_core::step::Guard) -> bool
+impl core::fmt::Debug for proef_core::step::Guard
+pub fn proef_core::step::Guard::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::step::Guard
+impl serde_core::ser::Serialize for proef_core::step::Guard
+pub fn proef_core::step::Guard::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::step::Guard
+pub fn proef_core::step::Guard::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::step::Guard
+impl core::marker::Send for proef_core::step::Guard
+impl core::marker::Sync for proef_core::step::Guard
+impl core::marker::Unpin for proef_core::step::Guard
+impl core::marker::UnsafeUnpin for proef_core::step::Guard
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Guard
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Guard
+pub struct proef_core::step::LoweredStep
+pub proef_core::step::LoweredStep::kind: proef_core::step::StepKindId
+pub proef_core::step::LoweredStep::label: core::option::Option<alloc::string::String>
+pub proef_core::step::LoweredStep::optional: bool
+pub proef_core::step::LoweredStep::payload: proef_core::step::StepPayload
+pub proef_core::step::LoweredStep::retry: core::option::Option<proef_core::step::Retry>
+pub proef_core::step::LoweredStep::save_as: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::step::LoweredStep::step: proef_core::step::StepRef
+pub proef_core::step::LoweredStep::when: core::option::Option<proef_core::step::Guard>
+impl core::clone::Clone for proef_core::step::LoweredStep
+pub fn proef_core::step::LoweredStep::clone(&self) -> proef_core::step::LoweredStep
+impl core::cmp::PartialEq for proef_core::step::LoweredStep
+pub fn proef_core::step::LoweredStep::eq(&self, &proef_core::step::LoweredStep) -> bool
+impl core::fmt::Debug for proef_core::step::LoweredStep
+pub fn proef_core::step::LoweredStep::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::step::LoweredStep
+impl core::marker::Freeze for proef_core::step::LoweredStep
+impl core::marker::Send for proef_core::step::LoweredStep
+impl core::marker::Sync for proef_core::step::LoweredStep
+impl core::marker::Unpin for proef_core::step::LoweredStep
+impl core::marker::UnsafeUnpin for proef_core::step::LoweredStep
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::LoweredStep
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::LoweredStep
+pub struct proef_core::step::Retry
+pub proef_core::step::Retry::count: u32
+pub proef_core::step::Retry::interval_ms: u64
+impl core::clone::Clone for proef_core::step::Retry
+pub fn proef_core::step::Retry::clone(&self) -> proef_core::step::Retry
+impl core::cmp::Eq for proef_core::step::Retry
+impl core::cmp::PartialEq for proef_core::step::Retry
+pub fn proef_core::step::Retry::eq(&self, &proef_core::step::Retry) -> bool
+impl core::fmt::Debug for proef_core::step::Retry
+pub fn proef_core::step::Retry::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::step::Retry
+impl core::marker::StructuralPartialEq for proef_core::step::Retry
+impl serde_core::ser::Serialize for proef_core::step::Retry
+pub fn proef_core::step::Retry::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::step::Retry
+pub fn proef_core::step::Retry::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::step::Retry
+impl core::marker::Send for proef_core::step::Retry
+impl core::marker::Sync for proef_core::step::Retry
+impl core::marker::Unpin for proef_core::step::Retry
+impl core::marker::UnsafeUnpin for proef_core::step::Retry
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Retry
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Retry
+pub struct proef_core::step::StepBatch
+pub proef_core::step::StepBatch::engine: proef_core::engine::EngineId
+pub proef_core::step::StepBatch::index: usize
+pub proef_core::step::StepBatch::steps: alloc::vec::Vec<proef_core::step::LoweredStep>
+impl core::clone::Clone for proef_core::step::StepBatch
+pub fn proef_core::step::StepBatch::clone(&self) -> proef_core::step::StepBatch
+impl core::cmp::PartialEq for proef_core::step::StepBatch
+pub fn proef_core::step::StepBatch::eq(&self, &proef_core::step::StepBatch) -> bool
+impl core::fmt::Debug for proef_core::step::StepBatch
+pub fn proef_core::step::StepBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::step::StepBatch
+impl core::marker::Freeze for proef_core::step::StepBatch
+impl core::marker::Send for proef_core::step::StepBatch
+impl core::marker::Sync for proef_core::step::StepBatch
+impl core::marker::Unpin for proef_core::step::StepBatch
+impl core::marker::UnsafeUnpin for proef_core::step::StepBatch
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepBatch
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepBatch
+pub struct proef_core::step::StepKindId(_)
+impl proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::as_str(&self) -> &str
+impl core::clone::Clone for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::clone(&self) -> proef_core::step::StepKindId
+impl core::cmp::Eq for proef_core::step::StepKindId
+impl core::cmp::PartialEq for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::eq(&self, &proef_core::step::StepKindId) -> bool
+impl core::convert::From<&str> for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::from(&str) -> Self
+impl core::fmt::Debug for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for proef_core::step::StepKindId
+impl serde_core::ser::Serialize for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::step::StepKindId
+pub fn proef_core::step::StepKindId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::step::StepKindId
+impl core::marker::Send for proef_core::step::StepKindId
+impl core::marker::Sync for proef_core::step::StepKindId
+impl core::marker::Unpin for proef_core::step::StepKindId
+impl core::marker::UnsafeUnpin for proef_core::step::StepKindId
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepKindId
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepKindId
+pub struct proef_core::step::StepOutcome
+pub proef_core::step::StepOutcome::artifact_span: core::option::Option<(u32, u32)>
+pub proef_core::step::StepOutcome::attempts: u32
+pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
+pub proef_core::step::StepOutcome::duration: core::time::Duration
+pub proef_core::step::StepOutcome::status: proef_core::step::Status
+pub proef_core::step::StepOutcome::step: proef_core::step::StepRef
+impl core::clone::Clone for proef_core::step::StepOutcome
+pub fn proef_core::step::StepOutcome::clone(&self) -> proef_core::step::StepOutcome
+impl core::fmt::Debug for proef_core::step::StepOutcome
+pub fn proef_core::step::StepOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::step::StepOutcome
+impl core::marker::Send for proef_core::step::StepOutcome
+impl core::marker::Sync for proef_core::step::StepOutcome
+impl core::marker::Unpin for proef_core::step::StepOutcome
+impl core::marker::UnsafeUnpin for proef_core::step::StepOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepOutcome
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepOutcome
+pub struct proef_core::step::StepRef
+pub proef_core::step::StepRef::file: alloc::sync::Arc<str>
+pub proef_core::step::StepRef::line: usize
+pub proef_core::step::StepRef::text: alloc::sync::Arc<str>
+impl core::clone::Clone for proef_core::step::StepRef
+pub fn proef_core::step::StepRef::clone(&self) -> proef_core::step::StepRef
+impl core::cmp::Eq for proef_core::step::StepRef
+impl core::cmp::PartialEq for proef_core::step::StepRef
+pub fn proef_core::step::StepRef::eq(&self, &proef_core::step::StepRef) -> bool
+impl core::fmt::Debug for proef_core::step::StepRef
+pub fn proef_core::step::StepRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::step::StepRef
+impl serde_core::ser::Serialize for proef_core::step::StepRef
+pub fn proef_core::step::StepRef::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::step::StepRef
+pub fn proef_core::step::StepRef::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::step::StepRef
+impl core::marker::Send for proef_core::step::StepRef
+impl core::marker::Sync for proef_core::step::StepRef
+impl core::marker::Unpin for proef_core::step::StepRef
+impl core::marker::UnsafeUnpin for proef_core::step::StepRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepRef
+pub mod proef_core::world
+pub enum proef_core::world::Value
+pub proef_core::world::Value::Bool(bool)
+pub proef_core::world::Value::Float(f64)
+pub proef_core::world::Value::Int(i64)
+pub proef_core::world::Value::Null
+pub proef_core::world::Value::String(alloc::string::String)
+impl core::clone::Clone for proef_core::world::Value
+pub fn proef_core::world::Value::clone(&self) -> proef_core::world::Value
+impl core::cmp::PartialEq for proef_core::world::Value
+pub fn proef_core::world::Value::eq(&self, &proef_core::world::Value) -> bool
+impl core::fmt::Debug for proef_core::world::Value
+pub fn proef_core::world::Value::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::world::Value
+pub fn proef_core::world::Value::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::world::Value
+impl serde_core::ser::Serialize for proef_core::world::Value
+pub fn proef_core::world::Value::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for proef_core::world::Value
+pub fn proef_core::world::Value::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for proef_core::world::Value
+impl core::marker::Send for proef_core::world::Value
+impl core::marker::Sync for proef_core::world::Value
+impl core::marker::Unpin for proef_core::world::Value
+impl core::marker::UnsafeUnpin for proef_core::world::Value
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::world::Value
+impl core::panic::unwind_safe::UnwindSafe for proef_core::world::Value
+pub struct proef_core::world::GlobalStore
+impl proef_core::world::GlobalStore
+pub fn proef_core::world::GlobalStore::get(&self, &str) -> core::option::Option<&proef_core::world::Value>
+pub fn proef_core::world::GlobalStore::insert(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value)
+pub fn proef_core::world::GlobalStore::iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&str, &proef_core::world::Value)>
+pub fn proef_core::world::GlobalStore::load(&std::path::Path) -> core::result::Result<Self, proef_core::error::CoreError>
+pub fn proef_core::world::GlobalStore::new() -> Self
+pub fn proef_core::world::GlobalStore::save(&self, &std::path::Path) -> core::result::Result<(), proef_core::error::CoreError>
+impl core::clone::Clone for proef_core::world::GlobalStore
+pub fn proef_core::world::GlobalStore::clone(&self) -> proef_core::world::GlobalStore
+impl core::cmp::PartialEq for proef_core::world::GlobalStore
+pub fn proef_core::world::GlobalStore::eq(&self, &proef_core::world::GlobalStore) -> bool
+impl core::default::Default for proef_core::world::GlobalStore
+pub fn proef_core::world::GlobalStore::default() -> proef_core::world::GlobalStore
+impl core::fmt::Debug for proef_core::world::GlobalStore
+pub fn proef_core::world::GlobalStore::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::world::GlobalStore
+impl core::marker::Freeze for proef_core::world::GlobalStore
+impl core::marker::Send for proef_core::world::GlobalStore
+impl core::marker::Sync for proef_core::world::GlobalStore
+impl core::marker::Unpin for proef_core::world::GlobalStore
+impl core::marker::UnsafeUnpin for proef_core::world::GlobalStore
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::world::GlobalStore
+impl core::panic::unwind_safe::UnwindSafe for proef_core::world::GlobalStore
+pub struct proef_core::world::World
+impl proef_core::world::World
+pub fn proef_core::world::World::get(&self, &str) -> core::option::Option<&proef_core::world::Value>
+pub fn proef_core::world::World::global(&self) -> &proef_core::world::GlobalStore
+pub fn proef_core::world::World::merged(&self) -> alloc::collections::btree::map::BTreeMap<&str, &proef_core::world::Value>
+pub fn proef_core::world::World::new(proef_core::world::GlobalStore) -> Self
+pub fn proef_core::world::World::promotions(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&str, &proef_core::world::Value)>
+pub fn proef_core::world::World::set(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value)
+pub fn proef_core::world::World::set_global(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value)
+impl core::default::Default for proef_core::world::World
+pub fn proef_core::world::World::default() -> proef_core::world::World
+impl core::fmt::Debug for proef_core::world::World
+pub fn proef_core::world::World::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::world::World
+impl core::marker::Send for proef_core::world::World
+impl core::marker::Sync for proef_core::world::World
+impl core::marker::Unpin for proef_core::world::World
+impl core::marker::UnsafeUnpin for proef_core::world::World
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::world::World
+impl core::panic::unwind_safe::UnwindSafe for proef_core::world::World

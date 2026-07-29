@@ -22,6 +22,7 @@ use hurl::runner::{self, RunnerOptionsBuilder, VariableSet};
 use hurl::util::logger::{Logger, LoggerOptionsBuilder};
 use hurl::util::term::{Stderr, Stdout, WriteMode};
 use hurl_core::ast::{CountOption, DurationOption, HurlFile, OptionKind, SectionValue};
+use hurl_core::error::DisplaySourceError;
 use hurl_core::types::{Count, DurationUnit};
 
 use proef_core::cancel::CancellationToken;
@@ -95,24 +96,27 @@ impl HurlSession {
                     .map_or([0, 0], |entry| entry.hurl_lines)
             })
             .collect();
+        // Partition, never overlap: each parsed entry is anchored by its
+        // *request line* (`Request.source_info` spans leading comments, so a
+        // comment-only step's range would overlap the next entry and the same
+        // request would run twice — one authored POST, two sent). A claimed
+        // set guarantees disjointness even if ranges are pathological.
+        let mut claimed: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         ranges
             .iter()
             .map(|[start, end]| {
-                parsed
+                let owned: Vec<usize> = parsed
                     .entries
                     .iter()
                     .enumerate()
-                    .filter(|(_, entry)| {
-                        // `Request.source_info` spans the whole entry *including
-                        // its leading comment lines* (probed against 8.0.1), so
-                        // match by overlap with the payload range, not by
-                        // containment of the start line.
-                        let entry_start = entry.request.source_info.start.line;
-                        let entry_end = entry.request.source_info.end.line;
-                        entry_start <= *end && entry_end >= *start
+                    .filter(|(index, entry)| {
+                        let request_line = entry.request.url.source_info.start.line;
+                        request_line >= *start && request_line <= *end && !claimed.contains(index)
                     })
                     .map(|(index, _)| index)
-                    .collect()
+                    .collect();
+                claimed.extend(owned.iter().copied());
+                owned
             })
             .collect()
     }
@@ -214,6 +218,7 @@ impl EngineSession for HurlSession {
                     0,
                     0,
                     &[],
+                    Some("skipped by `when:` guard"),
                 );
                 continue;
             }
@@ -244,6 +249,7 @@ impl EngineSession for HurlSession {
                         0,
                         0,
                         &[],
+                        Some("not run (an earlier step in the batch failed)"),
                     );
                 }
                 continue;
@@ -343,7 +349,7 @@ impl EngineSession for HurlSession {
                         if is_assert_error(&error.kind) {
                             assert_failure = true;
                         }
-                        errors.push(redact(&format!("{:?}", error.kind), &self.secrets));
+                        errors.push(redact(&error.description(), &self.secrets));
                     }
                 }
                 // Multiple results for the *same* entry are retries: attempts
@@ -355,14 +361,21 @@ impl EngineSession for HurlSession {
                 let status = if !reached {
                     Status::Skipped
                 } else if final_failed {
-                    Status::Failed
+                    // `optional:` failures warn (the runner's aggregate
+                    // status logic agrees) — emitting Failed here would make
+                    // the console/record contradict the summary.
+                    if step.optional {
+                        Status::Warned
+                    } else {
+                        Status::Failed
+                    }
                 } else {
                     Status::Passed
                 };
                 captures.sort();
                 captures.dedup();
                 let span = self.anchor(ordinal, *index).map(|(_, lines)| lines);
-                let detail = if status == Status::Failed {
+                let detail = if matches!(status, Status::Failed | Status::Warned) {
                     let location = span.map_or_else(String::new, |[a, _]| {
                         format!(" (artifact {}.hurl:{a})", self.artifact.slug)
                     });
@@ -401,6 +414,7 @@ impl EngineSession for HurlSession {
                     attempts.max(u32::from(reached)),
                     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
                     &captures,
+                    detail.as_deref(),
                 );
             }
         }
@@ -422,10 +436,17 @@ impl EngineSession for HurlSession {
                 let entry = parsed.entries.get(index)?;
                 let (retries, interval) = entry_retry(entry);
                 let timeout = entry_timeout(entry).unwrap_or(default_timeout);
-                budget += timeout * (retries + 1) + interval * retries;
+                let delay = entry_delay(entry);
+                // Saturating throughout: user-authored durations must never
+                // panic the budget math (they cap at Duration::MAX instead).
+                let attempts = retries.saturating_add(1);
+                budget = budget
+                    .saturating_add(timeout.saturating_mul(attempts))
+                    .saturating_add(interval.saturating_mul(retries))
+                    .saturating_add(delay.saturating_mul(attempts));
             }
         }
-        Some(budget + BUDGET_MARGIN)
+        Some(budget.saturating_add(BUDGET_MARGIN))
     }
 
     fn finish(&mut self) -> Result<(), EngineError> {
@@ -517,6 +538,7 @@ fn emit_step(
     attempts: u32,
     duration_ms: u64,
     captures: &[String],
+    detail: Option<&str>,
 ) {
     events.emit(&Event::StepFinished {
         scenario: Arc::clone(scenario),
@@ -526,6 +548,7 @@ fn emit_step(
         attempts,
         duration_ms,
         captures: captures.to_vec(),
+        detail: detail.map(ToOwned::to_owned),
     });
 }
 
@@ -637,6 +660,21 @@ fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
     (retries, interval)
 }
 
+/// Per-entry `[Options] delay:` — an uninterruptible sleep hurl applies per
+/// attempt; it must be part of the budget or the watchdog kills the scenario.
+fn entry_delay(entry: &hurl_core::ast::Entry) -> Duration {
+    for section in &entry.request.sections {
+        if let SectionValue::Options(options) = &section.value {
+            for option in options {
+                if let OptionKind::Delay(DurationOption::Literal(duration)) = &option.kind {
+                    return ast_duration(duration);
+                }
+            }
+        }
+    }
+    Duration::ZERO
+}
+
 fn entry_timeout(entry: &hurl_core::ast::Entry) -> Option<Duration> {
     for section in &entry.request.sections {
         if let SectionValue::Options(options) = &section.value {
@@ -653,10 +691,11 @@ fn entry_timeout(entry: &hurl_core::ast::Entry) -> Option<Duration> {
 fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {
     let value = duration.value.as_u64();
     match duration.unit {
-        // hurl's default unit is milliseconds (retry-interval/delay)
+        // hurl's default unit is milliseconds (retry-interval/delay).
+        // Saturating: authored values must never panic the budget math.
         Some(DurationUnit::MilliSecond) | None => Duration::from_millis(value),
         Some(DurationUnit::Second) => Duration::from_secs(value),
-        Some(DurationUnit::Minute) => Duration::from_mins(value),
-        Some(DurationUnit::Hour) => Duration::from_hours(value),
+        Some(DurationUnit::Minute) => Duration::from_secs(value.saturating_mul(60)),
+        Some(DurationUnit::Hour) => Duration::from_secs(value.saturating_mul(3600)),
     }
 }

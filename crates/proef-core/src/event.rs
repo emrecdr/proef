@@ -74,6 +74,10 @@ pub enum Event {
         duration_ms: u64,
         /// Names (never values) of captures produced by this step.
         captures: Vec<String>,
+        /// Failure detail, when the step failed (additive schema field —
+        /// absent on passing steps, so pre-existing streams are unchanged).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
     },
     /// A scenario finished.
     ScenarioFinished {
@@ -159,6 +163,7 @@ mod tests {
             attempts: 1,
             duration_ms: 42,
             captures: vec!["clientId".to_owned()],
+            detail: None,
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         let back: Event = serde_json::from_str(&json).unwrap_or(Event::RunFinished {

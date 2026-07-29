@@ -16,6 +16,8 @@ repo-root `CLAUDE.md` carry the live status.
 
 | # | Document | What it answers | Audience |
 |---|---|---|---|
+| 0 | [GETTING-STARTED.md](GETTING-STARTED.md) | Your first suite in ten minutes | test authors |
+| 0 | [AUTHORING.md](AUTHORING.md) | The pack/feature reference from the author's seat | test authors |
 | 1 | [PRD.md](PRD.md) | What are we building, for whom, and how do we know it works? | everyone |
 | 2 | [adr/](adr/) — ADR-0001…0011 | Why is it built this way? Each decision, alternatives, consequences | engineers |
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
@@ -41,7 +43,8 @@ repo-root `CLAUDE.md` carry the live status.
 
 ## Naming & identifiers
 
-Project/binary **`proef`** · crates **`proef-core`**, **`proef-engine-hurl`**, **`proef-cli`**
+Project/binary **`proef`** · crates **`proef-core`**, **`proef-engine-hurl`**, **`proef-cli`**,
+**`proef-fixture`**, **`proef-harness`**
 · run records **`.proef-runs/`** · persistent
 World **`.proef-state.json`** · config **`proef.toml`**. Reserve the crates.io names early
 (placeholder `0.0.0` publish is customary; all verified free 2026-07-28).

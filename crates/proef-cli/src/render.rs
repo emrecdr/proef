@@ -11,7 +11,8 @@ use proef_core::diag::Diag;
 /// terminal wants it.
 pub fn install() {
     let _ = miette::set_hook(Box::new(|_| {
-        let theme = if std::env::var_os("NO_COLOR").is_some() {
+        use std::io::IsTerminal as _;
+        let theme = if std::env::var_os("NO_COLOR").is_some() || !std::io::stderr().is_terminal() {
             miette::GraphicalTheme::unicode_nocolor()
         } else {
             miette::GraphicalTheme::unicode()

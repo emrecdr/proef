@@ -8,7 +8,8 @@ fn main() -> ExitCode {
     match args.next().as_deref() {
         Some("canary") => canary(&args.collect::<Vec<_>>()),
         Some("fixture") => fixture(),
-        Some("dist") => not_yet("dist", "release packaging lands after M4"),
+        Some("docs-check") => docs_check(),
+        Some("public-api") => public_api(),
         Some(other) => usage(&format!("unknown task `{other}`")),
         None => usage("missing task"),
     }
@@ -182,13 +183,108 @@ fn fixture() -> ExitCode {
     }
 }
 
-fn not_yet(task: &str, plan: &str) -> ExitCode {
-    eprintln!("xtask: `{task}` is not implemented yet — {plan}");
+fn usage(problem: &str) -> ExitCode {
+    eprintln!("xtask: {problem}");
+    eprintln!("usage: cargo run -p xtask -- <canary|fixture|docs-check|public-api>");
     ExitCode::from(2)
 }
 
-fn usage(problem: &str) -> ExitCode {
-    eprintln!("xtask: {problem}");
-    eprintln!("usage: cargo run -p xtask -- <canary|fixture|dist>");
-    ExitCode::from(2)
+/// Mechanical doc↔code alignment (the drift class fixed by hand a dozen times
+/// before this existed): every workspace crate appears in TECH-SPEC §2 and
+/// CLAUDE.md; every ADR file appears in the docs index.
+fn docs_check() -> ExitCode {
+    let mut failures: Vec<String> = Vec::new();
+    let tech_spec = std::fs::read_to_string("docs/TECH-SPEC.md").unwrap_or_default();
+    let claude = std::fs::read_to_string("CLAUDE.md").unwrap_or_default();
+    let index = std::fs::read_to_string("docs/README.md").unwrap_or_default();
+
+    if let Ok(entries) = std::fs::read_dir("crates") {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !tech_spec.contains(&name) {
+                failures.push(format!("crate `{name}` missing from docs/TECH-SPEC.md §2"));
+            }
+            if !claude.contains(&name) {
+                failures.push(format!("crate `{name}` missing from CLAUDE.md"));
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir("docs/adr") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("ADR-") && !index.contains(&name) {
+                failures.push(format!(
+                    "`{name}` missing from the docs/README.md decision log"
+                ));
+            }
+        }
+    }
+    if failures.is_empty() {
+        println!("docs-check: aligned");
+        ExitCode::SUCCESS
+    } else {
+        for failure in &failures {
+            eprintln!("docs-check: {failure}");
+        }
+        ExitCode::FAILURE
+    }
+}
+
+/// The public API of proef-core, snapshotted: the mechanical form of "adding
+/// an engine leaves core diff-empty". Requires `cargo-public-api` + nightly
+/// (CI runs it in the job that already has both). `PROEF_PUBLIC_API_UPDATE=1`
+/// rewrites the snapshot deliberately.
+fn public_api() -> ExitCode {
+    let snapshot_path = "crates/proef-core/public-api.txt";
+    let output = std::process::Command::new("cargo")
+        .args(["public-api", "-p", "proef-core", "--simplified"])
+        .output();
+    let output = match output {
+        Ok(output) if output.status.success() => output,
+        Ok(output) => {
+            eprintln!(
+                "public-api: cargo public-api failed:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return ExitCode::FAILURE;
+        }
+        Err(err) => {
+            eprintln!("public-api: cannot run cargo public-api (install it): {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let current = String::from_utf8_lossy(&output.stdout).into_owned();
+    if std::env::var_os("PROEF_PUBLIC_API_UPDATE").is_some() {
+        if let Err(err) = std::fs::write(snapshot_path, &current) {
+            eprintln!("public-api: cannot write {snapshot_path}: {err}");
+            return ExitCode::FAILURE;
+        }
+        println!("public-api: snapshot updated ({snapshot_path})");
+        return ExitCode::SUCCESS;
+    }
+    let committed = std::fs::read_to_string(snapshot_path).unwrap_or_default();
+    if committed == current {
+        println!("public-api: surface unchanged");
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("public-api: proef-core's public API changed — review the diff:");
+        for line in diff_lines(&committed, &current) {
+            eprintln!("  {line}");
+        }
+        eprintln!("public-api: if intended, rerun with PROEF_PUBLIC_API_UPDATE=1");
+        ExitCode::FAILURE
+    }
+}
+
+/// Minimal set-difference rendering (order-stable enough for review).
+fn diff_lines(before: &str, after: &str) -> Vec<String> {
+    let old: std::collections::BTreeSet<&str> = before.lines().collect();
+    let new: std::collections::BTreeSet<&str> = after.lines().collect();
+    let mut out: Vec<String> = Vec::new();
+    out.extend(old.difference(&new).map(|l| format!("- {l}")));
+    out.extend(new.difference(&old).map(|l| format!("+ {l}")));
+    out
 }

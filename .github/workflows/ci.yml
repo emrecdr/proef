@@ -70,6 +70,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: zizmor .github/workflows/
 
+      - name: docs alignment (xtask docs-check)
+        run: cargo run -p xtask --locked -- docs-check
+
       - name: doctor smoke
         run: cargo run -p proef --locked -- doctor
 
@@ -91,10 +94,10 @@ jobs:
         with:
           workspaces: fuzz
 
-      - name: Install cargo-fuzz
+      - name: Install cargo-fuzz + cargo-public-api
         uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: cargo-fuzz
+          tool: cargo-fuzz,cargo-public-api
 
       - name: Fuzz smoke
         # Explicit host triple: the prebuilt cargo-fuzz defaults to its own
@@ -104,6 +107,11 @@ jobs:
           for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load; do
             cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=30
           done
+
+      # The mechanical form of "adding an engine leaves core diff-empty":
+      # proef-core's public API surface is snapshot-locked (nightly rustdoc).
+      - name: public API surface (proef-core)
+        run: cargo run -p xtask --locked -- public-api
 
   # The real upgrade canary (ADR-0003, M4): fast no-op while the pin is the
   # latest hurl release. Runs on main pushes and nightly — not on PRs, so an

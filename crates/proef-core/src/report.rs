@@ -82,6 +82,7 @@ impl Redactions {
                 attempts,
                 duration_ms,
                 captures,
+                detail,
             } => Event::StepFinished {
                 scenario: s(scenario),
                 engine: s(engine),
@@ -94,6 +95,7 @@ impl Redactions {
                 attempts: *attempts,
                 duration_ms: *duration_ms,
                 captures: captures.iter().map(|name| self.apply(name)).collect(),
+                detail: detail.as_deref().map(|text| self.apply(text)),
             },
             Event::ScenarioFinished { scenario, status } => Event::ScenarioFinished {
                 scenario: s(scenario),
@@ -386,6 +388,7 @@ mod tests {
                 attempts: 2,
                 duration_ms: 12,
                 captures: vec!["token".to_owned()],
+                detail: None,
             },
             Event::ScenarioFinished {
                 scenario: Arc::from("S"),
@@ -557,6 +560,7 @@ mod tests {
                     attempts: 1,
                     duration_ms: 1,
                     captures: vec![format!("cap-{secret}")],
+                    detail: Some(format!("boom {secret}")),
                 });
                 sink.emit(&Event::RunFinished {
                     passed: 0,
@@ -594,6 +598,7 @@ mod tests {
                         attempts: 1,
                         duration_ms: 1,
                         captures: Vec::new(),
+                        detail: None,
                     });
                     console.on_event(&Event::ScenarioFinished {
                         scenario: Arc::from("S"),

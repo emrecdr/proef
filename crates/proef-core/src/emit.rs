@@ -109,11 +109,15 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
         &mut line,
         &format!("# source: {}:{}", first_step.step.file, scenario.line),
     );
-    let replay = if has_vars {
-        format!("# replay: hurl --test {slug}.hurl --variables-file {slug}.vars")
-    } else {
-        format!("# replay: hurl --test {slug}.hurl")
-    };
+    use std::fmt::Write as _;
+    let mut replay = format!("# replay: hurl --test {slug}.hurl");
+    if has_vars {
+        let _ = write!(replay, " --variables-file {slug}.vars");
+    }
+    for secret in &scenario.secrets {
+        // Placeholders, never values (ADR-0005) — the human fills them in.
+        let _ = write!(replay, " --secret {secret}=<value>");
+    }
     push_line(&mut text, &mut line, &replay);
 
     let mut entries = Vec::new();

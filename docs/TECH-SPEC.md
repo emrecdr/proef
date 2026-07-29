@@ -169,8 +169,9 @@ XPath eval — exercised concurrently by upstream itself. Scenario-per-thread is
 engine computes batch budget = Σ(timeout × (retry+1)) + intervals + margin; watchdog
 abandons over-budget scenario threads; token checked between batches only.
 
-**Timings/curl debug.** `EntryResult.calls[].timings` (libcurl `*_t`) surface into
-`StepFinished` detail; `curl_cmd` exposed under `--output json` for debugging.
+**Failure detail.** Engine errors surface through hurl's own
+`DisplaySourceError::description` into `StepFinished.detail` (additive event
+field), the console, JUnit, and the GitHub summary.
 
 ## 6. Pack schema v1 (normative field reference)
 
@@ -237,7 +238,8 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ```
 proef test <file|dir> [--dry-run] [--tags csv] [--jobs N] [--junit path|auto]
                       [--output json] [--watch] [--scenario NAME]
-proef flows [dir]              proef artifacts <file|dir> -o DIR
+proef flows [dir] [--output json]
+proef artifacts <file|dir> -o DIR [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list
 proef explain [run-id]         proef doctor
 proef fmt <file|dir> [--check]
@@ -280,7 +282,8 @@ Engine: `hurl =8.0.1`, `hurl_core =8.0.1` (`--locked`; ADR-0003). Core: `gherkin
 (derive, env), `miette 7` (fancy), `uuid 1` (v7), `notify =8.2.0`, `ctrlc`,
 `chacha20poly1305 rpassword base64`, `quick-junit`, `toml`. Fixture/harness (dev):
 `tiny_http` (ADR-0011 — axum conflicts with the tokio-runtime ban), `libtest-mimic`.
-Dev: `insta assert_cmd proptest tempfile quick-xml` + `cargo-fuzz` targets. Synthetic
+Dev: `insta assert_cmd predicates proptest tempfile quick-xml` + `cargo-fuzz`
+targets; `openssl-sys` rides as the engine's `vendored-openssl` feature carrier. Synthetic
 data (`${fake:*}`) is a dependency-free SplitMix64/FNV implementation in-core — the
 `fake` crate was not needed. Datetime never enters our code (the jiff-not-chrono rule
 stands for the day it does). Banned: serde_yaml/serde_yml, chrono (ours), reqwest

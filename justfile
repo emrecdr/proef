@@ -15,7 +15,8 @@ doctest:
 fmt:
     cargo fmt --all
 
-# All CI gates, locally (global definition of done)
+# All CI gates, locally (global definition of done). cargo-audit runs
+# nightly in CI; keep `just audit` for on-demand advisory sweeps.
 gates:
     cargo fmt --all --check
     cargo clippy --all-targets --all-features -- -D warnings
@@ -23,6 +24,10 @@ gates:
     cargo test --doc
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
     cargo deny check
+    cargo machete
+    cargo run -p xtask -- docs-check
+
+audit:
     cargo audit
 
 doctor:

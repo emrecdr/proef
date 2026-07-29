@@ -421,8 +421,26 @@ fn bake_entry_options(
     let mut out: Vec<String> = Vec::new();
     let mut in_entry_head = false; // between a method line and its first section/body
     let mut injected_current = false;
+    let mut in_fence = false; // inside a ```…``` body — no entry surgery there
     for line in text.lines() {
         let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            // A fence opening directly after the entry head is the body — the
+            // options section belongs immediately before it.
+            if !in_fence && in_entry_head && !injected_current {
+                out.push("[Options]".to_owned());
+                out.push(retry_lines.clone());
+                injected_current = true;
+            }
+            in_fence = !in_fence;
+            in_entry_head = false;
+            out.push(line.to_owned());
+            continue;
+        }
+        if in_fence {
+            out.push(line.to_owned());
+            continue;
+        }
         let is_method_line = trimmed.split_whitespace().next().is_some_and(|word| {
             word.len() >= 3
                 && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')

@@ -107,6 +107,9 @@ macOS: Xcode Command Line Tools; Windows: vcpkg (see
 
 ## Quick start
 
+Ten-minute walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) ·
+full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
+
 ```bash
 mkdir -p suite/packs
 # 1. write suite/case.feature (prose) and suite/packs/api.yaml (bindings)
@@ -164,7 +167,9 @@ cargo run -p xtask -- fixture   # local fixture API server
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 
-The authoritative corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
+Author-facing guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) and
+[`docs/AUTHORING.md`](docs/AUTHORING.md).
+The maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
 (ADR-0001…0011), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.
 

@@ -4,7 +4,7 @@ expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — Search over users returns 200
 # source: tests/features/510_api_search_matrix.feature:15
-# replay: hurl --test 510-api-search-matrix--search-over-users-returns-200.hurl --variables-file 510-api-search-matrix--search-over-users-returns-200.vars
+# replay: hurl --test 510-api-search-matrix--search-over-users-returns-200.hurl --variables-file 510-api-search-matrix--search-over-users-returns-200.vars --secret apiToken=<value>
 
 # tests/features/510_api_search_matrix.feature:8 — the client environment is provisioned (fixture warm-up probe)
 # optional

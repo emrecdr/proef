@@ -43,3 +43,12 @@ a split design (live events + separate JSON record) — two sources of truth to 
 consistent. `tracing` as the event bus — wrong tool: tracing is operator telemetry, not
 a typed result stream (kept for diagnostics). Cucumber's writers verbatim — async trait
 + World coupling we don't need; the decorator *shape* is what's adopted.
+
+## Errata
+
+**2026-07-29:** the variant set has grown additively since acceptance:
+`EntryRunning` (live per-attempt engine progress) joined the six original
+variants, `RunFinished` gained a `cancelled` flag, and `StepFinished` gained a
+`detail` failure field — all serialized only when present, so pre-existing
+streams parse unchanged. The additive-only rule held; this note keeps the
+variant inventory honest.

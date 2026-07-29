@@ -33,7 +33,6 @@ proef-engine-hurl = { workspace = true, optional = true }
 clap = { workspace = true }
 miette = { workspace = true }
 uuid = { workspace = true }
-dotenvy = { workspace = true }
 ctrlc = { workspace = true }
 toml = { workspace = true }
 quick-junit = { workspace = true }

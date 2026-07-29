@@ -81,7 +81,6 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
         .collect();
 
     // Injected values — the core reads no environment, clock, or randomness.
-    dotenvy::dotenv().ok();
     let env: Arc<BTreeMap<String, String>> = Arc::new(std::env::vars().collect());
     let run_id: Arc<str> = Arc::from(
         run_id

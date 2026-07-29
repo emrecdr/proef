@@ -283,6 +283,9 @@ fn cancelled_run_is_never_success() {
         .find(|o| o.name.as_ref() == "interrupted")
         .unwrap();
     assert_eq!(interrupted.status, Status::Skipped);
-    assert_eq!(interrupted.steps.len(), 1, "first batch did run");
+    // The dispatched batch's step plus the unreached batch's Skipped record —
+    // every authored step gets an outcome.
+    assert_eq!(interrupted.steps.len(), 2);
+    assert_eq!(interrupted.steps[1].status, Status::Skipped);
     assert_eq!(summary.exit_code(), ExitCode::TestFailure);
 }

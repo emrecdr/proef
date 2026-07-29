@@ -4,7 +4,7 @@ expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — A message sent via the API appears in the client feed
 # source: tests/features/500_api_message.feature:10
-# replay: hurl --test 500-api-message--a-message-sent-via-the-api-appears-in-the-client-feed.hurl --variables-file 500-api-message--a-message-sent-via-the-api-appears-in-the-client-feed.vars
+# replay: hurl --test 500-api-message--a-message-sent-via-the-api-appears-in-the-client-feed.hurl --variables-file 500-api-message--a-message-sent-via-the-api-appears-in-the-client-feed.vars --secret apiToken=<value>
 
 # tests/features/500_api_message.feature:11 — the client environment is provisioned (fixture warm-up probe)
 # optional
