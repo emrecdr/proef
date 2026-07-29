@@ -253,6 +253,7 @@ pub fn execute(
         }
     }
 
+    let mut junit_failed = false;
     // CI reports (US-8): JUnit XML + GitHub job summary.
     let junit_path = match junit {
         Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {
@@ -264,7 +265,11 @@ pub fn execute(
     if let Some(junit_path) = junit_path {
         match crate::ci_reports::write_junit(&summary, &front.run_id, &junit_path, &redactions) {
             Ok(()) => eprintln!("junit report: {}", junit_path.display()),
-            Err(message) => eprintln!("warning: {message}"),
+            Err(message) => {
+                // A CI job gating on this file must not see exit 0.
+                eprintln!("error: {message}");
+                junit_failed = true;
+            }
         }
     }
     crate::ci_reports::write_github_summary(&summary, &front.run_id, &redactions);
@@ -281,6 +286,9 @@ pub fn execute(
         println!("{json}");
     }
 
+    if junit_failed {
+        return ExitCode::SystemError;
+    }
     summary.exit_code()
 }
 

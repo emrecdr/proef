@@ -208,7 +208,9 @@ impl GlobalStore {
 /// `<path>.tmp` next to the target, so the final rename stays on one filesystem.
 fn sibling_tmp_path(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_owned();
-    os.push(".tmp");
+    // Process-unique: concurrent proef processes (the harness) must not
+    // truncate each other's in-flight temp file.
+    os.push(format!(".{}.tmp", std::process::id()));
     PathBuf::from(os)
 }
 

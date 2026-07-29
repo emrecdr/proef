@@ -259,7 +259,8 @@ pub fn discover_features(path: &Path) -> Result<Vec<PathBuf>, FrontError> {
     if path.is_file() {
         found.push(path.to_path_buf());
     } else if path.is_dir() {
-        walk_features(path, &mut found)?;
+        let mut visited = std::collections::BTreeSet::new();
+        walk_features(path, &mut found, &mut visited)?;
     } else {
         return Err(FrontError::Core(CoreError::user(format!(
             "`{}` is neither a feature file nor a directory",
@@ -276,7 +277,18 @@ pub fn discover_features(path: &Path) -> Result<Vec<PathBuf>, FrontError> {
     Ok(found)
 }
 
-fn walk_features(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FrontError> {
+fn walk_features(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    visited: &mut std::collections::BTreeSet<PathBuf>,
+) -> Result<(), FrontError> {
+    // Symlink cycles must not multiply features (each copy would become a
+    // same-named scenario issuing real traffic).
+    if let Ok(real) = dir.canonicalize()
+        && !visited.insert(real)
+    {
+        return Ok(());
+    }
     let entries = std::fs::read_dir(dir).map_err(|err| {
         FrontError::Core(CoreError::system_with(
             format!("cannot read directory {}", dir.display()),
@@ -286,7 +298,7 @@ fn walk_features(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FrontError> {
     for entry in entries.flatten() {
         let entry_path = entry.path();
         if entry_path.is_dir() {
-            walk_features(&entry_path, out)?;
+            walk_features(&entry_path, out, visited)?;
         } else if entry_path.extension().is_some_and(|e| e == "feature") {
             out.push(entry_path);
         }
