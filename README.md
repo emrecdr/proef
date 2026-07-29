@@ -3,6 +3,7 @@
 [![CI](https://github.com/emrecdr/proef/actions/workflows/ci.yml/badge.svg)](https://github.com/emrecdr/proef/actions/workflows/ci.yml)
 [![windows](https://github.com/emrecdr/proef/actions/workflows/windows.yml/badge.svg)](https://github.com/emrecdr/proef/actions/workflows/windows.yml)
 [![nightly](https://github.com/emrecdr/proef/actions/workflows/nightly.yml/badge.svg)](https://github.com/emrecdr/proef/actions/workflows/nightly.yml)
+[![crates.io](https://img.shields.io/crates/v/proef)](https://crates.io/crates/proef)
 [![Rust](https://img.shields.io/badge/rust-1.97-B7410E?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](LICENSE-MIT)
 [![Gherkin](https://img.shields.io/badge/BDD-Gherkin-23D96C?logo=cucumber&logoColor=white)](https://cucumber.io/docs/gherkin/)
@@ -88,8 +89,8 @@ brew install emrecdr/proef/proef
 # Prebuilt binary via cargo-binstall (any Rust dev environment):
 cargo binstall proef
 
-# From source (pinned toolchain via rust-toolchain.toml):
-cargo install --git https://github.com/emrecdr/proef proef --locked
+# From source via crates.io:
+cargo install proef --locked
 ```
 
 Or grab a prebuilt archive from a [GitHub Release](https://github.com/emrecdr/proef/releases/latest)
