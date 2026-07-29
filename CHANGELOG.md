@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-29 (correctness, output contract, author docs)
+
 ### Fixed (v0.1.0 deep-review follow-up — all three blockers reproduced first)
 
 - `[Options]` injection is body-fence-aware: a `retry:`/`delay:` step whose

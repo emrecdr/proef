@@ -95,3 +95,7 @@ automated.
 ## History
 
 - `v0.1.0` — initial release (fresh history baseline, 2026-07-29)
+- `v0.2.0` — deep-review correctness blockers (duplicate-request, body
+  corruption, delay budget), panic containment, the output contract, and the
+  author guides — breaking: `--output json` stream split, empty selections
+  exit 2, event schema grew additively
