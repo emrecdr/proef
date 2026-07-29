@@ -95,6 +95,8 @@ automated.
 ## History
 
 - `v0.1.0` — initial release (fresh history baseline, 2026-07-29)
+- `v0.2.1` — review P0 (header grammar, pipe, filters, name dedup, secrets
+  perms) + failure UX (hurl expected/actual, true error-line anchoring)
 - `v0.2.0` — deep-review correctness blockers (duplicate-request, body
   corruption, delay budget), panic containment, the output contract, and the
   author guides — breaking: `--output json` stream split, empty selections

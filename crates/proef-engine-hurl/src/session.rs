@@ -349,7 +349,25 @@ impl EngineSession for HurlSession {
                         if is_assert_error(&error.kind) {
                             assert_failure = true;
                         }
-                        errors.push(redact(&error.description(), &self.secrets));
+                        // hurl computed expected/actual and the true failing
+                        // line — surface them, anchored on the error's own
+                        // source line, not the entry's first line.
+                        let content: Vec<&str> = self.artifact.text.lines().collect();
+                        let fixme = error
+                            .fixme(&content)
+                            .to_string(hurl_core::text::Format::Plain)
+                            .split_whitespace()
+                            .filter(|word| !word.chars().all(|c| c == '^'))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        let rendered = format!(
+                            "{} ({}.hurl:{}: {})",
+                            error.description(),
+                            self.artifact.slug,
+                            error.source_info.start.line,
+                            fixme
+                        );
+                        errors.push(redact(&rendered, &self.secrets));
                     }
                 }
                 // Multiple results for the *same* entry are retries: attempts

@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-29 (review P0 + failure UX)
+
+### Fixed
+
+- `[Options]` header detection follows hurl's token grammar — the injection
+  can never land inside XML/JSON/prose bodies (class closed, unit-tested).
+- `proef artifacts` survives a closed pipe (exit 0, best-effort writes).
+- `--dry-run` honors `--scenario`/`--tags` with the same zero-match exit 2.
+- Duplicate scenario names dedup feature-wide (`#N`): unique artifacts,
+  console buffers, and events — no silent overwrite.
+- `.proef-secrets.json` is created `0600`, gitignored, and documented.
+
+### Changed
+
+- Failure details surface hurl's computed expected/actual (`fixme`) anchored
+  on the error's own artifact line, not the entry's first line.
+- GETTING-STARTED uses `PROEF_BASE_URL`, points the reader at a runnable
+  target, and frames sample output honestly.
+
 ## [0.2.0] - 2026-07-29 (correctness, output contract, author docs)
 
 ### Fixed (v0.1.0 deep-review follow-up — all three blockers reproduced first)

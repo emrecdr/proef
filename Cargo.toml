@@ -14,7 +14,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
@@ -23,8 +23,8 @@ publish = false
 
 [workspace.dependencies]
 # intra-workspace (version required for publish; all crates release in lockstep)
-proef-core = { path = "crates/proef-core", version = "0.2.0" }
-proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.2.0" }
+proef-core = { path = "crates/proef-core", version = "0.2.1" }
+proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.2.1" }
 
 # The engine's `vendored-openssl` feature builds OpenSSL from source (release
 # macOS binaries: no Homebrew dependency, and cross-compiles become possible).
