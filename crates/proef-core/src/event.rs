@@ -83,6 +83,12 @@ pub enum Event {
     ScenarioFinished {
         /// Scenario name as authored.
         scenario: Arc<str>,
+        /// Feature file path — together with `scenario`, the run-wide
+        /// identity (scenario names are unique only within one file).
+        /// Defaults empty when replaying records that predate the field
+        /// (schema 1 is additive-only — ADR-0008).
+        #[serde(default = "unknown_file")]
+        file: Arc<str>,
         /// Aggregate scenario status.
         status: Status,
     },
@@ -100,6 +106,12 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         cancelled: bool,
     },
+}
+
+/// Serde default for records that predate the `file` field on
+/// [`Event::ScenarioFinished`].
+fn unknown_file() -> Arc<str> {
+    Arc::from("")
 }
 
 /// Fan-out point for [`Event`]s — reporters subscribe here (borrowed

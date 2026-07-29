@@ -40,3 +40,10 @@ fn sibling_tmp(path: &Path) -> std::path::PathBuf {
     tmp.push(format!(".{}.tmp", std::process::id()));
     std::path::PathBuf::from(tmp)
 }
+
+/// Is this directory name a proef run id (uuid)? Shared by run rotation and
+/// `explain`'s latest-run lookup so the two can never diverge on what counts
+/// as a run dir.
+pub fn is_run_id(name: &str) -> bool {
+    uuid::Uuid::try_parse(name).is_ok()
+}

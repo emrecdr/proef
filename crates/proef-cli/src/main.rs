@@ -21,7 +21,16 @@ mod watch;
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Machine output formats (`--output`). A typed enum so an unknown value is a
+/// clap usage error — exit 2 (ADR-0009) — never a silent fall-back to the
+/// human report.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    /// One JSON summary object (`test`) / one object per scenario (`flows`)
+    Json,
+}
 
 #[derive(Parser)]
 #[command(
@@ -51,14 +60,19 @@ enum Command {
         #[arg(long)]
         jobs: Option<usize>,
         /// Machine output: `json` prints a summary object to stdout
-        #[arg(long)]
-        output: Option<String>,
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
         /// `JUnit` XML: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`)
         #[arg(long)]
         junit: Option<String>,
         /// Only the scenario with exactly this name
         #[arg(long)]
         scenario: Option<String>,
+        /// Only scenarios from exactly this feature file (as printed by
+        /// `proef flows`; combine with --scenario to pin one of several
+        /// same-named scenarios across files)
+        #[arg(long)]
+        scenario_file: Option<String>,
         /// Rerun on feature/pack changes (Ctrl-C to stop)
         #[arg(long)]
         watch: bool,
@@ -69,8 +83,8 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
         /// Machine output: `json` prints one object per scenario
-        #[arg(long)]
-        output: Option<String>,
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
     },
     /// Emit canonical .hurl artifacts + sidecars for a stable hand-off
     Artifacts {
@@ -144,19 +158,21 @@ fn main() -> std::process::ExitCode {
             output,
             junit,
             scenario,
+            scenario_file,
             watch: watch_mode,
         } => {
             let run_once = |cancel| {
                 if dry_run {
-                    commands::dry_run(&path, &tags, scenario.as_deref())
+                    commands::dry_run(&path, &tags, scenario.as_deref(), scenario_file.as_deref())
                 } else {
                     exec::execute(
                         &path,
                         &tags,
                         jobs,
-                        output.as_deref() == Some("json"),
+                        output == Some(OutputFormat::Json),
                         junit.as_deref(),
                         scenario.as_deref(),
+                        scenario_file.as_deref(),
                         cancel, // None = execute installs its own Ctrl-C handler
                     )
                 }
@@ -169,7 +185,7 @@ fn main() -> std::process::ExitCode {
             }
         }
         Command::Flows { path, output } => {
-            commands::flows(&path, output.as_deref() == Some("json"))
+            commands::flows(&path, output == Some(OutputFormat::Json))
         }
         Command::Artifacts {
             path,
@@ -186,15 +202,29 @@ fn main() -> std::process::ExitCode {
             };
             match result {
                 Ok(()) => proef_core::error::ExitCode::Success,
+                Err(err) => {
+                    eprintln!("error: {}", err.message());
+                    // The variant carries the ADR-0009 classification: a typo
+                    // exits 2, an unwritable key dir or lock failure exits 3.
+                    match err {
+                        secretstore::SecretError::User(_) => proef_core::error::ExitCode::UserError,
+                        secretstore::SecretError::System(_) => {
+                            proef_core::error::ExitCode::SystemError
+                        }
+                    }
+                }
+            }
+        }
+        Command::Explain { run_id } => {
+            // Same loud failure as `test` (exec.rs): a malformed proef.toml
+            // silently defaulting `runs-dir` would misdiagnose "no runs".
+            match config::ProjectConfig::load() {
+                Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
                 Err(message) => {
                     eprintln!("error: {message}");
                     proef_core::error::ExitCode::UserError
                 }
             }
-        }
-        Command::Explain { run_id } => {
-            let config = config::ProjectConfig::load().unwrap_or_default();
-            explain::explain(config.runs_dir(), run_id.as_deref())
         }
         Command::Fmt { path, check } => fmt::fmt(&path, check),
     };

@@ -29,8 +29,9 @@ const RUN_RETENTION: usize = 200;
 
 /// Run the suite. Exit codes: 0 ok · 1 test failure · 2 user error · 3 system
 /// error (ADR-0009, worst-wins across scenarios).
-// One cohesive listing of the run lifecycle; splitting hides the order.
-#[allow(clippy::too_many_lines)]
+// One cohesive listing of the run lifecycle; splitting hides the order. The
+// flat parameter list mirrors the CLI flag surface one-to-one.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub fn execute(
     path: &Path,
     tags: &[String],
@@ -38,6 +39,7 @@ pub fn execute(
     output_json: bool,
     junit: Option<&str>,
     scenario_filter: Option<&str>,
+    scenario_file_filter: Option<&str>,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
     let config = match ProjectConfig::load() {
@@ -89,7 +91,14 @@ pub fn execute(
             return ExitCode::SystemError;
         }
     };
-    let log_file = std::fs::File::create(run_dir.join("run.log")).ok();
+    let log_file = match std::fs::File::create(run_dir.join("run.log")) {
+        Ok(file) => Some(file),
+        Err(err) => {
+            // Best-effort mirror — the run proceeds, but never silently.
+            eprintln!("warning: cannot create run.log (console mirror disabled): {err}");
+            None
+        }
+    };
     let redactions = Redactions::new(secrets.values().cloned());
     // Machine output owns stdout exclusively (`--output json` must be
     // pipeable into jq); the human report moves to stderr in that mode.
@@ -135,7 +144,13 @@ pub fn execute(
         }
     };
 
-    let specs = build_specs(&front, tags, scenario_filter, &artifacts_dir);
+    let specs = build_specs(
+        &front,
+        tags,
+        scenario_filter,
+        scenario_file_filter,
+        &artifacts_dir,
+    );
     let selected = specs.len();
     if selected == 0 {
         // A typo'd --tags/--scenario passing CI with zero tests run is the
@@ -271,10 +286,19 @@ fn build_specs(
     front: &FrontEnd,
     tags: &[String],
     scenario_filter: Option<&str>,
+    scenario_file_filter: Option<&str>,
     artifacts_dir: &Path,
 ) -> Vec<ScenarioSpec> {
     let mut specs = Vec::new();
     for feature in &front.features {
+        // `--scenario-file`: exact-path match (as printed by `proef flows`) —
+        // scopes a name filter to one file so duplicate scenario names across
+        // features stay one-Trial-one-scenario (US-12).
+        if let Some(file) = scenario_file_filter
+            && feature.file.path != file
+        {
+            continue;
+        }
         let file_arc: Arc<str> = Arc::from(feature.file.path.as_str());
         let feature_arc = Arc::new(feature.file.clone());
         let stem: Arc<str> = Arc::from(
@@ -315,22 +339,21 @@ fn build_specs(
                 };
                 let lowered = lower::lower(&bound, &ctx)?;
                 let artifact = emit::emit(&lowered, &stem, world).map(|artifact| {
-                    // The run dir holds the exact executed bytes.
-                    let _ = std::fs::write(
-                        artifacts_dir.join(format!("{}.hurl", artifact.slug)),
+                    // The run dir holds the exact executed bytes. Record
+                    // writes are best-effort (the run proceeds) but never
+                    // silent — the record is the debugging surface.
+                    write_or_warn(
+                        &artifacts_dir.join(format!("{}.hurl", artifact.slug)),
                         &artifact.hurl_text,
                     );
                     if let Ok(map_json) = serde_json::to_string_pretty(&artifact.map) {
-                        let _ = std::fs::write(
-                            artifacts_dir.join(format!("{}.map.json", artifact.slug)),
+                        write_or_warn(
+                            &artifacts_dir.join(format!("{}.map.json", artifact.slug)),
                             format!("{map_json}\n"),
                         );
                     }
                     if let Some(vars) = &artifact.vars {
-                        let _ = std::fs::write(
-                            artifacts_dir.join(format!("{}.vars", artifact.slug)),
-                            vars,
-                        );
+                        write_or_warn(&artifacts_dir.join(format!("{}.vars", artifact.slug)), vars);
                     }
                     // Referenced `file,…;` assets ride along so the run-dir
                     // artifact replays under stock hurl (ADR-0010 hand-off).
@@ -371,6 +394,14 @@ fn build_specs(
 /// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
 /// time). Only directories *named by a run id* are candidates — `runs-dir`
 /// may be `.` or otherwise shared with user content, and rotation must never
+/// Best-effort run-record write: the run proceeds on failure, but never
+/// silently (matches the asset-copy warning path in the same closure).
+fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
+    if let Err(err) = std::fs::write(path, contents) {
+        eprintln!("warning: cannot write {}: {err}", path.display());
+    }
+}
+
 /// touch anything proef did not create — and the in-flight run never is.
 fn rotate_runs(runs_dir: &Path, current_run: &str) {
     let Ok(entries) = std::fs::read_dir(runs_dir) else {
@@ -383,7 +414,7 @@ fn rotate_runs(runs_dir: &Path, current_run: &str) {
         .filter(|p| {
             p.file_name()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| name != current_run && uuid::Uuid::try_parse(name).is_ok())
+                .is_some_and(|name| name != current_run && crate::fsutil::is_run_id(name))
         })
         .collect();
     dirs.sort();

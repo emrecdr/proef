@@ -9,7 +9,7 @@
 //! and is never used in byte math; parse-error positions are converted by
 //! walking the line's `char_indices`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use gherkin::GherkinEnv;
@@ -27,8 +27,10 @@ pub struct FeatureFile {
     /// Normalized source text (trailing newline guaranteed).
     pub source: Arc<str>,
     /// `# key: value` directives found before `Feature:` (values unresolved —
-    /// `${…}` in them resolves at lowering, before any step uses them).
-    pub directives: BTreeMap<String, String>,
+    /// `${…}` in them resolves at lowering, before any step uses them), in
+    /// authored order: cross-references resolve top-down, so a directive sees
+    /// exactly the ones written above it.
+    pub directives: Vec<(String, String)>,
     /// Feature-level tags (without `@`).
     pub tags: Vec<String>,
     /// All concrete scenarios, in authored order.
@@ -148,9 +150,11 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
     })
 }
 
-/// `# key: value` comment lines before the `Feature:` (or first tag) line.
-fn collect_directives(source: &str) -> BTreeMap<String, String> {
-    let mut directives = BTreeMap::new();
+/// `# key: value` comment lines before the `Feature:` (or first tag) line,
+/// in authored order — order is meaning (top-down cross-reference
+/// visibility), not presentation.
+fn collect_directives(source: &str) -> Vec<(String, String)> {
+    let mut directives: Vec<(String, String)> = Vec::new();
     for line in source.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('@') || trimmed.starts_with("Feature:") {
@@ -161,7 +165,14 @@ fn collect_directives(source: &str) -> BTreeMap<String, String> {
         {
             let key = key.trim();
             if !key.is_empty() && !key.contains(char::is_whitespace) {
-                directives.insert(key.to_owned(), value.trim().to_owned());
+                // A re-authored key overwrites in place (last wins, as the
+                // map used to behave) without duplicating the entry.
+                let value = value.trim().to_owned();
+                if let Some(entry) = directives.iter_mut().find(|(k, _)| k == key) {
+                    entry.1 = value;
+                } else {
+                    directives.push((key.to_owned(), value));
+                }
             }
         }
     }
@@ -315,12 +326,23 @@ fn dedup_names(scenarios: &mut [ScenarioDef]) {
     for scenario_def in scenarios.iter() {
         *seen.entry(scenario_def.name.clone()).or_default() += 1;
     }
+    // Every name in play — authored and assigned — so a rename can never
+    // recreate the collision this function exists to prevent (an authored
+    // `Name #1` next to a renamed duplicate of `Name`).
+    let mut taken: BTreeSet<String> = scenarios.iter().map(|s| s.name.clone()).collect();
     let mut counters: BTreeMap<String, usize> = BTreeMap::new();
     for scenario_def in scenarios.iter_mut() {
         if seen.get(&scenario_def.name).copied().unwrap_or(0) > 1 {
             let n = counters.entry(scenario_def.name.clone()).or_default();
-            *n += 1;
-            scenario_def.name = format!("{} #{n}", scenario_def.name);
+            let renamed = loop {
+                *n += 1;
+                let candidate = format!("{} #{n}", scenario_def.name);
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+            };
+            taken.insert(renamed.clone());
+            scenario_def.name = renamed;
         }
     }
 }
@@ -478,8 +500,14 @@ mod tests {
     #[test]
     fn directives_tags_background_and_outline_expand() {
         let feature = parse("search.feature", FEATURE).unwrap();
-        assert_eq!(feature.directives["baseURL"], "http://fixture.local");
-        assert_eq!(feature.directives["app"], "backend");
+        assert_eq!(
+            feature.directives,
+            vec![
+                ("baseURL".to_owned(), "http://fixture.local".to_owned()),
+                ("app".to_owned(), "backend".to_owned()),
+            ],
+            "authored order preserved — cross-references resolve top-down"
+        );
         assert_eq!(feature.tags, vec!["e2e", "api"]);
         assert_eq!(feature.scenarios.len(), 3);
 

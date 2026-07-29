@@ -31,7 +31,9 @@ warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
 *names* only — never values) · `detail` (string, **only present** on
 failures/warnings/skips-with-reason).
 
-**`scenario_finished`** — `scenario` · `status`.
+**`scenario_finished`** — `scenario` · `file` (feature path — with `scenario`,
+the run-wide identity: names are unique only within one file; absent in
+records that predate the field) · `status`.
 
 **`run_finished`** — tail. `passed` · `failed` · `skipped` (scenario counts)
 · `cancelled` (bool, **only present when true**).
@@ -45,7 +47,7 @@ failures/warnings/skips-with-reason).
 {"event":"entry_running","scenario":"reference","engine":"hurl","entry":0,"retry":0}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":12,"captures":[]}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":5,"text":"the response status is 200"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
-{"event":"scenario_finished","scenario":"reference","status":"passed"}
+{"event":"scenario_finished","scenario":"reference","file":"suite/case.feature","status":"passed"}
 {"event":"run_finished","passed":1,"failed":0,"skipped":0}
 ```
 
@@ -54,8 +56,9 @@ failures/warnings/skips-with-reason).
 - **Secrets never appear.** Redaction applies once at the sink boundary
   before any reporter (property-tested); `captures` carries names only.
 - **Order:** events of one scenario are internally ordered; scenarios
-  running in parallel interleave. Group by `scenario` before assuming
-  sequence across the stream.
+  running in parallel interleave. Group by `(scenario, file)` before assuming
+  sequence across the stream — `scenario` alone collides when two feature
+  files reuse a name.
 - **Flake-safe assertions:** assert on `attempts` counts and normalized
   event order, never wall-clock (`duration_ms` is engine-measured and
   varies).

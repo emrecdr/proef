@@ -97,8 +97,13 @@ impl Redactions {
                 captures: captures.iter().map(|name| self.apply(name)).collect(),
                 detail: detail.as_deref().map(|text| self.apply(text)),
             },
-            Event::ScenarioFinished { scenario, status } => Event::ScenarioFinished {
+            Event::ScenarioFinished {
+                scenario,
+                file,
+                status,
+            } => Event::ScenarioFinished {
                 scenario: s(scenario),
+                file: s(file),
                 status: *status,
             },
             Event::RunFinished { .. } => event.clone(),
@@ -119,26 +124,37 @@ pub trait Reporter: Send {
 pub fn sink(reporters: Vec<Box<dyn Reporter>>, redactions: Redactions) -> EventSink {
     let stack = Arc::new(Mutex::new(reporters));
     EventSink::new(move |event| {
-        if let Ok(mut stack) = stack.lock() {
-            if redactions.is_empty() {
-                for reporter in stack.iter_mut() {
-                    reporter.on_event(event);
-                }
-            } else {
-                let redacted = redactions.apply_event(event);
-                for reporter in stack.iter_mut() {
-                    reporter.on_event(&redacted);
-                }
+        // Poison recovery: fan-out holds no cross-event invariant, and
+        // dropping events after one reporter panic would truncate the run
+        // record and lose its terminal event (ADR-0008 — the JSONL stream IS
+        // the record).
+        let mut stack = stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if redactions.is_empty() {
+            for reporter in stack.iter_mut() {
+                reporter.on_event(event);
+            }
+        } else {
+            let redacted = redactions.apply_event(event);
+            for reporter in stack.iter_mut() {
+                reporter.on_event(&redacted);
             }
         }
     })
 }
 
-/// Console BDD tree, buffered per scenario.
+/// Buffer key: `(feature file, scenario name)` — the run-wide scenario
+/// identity (names are unique only within one file).
+type ScenarioKey = (Arc<str>, Arc<str>);
+
+/// Console BDD tree, buffered per scenario — keyed by `(file, scenario)`
+/// (the run-wide identity), since two same-named scenarios under `--jobs > 1`
+/// must never share a buffer.
 pub struct ConsoleReporter<W: Write + Send> {
     out: W,
     redactions: Redactions,
-    buffers: Vec<(Arc<str>, Vec<String>)>,
+    buffers: Vec<(ScenarioKey, Vec<String>)>,
 }
 
 impl<W: Write + Send> ConsoleReporter<W> {
@@ -151,11 +167,16 @@ impl<W: Write + Send> ConsoleReporter<W> {
         }
     }
 
-    fn buffer_for(&mut self, scenario: &Arc<str>) -> &mut Vec<String> {
-        if let Some(position) = self.buffers.iter().position(|(name, _)| name == scenario) {
+    fn buffer_for(&mut self, file: &Arc<str>, scenario: &Arc<str>) -> &mut Vec<String> {
+        if let Some(position) = self
+            .buffers
+            .iter()
+            .position(|((f, name), _)| f == file && name == scenario)
+        {
             &mut self.buffers[position].1
         } else {
-            self.buffers.push((Arc::clone(scenario), Vec::new()));
+            self.buffers
+                .push(((Arc::clone(file), Arc::clone(scenario)), Vec::new()));
             &mut self
                 .buffers
                 .last_mut()
@@ -182,7 +203,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
             }
             Event::ScenarioStarted { scenario, file } => {
                 let header = format!("\n  Scenario: {scenario} ({file})");
-                self.buffer_for(scenario).push(header);
+                self.buffer_for(file, scenario).push(header);
             }
             // Buffered console renders on completion; the live progress
             // signal is for streaming consumers (JSONL record, future TTY).
@@ -215,17 +236,21 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                     .then_some(detail.as_deref())
                     .flatten()
                     .map(|d| self.redactions.apply(&format!("      ↳ {d}")));
-                let buffer = self.buffer_for(scenario);
+                let buffer = self.buffer_for(&step.file, scenario);
                 buffer.push(line);
                 if let Some(warn_detail) = warn_detail {
                     buffer.push(warn_detail);
                 }
             }
-            Event::ScenarioFinished { scenario, status } => {
+            Event::ScenarioFinished {
+                scenario,
+                file,
+                status,
+            } => {
                 let lines = self
                     .buffers
                     .iter()
-                    .position(|(name, _)| name == scenario)
+                    .position(|((f, name), _)| f == file && name == scenario)
                     .map(|position| self.buffers.remove(position).1)
                     .unwrap_or_default();
                 for line in lines {
@@ -347,6 +372,7 @@ mod tests {
             },
             Event::ScenarioFinished {
                 scenario: Arc::from("S"),
+                file: Arc::from("f.feature"),
                 status: Status::Passed,
             },
             Event::RunFinished {
@@ -517,6 +543,7 @@ mod tests {
                     });
                     console.on_event(&Event::ScenarioFinished {
                         scenario: Arc::from("S"),
+                        file: Arc::from("f"),
                         status: Status::Failed,
                     });
                 }

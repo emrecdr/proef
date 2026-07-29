@@ -64,7 +64,12 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
-pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode {
+pub fn dry_run(
+    path: &Path,
+    tags: &[String],
+    scenario: Option<&str>,
+    scenario_file: Option<&str>,
+) -> ExitCode {
     let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
@@ -92,6 +97,7 @@ pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode
         let selected = feature
             .scenarios
             .iter()
+            .filter(|_| scenario_file.is_none_or(|file| feature.file.path == file))
             .filter(|s| front::tag_selected(&s.lowered.tags, tags))
             .filter(|s| scenario.is_none_or(|name| s.lowered.name == name))
             .count();
@@ -110,10 +116,10 @@ pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode
     }
 
     render::print_all(&front.warnings);
-    if (!tags.is_empty() || scenario.is_some()) && totals.1 == 0 {
+    if (!tags.is_empty() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
         return front::no_scenarios_matched();
     }
-    let selected_note = if tags.is_empty() && scenario.is_none() {
+    let selected_note = if tags.is_empty() && scenario.is_none() && scenario_file.is_none() {
         String::new()
     } else {
         format!(" ({} selected by the filters)", totals.1)
@@ -258,7 +264,16 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
         .flat_map(|e| e.step_kinds().iter().copied())
         .collect();
     let schema = proef_core::pack::json_schema(&kinds);
-    let rendered = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "true".to_owned());
+    let rendered = match serde_json::to_string_pretty(&schema) {
+        Ok(rendered) => rendered,
+        Err(err) => {
+            // The old `"true"` fallback was the accept-everything schema —
+            // `--add-to` would have installed it and silently disabled
+            // editor validation. Fail like every other serialization error.
+            eprintln!("error: cannot serialize the pack schema: {err}");
+            return ExitCode::SystemError;
+        }
+    };
 
     if add_to.is_empty() {
         crate::render::outln!("{rendered}");

@@ -21,17 +21,20 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
     }
     let mut dirty = false;
     for pack in packs {
-        let Ok(text) = std::fs::read_to_string(&pack) else {
-            eprintln!("error: cannot read {}", pack.display());
-            return ExitCode::SystemError;
+        let text = match std::fs::read_to_string(&pack) {
+            Ok(text) => text,
+            Err(err) => {
+                eprintln!("error: cannot read {}: {err}", pack.display());
+                return ExitCode::SystemError;
+            }
         };
         let formatted = normalize_pack(&text);
         if formatted != text {
             dirty = true;
             if check {
                 crate::render::outln!("  needs formatting: {}", pack.display());
-            } else if crate::fsutil::write_atomic(&pack, &formatted).is_err() {
-                eprintln!("error: cannot write {}", pack.display());
+            } else if let Err(err) = crate::fsutil::write_atomic(&pack, &formatted) {
+                eprintln!("error: cannot write {}: {err}", pack.display());
                 return ExitCode::SystemError;
             } else {
                 crate::render::outln!("  formatted: {}", pack.display());

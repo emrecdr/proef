@@ -169,6 +169,11 @@ impl EngineError {
 }
 
 impl From<EngineError> for CoreError {
+    /// Fold the engine fault into the core taxonomy (ADR-0009). The cause
+    /// chain rides along only for system faults — deliberate flattening:
+    /// assert/user failures carry complete user-facing messages, and their
+    /// `source` (when any exists) is engine internals that would only repeat
+    /// the message.
     fn from(err: EngineError) -> Self {
         match err.class {
             EngineErrorClass::AssertFailed => Self::TestFailure(err.message),

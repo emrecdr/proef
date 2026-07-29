@@ -488,8 +488,16 @@ fn lint_raw_options(
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
+    let mut in_fence = false;
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue; // fenced body data — a literal `retry: -1` is payload, not an option
+        }
         let mut reject = |code: &'static str, message: String| {
             diags.push(
                 at(Diag::error(
@@ -569,69 +577,167 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
 }
 
 /// Pass 4: `use:` reference cycles and depth over the whole macro graph.
+/// Three-color DFS with memoized chain depths — node-linear where a per-root
+/// path enumeration goes exponential on shared (multi-edge) `use:` targets.
 fn use_graph_passes(set: &PackSet, diags: &mut Vec<Diag>) {
+    let mut colors: BTreeMap<&str, Color> = BTreeMap::new();
+    let mut chains: BTreeMap<&str, usize> = BTreeMap::new();
     for macro_ in set.macros.values() {
-        let mut stack = vec![macro_.name.as_str()];
-        walk_uses(set, macro_, &mut stack, diags);
+        visit_uses(set, macro_, &mut colors, &mut chains, diags);
     }
-}
-
-fn walk_uses<'a>(
-    set: &'a PackSet,
-    macro_: &'a Macro,
-    stack: &mut Vec<&'a str>,
-    diags: &mut Vec<Diag>,
-) {
-    if stack.len() > MAX_USE_DEPTH {
+    for macro_ in set.macros.values() {
+        if chains.get(macro_.name.as_str()).copied().unwrap_or(1) <= MAX_USE_DEPTH {
+            continue;
+        }
+        let path = longest_use_path(set, macro_, &chains);
+        // The first macro past the limit carries the diagnostic — the same
+        // attribution the depth-33 stack frame had under the walking scheme.
+        let Some(deep) = path.get(MAX_USE_DEPTH).copied() else {
+            continue; // depth reached only through a cycle — already reported
+        };
         diags.push(
             Diag::error(
                 "proef::pack::use_too_deep",
                 format!(
                     "`use:` nesting exceeds depth {MAX_USE_DEPTH} (via `{}`)",
-                    stack.join("` → `")
+                    path[..=MAX_USE_DEPTH]
+                        .iter()
+                        .map(|m| m.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("` → `")
                 ),
             )
-            .with_source(macro_.pack.clone(), Arc::clone(&macro_.source))
-            .maybe_span(macro_.span),
+            .with_source(deep.pack.clone(), Arc::clone(&deep.source))
+            .maybe_span(deep.span),
         );
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Color {
+    Gray,
+    Black,
+}
+
+enum Frame<'a> {
+    Enter(&'a Macro),
+    Exit(&'a Macro),
+}
+
+/// Resolvable `use:` targets of a macro, in step order.
+fn use_targets<'a>(set: &'a PackSet, macro_: &'a Macro) -> Vec<&'a Macro> {
+    let MacroBody::Steps(steps) = &macro_.body else {
+        return Vec::new();
+    };
+    steps
+        .iter()
+        .filter_map(|step| {
+            let MacroStepKind::Use { target, .. } = &step.kind else {
+                return None;
+            };
+            set.find_use_target(target) // unresolved: reported by use_target_passes
+        })
+        .collect()
+}
+
+/// Iterative DFS from one root (explicit frames — the walk must stay
+/// stack-safe on arbitrarily long chains): gray while on the path, black once
+/// the longest downstream chain is memoized in `chains`. A `use:` edge to a
+/// gray macro closes a cycle.
+fn visit_uses<'a>(
+    set: &'a PackSet,
+    root: &'a Macro,
+    colors: &mut BTreeMap<&'a str, Color>,
+    chains: &mut BTreeMap<&'a str, usize>,
+    diags: &mut Vec<Diag>,
+) {
+    if colors.contains_key(root.name.as_str()) {
         return;
     }
-    let MacroBody::Steps(steps) = &macro_.body else {
+    let mut work = vec![Frame::Enter(root)];
+    let mut path: Vec<&'a Macro> = Vec::new();
+    while let Some(frame) = work.pop() {
+        match frame {
+            Frame::Enter(m) => {
+                if colors.contains_key(m.name.as_str()) {
+                    continue; // finished via an earlier multi-edge
+                }
+                colors.insert(m.name.as_str(), Color::Gray);
+                path.push(m);
+                work.push(Frame::Exit(m));
+                for next in use_targets(set, m).into_iter().rev() {
+                    match colors.get(next.name.as_str()).copied() {
+                        Some(Color::Gray) => report_use_cycle(&path, next, diags),
+                        Some(Color::Black) => {} // chain read at Exit
+                        None => work.push(Frame::Enter(next)),
+                    }
+                }
+            }
+            Frame::Exit(m) => {
+                path.pop();
+                let chain = 1 + use_targets(set, m)
+                    .into_iter()
+                    .filter_map(|next| chains.get(next.name.as_str()).copied())
+                    .max()
+                    .unwrap_or(0);
+                colors.insert(m.name.as_str(), Color::Black);
+                chains.insert(m.name.as_str(), chain);
+            }
+        }
+    }
+}
+
+/// Render one cycle: rotate the gray-path ring to start at its
+/// lexicographically-first member; the member whose `use:` closes back to it
+/// carries the diagnostic.
+fn report_use_cycle(path: &[&Macro], next: &Macro, diags: &mut Vec<Diag>) {
+    let pos = path.iter().position(|m| m.name == next.name).unwrap_or(0);
+    let ring = &path[pos..];
+    let min_ix = ring
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, m)| m.name.as_str())
+        .map_or(0, |(i, _)| i);
+    let rotated: Vec<&Macro> = ring[min_ix..]
+        .iter()
+        .chain(&ring[..min_ix])
+        .copied()
+        .collect();
+    let Some(closer) = rotated.last().copied() else {
         return;
     };
-    for step in steps {
-        let MacroStepKind::Use { target, .. } = &step.kind else {
-            continue;
-        };
-        let Some(next) = set.find_use_target(target) else {
-            continue; // reported by use_target_passes
-        };
-        if stack.contains(&next.name.as_str()) {
-            // Report the cycle once, from its lexicographically-first entry —
-            // every member sees it, one diagnostic describes it.
-            if stack[0]
-                == stack
-                    .iter()
-                    .chain([&next.name.as_str()])
-                    .min()
-                    .copied()
-                    .unwrap_or_default()
-            {
-                diags.push(
-                    Diag::error(
-                        "proef::pack::use_cycle",
-                        format!("`use:` cycle: `{}` → `{}`", stack.join("` → `"), next.name),
-                    )
-                    .with_source(macro_.pack.clone(), Arc::clone(&macro_.source))
-                    .maybe_span(macro_.span),
-                );
-            }
-            continue;
+    let names: Vec<&str> = rotated.iter().map(|m| m.name.as_str()).collect();
+    diags.push(
+        Diag::error(
+            "proef::pack::use_cycle",
+            format!("`use:` cycle: `{}` → `{}`", names.join("` → `"), names[0]),
+        )
+        .with_source(closer.pack.clone(), Arc::clone(&closer.source))
+        .maybe_span(closer.span),
+    );
+}
+
+/// Follow max-chain children from `from` — in a cycle-free graph this is a
+/// longest `use:` chain, matching the memoized depth that triggered the
+/// diagnostic.
+fn longest_use_path<'a>(
+    set: &'a PackSet,
+    from: &'a Macro,
+    chains: &BTreeMap<&'a str, usize>,
+) -> Vec<&'a Macro> {
+    let mut path = vec![from];
+    while path.len() <= MAX_USE_DEPTH {
+        let cur = path[path.len() - 1];
+        let next = use_targets(set, cur)
+            .into_iter()
+            .filter(|cand| !path.iter().any(|m| m.name == cand.name))
+            .max_by_key(|cand| chains.get(cand.name.as_str()).copied().unwrap_or(1));
+        match next {
+            Some(next) => path.push(next),
+            None => break,
         }
-        stack.push(&next.name);
-        walk_uses(set, next, stack, diags);
-        stack.pop();
     }
+    path
 }
 
 #[cfg(test)]
@@ -648,12 +754,12 @@ mod tests {
         Err(PayloadProbeError {
             line: 1,
             column: 1,
-            message: "unknown web verb".into(),
+            message: "unknown alt verb".into(),
         })
     }
 
     const KINDS: &[StepKindSpec] = &[StepKindSpec {
-        prefix: "web",
+        prefix: "alt",
         schema: "true",
         validate: Some(deny),
     }];
@@ -663,9 +769,9 @@ mod tests {
     #[test]
     fn structured_payloads_run_the_engine_validator() {
         let source = PackSource {
-            name: "web.yaml".into(),
+            name: "alt.yaml".into(),
             text: Arc::from(
-                "templates:\n  open:\n    match: the page is opened\n    steps:\n      - web:\n          bogus: 1\n",
+                "templates:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
             ),
         };
         let err = pack::load(&[source], KINDS).unwrap_err();
@@ -676,8 +782,44 @@ mod tests {
             diags
                 .iter()
                 .any(|d| d.code == "proef::pack::payload_invalid"
-                    && d.message.contains("unknown web verb")),
+                    && d.message.contains("unknown alt verb")),
             "{diags:?}"
         );
+    }
+
+    /// A doubled-edge `use:` chain that path enumeration would walk ~2^30
+    /// times loads instantly under the node-linear graph passes, and a chain
+    /// of exactly [`MAX_USE_DEPTH`] macros raises no diagnostics.
+    #[test]
+    fn use_graph_walk_is_linear_on_multi_edge_dags() {
+        const PLAIN: &[StepKindSpec] = &[StepKindSpec {
+            prefix: "alt",
+            schema: "true",
+            validate: None,
+        }];
+        use std::fmt::Write as _;
+        let mut yaml = String::from("templates:\n");
+        for i in 0..31 {
+            writeln!(yaml, "  m{i:02}:").unwrap();
+            if i == 0 {
+                yaml.push_str("    match: the chain runs\n");
+            }
+            writeln!(
+                yaml,
+                "    steps:\n      - use: m{next:02}\n      - use: m{next:02}",
+                next = i + 1
+            )
+            .unwrap();
+        }
+        yaml.push_str("  m31:\n    steps:\n      - alt:\n          probe: 1\n");
+        let packs = pack::load(
+            &[PackSource {
+                name: "chain.yaml".into(),
+                text: Arc::from(yaml.as_str()),
+            }],
+            PLAIN,
+        )
+        .unwrap();
+        assert_eq!(packs.macros.len(), 32);
     }
 }

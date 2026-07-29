@@ -265,12 +265,22 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             in_captures = false;
             continue;
         }
-        if in_captures
-            && let Some((name, _)) = trimmed.split_once(':')
-            && !name.trim().is_empty()
-            && !name.trim().contains(char::is_whitespace)
-        {
-            names.push(name.trim().to_owned());
+        // So does a body opener: nothing after it in this entry is a capture.
+        if trimmed.starts_with('{') || trimmed.starts_with('<') || trimmed.starts_with("```") {
+            in_captures = false;
+            continue;
+        }
+        if in_captures && let Some((name, _)) = trimmed.split_once(':') {
+            let name = name.trim();
+            // Bare identifiers only — a JSON body line (`"status": "ok"`)
+            // must never read as the capture `"status"`.
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                names.push(name.to_owned());
+            }
         }
     }
     names
@@ -316,7 +326,18 @@ fn vars_content(scenario: &LoweredScenario, slug: &str, world: &World) -> String
     for name in &scenario.globals {
         match world.get(name) {
             Some(value) => {
-                let _ = writeln!(out, "{name}={value}");
+                let rendered = value.to_string();
+                if rendered.contains(['\n', '\r']) {
+                    // A raw newline would corrupt the `name=value` line format
+                    // `hurl --variables-file` parses — degrade like an unset
+                    // global, with the reason on record.
+                    let _ = writeln!(
+                        out,
+                        "# global `{name}` is not line-representable (value contains a newline)\n{name}="
+                    );
+                } else {
+                    let _ = writeln!(out, "{name}={rendered}");
+                }
             }
             None => {
                 let _ = writeln!(out, "# global `{name}` was unset at emit time\n{name}=");

@@ -100,6 +100,10 @@ fn canary(args: &[String]) -> ExitCode {
         eprintln!(
             "Runbook: docs/IMPLEMENTATION-PLAN.md §7 (fix adapter, or patch via docs/runbooks/thin-fork.md)"
         );
+        eprintln!(
+            "workspace copy left for inspection at {} (delete when done)",
+            scratch.display()
+        );
         return ExitCode::FAILURE;
     }
     let mut tests = Command::new("cargo");
@@ -110,6 +114,10 @@ fn canary(args: &[String]) -> ExitCode {
     if !run_ok(&mut tests) {
         eprintln!("canary RED: hurl {target} builds but the suite fails — behavior drift.");
         eprintln!("Runbook: docs/IMPLEMENTATION-PLAN.md §7");
+        eprintln!(
+            "workspace copy left for inspection at {} (delete when done)",
+            scratch.display()
+        );
         return ExitCode::FAILURE;
     }
     let _ = std::fs::remove_dir_all(&scratch);
@@ -159,7 +167,7 @@ fn run_ok(cmd: &mut Command) -> bool {
     cmd.status().is_ok_and(|status| status.success())
 }
 
-/// Run the fixture API server on a fixed local port until interrupted.
+/// Run the fixture API server on an ephemeral local port until interrupted.
 fn fixture() -> ExitCode {
     // The library binds an ephemeral port; for the dev loop we document the
     // printed URL rather than forcing 8787 (which may be taken).

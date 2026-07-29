@@ -18,7 +18,7 @@ use proef_core::engine::{
 use proef_core::error::EngineError;
 
 /// The exact embedded hurl release (kept in lockstep with the Cargo pin —
-/// asserted by the seam smoke test).
+/// asserted by `embedded_version_matches_the_cargo_pin`).
 pub const EMBEDDED_HURL_VERSION: &str = "8.0.1";
 
 /// A parseable single-entry probe file used by doctor checks and smoke tests.
@@ -150,6 +150,24 @@ mod tests {
         assert_eq!(factory.id(), "hurl");
         assert_eq!(factory.step_kinds().len(), 1);
         assert_eq!(factory.step_kinds()[0].prefix, "hurl");
+    }
+
+    /// The doc on [`EMBEDDED_HURL_VERSION`] promises lockstep with the Cargo
+    /// pin — this is that assertion: a runbook pin bump that forgets the
+    /// const (or vice versa) fails here, not at doctor time mid-upgrade.
+    #[test]
+    fn embedded_version_matches_the_cargo_pin() {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml"),
+        )
+        .unwrap();
+        for dep in ["hurl", "hurl_core"] {
+            let needle = format!("{dep} = \"={EMBEDDED_HURL_VERSION}\"");
+            assert!(
+                manifest.contains(&needle),
+                "workspace Cargo.toml must contain `{needle}` (ADR-0003 lockstep)"
+            );
+        }
     }
 
     #[test]

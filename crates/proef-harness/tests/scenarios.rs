@@ -1,7 +1,9 @@
 //! One libtest-mimic `Trial` per proef scenario (US-12). See the crate docs
 //! for configuration. Listing uses `proef flows --output json`; execution
-//! uses `proef test --scenario <name>` — the nextest contract
-//! (`--list --format terse`, `--exact --nocapture`) comes from libtest-mimic.
+//! uses `proef test --scenario <name> --scenario-file <file>` — file-scoped so
+//! duplicate scenario names across features keep the Trial↔scenario bijection
+//! — and the nextest contract (`--list --format terse`, `--exact
+//! --nocapture`) comes from libtest-mimic.
 
 use std::process::Command;
 
@@ -53,17 +55,38 @@ fn discover() -> Vec<Trial> {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
         let trial_name = format!("{stem}::{name}");
-        let (suite, scenario) = (suite.clone(), name.to_owned());
+        let (suite, file, scenario) = (suite.clone(), file.to_owned(), name.to_owned());
         trials.push(Trial::test(trial_name, move || {
-            run_scenario(&suite, &scenario)
+            run_scenario(&suite, &file, &scenario)
         }));
+    }
+    if trials.is_empty() && !stdout.trim().is_empty() {
+        // Flows succeeded and printed rows, yet none parsed into a trial —
+        // contract drift between `proef flows --output json` and this harness
+        // must fail CI loudly, never run zero tests green.
+        return vec![Trial::test("proef::flows-contract", move || {
+            Err(Failed::from(
+                "flows printed output but no line parsed into a trial (file/name fields \
+                 missing?) — the flows JSON contract and this harness disagree",
+            ))
+        })];
     }
     trials
 }
 
-fn run_scenario(suite: &str, scenario: &str) -> Result<(), Failed> {
+fn run_scenario(suite: &str, file: &str, scenario: &str) -> Result<(), Failed> {
+    // The suite stays the `test` path (pack discovery is suite-rooted);
+    // `--scenario-file` pins the name filter to this trial's feature file so
+    // same-named scenarios in other files never ride along.
     let output = Command::new(proef_bin())
-        .args(["test", suite, "--scenario", scenario])
+        .args([
+            "test",
+            suite,
+            "--scenario",
+            scenario,
+            "--scenario-file",
+            file,
+        ])
         .output()
         .map_err(|err| Failed::from(format!("cannot invoke proef: {err}")))?;
     if output.status.success() {

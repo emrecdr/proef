@@ -13,7 +13,7 @@
 //! rejected (the single-pass matcher cannot split them), braces must be
 //! balanced, and every capture must name a declared param.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// One token of a `match:` pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +122,12 @@ pub enum PatternProblem {
         /// Closest declared param, when one is near.
         suggestion: Option<String>,
     },
+    /// The same capture written twice — a later match would silently
+    /// overwrite the earlier binding.
+    DuplicateCapture {
+        /// The repeated capture name.
+        name: String,
+    },
 }
 
 impl PatternProblem {
@@ -133,6 +139,7 @@ impl PatternProblem {
             Self::UnsupportedBraces { .. } => "proef::pack::pattern_braces",
             Self::EmptyCapture => "proef::pack::pattern_empty_capture",
             Self::UnknownCapture { .. } => "proef::pack::pattern_unknown_capture",
+            Self::DuplicateCapture { .. } => "proef::pack::pattern_duplicate_capture",
         }
     }
 }
@@ -159,6 +166,10 @@ impl std::fmt::Display for PatternProblem {
                     .unwrap_or_default();
                 write!(f, "capture `{{{name}}}` is not a declared param{hint}")
             }
+            Self::DuplicateCapture { name } => write!(
+                f,
+                "capture `{{{name}}}` appears more than once — a later match would silently overwrite the earlier value"
+            ),
         }
     }
 }
@@ -181,6 +192,19 @@ pub fn pattern_problems(pattern: &str, params: &[String]) -> Vec<PatternProblem>
                 first: a.clone(),
                 second: b.clone(),
             });
+        }
+    }
+
+    let mut seen_names = BTreeSet::new();
+    for token in &tokens {
+        let Token::Capture(name) = token else {
+            continue;
+        };
+        if !seen_names.insert(name.as_str()) {
+            let dup = PatternProblem::DuplicateCapture { name: name.clone() };
+            if !problems.contains(&dup) {
+                problems.push(dup);
+            }
         }
     }
 
@@ -358,6 +382,17 @@ mod tests {
             Some("search")
         );
         assert_eq!(closest("zzzzzz", ["search", "create"].into_iter()), None);
+    }
+
+    #[test]
+    fn duplicate_captures_are_rejected_once_per_name() {
+        let params = vec!["x".to_owned()];
+        let problems = pattern_problems("move {x} to {x} and {x}", &params);
+        let dups: Vec<_> = problems
+            .iter()
+            .filter(|p| matches!(p, PatternProblem::DuplicateCapture { name } if name == "x"))
+            .collect();
+        assert_eq!(dups.len(), 1, "{problems:?}");
     }
 
     mod properties {

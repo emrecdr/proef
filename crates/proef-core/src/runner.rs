@@ -183,7 +183,11 @@ pub fn run(
     let mut queue: std::collections::VecDeque<(usize, ScenarioSpec)> =
         specs.into_iter().enumerate().collect();
     let total = queue.len();
-    let mut active: BTreeMap<usize, Instant> = BTreeMap::new();
+    // Deadline plus the scenario's child cancellation token — retained so
+    // abandonment can cancel the detached thread's work instead of leaving it
+    // appending events forever (record hygiene; engines gain real stop points
+    // as they support cancellation).
+    let mut active: BTreeMap<usize, (Instant, CancellationToken)> = BTreeMap::new();
     let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
     let grace = Duration::from_secs(2);
 
@@ -196,6 +200,7 @@ pub fn run(
             if cancel.is_cancelled() {
                 events.emit(&Event::ScenarioFinished {
                     scenario: Arc::clone(&spec.name),
+                    file: Arc::clone(&spec.file),
                     status: Status::Skipped,
                 });
                 outcomes.push(ScenarioOutcome {
@@ -210,7 +215,8 @@ pub fn run(
                 continue;
             }
             let initial_deadline = Instant::now() + config.default_batch_budget + grace;
-            active.insert(index, initial_deadline);
+            let child = cancel.child_token();
+            active.insert(index, (initial_deadline, child.clone()));
             spawn_scenario(
                 index,
                 spec,
@@ -218,7 +224,7 @@ pub fn run(
                 Arc::clone(store),
                 config.clone(),
                 events.clone(),
-                cancel.child_token(),
+                child,
                 tx.clone(),
             );
         }
@@ -228,20 +234,25 @@ pub fn run(
 
         // Wait for progress, bounded by the earliest active deadline.
         let now = Instant::now();
-        let next_deadline = active.values().min().copied().unwrap_or(now + grace);
+        let next_deadline = active
+            .values()
+            .map(|(deadline, _)| *deadline)
+            .min()
+            .unwrap_or(now + grace);
         let wait = next_deadline
             .saturating_duration_since(now)
             .max(Duration::from_millis(20));
         match rx.recv_timeout(wait) {
             Ok(Msg::BatchBegin { scenario, deadline }) => {
                 if let Some(entry) = active.get_mut(&scenario) {
-                    *entry = deadline + grace;
+                    entry.0 = deadline + grace;
                 }
             }
             Ok(Msg::Done { scenario, outcome }) => {
                 if active.remove(&scenario).is_some() {
                     events.emit(&Event::ScenarioFinished {
                         scenario: Arc::clone(&outcome.name),
+                        file: Arc::clone(&outcome.file),
                         status: outcome.status,
                     });
                     outcomes.push(outcome);
@@ -285,10 +296,12 @@ pub fn run(
     }
 }
 
-/// Abandon every scenario whose deadline has passed: record a `System` fault
-/// and detach the thread (ADR-0007 — the process reaps it at exit).
+/// Abandon every scenario whose deadline has passed: cancel its child token,
+/// record a `System` fault, and detach the thread (ADR-0007 — the process
+/// reaps it at exit; the cancelled token is the thread's signal to stop
+/// appending to the record).
 fn sweep_expired(
-    active: &mut BTreeMap<usize, Instant>,
+    active: &mut BTreeMap<usize, (Instant, CancellationToken)>,
     outcomes: &mut Vec<ScenarioOutcome>,
     events: &EventSink,
     identities: &[(Arc<str>, Arc<str>, usize)],
@@ -296,11 +309,13 @@ fn sweep_expired(
     let now = Instant::now();
     let expired: Vec<usize> = active
         .iter()
-        .filter(|(_, deadline)| **deadline <= now)
+        .filter(|(_, (deadline, _))| *deadline <= now)
         .map(|(index, _)| *index)
         .collect();
     for index in expired {
-        active.remove(&index);
+        if let Some((_, token)) = active.remove(&index) {
+            token.cancel();
+        }
         // `active` keys are spec indices and `identities` is built 1:1 from
         // the same specs — the lookup cannot miss.
         let (file, name, line) = &identities[index];
@@ -317,6 +332,7 @@ fn sweep_expired(
         };
         events.emit(&Event::ScenarioFinished {
             scenario: Arc::clone(&outcome.name),
+            file: Arc::clone(&outcome.file),
             status: Status::Failed,
         });
         outcomes.push(outcome);
@@ -503,6 +519,10 @@ fn run_scenario(
         if let Some(err) = result.error {
             if all_optional {
                 // `optional:` — warn and continue (segmentation isolates it).
+                // The batch WAS dispatched and its steps already carry real
+                // outcomes: count it, or the unreached-steps loop below would
+                // re-report it as Skipped on top of them (ADR-0008).
+                processed += 1;
                 continue;
             }
             match err.class {
@@ -549,14 +569,31 @@ fn run_scenario(
         }
     }
 
-    for (_, session) in sessions.iter_mut().rev() {
-        let _ = session.finish();
+    for (engine_id, session) in sessions.iter_mut().rev() {
+        if let Err(err) = session.finish()
+            && fault.is_none()
+        {
+            // Teardown failure on an otherwise-clean scenario is a real infra
+            // signal (never silently swallowed); a scenario that already
+            // failed keeps its primary fault.
+            fault = Some(Fault::System(format!(
+                "engine `{engine_id}` teardown failed: {}",
+                err.message
+            )));
+        }
     }
 
     // Merge global promotions back through the store lock (§12) — the write
     // set only. Writing the whole world back would clobber keys another
     // scenario promoted after this one took its snapshot (lost update).
-    if let Ok(mut guard) = store.lock() {
+    // Poison recovery is sound here: store inserts are plain map writes with
+    // no cross-key invariant a panicked holder could have torn — dropping the
+    // write set instead would silently lose `saveAs: global` promotions from
+    // a scenario that reports Passed.
+    {
+        let mut guard = store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (key, value) in world.promotions() {
             guard.insert(key, value.clone());
         }

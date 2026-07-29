@@ -8,6 +8,12 @@
 //!
 //! Auth: `Authorization: Bearer fixture-token` on `/api/v1/*` admin routes;
 //! per-feed read routes are unauthenticated (the sync-consumer side).
+//!
+//! **Single-threaded by design**: one accept loop, one request at a time —
+//! request handling needs no internal synchronization discipline beyond the
+//! `Envs` mutex, and suite wall-time is bounded by the poll-token rule above.
+//! `/slow` is served before the state lock so the deliberate sleep can never
+//! wedge other routes if worker threads are ever added.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -129,6 +135,14 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
         })
         .map_or_else(|| "default".to_owned(), |h| h.value.as_str().to_owned());
 
+    if method == "GET" && path == "/slow" {
+        // The deliberate sleep: exercises budgets + watchdog (ADR-0007).
+        // Handled *before* the state lock — sleeping inside the guard would
+        // wedge every route the moment this server grows worker threads.
+        std::thread::sleep(Duration::from_secs(5));
+        respond_json(request, 200, r#"{"finally":true}"#);
+        return;
+    }
     let Ok(mut envs) = state.lock() else {
         respond_json(request, 500, r#"{"error":"lock"}"#);
         return;
@@ -265,11 +279,6 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
             } else {
                 respond_json(request, 403, r#"{"error":"no session cookie"}"#);
             }
-        }
-        ("GET", "/slow") => {
-            // The deliberate sleep: exercises budgets + watchdog (ADR-0007).
-            std::thread::sleep(Duration::from_secs(5));
-            respond_json(request, 200, r#"{"finally":true}"#);
         }
         ("POST", "/upload") => respond_json(request, 201, r#"{"id":"ph-1"}"#),
         ("GET", "/malformed") => respond_json(request, 200, r#"{"broken": "#),

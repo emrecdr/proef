@@ -92,7 +92,8 @@ impl std::fmt::Display for EngineId {
     }
 }
 
-/// An engine's claim on a pack step kind: the key prefix (`hurl`, `web`, …) plus the
+/// An engine's claim on a pack step kind: the key prefix (`hurl`; other
+/// prefixes reserved — ADR-0002 errata) plus the
 /// JSON-Schema fragment describing that step's payload, merged into `proef schema`
 /// output (TECH-SPEC §6), and an optional static payload validator used by pack
 /// validation pass 7 (probe-instantiation parse — TECH-SPEC §4.1).

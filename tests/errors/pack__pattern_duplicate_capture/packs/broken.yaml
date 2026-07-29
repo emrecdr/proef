@@ -1,0 +1,7 @@
+templates:
+  move:
+    params: [x]
+    match: move {x} to {x}
+    steps:
+      - hurl: |
+          GET http://localhost/${x}

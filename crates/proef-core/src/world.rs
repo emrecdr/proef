@@ -177,25 +177,48 @@ impl GlobalStore {
         Ok(Self { values })
     }
 
-    /// Persist the store to `path` atomically: write a sibling temp file (mode
-    /// `0600` on unix), then rename over the target.
+    /// Persist the store to `path` atomically: write a sibling temp file
+    /// (*created* mode `0600` on unix — private from the first byte, no
+    /// world-readable window), then rename over the target.
     pub fn save(&self, path: &Path) -> Result<(), CoreError> {
         let json = serde_json::to_string_pretty(&self.values)
             .map_err(|err| CoreError::system_with("cannot serialize global state", err))?;
         let tmp = sibling_tmp_path(path);
+        #[cfg(unix)]
+        {
+            use std::io::Write as _;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)
+                .map_err(|err| {
+                    CoreError::system_with(
+                        format!("cannot write global state temp file {}", tmp.display()),
+                        err,
+                    )
+                })?;
+            file.write_all(json.as_bytes()).map_err(|err| {
+                CoreError::system_with(
+                    format!("cannot write global state temp file {}", tmp.display()),
+                    err,
+                )
+            })?;
+            // `mode` applies only on create — re-assert for a leftover tmp
+            // file that predates this write.
+            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|err| {
+                CoreError::system_with(format!("cannot set permissions on {}", tmp.display()), err)
+            })?;
+        }
+        #[cfg(not(unix))]
         fs::write(&tmp, json).map_err(|err| {
             CoreError::system_with(
                 format!("cannot write global state temp file {}", tmp.display()),
                 err,
             )
         })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)).map_err(|err| {
-                CoreError::system_with(format!("cannot set permissions on {}", tmp.display()), err)
-            })?;
-        }
         fs::rename(&tmp, path).map_err(|err| {
             CoreError::system_with(
                 format!("cannot move global state into place at {}", path.display()),

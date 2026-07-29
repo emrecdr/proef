@@ -14,7 +14,7 @@ use proef_core::engine::{
 };
 use proef_core::error::{EngineError, ExitCode};
 use proef_core::event::EventSink;
-use proef_core::runner::{Prepared, RunConfig, ScenarioSpec, run};
+use proef_core::runner::{Fault, Prepared, RunConfig, ScenarioSpec, run};
 use proef_core::step::{
     BatchResult, LoweredStep, Status, StepBatch, StepOutcome, StepPayload, StepRef,
 };
@@ -77,6 +77,126 @@ impl EngineSession for MockSession {
             })
             .collect();
         BatchResult { steps, error: None }
+    }
+
+    fn finish(&mut self) -> Result<(), EngineError> {
+        Ok(())
+    }
+}
+
+/// A session that fails its batch: outcomes carry `Failed` and the batch
+/// errors, like an exhausted-retries batch would.
+struct FailingFactory;
+struct FailingSession;
+
+impl EngineFactory for FailingFactory {
+    fn id(&self) -> &'static str {
+        "failing"
+    }
+
+    fn step_kinds(&self) -> &'static [StepKindSpec] {
+        NO_KINDS
+    }
+
+    fn doctor(&self) -> Vec<DoctorCheck> {
+        Vec::new()
+    }
+
+    fn open(&self, _ctx: &ScenarioCtx) -> Result<Box<dyn EngineSession>, EngineError> {
+        Ok(Box::new(FailingSession))
+    }
+}
+
+impl EngineSession for FailingSession {
+    fn run_batch(
+        &mut self,
+        batch: &StepBatch,
+        _world: &mut World,
+        _events: &EventSink,
+        _cancel: &CancellationToken,
+    ) -> BatchResult {
+        let steps = batch
+            .steps
+            .iter()
+            .map(|step| StepOutcome {
+                step: step.step.clone(),
+                status: Status::Failed,
+                attempts: 1,
+                duration: Duration::ZERO,
+                detail: Some("mock failure".to_owned()),
+            })
+            .collect();
+        BatchResult {
+            steps,
+            error: Some(EngineError::infra("mock batch failure")),
+        }
+    }
+
+    fn finish(&mut self) -> Result<(), EngineError> {
+        Ok(())
+    }
+}
+
+/// Behavior variants for the error-path factory: which failure mode the
+/// orchestrator must contain (checklist: error paths need direct tests).
+#[derive(Clone, Copy)]
+enum Misbehavior {
+    /// `run_batch` panics — the dispatcher must contain it, not hang.
+    Panic,
+    /// `open` fails — a System fault under the scenario's identity.
+    OpenFails,
+    /// `run_batch` sleeps past every budget — the watchdog must abandon it.
+    Hang,
+}
+
+struct MisbehavingFactory(Misbehavior);
+struct MisbehavingSession(Misbehavior);
+
+impl EngineFactory for MisbehavingFactory {
+    fn id(&self) -> &'static str {
+        "misbehaving"
+    }
+
+    fn step_kinds(&self) -> &'static [StepKindSpec] {
+        NO_KINDS
+    }
+
+    fn doctor(&self) -> Vec<DoctorCheck> {
+        Vec::new()
+    }
+
+    fn open(&self, _ctx: &ScenarioCtx) -> Result<Box<dyn EngineSession>, EngineError> {
+        match self.0 {
+            Misbehavior::OpenFails => Err(EngineError::infra("mock open failure")),
+            other => Ok(Box::new(MisbehavingSession(other))),
+        }
+    }
+}
+
+impl EngineSession for MisbehavingSession {
+    fn run_batch(
+        &mut self,
+        _batch: &StepBatch,
+        _world: &mut World,
+        _events: &EventSink,
+        cancel: &CancellationToken,
+    ) -> BatchResult {
+        match self.0 {
+            Misbehavior::Panic => panic!("mock engine panic"),
+            Misbehavior::Hang => {
+                // Poll the child token instead of one long sleep so the
+                // abandonment cancel (swept by the dispatcher) ends the wait.
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !cancel.is_cancelled() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                BatchResult {
+                    steps: Vec::new(),
+                    error: Some(EngineError::infra("hang elapsed")),
+                }
+            }
+            Misbehavior::OpenFails => unreachable!("open never succeeds"),
+        }
     }
 
     fn finish(&mut self) -> Result<(), EngineError> {
@@ -239,6 +359,186 @@ fn merge_back_is_write_set_only() {
         "A's promotion survives"
     );
     assert_eq!(store.get("y"), Some(&Value::Int(3)), "B's promotion lands");
+}
+
+/// An erroring `optional:` batch is warn-and-continue — and it was
+/// *dispatched*, so the unreached-steps accounting must count it: its steps
+/// already carry real outcomes, and later batches must not be re-reported as
+/// `Skipped` on top of their own outcomes (ADR-0008 — one outcome per step).
+#[test]
+fn optional_batch_error_does_not_rereport_later_batches() {
+    let ok: OnBatch = Arc::new(|_, _, _, _| {});
+    let engines = engines(vec![
+        Box::new(FailingFactory),
+        Box::new(MockFactory {
+            id: "mock",
+            on_batch: ok,
+        }),
+    ]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let batches = vec![
+        StepBatch {
+            index: 0,
+            engine: EngineId::from("failing"),
+            steps: vec![LoweredStep {
+                optional: true,
+                ..lowered_step("optional probe")
+            }],
+        },
+        StepBatch {
+            index: 1,
+            engine: EngineId::from("mock"),
+            steps: vec![lowered_step("real step")],
+        },
+    ];
+    let spec = ScenarioSpec {
+        file: Arc::from("mock.feature"),
+        name: Arc::from("optional-error"),
+        line: 1,
+        file_root: None,
+        prepare: Box::new(move |_world| {
+            Ok(Prepared {
+                batches,
+                artifact: None,
+            })
+        }),
+    };
+
+    let summary = run(
+        vec![spec],
+        &engines,
+        &store,
+        &config(1),
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.failed, 0, "an optional failure never fails the run");
+    let outcome = summary
+        .outcomes
+        .iter()
+        .find(|o| o.name.as_ref() == "optional-error")
+        .unwrap();
+    assert_eq!(outcome.steps.len(), 2, "one outcome per authored step");
+    assert_eq!(outcome.steps[0].status, Status::Warned);
+    assert_eq!(outcome.steps[1].status, Status::Passed);
+}
+
+/// A panicking engine is contained: the scenario reports a `System` fault
+/// under its real identity (never a hang), sibling scenarios still run, and
+/// the run exits `SystemError`.
+#[test]
+fn engine_panic_is_contained_as_a_system_fault() {
+    let ok: OnBatch = Arc::new(|_, _, _, _| {});
+    let engines = engines(vec![
+        Box::new(MisbehavingFactory(Misbehavior::Panic)),
+        Box::new(MockFactory {
+            id: "mock",
+            on_batch: ok,
+        }),
+    ]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+
+    let summary = run(
+        vec![spec("panics", &["misbehaving"]), spec("healthy", &["mock"])],
+        &engines,
+        &store,
+        &config(1),
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.failed, 1);
+    assert_eq!(summary.passed, 1, "the healthy sibling still ran");
+    let panicked = summary
+        .outcomes
+        .iter()
+        .find(|o| o.name.as_ref() == "panics")
+        .unwrap();
+    assert_eq!(panicked.status, Status::Failed);
+    assert!(
+        matches!(&panicked.fault, Some(Fault::System(m)) if m.contains("panicked")),
+        "{:?}",
+        panicked.fault
+    );
+    assert_eq!(summary.exit_code(), ExitCode::SystemError);
+}
+
+/// A failing `open` is a `System` fault on the scenario, not a crash — and an
+/// engine id no factory claims is the same class.
+#[test]
+fn open_failure_and_unknown_engine_are_system_faults() {
+    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::OpenFails))]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+
+    let summary = run(
+        vec![
+            spec("open-fails", &["misbehaving"]),
+            spec("ghost-engine", &["ghost"]),
+        ],
+        &engines,
+        &store,
+        &config(1),
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.failed, 2);
+    let open_fails = summary
+        .outcomes
+        .iter()
+        .find(|o| o.name.as_ref() == "open-fails")
+        .unwrap();
+    assert!(
+        matches!(&open_fails.fault, Some(Fault::System(m)) if m.contains("cannot open engine")),
+        "{:?}",
+        open_fails.fault
+    );
+    let ghost = summary
+        .outcomes
+        .iter()
+        .find(|o| o.name.as_ref() == "ghost-engine")
+        .unwrap();
+    assert!(
+        matches!(&ghost.fault, Some(Fault::System(m)) if m.contains("no engine registered")),
+        "{:?}",
+        ghost.fault
+    );
+    assert_eq!(summary.exit_code(), ExitCode::SystemError);
+}
+
+/// A batch that outlives its budget is abandoned by the watchdog: `System`
+/// fault, `Failed` status, and the dispatcher cancels the scenario's child
+/// token so the detached thread stops (observed via the polled hang ending).
+#[test]
+fn watchdog_abandons_a_hung_scenario() {
+    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::Hang))]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let mut config = config(1);
+    config.default_batch_budget = Duration::from_millis(50);
+
+    let summary = run(
+        vec![spec("hangs", &["misbehaving"])],
+        &engines,
+        &store,
+        &config,
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.failed, 1);
+    let hung = summary
+        .outcomes
+        .iter()
+        .find(|o| o.name.as_ref() == "hangs")
+        .unwrap();
+    assert_eq!(hung.status, Status::Failed);
+    assert!(
+        matches!(&hung.fault, Some(Fault::System(m)) if m.contains("abandoned")),
+        "{:?}",
+        hung.fault
+    );
+    assert_eq!(summary.exit_code(), ExitCode::SystemError);
 }
 
 /// A run cancelled mid-scenario: the interrupted scenario reports `Skipped`

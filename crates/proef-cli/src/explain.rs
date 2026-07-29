@@ -60,7 +60,9 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
                         step.file, step.line, step.text
                     ));
             }
-            Event::ScenarioFinished { scenario, status } => {
+            Event::ScenarioFinished {
+                scenario, status, ..
+            } => {
                 scenario_status.push((scenario.to_string(), *status));
             }
             _ => {}
@@ -100,7 +102,16 @@ fn latest_run(runs_root: &Path) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
+        // Same run-dir predicate rotation uses (fsutil::is_run_id) — with
+        // `runs-dir = "."` a stray `suite/` or `target/` sorting after the
+        // uuid range must not shadow the real latest run.
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(crate::fsutil::is_run_id)
+        })
         .collect();
     dirs.sort();
     dirs.pop()

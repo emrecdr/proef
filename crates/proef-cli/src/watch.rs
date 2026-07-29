@@ -18,7 +18,21 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
     let mut watcher = match notify::recommended_watcher(move |event| {
         if let Ok(event) = event {
             let event: notify::Event = event;
-            if event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove() {
+            if !(event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove()) {
+                return;
+            }
+            // Only authored inputs retrigger: feature files and pack YAML.
+            // Anything else — run records under the runs dir, the state file,
+            // editor swap files — must not requeue, or a watched tree that
+            // contains proef's own output reruns itself forever.
+            let authored = event.paths.iter().any(|p| {
+                p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    e.eq_ignore_ascii_case("feature")
+                        || e.eq_ignore_ascii_case("yaml")
+                        || e.eq_ignore_ascii_case("yml")
+                })
+            });
+            if authored {
                 let _ = tx.send(());
             }
         }

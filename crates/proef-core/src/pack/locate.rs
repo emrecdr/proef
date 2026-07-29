@@ -57,10 +57,13 @@ pub(crate) fn payload_line_span(
     ordinal: usize,
     rel_line: usize,
 ) -> Option<Span> {
+    if rel_line == 0 {
+        return None; // 1-based by contract — degrade, never underflow
+    }
     let (begin, end) = template_region(text, template)?;
     let region = &text[begin..end];
     let mut seen = 0usize;
-    let mut lines = lines_with_offsets(region).peekable();
+    let mut lines = lines_with_offsets(region);
     while let Some((offset, line)) = lines.next() {
         let trimmed = line.trim_start();
         // The key may share the line with the sequence dash (`- hurl: |`).

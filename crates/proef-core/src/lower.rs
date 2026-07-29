@@ -108,6 +108,30 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
         );
     }
 
+    // Routing invariant (ADR-0002): every non-glued step's kind must map to a
+    // registered engine. Pack validation and the CLI registry keep this true,
+    // so a miss is drift between them — surfaced as an explicit internal
+    // fault instead of a fabricated engine id that fails later and further
+    // from the cause.
+    for step in &lowered {
+        if matches!(step.payload, StepPayload::MergedAsserts { .. }) {
+            continue; // glued to its host batch — no engine of its own
+        }
+        if !ctx.kind_to_engine.contains_key(step.kind.as_str()) {
+            diags.push(
+                Diag::error(
+                    "proef::lower::kind_unrouted",
+                    format!(
+                        "internal: step kind `{}` is not claimed by any registered engine \
+                         (registry/pack-validation drift)",
+                        step.kind.as_str()
+                    ),
+                )
+                .with_source(ctx.feature.path.clone(), Arc::clone(&ctx.feature.source)),
+            );
+        }
+    }
+
     if diags.iter().any(|d| d.severity == Severity::Error) {
         return Err(diags);
     }
@@ -433,16 +457,41 @@ fn bake_entry_options(
         option_lines.push(format!("delay: {delay_ms}ms"));
     }
     let retry_lines = option_lines.join("\n");
+    // Pre-scan: entries whose author already wrote an `[Options]` section only
+    // get that section extended — auto-injecting a fresh one as well would
+    // leave two `[Options]` sections in one entry, which hurl rejects. Slot 0
+    // is the preamble before the first method line.
+    let mut author_options = vec![false];
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if is_method_line(trimmed) {
+            author_options.push(false);
+        } else if trimmed == "[Options]"
+            && let Some(last) = author_options.last_mut()
+        {
+            *last = true;
+        }
+    }
+    let has_author_options = |entry: usize| author_options.get(entry).copied().unwrap_or(false);
     let mut out: Vec<String> = Vec::new();
     let mut in_entry_head = false; // between a method line and its first section/body
     let mut injected_current = false;
     let mut in_fence = false; // inside a ```…``` body — no entry surgery there
+    let mut entry = 0usize;
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
             // A fence opening directly after the entry head is the body — the
             // options section belongs immediately before it.
-            if !in_fence && in_entry_head && !injected_current {
+            if !in_fence && in_entry_head && !injected_current && !has_author_options(entry) {
                 out.push("[Options]".to_owned());
                 out.push(retry_lines.clone());
                 injected_current = true;
@@ -456,27 +505,26 @@ fn bake_entry_options(
             out.push(line.to_owned());
             continue;
         }
-        let is_method_line = trimmed.split_whitespace().next().is_some_and(|word| {
-            word.len() >= 3
-                && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')
-                && word != "HTTP"
-        }) && trimmed.split_whitespace().count() >= 2;
-        if is_method_line {
+        if is_method_line(trimmed) {
             in_entry_head = true;
             injected_current = false;
+            entry += 1;
             out.push(line.to_owned());
             continue;
         }
         if trimmed == "[Options]" {
-            // Extend the author's own section.
+            // Extend the author's own section (once — a second author section
+            // is the pack's own parse error, not ours to widen).
             out.push(line.to_owned());
-            out.push(retry_lines.clone());
-            injected_current = true;
+            if !injected_current {
+                out.push(retry_lines.clone());
+                injected_current = true;
+            }
             in_entry_head = false;
             continue;
         }
         let is_header = in_entry_head && is_header_line(trimmed);
-        if in_entry_head && !is_header && !injected_current {
+        if in_entry_head && !is_header && !injected_current && !has_author_options(entry) {
             out.push("[Options]".to_owned());
             out.push(retry_lines.clone());
             injected_current = true;
@@ -538,12 +586,16 @@ fn merge_expect(
     let StepPayload::HurlEntries(text) = &mut previous.payload else {
         return None;
     };
-    // Ensure the last entry has a response section, then an [Asserts] section,
-    // then append the asserts. (The emitter parse-validates the result.)
-    if !text.lines().any(|l| l.trim_start().starts_with("HTTP")) {
+    // Ensure the *last* entry has a response section, then an [Asserts]
+    // section, then append the asserts. (The emitter parse-validates the
+    // result.) The scan is scoped to the last entry with fences skipped — an
+    // earlier entry's response, or a fenced body line starting with `HTTP`,
+    // must not satisfy it (ADR-0004: merge into the previous entry, singular).
+    let (tail_has_http, tail_has_asserts) = last_entry_scan(text);
+    if !tail_has_http {
         push_line(text, "HTTP *");
     }
-    if !text.lines().any(|l| l.trim() == "[Asserts]") {
+    if !tail_has_asserts {
         push_line(text, "[Asserts]");
     }
     let mut appended = 0usize;
@@ -575,6 +627,43 @@ fn is_header_line(trimmed: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
 }
 
+/// Is this trimmed line an entry-opening method line (`GET http://…`)? Custom
+/// methods are any ≥ 3-char run of ASCII uppercase / `-` — except `HTTP`,
+/// which opens a response.
+fn is_method_line(trimmed: &str) -> bool {
+    trimmed.split_whitespace().next().is_some_and(|word| {
+        word.len() >= 3
+            && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')
+            && word != "HTTP"
+    }) && trimmed.split_whitespace().count() >= 2
+}
+
+/// Does the *last* entry of `text` have a response (`HTTP …`) line, and an
+/// `[Asserts]` section? Flags reset at every entry-opening method line, and
+/// fenced (```…```) bodies are skipped, so the end state describes the last
+/// entry alone.
+fn last_entry_scan(text: &str) -> (bool, bool) {
+    let mut in_fence = false;
+    let (mut has_http, mut has_asserts) = (false, false);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if is_method_line(trimmed) {
+            (has_http, has_asserts) = (false, false);
+            continue;
+        }
+        has_http = has_http || trimmed.starts_with("HTTP");
+        has_asserts = has_asserts || trimmed == "[Asserts]";
+    }
+    (has_http, has_asserts)
+}
+
 fn push_line(text: &mut String, line: &str) {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
@@ -589,6 +678,9 @@ fn push_line(text: &mut String, line: &str) {
 fn segment(steps: Vec<LoweredStep>, kind_to_engine: &BTreeMap<String, String>) -> Vec<StepBatch> {
     let mut batches: Vec<StepBatch> = Vec::new();
     for step in steps {
+        // Unreachable behind lower()'s kind-routing guard; kept total (the
+        // kind doubles as the engine id) so core stays panic-free if a future
+        // caller skips the guard.
         let engine = kind_to_engine
             .get(step.kind.as_str())
             .map_or_else(|| step.kind.as_str().to_owned(), Clone::clone);
@@ -794,29 +886,29 @@ mod tests {
     /// recursively — keys stay literal (they are schema, not data).
     #[test]
     fn structured_payloads_resolve_placeholders_recursively() {
-        const WEB_KINDS: &[StepKindSpec] = &[StepKindSpec {
-            prefix: "web",
+        const ALT_KINDS: &[StepKindSpec] = &[StepKindSpec {
+            prefix: "alt",
             schema: "true",
             validate: None,
         }];
         let packs = pack::load(
             &[PackSource {
-                name: "web.yaml".into(),
+                name: "alt.yaml".into(),
                 text: Arc::from(
-                    "templates:\n  open:\n    match: the page is opened\n    steps:\n      - name: open\n        web:\n          goto: \"${baseURL}/page\"\n          checks: [\"${baseURL}\", 7]\n",
+                    "templates:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${baseURL}/item\"\n          checks: [\"${baseURL}\", 7]\n",
                 ),
             }],
-            WEB_KINDS,
+            ALT_KINDS,
         )
         .unwrap();
         let feature = crate::feature::parse(
             "t.feature",
-            "# baseURL: http://fixture.local\nFeature: F\n  Scenario: S\n    When the page is opened\n",
+            "# baseURL: http://fixture.local\nFeature: F\n  Scenario: S\n    When the alternate step runs\n",
         )
         .unwrap();
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
         let kind_to_engine: BTreeMap<String, String> =
-            [("web".to_owned(), "web".to_owned())].into();
+            [("alt".to_owned(), "alt".to_owned())].into();
         let env = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
@@ -827,9 +919,70 @@ mod tests {
         let StepPayload::Structured(value) = &lowered.batches[0].steps[0].payload else {
             panic!("structured payload expected");
         };
-        assert_eq!(value["goto"], "http://fixture.local/page");
+        assert_eq!(value["target"], "http://fixture.local/item");
         assert_eq!(value["checks"][0], "http://fixture.local");
         assert_eq!(value["checks"][1], 7);
+    }
+
+    /// The Then-merge scans only the *last* entry: an earlier entry's
+    /// `HTTP`/`[Asserts]` must not satisfy the check (ADR-0004 — merge into
+    /// the previous entry, singular).
+    #[test]
+    fn expect_merge_scopes_to_the_last_entry() {
+        let packs = pack::load(
+            &[PackSource {
+                name: "multi.yaml".into(),
+                text: Arc::from(
+                    "templates:\n  pair:\n    match: both calls run\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n          [Asserts]\n          status == 200\n          GET http://x/b\n  expectStatus:\n    params: [status]\n    match: \"the response status is {status}\"\n    expect:\n      - status: \"${status}\"\n",
+                ),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    When both calls run\n    Then the response status is 201\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
+        )
+        .unwrap();
+        let StepPayload::HurlEntries(text) = &lowered.batches[0].steps[0].payload else {
+            panic!("expected hurl entries");
+        };
+        // The second entry had no response: the merge must open its own
+        // `HTTP *` + `[Asserts]` after `GET http://x/b` instead of riding on
+        // the first entry's.
+        let tail = text.split("GET http://x/b").nth(1).unwrap();
+        assert!(tail.contains("HTTP *"), "{text}");
+        assert!(tail.contains("[Asserts]"), "{text}");
+        assert!(tail.contains("status == 201"), "{text}");
+    }
+
+    /// An author `[Options]` section placed after another section is extended
+    /// in place — never paired with a second, injected `[Options]`, which
+    /// hurl rejects as a duplicate section.
+    #[test]
+    fn baked_options_extend_a_late_author_options_section() {
+        let retry = Some(crate::step::Retry {
+            count: 2,
+            interval_ms: 100,
+        });
+        let body =
+            "GET http://x/a\n[QueryStringParams]\nq: 1\n[Options]\nverbose: true\nHTTP 200\n";
+        let baked = bake_entry_options(body, retry, None);
+        assert_eq!(baked.matches("[Options]").count(), 1, "{baked}");
+        assert!(
+            baked.contains("[Options]\nretry: 2\nretry-interval: 100ms\nverbose: true"),
+            "{baked}"
+        );
     }
 
     /// The `[Options]` injection must never land inside a body: fenced text,
@@ -863,7 +1016,7 @@ mod tests {
 
     #[test]
     fn engine_change_splits_batches() {
-        let steps: Vec<LoweredStep> = ["hurl", "hurl", "web", "hurl"]
+        let steps: Vec<LoweredStep> = ["hurl", "hurl", "alt", "hurl"]
             .iter()
             .map(|kind| LoweredStep {
                 step: StepRef {
@@ -881,13 +1034,13 @@ mod tests {
             .collect();
         let mapping: BTreeMap<String, String> = [
             ("hurl".to_owned(), "hurl".to_owned()),
-            ("web".to_owned(), "web".to_owned()),
+            ("alt".to_owned(), "alt".to_owned()),
         ]
         .into();
         let batches = segment(steps, &mapping);
         let sizes: Vec<usize> = batches.iter().map(|b| b.steps.len()).collect();
         assert_eq!(sizes, vec![2, 1, 1]);
-        assert_eq!(batches[1].engine.as_str(), "web");
+        assert_eq!(batches[1].engine.as_str(), "alt");
         // Scenario-wide ordinals — the sidecar `batch` key engines filter by.
         let indexes: Vec<usize> = batches.iter().map(|b| b.index).collect();
         assert_eq!(indexes, vec![0, 1, 2]);

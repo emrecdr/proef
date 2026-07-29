@@ -17,6 +17,27 @@ use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 /// The project-local store file (committed-safe: ciphertext only).
 pub const STORE_FILE: &str = ".proef-secrets.json";
 
+/// A classified secret-machinery failure — the CLI maps the variant straight
+/// onto the exit-code contract (ADR-0009): `User` exits 2, `System` exits 3.
+/// A stringly error would erase exactly that split (an unwritable key dir is
+/// not the user's typo).
+pub enum SecretError {
+    /// Bad input: malformed key material, a corrupt committed store, an
+    /// unknown secret name.
+    User(String),
+    /// Environment fault: unreadable/unwritable paths, lock failures.
+    System(String),
+}
+
+impl SecretError {
+    /// The rendered message (the variant carries only the classification).
+    pub fn message(&self) -> &str {
+        match self {
+            Self::User(message) | Self::System(message) => message,
+        }
+    }
+}
+
 const PREFIX: &str = "enc:v1:";
 const NONCE_LEN: usize = 24;
 
@@ -55,12 +76,18 @@ pub fn decrypt(token: &str, key: &[u8; 32]) -> Result<String, String> {
     String::from_utf8(plaintext).map_err(|err| format!("invalid utf8: {err}"))
 }
 
-/// The key file path (`$PROEF_CONFIG_DIR`, else XDG config, else `~/.config`).
+/// The key file path (`$PROEF_CONFIG_DIR`, else XDG config, else `~/.config`,
+/// else the Windows-native homes).
 fn key_path() -> PathBuf {
     let config_dir = std::env::var_os("PROEF_CONFIG_DIR")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        // Windows shells carry APPDATA/USERPROFILE instead of HOME — without
+        // these the key would land in `./proef/keys/` relative to the cwd,
+        // fragmented per directory and begging to be committed.
+        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+        .or_else(|| std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
     config_dir.join("proef").join("keys").join("default.key")
 }
@@ -68,8 +95,8 @@ fn key_path() -> PathBuf {
 /// Decode a base64 `PROEF_KEY` value into a project key. A set-but-invalid
 /// key is always an error — silently falling through to the file would
 /// decrypt with the wrong key and report tampering instead of the real cause.
-fn key_from_env(value: &str) -> Result<[u8; 32], String> {
-    decode_key_material("PROEF_KEY", value)
+fn key_from_env(value: &str) -> Result<[u8; 32], SecretError> {
+    decode_key_material("PROEF_KEY", value).map_err(SecretError::User)
 }
 
 /// The one base64 → 32-byte decode; `label` names the key source in errors.
@@ -85,7 +112,7 @@ fn decode_key_material(label: &str, text: &str) -> Result<[u8; 32], String> {
 /// Load the project key: `PROEF_KEY` env override (CI / shared stores —
 /// the ciphertext store can be committed and the key supplied out of band),
 /// else the key file, creating a fresh random one on first use (`0600`).
-pub fn load_or_create_key() -> Result<[u8; 32], String> {
+pub fn load_or_create_key() -> Result<[u8; 32], SecretError> {
     if let Ok(value) = std::env::var("PROEF_KEY") {
         return key_from_env(&value);
     }
@@ -95,8 +122,9 @@ pub fn load_or_create_key() -> Result<[u8; 32], String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             let key: [u8; 32] = XChaCha20Poly1305::generate_key(&mut OsRng).into();
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
+                std::fs::create_dir_all(parent).map_err(|err| {
+                    SecretError::System(format!("cannot create {}: {err}", parent.display()))
+                })?;
             }
             let encoded = base64::engine::general_purpose::STANDARD.encode(key);
             match write_private(&path, encoded.as_bytes()) {
@@ -107,19 +135,31 @@ pub fn load_or_create_key() -> Result<[u8; 32], String> {
                 // Lost the creation race: a concurrent proef won a moment
                 // ago — its key is the project key, use it.
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let text = std::fs::read_to_string(&path)
-                        .map_err(|err| format!("cannot read key file {}: {err}", path.display()))?;
+                    let text = std::fs::read_to_string(&path).map_err(|err| {
+                        SecretError::System(format!(
+                            "cannot read key file {}: {err}",
+                            path.display()
+                        ))
+                    })?;
                     decode_key(&path, &text)
                 }
-                Err(err) => Err(format!("cannot write key file {}: {err}", path.display())),
+                Err(err) => Err(SecretError::System(format!(
+                    "cannot write key file {}: {err}",
+                    path.display()
+                ))),
             }
         }
-        Err(err) => Err(format!("cannot read key file {}: {err}", path.display())),
+        Err(err) => Err(SecretError::System(format!(
+            "cannot read key file {}: {err}",
+            path.display()
+        ))),
     }
 }
 
-fn decode_key(path: &Path, text: &str) -> Result<[u8; 32], String> {
-    decode_key_material(&format!("key file {}", path.display()), text)
+/// A generated key file that no longer decodes is damaged machine state, not
+/// user input — classified `System`.
+fn decode_key(path: &Path, text: &str) -> Result<[u8; 32], SecretError> {
+    decode_key_material(&format!("key file {}", path.display()), text).map_err(SecretError::System)
 }
 
 /// Create `path` private from the first byte: on unix the file is *opened*
@@ -158,13 +198,19 @@ fn read_store() -> StoreState {
     }
 }
 
-/// Load the store (`name → enc:v1:token`); missing file = empty.
-pub fn load_store() -> Result<BTreeMap<String, String>, String> {
+/// Load the store (`name → enc:v1:token`); missing file = empty. A corrupt
+/// store is the user's committed file gone bad (`User`); an unreadable one is
+/// the environment (`System`).
+pub fn load_store() -> Result<BTreeMap<String, String>, SecretError> {
     match read_store() {
         StoreState::Loaded(store) => Ok(store),
         StoreState::Missing => Ok(BTreeMap::new()),
-        StoreState::Corrupt(err) => Err(format!("{STORE_FILE} is invalid: {err}")),
-        StoreState::Unreadable(err) => Err(format!("cannot read {STORE_FILE}: {err}")),
+        StoreState::Corrupt(err) => {
+            Err(SecretError::User(format!("{STORE_FILE} is invalid: {err}")))
+        }
+        StoreState::Unreadable(err) => Err(SecretError::System(format!(
+            "cannot read {STORE_FILE}: {err}"
+        ))),
     }
 }
 
@@ -172,46 +218,50 @@ pub fn load_store() -> Result<BTreeMap<String, String>, String> {
 /// on a sibling `.lock` file. The lock file (not the store itself) carries
 /// the lock because [`save_store`] renames over the store — a lock on the
 /// old inode would not stop a writer opening the new one.
-fn lock_store() -> Result<std::fs::File, String> {
+fn lock_store() -> Result<std::fs::File, SecretError> {
     let path = format!("{STORE_FILE}.lock");
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(&path)
-        .map_err(|err| format!("cannot open {path}: {err}"))?;
+        .map_err(|err| SecretError::System(format!("cannot open {path}: {err}")))?;
     file.lock()
-        .map_err(|err| format!("cannot lock {path}: {err}"))?;
+        .map_err(|err| SecretError::System(format!("cannot lock {path}: {err}")))?;
     Ok(file)
 }
 
-fn save_store(store: &BTreeMap<String, String>) -> Result<(), String> {
+fn save_store(store: &BTreeMap<String, String>) -> Result<(), SecretError> {
     let json = serde_json::to_string_pretty(store)
-        .map_err(|err| format!("cannot serialize store: {err}"))?;
+        .map_err(|err| SecretError::System(format!("cannot serialize store: {err}")))?;
     // Ciphertext-only, but private anyway (TECH-SPEC §13 discipline).
     crate::fsutil::write_atomic_private(Path::new(STORE_FILE), &format!("{json}\n"))
-        .map_err(|err| format!("cannot write {STORE_FILE}: {err}"))
+        .map_err(|err| SecretError::System(format!("cannot write {STORE_FILE}: {err}")))
 }
 
 /// Like [`load_store`], but a *corrupt* store (unparseable JSON) is moved
 /// aside to `.corrupt` and treated as empty — `secret set` must always have
 /// a way forward, and the sidelined file keeps the evidence. Read paths
 /// (`list`, `rm`, resolution) still fail loudly instead of destroying state.
-fn load_store_or_recover() -> Result<BTreeMap<String, String>, String> {
+fn load_store_or_recover() -> Result<BTreeMap<String, String>, SecretError> {
     match read_store() {
         StoreState::Loaded(store) => Ok(store),
         StoreState::Missing => Ok(BTreeMap::new()),
         StoreState::Corrupt(err) => {
             let backup = format!("{STORE_FILE}.corrupt");
             std::fs::rename(STORE_FILE, &backup).map_err(|rename_err| {
-                format!("{STORE_FILE} is invalid ({err}) and cannot be moved aside: {rename_err}")
+                SecretError::System(format!(
+                    "{STORE_FILE} is invalid ({err}) and cannot be moved aside: {rename_err}"
+                ))
             })?;
             eprintln!(
                 "warning: {STORE_FILE} was corrupt ({err}) — moved to {backup}, starting fresh"
             );
             Ok(BTreeMap::new())
         }
-        StoreState::Unreadable(err) => Err(format!("cannot read {STORE_FILE}: {err}")),
+        StoreState::Unreadable(err) => Err(SecretError::System(format!(
+            "cannot read {STORE_FILE}: {err}"
+        ))),
     }
 }
 
@@ -267,21 +317,21 @@ pub fn resolve_all(
                             }
                         }
                     }
-                    Err(message) => {
+                    Err(err) => {
                         missing.extend(
                             stored
                                 .iter()
-                                .map(|(name, _)| format!("`{name}` ({message})")),
+                                .map(|(name, _)| format!("`{name}` ({})", err.message())),
                         );
                     }
                 }
             }
         }
-        Err(message) => {
+        Err(err) => {
             missing.extend(
                 from_store
                     .iter()
-                    .map(|name| format!("`{name}` ({message})")),
+                    .map(|name| format!("`{name}` ({})", err.message())),
             );
         }
     }
@@ -294,11 +344,16 @@ pub fn resolve_all(
 }
 
 /// `proef secret set NAME [--value V]` — value via hidden prompt when absent.
-pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
+pub fn set(name: &str, value: Option<&str>) -> Result<(), SecretError> {
     let value = match value {
         Some(value) => value.to_owned(),
-        None => rpassword::prompt_password(format!("value for `{name}` (hidden): "))
-            .map_err(|err| format!("cannot read value: {err}"))?,
+        None => {
+            rpassword::prompt_password(format!("value for `{name}` (hidden): ")).map_err(|err| {
+                SecretError::User(format!(
+                    "cannot read value: {err} (pass --value in scripts)"
+                ))
+            })?
+        }
     };
     let key = load_or_create_key()?;
     // The whole read-modify-write is one critical section: concurrent
@@ -314,13 +369,13 @@ pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
 /// `proef secret rm NAME` — remove a stored secret (same locked
 /// read-modify-write as `set`). Removing an absent name is a user error:
 /// a typo'd cleanup must not report success.
-pub fn rm(name: &str) -> Result<(), String> {
+pub fn rm(name: &str) -> Result<(), SecretError> {
     let _lock = lock_store()?;
     let mut store = load_store()?;
     if store.remove(name).is_none() {
-        return Err(format!(
+        return Err(SecretError::User(format!(
             "no secret named `{name}` in {STORE_FILE} (see `proef secret list`)"
-        ));
+        )));
     }
     save_store(&store)?;
     crate::render::outln!("secret `{name}` removed from {STORE_FILE}");
@@ -328,7 +383,7 @@ pub fn rm(name: &str) -> Result<(), String> {
 }
 
 /// `proef secret list` — names only, never values (ADR-0005).
-pub fn list() -> Result<(), String> {
+pub fn list() -> Result<(), SecretError> {
     let store = load_store()?;
     if store.is_empty() {
         crate::render::outln!("no secrets stored ({STORE_FILE})");
@@ -352,13 +407,15 @@ pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, S
                 "secret key",
                 "PROEF_KEY env override (32 bytes)".to_owned(),
             )),
-            Err(err) => checks.push((S::Fail, "secret key", err)),
+            Err(err) => checks.push((S::Fail, "secret key", err.message().to_owned())),
         }
     } else {
         let path = key_path();
         if path.is_file() {
             let outcome = std::fs::read_to_string(&path)
-                .map_err(|err| format!("cannot read {}: {err}", path.display()))
+                .map_err(|err| {
+                    SecretError::System(format!("cannot read {}: {err}", path.display()))
+                })
                 .and_then(|text| decode_key(&path, &text));
             match outcome {
                 Ok(_) => checks.push((
@@ -366,7 +423,7 @@ pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, S
                     "secret key",
                     format!("{} (32 bytes)", path.display()),
                 )),
-                Err(err) => checks.push((S::Fail, "secret key", err)),
+                Err(err) => checks.push((S::Fail, "secret key", err.message().to_owned())),
             }
         } else {
             checks.push((

@@ -31,6 +31,17 @@ fn unknown_flag_is_a_user_error() {
 }
 
 #[test]
+fn unknown_output_format_is_a_user_error() {
+    // `--output` is a typed enum: a typo must exit 2, never silently degrade
+    // to the human report.
+    proef()
+        .args(["test", "tests/features", "--output", "jsonl"])
+        .assert()
+        .code(2)
+        .stderr(contains("json"));
+}
+
+#[test]
 fn no_arguments_shows_help_as_a_user_error() {
     proef().assert().code(2).stderr(contains("Usage"));
 }

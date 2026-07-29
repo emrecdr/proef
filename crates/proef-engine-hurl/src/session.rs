@@ -35,6 +35,10 @@ use proef_core::world::{Value as WorldValue, World};
 /// Margin added to every computed batch budget (ADR-0007).
 const BUDGET_MARGIN: Duration = Duration::from_secs(5);
 
+/// Connect-phase cap: even a suite with generous response budgets should fail
+/// fast on an unreachable host — the request timeout applies on top.
+const CONNECT_TIMEOUT_CAP_MS: u64 = 10_000;
+
 pub(crate) struct HurlSession {
     artifact: ArtifactRef,
     secrets: Arc<BTreeMap<String, String>>,
@@ -137,7 +141,9 @@ impl HurlSession {
     fn runner_options(&self) -> runner::RunnerOptions {
         let mut builder = RunnerOptionsBuilder::new();
         builder.timeout(Duration::from_millis(self.http.timeout_ms));
-        builder.connect_timeout(Duration::from_millis(self.http.timeout_ms.min(10_000)));
+        builder.connect_timeout(Duration::from_millis(
+            self.http.timeout_ms.min(CONNECT_TIMEOUT_CAP_MS),
+        ));
         if self.http.follow_location {
             builder.follow_location(hurl::http::FollowLocation::Follow(
                 hurl::http::CredentialForwarding::default(),
@@ -156,19 +162,17 @@ impl HurlSession {
         builder.build()
     }
 
-    /// Feature anchor + artifact span for the map entry of (ordinal, step) —
-    /// selected by the sidecar's explicit indices, never positionally.
-    fn anchor(&self, ordinal: usize, step_index: usize) -> Option<(&StepRefLike, [usize; 2])> {
+    /// Artifact line span for the map entry of (ordinal, step) — selected by
+    /// the sidecar's explicit indices, never positionally.
+    fn anchor(&self, ordinal: usize, step_index: usize) -> Option<[usize; 2]> {
         self.artifact
             .map
             .entries
             .iter()
             .find(|entry| entry.batch == ordinal && entry.step == step_index)
-            .map(|entry| (&entry.feature, entry.hurl_lines))
+            .map(|entry| entry.hurl_lines)
     }
 }
-
-type StepRefLike = proef_core::emit::FeatureAnchor;
 
 impl EngineSession for HurlSession {
     // One cohesive listing of the batch lifecycle; splitting hides the order.
@@ -178,7 +182,7 @@ impl EngineSession for HurlSession {
         batch: &StepBatch,
         world: &mut World,
         events: &EventSink,
-        _cancel: &CancellationToken,
+        cancel: &CancellationToken,
     ) -> BatchResult {
         // The scenario-wide batch ordinal — the sidecar's `batch` key. Never a
         // per-session counter: with interleaved engines the session only sees
@@ -238,7 +242,16 @@ impl EngineSession for HurlSession {
 
         let mut failed = false;
         for run in runs {
-            if failed {
+            // Between-runs cancellation point (ADR-0007 finer grain): honor
+            // Ctrl-C at run granularity instead of waiting out the budget.
+            let skip_detail = if failed {
+                Some("not run (an earlier step in the batch failed)")
+            } else if cancel.is_cancelled() {
+                Some("not run (run cancelled)")
+            } else {
+                None
+            };
+            if let Some(detail) = skip_detail {
                 for (_, step, _) in run {
                     outcomes.push(skipped_outcome(step));
                     emit_step(
@@ -250,7 +263,7 @@ impl EngineSession for HurlSession {
                         0,
                         0,
                         &[],
-                        Some("not run (an earlier step in the batch failed)"),
+                        Some(detail),
                     );
                 }
                 continue;
@@ -318,7 +331,11 @@ impl EngineSession for HurlSession {
                 &mut self.cookie_file,
                 &result.cookie_store.to_netscape(),
             ) {
+                // A broken cookie chain would run later requests against
+                // stale session state and blame the resulting assert
+                // failures on the app under test — stop the batch instead.
                 batch_error = batch_error.or(Some(err));
+                failed = true;
             }
 
             // Merge captures into the World (typed), honoring saveAs: global.
@@ -389,7 +406,7 @@ impl EngineSession for HurlSession {
                         proef_core::step::StepPayload::MergedAsserts { .. }
                     )
                 })
-                .filter_map(|(i, _, _)| self.anchor(ordinal, *i).map(|(_, lines)| lines))
+                .filter_map(|(i, _, _)| self.anchor(ordinal, *i))
                 .collect();
             let in_merged_span = |line: usize| {
                 merged_spans
@@ -397,7 +414,7 @@ impl EngineSession for HurlSession {
                     .any(|[start, end]| line >= *start && line <= *end)
             };
             for (index, step, entries) in &run {
-                let span = self.anchor(ordinal, *index).map(|(_, lines)| lines);
+                let span = self.anchor(ordinal, *index);
                 let merged = matches!(
                     step.payload,
                     proef_core::step::StepPayload::MergedAsserts { .. }
@@ -819,6 +836,12 @@ fn to_hurl_value(value: &WorldValue) -> runner::Value {
     }
 }
 
+/// Captures fold into the scalar [`WorldValue`] **lossily**: `JSONPath` lists
+/// and objects, `Bytes`, and `Date` all become their hurl `Display` string
+/// (and `BigInteger` deliberately stays a string — the serde
+/// `arbitrary_precision` constraint bans numeric round-trips through
+/// untagged enums). Pack authors capture scalars; anything structured is a
+/// string on arrival in the World.
 fn from_hurl_value(value: &runner::Value) -> WorldValue {
     match value {
         runner::Value::Bool(b) => WorldValue::Bool(*b),

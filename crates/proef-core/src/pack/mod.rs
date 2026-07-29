@@ -131,12 +131,24 @@ impl PackSet {
     /// Resolve a `use:` target (`name` or `pack.yaml#name`) to a macro.
     pub fn find_use_target(&self, target: &str) -> Option<&Macro> {
         match target.split_once('#') {
-            Some((pack_ref, name)) => self.macros.get(name).filter(|m| {
-                m.pack == pack_ref || m.pack.ends_with(pack_ref) || pack_ref.ends_with(&m.pack)
-            }),
+            Some((pack_ref, name)) => self
+                .macros
+                .get(name)
+                .filter(|m| pack_ref_matches(&m.pack, pack_ref)),
             None => self.macros.get(target),
         }
     }
+}
+
+/// Path-boundary-aware pack-qualifier match: `api.yaml` qualifies
+/// `packs/api.yaml` but never `legacy-api.yaml` — a suffix only counts when
+/// it starts at a `/` boundary (or spans the whole name).
+fn pack_ref_matches(pack: &str, pack_ref: &str) -> bool {
+    let bounded_suffix = |hay: &str, needle: &str| {
+        hay.strip_suffix(needle)
+            .is_some_and(|rest| rest.is_empty() || rest.ends_with('/'))
+    };
+    bounded_suffix(pack, pack_ref) || bounded_suffix(pack_ref, pack)
 }
 
 /// One loaded macro.

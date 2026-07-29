@@ -41,6 +41,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::pattern_empty_capture` | `{}` with no capture name | |
 | `pack::pattern_no_anchor` | A pattern with no literal word (capture-only) | ✓ |
 | `pack::pattern_unknown_capture` | A `{capture}` that is not a declared param | ✓ |
+| `pack::pattern_duplicate_capture` | The same `{capture}` written twice in one pattern | ✓ |
 | `pack::adjacent_captures` | `{a} {b}` with no literal between captures | ✓ |
 | `pack::default_not_param` | A `defaults:` key that is not a declared param | ✓ |
 | `pack::bad_save_target` | `saveAs:` target other than `global` | |
@@ -71,6 +72,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `lower::then_before_when` | An `expect:` step with no previous request to attach to | ✓ |
 | `lower::bad_status` | `expect: status:` is not an HTTP status number | |
+| `lower::kind_unrouted` | Internal safety net: a lowered step's kind maps to no engine (registry drift — unreachable through the CLI, which is why it has no corpus case) | |
 | `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
 | `lower::dry_run_unknown` | A runtime-only global under `--dry-run` (*warning*) | |
 

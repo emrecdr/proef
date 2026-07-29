@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::pattern_duplicate_capture
+
+  × macro `move`: capture `{x}` appears more than once — a later match would silently overwrite the earlier value
+   ╭─[tests/errors/pack__pattern_duplicate_capture/packs/broken.yaml:2:3]
+ 1 │ templates:
+ 2 │   move:
+   ·   ────
+ 3 │     params: [x]
+   ╰────
+
+1 error(s)
