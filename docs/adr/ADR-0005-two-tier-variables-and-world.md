@@ -44,6 +44,13 @@ round-trips would lose numbers/bools at engine boundaries.
 
 ## Errata
 
+**2026-07-29 (v0.3.1):** the "secrets reach no sink" invariant now explicitly
+covers the persistent World: a `saveAs: global` capture whose value equals a
+known secret is refused (the owning step warns) — `.proef-state.json` is
+plaintext at rest and must never receive secret-derived material. `PROEF_KEY`
+(base64) may supply the project key via the environment for CI use of a
+committed ciphertext store.
+
 **2026-07-28 (post-M5 hardening; API removed 2026-07-29 per YAGNI):**
 "snapshot/restore across scenario retries" originally described a mechanism whose
 *trigger* was never specified anywhere in the corpus — no

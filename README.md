@@ -74,7 +74,8 @@ summary: 12 passed · 0 failed · 0 skipped
   generates no randomness — run ids, timestamps, and env are injected. Snapshots and
   property tests stay stable; `${fake:*}` data is seeded from the run id.
 - **Secrets stay secret.** Encrypted at rest, injected through hurl's redaction,
-  value-redacted once at the event-sink boundary — property-tested end to end.
+  value-redacted once at the event-sink boundary, never persisted by captures —
+  property-tested end to end. CI decrypts a committed store via `PROEF_KEY`.
 - **Engine-agnostic core.** Adding an engine leaves `proef-core` diff-empty; that is
   the acceptance test for the seam.
 
@@ -131,9 +132,9 @@ proef test suite --jobs 4
 | `proef artifacts <path> -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef schema` | print/install the pack JSON Schema (engine fragments included) |
-| `proef secret set\|list` | encrypted secret store (names listed, values never) |
+| `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
 | `proef fmt <path>` | canonicalize raw hurl blocks inside packs (`--check` for CI) |
-| `proef doctor` | native library / environment checks per engine |
+| `proef doctor` | native library, environment, and secret store/key checks |
 
 **Exit codes are a contract:** `0` ok · `1` test failure (incl. cancelled runs) ·
 `2` user error · `3` system error.

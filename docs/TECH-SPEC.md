@@ -192,6 +192,7 @@ templates:
         when: "${expr}"       # skip guard: skips when empty or literal false/0 after resolution
         retry: { count: N, interval_ms: M }   # finite only (lint); → [Options] retry
         saveAs: { captureName: global }        # promote capture(s) into the World
+                              # (refused with a warning if the value equals a secret)
         hurl: |               # PRIMARY form (ADR-0004): raw hurl, ${…} lowered first,
           …                   # {{…}} left for run time; validated by parse_hurl_file
         # OR structured payload (reserved for future non-hurl engines):
@@ -243,15 +244,17 @@ proef test <file|dir> [--dry-run] [--tags csv] [--jobs N] [--junit path|auto]
                       [--output json] [--watch] [--scenario NAME]
 proef flows [dir] [--output json]
 proef artifacts <file|dir> -o DIR [--run-id ID]
-proef schema [--add-to FILE…]  proef secret set|list
+proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
 proef fmt <file|dir> [--check]
 ```
 
 Exit codes: 0 ok · 1 test failure · 2 user error · 3 system error (typed enum,
 assert_cmd-pinned). Config precedence: built-in defaults < `proef.toml` < flags;
-secrets additionally resolve `PROEF_SECRET_<NAME>` env overrides before the store
-(there is no generic `PROEF_*` config layer). `--dry-run` = §4.1–4.5 including artifact
+secrets additionally resolve `PROEF_SECRET_<NAME>` env overrides before the store,
+and `PROEF_KEY` (base64) overrides the key file — CI decrypts a committed
+ciphertext store without the key ever touching disk (there is no generic
+`PROEF_*` config layer). `--dry-run` = §4.1–4.5 including artifact
 parse-validation; no engine sessions, no network.
 
 ## 11. State & files
@@ -274,7 +277,10 @@ scenario ordering within a file is preserved for artifact naming, not execution 
 
 Secrets: encrypted at rest (chacha20poly1305), surfaced only
 via `insert_secret`; redaction invariants (never in artifacts/events/reports/logs)
-property-tested; sensitive files 0600. `context_dir` confines file bodies (hurl's own
+property-tested; a `saveAs: global` capture whose value equals a known secret is
+refused (warned) — `.proef-state.json` is plaintext and never receives
+secret-derived material; sensitive files 0600; `proef doctor` reports store/key
+health. `context_dir` confines file bodies (hurl's own
 sandbox option). No telemetry.
 
 ## 14. Dependencies (exact at M0; policy: latest stable at adoption, Renovate-managed)

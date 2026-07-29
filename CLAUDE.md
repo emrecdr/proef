@@ -120,9 +120,10 @@ never import each other. The structural acceptance test: *adding an engine leave
 - **Two-tier variables (ADR-0005):** `${…}` resolves at lower time (recursive, depth ≤ 8,
   `$${` escape — captured step args may themselves contain `${…}`); `{{…}}` is hurl
   run-time and must pass through core untouched. Secrets go through
-  `VariableSet::insert_secret` and **never** appear in artifacts, events, logs, or
-  reports (property-tested invariant — keep it green; events carry capture *names*
-  only).
+  `VariableSet::insert_secret` and **never** appear in artifacts, events, logs,
+  reports, or the persistent World — `saveAs: global` refuses secret-valued
+  captures (property-tested invariant — keep it green; events carry capture
+  *names* only).
 - **Artifacts are the executed input (ADR-0010):** the emitted `.hurl` text and the text
   handed to `parse_hurl_file` must be the *same bytes* (hash-asserted in tests). The
   canonical format is snapshot-locked — emitter changes require deliberate
