@@ -5,6 +5,7 @@
 //! (ADR-0009), performs all IO (core purity), and is the only crate rendering
 //! user-facing diagnostics (miette — ADR-0009).
 
+mod assets;
 mod ci_reports;
 mod commands;
 mod config;

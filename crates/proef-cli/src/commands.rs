@@ -212,17 +212,14 @@ pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCod
             }
             // Copy referenced `file,…;` assets next to the artifact so stock
             // `hurl --test <file>` replays without proef's context root.
-            if let Some(root) = Path::new(feature.file.path.as_str()).parent() {
-                for asset in proef_core::emit::file_references(&artifact.hurl_text) {
-                    let source = root.join(&asset);
-                    let target = out_dir.join(&asset);
-                    if source.is_file() {
-                        if let Some(parent) = target.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        let _ = std::fs::copy(&source, &target);
-                    }
-                }
+            if let Some(root) = Path::new(feature.file.path.as_str()).parent()
+                && let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, root, out_dir)
+            {
+                eprintln!("error: {}.hurl: {err}", artifact.slug);
+                return match err {
+                    crate::assets::AssetCopyError::Unsafe(_) => ExitCode::UserError,
+                    crate::assets::AssetCopyError::Io(_) => ExitCode::SystemError,
+                };
             }
             let _ = writeln!(std::io::stdout(), "  ok {}.hurl", artifact.slug);
             written += 1;

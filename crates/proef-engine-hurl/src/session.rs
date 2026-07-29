@@ -257,6 +257,27 @@ impl EngineSession for HurlSession {
             let entry_indices: Vec<usize> =
                 run.iter().flat_map(|(_, _, e)| e.iter().copied()).collect();
             let (Some(&first), Some(&last)) = (entry_indices.first(), entry_indices.last()) else {
+                // Nothing to execute (comment-only payloads): the steps must
+                // still surface in every sink — a scenario may never report
+                // green while silently having run nothing (load-time lint
+                // rejects this; this is the engine-side backstop).
+                for (_, step, _) in run {
+                    outcomes.push(StepOutcome {
+                        detail: Some(NO_ENTRIES_DETAIL.to_owned()),
+                        ..skipped_outcome(step)
+                    });
+                    emit_step(
+                        events,
+                        &self.scenario,
+                        batch,
+                        step,
+                        Status::Skipped,
+                        0,
+                        0,
+                        &[],
+                        Some(NO_ENTRIES_DETAIL),
+                    );
+                }
                 continue;
             };
 
@@ -398,6 +419,8 @@ impl EngineSession for HurlSession {
                         format!(" (artifact {}.hurl:{a})", self.artifact.slug)
                     });
                     Some(format!("{}{location}", errors.join("; ")))
+                } else if entries.is_empty() {
+                    Some(NO_ENTRIES_DETAIL.to_owned())
                 } else {
                     None
                 };
@@ -534,6 +557,9 @@ fn line_in_entry(parsed_entry: &hurl_core::ast::Entry, result_line: usize) -> bo
     let end = parsed_entry.request.source_info.end.line;
     result_line >= start && result_line <= end
 }
+
+/// Detail attached to a step whose payload lowered to zero hurl entries.
+const NO_ENTRIES_DETAIL: &str = "no hurl entries to execute (comment-only payload?)";
 
 fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
     StepOutcome {

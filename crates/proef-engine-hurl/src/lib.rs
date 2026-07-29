@@ -98,6 +98,14 @@ fn validate_payload(text: &str) -> Result<(), PayloadProbeError> {
         normalized.push('\n');
     }
     match hurl_core::parser::parse_hurl_file(&normalized) {
+        // A parseable payload with zero entries (only comments or blank
+        // lines) would execute nothing while the step reports green — reject
+        // it at load so dry-run and execution agree.
+        Ok(file) if file.entries.is_empty() => Err(PayloadProbeError {
+            line: 1,
+            column: 1,
+            message: "contains no hurl entries (only comments or blank lines)".to_owned(),
+        }),
         Ok(_) => Ok(()),
         Err(err) => Err(PayloadProbeError {
             line: err.pos.line,

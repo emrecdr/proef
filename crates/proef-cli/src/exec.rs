@@ -98,15 +98,16 @@ pub fn execute(
         }
     };
 
-    // Run directory.
+    // Run directory. Rotation happens before the new dir exists so the
+    // in-flight run can never be a rotation candidate.
     let runs_root = PathBuf::from(config.runs_dir());
+    rotate_runs(&runs_root, front.run_id.as_ref());
     let run_dir = runs_root.join(front.run_id.as_ref());
     let artifacts_dir = run_dir.join("artifacts");
     if let Err(err) = std::fs::create_dir_all(&artifacts_dir) {
         eprintln!("error: cannot create run dir {}: {err}", run_dir.display());
         return ExitCode::SystemError;
     }
-    rotate_runs(&runs_root);
 
     // Reporters: console (stdout + run.log tee) and the JSONL record.
     let events_file = match std::fs::File::create(run_dir.join("events.jsonl")) {
@@ -365,17 +366,14 @@ fn build_specs(
                     }
                     // Referenced `file,…;` assets ride along so the run-dir
                     // artifact replays under stock hurl (ADR-0010 hand-off).
-                    if let Some(root) = Path::new(feature_file.path.as_str()).parent() {
-                        for asset in emit::file_references(&artifact.hurl_text) {
-                            let source = root.join(&asset);
-                            let target = artifacts_dir.join(&asset);
-                            if source.is_file() {
-                                if let Some(parent) = target.parent() {
-                                    let _ = std::fs::create_dir_all(parent);
-                                }
-                                let _ = std::fs::copy(&source, &target);
-                            }
-                        }
+                    // The run itself is unaffected (the engine reads bodies
+                    // from the suite, fenced by its context dir) — an
+                    // incomplete run record is a warning, not a failure.
+                    if let Some(root) = Path::new(feature_file.path.as_str()).parent()
+                        && let Err(err) =
+                            crate::assets::copy_assets(&artifact.hurl_text, root, &artifacts_dir)
+                    {
+                        eprintln!("warning: run record for {}.hurl: {err}", artifact.slug);
                     }
                     ArtifactRef {
                         slug: Arc::from(artifact.slug.as_str()),
@@ -403,8 +401,11 @@ fn build_specs(
     specs
 }
 
-/// Keep the newest [`RUN_RETENTION`] run dirs (uuid-v7 names sort by time).
-fn rotate_runs(runs_dir: &Path) {
+/// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
+/// time). Only directories *named by a run id* are candidates — `runs-dir`
+/// may be `.` or otherwise shared with user content, and rotation must never
+/// touch anything proef did not create — and the in-flight run never is.
+fn rotate_runs(runs_dir: &Path, current_run: &str) {
     let Ok(entries) = std::fs::read_dir(runs_dir) else {
         return;
     };
@@ -412,6 +413,11 @@ fn rotate_runs(runs_dir: &Path) {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.is_dir())
+        .filter(|p| {
+            p.file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| name != current_run && uuid::Uuid::try_parse(name).is_ok())
+        })
         .collect();
     dirs.sort();
     if dirs.len() > RUN_RETENTION {
