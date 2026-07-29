@@ -35,8 +35,6 @@ pub struct LowerCtx<'a> {
     pub run_id: &'a str,
     /// World (globals read at lower time).
     pub world: &'a World,
-    /// Flow/project config variables (empty until M3).
-    pub config: &'a BTreeMap<String, String>,
     /// Strict (execution) or dry-run resolution.
     pub mode: ResolveMode,
 }
@@ -76,7 +74,7 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
     let mut warnings: Vec<Diag> = Vec::new();
     let mut refs = Refs::default();
 
-    // Directives resolve first (env/run/config only — no step scope).
+    // Directives resolve first (env/run only — no step scope).
     let Some(directives) = resolve_directives(ctx, &mut refs, &mut warnings, &mut diags) else {
         return Err(diags);
     };
@@ -125,7 +123,7 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
     })
 }
 
-/// Resolve `# key: value` directive values (they may reference env/run/config).
+/// Resolve `# key: value` directive values (they may reference env/run).
 /// Failures land in `diags`; `None` means at least one directive is broken.
 fn resolve_directives(
     ctx: &LowerCtx<'_>,
@@ -140,7 +138,6 @@ fn resolve_directives(
             args: &empty,
             defaults: &empty,
             directives: &resolved, // earlier directives are visible to later ones
-            config: ctx.config,
             env: ctx.env,
             run_id: ctx.run_id,
             world: ctx.world,
@@ -203,7 +200,6 @@ fn expand_macro(
             args,
             defaults: &macro_.defaults,
             directives,
-            config: ctx.config,
             env: ctx.env,
             run_id: ctx.run_id,
             world: ctx.world,
@@ -260,7 +256,6 @@ fn expand_macro(
                     kind,
                     payload: StepPayload::MergedAsserts { lines },
                     optional,
-                    retry: None,
                     when: None,
                     label: None,
                     save_as: std::collections::BTreeMap::new(),
@@ -384,7 +379,6 @@ fn expand_step(
                 kind: StepKindId::from(kind.as_str()),
                 payload,
                 optional: macro_step.optional,
-                retry: macro_step.retry,
                 when,
                 label,
                 save_as: macro_step.save_as.clone(),
@@ -709,7 +703,6 @@ mod tests {
         kind_to_engine: &'a BTreeMap<String, String>,
         env: &'a BTreeMap<String, String>,
         world: &'a World,
-        config: &'a BTreeMap<String, String>,
     ) -> LowerCtx<'a> {
         LowerCtx {
             feature,
@@ -718,7 +711,6 @@ mod tests {
             env,
             run_id: "run-0001",
             world,
-            config,
             mode: ResolveMode::DryRun,
         }
     }
@@ -728,11 +720,11 @@ mod tests {
         let (feature, scenario, packs) = fixture();
         let kind_to_engine: BTreeMap<String, String> =
             [("hurl".to_owned(), "hurl".to_owned())].into();
-        let (env, config) = (BTreeMap::new(), BTreeMap::new());
+        let env = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world, &config),
+            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
         )
         .unwrap();
 
@@ -788,11 +780,11 @@ mod tests {
         .unwrap();
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
         let kind_to_engine = BTreeMap::new();
-        let (env, config) = (BTreeMap::new(), BTreeMap::new());
+        let env = BTreeMap::new();
         let world = World::default();
         let errs = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world, &config),
+            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
         )
         .unwrap_err();
         assert_eq!(errs[0].code, "proef::lower::then_before_when");
@@ -825,11 +817,11 @@ mod tests {
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
         let kind_to_engine: BTreeMap<String, String> =
             [("web".to_owned(), "web".to_owned())].into();
-        let (env, config) = (BTreeMap::new(), BTreeMap::new());
+        let env = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world, &config),
+            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
         )
         .unwrap();
         let StepPayload::Structured(value) = &lowered.batches[0].steps[0].payload else {
@@ -882,7 +874,6 @@ mod tests {
                 kind: StepKindId::from(*kind),
                 payload: StepPayload::HurlEntries(String::new()),
                 optional: false,
-                retry: None,
                 when: None,
                 label: None,
                 save_as: BTreeMap::new(),

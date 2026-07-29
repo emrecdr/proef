@@ -85,9 +85,16 @@ fn schema_prints_merged_json() {
     );
 }
 
+/// Real execution against the corpus with no target configured: strict
+/// resolution finds `${env:PROEF_BASE_URL}` (and the secret) unbound — a
+/// user-input fault, exit 2, before any request is attempted.
 #[test]
-fn execution_without_dry_run_is_not_available_yet() {
-    proef().args(["test", "tests/features"]).assert().code(2);
+fn execution_without_target_env_is_a_user_error() {
+    proef()
+        .env_remove("PROEF_BASE_URL")
+        .args(["test", "tests/features"])
+        .assert()
+        .code(2);
 }
 
 /// The canonical artifact corpus (ADR-0010): emission is byte-deterministic

@@ -47,33 +47,16 @@ pub struct ScenarioDef {
     pub steps: Vec<StepDefn>,
     /// 1-based line of the scenario header (display).
     pub line: usize,
-    /// Byte span of the scenario in the normalized source.
-    pub span: Span,
-}
-
-/// Step keyword class (And/But already resolved by the parser).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StepKeyword {
-    /// Given — setup.
-    Given,
-    /// When — action.
-    When,
-    /// Then — assertion.
-    Then,
 }
 
 /// One authored step, ready for binding.
 #[derive(Debug, Clone)]
 pub struct StepDefn {
-    /// Keyword as authored (display only — never matched against patterns).
-    pub keyword: String,
-    /// Resolved keyword class.
-    pub ty: StepKeyword,
     /// Step text (keyword stripped, outline placeholders substituted).
     pub text: String,
     /// Data-table rows (outline placeholders substituted), when present.
     pub table: Option<Vec<Vec<String>>>,
-    /// Docstring, when present (reserved for raw bodies — M5).
+    /// Docstring, when present (raw request bodies).
     pub docstring: Option<String>,
     /// 1-based line of the step (anchors + events).
     pub line: usize,
@@ -354,12 +337,6 @@ fn concrete_scenario(
                     .collect()
             });
             StepDefn {
-                keyword: step.keyword.trim().to_owned(),
-                ty: match step.ty {
-                    gherkin::StepType::Given => StepKeyword::Given,
-                    gherkin::StepType::When => StepKeyword::When,
-                    gherkin::StepType::Then => StepKeyword::Then,
-                },
                 text,
                 table,
                 docstring,
@@ -374,7 +351,6 @@ fn concrete_scenario(
         tags: strip_tag_markers(tags),
         steps,
         line: scenario.position.line,
-        span: clamp(scenario.span, source),
     }
 }
 
@@ -471,7 +447,6 @@ mod tests {
         assert_eq!(first.tags, vec!["e2e", "api", "search"]);
         assert_eq!(first.steps.len(), 3, "background prepended");
         assert_eq!(first.steps[0].text, "the api is available");
-        assert_eq!(first.steps[0].ty, StepKeyword::Given);
 
         let expanded = &feature.scenarios[1];
         assert_eq!(expanded.steps[1].text, "I check /a");
@@ -480,12 +455,12 @@ mod tests {
     }
 
     #[test]
-    fn and_but_resolve_to_the_previous_primary_keyword() {
+    fn and_but_steps_parse_as_plain_steps() {
         let text = "Feature: F\n  Scenario: S\n    When I do a thing\n    And I do another\n    Then it worked\n    But not too much\n";
         let feature = parse("f.feature", text).unwrap();
         let steps = &feature.scenarios[0].steps;
-        assert_eq!(steps[1].ty, StepKeyword::When);
-        assert_eq!(steps[3].ty, StepKeyword::Then);
+        assert_eq!(steps.len(), 4, "And/But bind by text like any step");
+        assert_eq!(steps[1].text, "I do another");
     }
 
     #[test]

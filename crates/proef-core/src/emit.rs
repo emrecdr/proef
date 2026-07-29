@@ -373,7 +373,6 @@ mod tests {
             kind: StepKindId::from("hurl"),
             payload: StepPayload::HurlEntries(payload.to_owned()),
             optional,
-            retry: None,
             when: None,
             label: label.map(ToOwned::to_owned),
             save_as: BTreeMap::new(),

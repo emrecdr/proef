@@ -52,12 +52,14 @@ fn discover(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
     }
-    let packs_dir = if path.join("packs").is_dir() {
-        path.join("packs")
-    } else {
-        path.to_path_buf()
-    };
-    let mut found: Vec<PathBuf> = std::fs::read_dir(packs_dir)
+    // Same location rule as pack loading (front::pack_files) — fmt must
+    // format exactly what a run would load; a plain directory of yaml files
+    // (no packs/ layout) still formats as itself.
+    let found = crate::front::pack_files(path).unwrap_or_default();
+    if !found.is_empty() {
+        return found;
+    }
+    let mut found: Vec<PathBuf> = std::fs::read_dir(path)
         .into_iter()
         .flatten()
         .flatten()

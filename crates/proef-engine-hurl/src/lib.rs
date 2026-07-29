@@ -116,7 +116,7 @@ fn validate_payload(text: &str) -> Result<(), PayloadProbeError> {
 }
 
 /// Report the libcurl this binary is linked against (mirrors `curl --version`) —
-/// the library `run_entries` drives at M3.
+/// the library `run_entries` drives during execution.
 fn check_libcurl() -> DoctorResult {
     let info = hurl::http::libcurl_version_info();
     if info.libraries.is_empty() {

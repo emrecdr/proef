@@ -38,6 +38,7 @@ const BUDGET_MARGIN: Duration = Duration::from_secs(5);
 pub(crate) struct HurlSession {
     artifact: ArtifactRef,
     secrets: Arc<BTreeMap<String, String>>,
+    redactions: proef_core::report::Redactions,
     http: HttpDefaults,
     file_root: Option<std::path::PathBuf>,
     scenario: Arc<str>,
@@ -54,6 +55,7 @@ impl HurlSession {
         })?;
         Ok(Self {
             artifact,
+            redactions: proef_core::report::Redactions::new(ctx.secrets.values().cloned()),
             secrets: Arc::clone(&ctx.secrets),
             http: ctx.http,
             file_root: ctx.file_root.clone(),
@@ -207,7 +209,6 @@ impl EngineSession for HurlSession {
                     attempts: 0,
                     duration: Duration::ZERO,
                     detail: Some("skipped by `when:` guard".to_owned()),
-                    artifact_span: None,
                 });
                 emit_step(
                     events,
@@ -362,7 +363,7 @@ impl EngineSession for HurlSession {
                     error.source_info.start.line,
                     fixme
                 );
-                redact(&rendered, &self.secrets)
+                self.redactions.apply(&rendered)
             };
             // Lines owned by merged-asserts steps (§2.7): their errors
             // attribute to the authored `Then`, never to the host request —
@@ -521,12 +522,6 @@ impl EngineSession for HurlSession {
                     attempts: attempts.max(u32::from(reached)),
                     duration,
                     detail: detail.clone(),
-                    artifact_span: span.map(|[a, b]| {
-                        (
-                            u32::try_from(a).unwrap_or(u32::MAX),
-                            u32::try_from(b).unwrap_or(u32::MAX),
-                        )
-                    }),
                 });
                 emit_step(
                     events,
@@ -652,7 +647,6 @@ fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
         attempts: 0,
         duration: Duration::ZERO,
         detail: None,
-        artifact_span: None,
     }
 }
 
@@ -765,16 +759,6 @@ fn classify_error(error: &runner::RunnerError) -> HurlErrorClass {
         _ if error.assert => HurlErrorClass::Assert,
         _ => HurlErrorClass::Infra,
     }
-}
-
-fn redact(text: &str, secrets: &BTreeMap<String, String>) -> String {
-    let mut out = text.to_owned();
-    for value in secrets.values() {
-        if !value.is_empty() {
-            out = out.replace(value, "***");
-        }
-    }
-    out
 }
 
 fn to_hurl_value(value: &WorldValue) -> runner::Value {

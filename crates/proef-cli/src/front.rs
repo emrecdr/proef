@@ -94,7 +94,6 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             .as_str(),
     );
     let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
-    let config = BTreeMap::new(); // proef.toml loading lands with execution (M3)
 
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
@@ -135,7 +134,6 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             env: &env,
             run_id: &run_id,
             world: &world,
-            config: &config,
             mode,
         };
         let feature_stem = feature_path.file_stem().map_or_else(
@@ -312,8 +310,51 @@ fn walk_features(
     Ok(())
 }
 
-/// Project packs: `<dir>/packs/*.yml|yaml` where `<dir>` is the input
-/// directory (or the input file's parent), sorted for determinism.
+/// Every pack file under `base`: the yaml files of `packs/` directories at
+/// any depth — feature discovery recurses, so nested suites must find their
+/// packs too — symlink-cycle guarded and sorted for determinism. A `base`
+/// that itself is named `packs` contributes its own files.
+pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
+    fn walk(
+        dir: &Path,
+        out: &mut Vec<PathBuf>,
+        visited: &mut std::collections::BTreeSet<PathBuf>,
+    ) -> Result<(), FrontError> {
+        if let Ok(real) = dir.canonicalize()
+            && !visited.insert(real)
+        {
+            return Ok(());
+        }
+        let is_packs_dir = dir.file_name().is_some_and(|name| name == "packs");
+        let entries = std::fs::read_dir(dir).map_err(|err| {
+            FrontError::Core(CoreError::system_with(
+                format!("cannot read directory {}", dir.display()),
+                err,
+            ))
+        })?;
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                walk(&entry_path, out, visited)?;
+            } else if is_packs_dir
+                && entry_path
+                    .extension()
+                    .is_some_and(|e| e == "yaml" || e == "yml")
+            {
+                out.push(entry_path);
+            }
+        }
+        Ok(())
+    }
+    let mut out = Vec::new();
+    let mut visited = std::collections::BTreeSet::new();
+    walk(base, &mut out, &mut visited)?;
+    out.sort();
+    Ok(out)
+}
+
+/// Project packs: every `packs/*.yml|yaml` under the input directory (or the
+/// input file's parent) via [`pack_files`].
 fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
     let base = if path.is_dir() {
         path.to_path_buf()
@@ -321,33 +362,18 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
         path.parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
-    let packs_dir = base.join("packs");
     let mut sources = Vec::new();
-    if packs_dir.is_dir() {
-        let entries = std::fs::read_dir(&packs_dir).map_err(|err| {
+    for pack_path in pack_files(&base)? {
+        let text = std::fs::read_to_string(&pack_path).map_err(|err| {
             FrontError::Core(CoreError::system_with(
-                format!("cannot read packs directory {}", packs_dir.display()),
+                format!("cannot read pack {}", pack_path.display()),
                 err,
             ))
         })?;
-        let mut paths: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|e| e == "yaml" || e == "yml"))
-            .collect();
-        paths.sort();
-        for pack_path in paths {
-            let text = std::fs::read_to_string(&pack_path).map_err(|err| {
-                FrontError::Core(CoreError::system_with(
-                    format!("cannot read pack {}", pack_path.display()),
-                    err,
-                ))
-            })?;
-            sources.push(PackSource {
-                name: portable_display(&pack_path),
-                text: Arc::from(text.as_str()),
-            });
-        }
+        sources.push(PackSource {
+            name: portable_display(&pack_path),
+            text: Arc::from(text.as_str()),
+        });
     }
     Ok(sources)
 }

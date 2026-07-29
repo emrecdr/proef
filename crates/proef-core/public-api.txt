@@ -389,10 +389,7 @@ impl proef_core::error::CoreError
 pub fn proef_core::error::CoreError::exit_code(&self) -> proef_core::error::ExitCode
 pub fn proef_core::error::CoreError::system(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::error::CoreError::system_with(impl core::convert::Into<alloc::string::String>, impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
-pub fn proef_core::error::CoreError::test_failure(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::error::CoreError::user(impl core::convert::Into<alloc::string::String>) -> Self
-impl core::convert::From<&proef_core::error::CoreError> for proef_core::error::ExitCode
-pub fn proef_core::error::ExitCode::from(&proef_core::error::CoreError) -> Self
 impl core::convert::From<proef_core::error::CoreError> for proef_core::diag::FrontError
 pub fn proef_core::diag::FrontError::from(proef_core::error::CoreError) -> Self
 impl core::convert::From<proef_core::error::EngineError> for proef_core::error::CoreError
@@ -414,6 +411,7 @@ pub enum proef_core::error::EngineErrorClass
 pub proef_core::error::EngineErrorClass::AssertFailed
 pub proef_core::error::EngineErrorClass::Infra
 pub proef_core::error::EngineErrorClass::Setup
+pub proef_core::error::EngineErrorClass::UserInput
 impl core::clone::Clone for proef_core::error::EngineErrorClass
 pub fn proef_core::error::EngineErrorClass::clone(&self) -> proef_core::error::EngineErrorClass
 impl core::cmp::Eq for proef_core::error::EngineErrorClass
@@ -442,8 +440,6 @@ pub fn proef_core::error::ExitCode::clone(&self) -> proef_core::error::ExitCode
 impl core::cmp::Eq for proef_core::error::ExitCode
 impl core::cmp::PartialEq for proef_core::error::ExitCode
 pub fn proef_core::error::ExitCode::eq(&self, &proef_core::error::ExitCode) -> bool
-impl core::convert::From<&proef_core::error::CoreError> for proef_core::error::ExitCode
-pub fn proef_core::error::ExitCode::from(&proef_core::error::CoreError) -> Self
 impl core::fmt::Debug for proef_core::error::ExitCode
 pub fn proef_core::error::ExitCode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for proef_core::error::ExitCode
@@ -467,6 +463,7 @@ impl proef_core::error::EngineError
 pub fn proef_core::error::EngineError::assert_failed(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::error::EngineError::infra(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::error::EngineError::setup(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::error::EngineError::user_input(impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::error::EngineError::with_source(self, impl core::error::Error + core::marker::Send + core::marker::Sync + 'static) -> Self
 impl core::convert::From<proef_core::error::EngineError> for proef_core::error::CoreError
 pub fn proef_core::error::CoreError::from(proef_core::error::EngineError) -> Self
@@ -557,26 +554,6 @@ pub const proef_core::fake::GENERATORS: &[&str]
 pub fn proef_core::fake::generate(&str, usize, &str) -> core::option::Option<alloc::string::String>
 pub fn proef_core::fake::is_known_generator(&str) -> bool
 pub mod proef_core::feature
-pub enum proef_core::feature::StepKeyword
-pub proef_core::feature::StepKeyword::Given
-pub proef_core::feature::StepKeyword::Then
-pub proef_core::feature::StepKeyword::When
-impl core::clone::Clone for proef_core::feature::StepKeyword
-pub fn proef_core::feature::StepKeyword::clone(&self) -> proef_core::feature::StepKeyword
-impl core::cmp::Eq for proef_core::feature::StepKeyword
-impl core::cmp::PartialEq for proef_core::feature::StepKeyword
-pub fn proef_core::feature::StepKeyword::eq(&self, &proef_core::feature::StepKeyword) -> bool
-impl core::fmt::Debug for proef_core::feature::StepKeyword
-pub fn proef_core::feature::StepKeyword::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for proef_core::feature::StepKeyword
-impl core::marker::StructuralPartialEq for proef_core::feature::StepKeyword
-impl core::marker::Freeze for proef_core::feature::StepKeyword
-impl core::marker::Send for proef_core::feature::StepKeyword
-impl core::marker::Sync for proef_core::feature::StepKeyword
-impl core::marker::Unpin for proef_core::feature::StepKeyword
-impl core::marker::UnsafeUnpin for proef_core::feature::StepKeyword
-impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::StepKeyword
-impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepKeyword
 pub struct proef_core::feature::FeatureFile
 pub proef_core::feature::FeatureFile::directives: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::feature::FeatureFile::name: alloc::string::String
@@ -598,7 +575,6 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::FeatureFile
 pub struct proef_core::feature::ScenarioDef
 pub proef_core::feature::ScenarioDef::line: usize
 pub proef_core::feature::ScenarioDef::name: alloc::string::String
-pub proef_core::feature::ScenarioDef::span: proef_core::diag::Span
 pub proef_core::feature::ScenarioDef::steps: alloc::vec::Vec<proef_core::feature::StepDefn>
 pub proef_core::feature::ScenarioDef::tags: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for proef_core::feature::ScenarioDef
@@ -614,12 +590,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::ScenarioDe
 impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::ScenarioDef
 pub struct proef_core::feature::StepDefn
 pub proef_core::feature::StepDefn::docstring: core::option::Option<alloc::string::String>
-pub proef_core::feature::StepDefn::keyword: alloc::string::String
 pub proef_core::feature::StepDefn::line: usize
 pub proef_core::feature::StepDefn::span: proef_core::diag::Span
 pub proef_core::feature::StepDefn::table: core::option::Option<alloc::vec::Vec<alloc::vec::Vec<alloc::string::String>>>
 pub proef_core::feature::StepDefn::text: alloc::string::String
-pub proef_core::feature::StepDefn::ty: proef_core::feature::StepKeyword
 impl core::clone::Clone for proef_core::feature::StepDefn
 pub fn proef_core::feature::StepDefn::clone(&self) -> proef_core::feature::StepDefn
 impl core::fmt::Debug for proef_core::feature::StepDefn
@@ -634,7 +608,6 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepDefn
 pub fn proef_core::feature::parse(&str, &str) -> core::result::Result<proef_core::feature::FeatureFile, alloc::vec::Vec<proef_core::diag::Diag>>
 pub mod proef_core::lower
 pub struct proef_core::lower::LowerCtx<'a>
-pub proef_core::lower::LowerCtx::config: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::feature: &'a proef_core::feature::FeatureFile
 pub proef_core::lower::LowerCtx::kind_to_engine: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -887,18 +860,6 @@ impl<W> core::marker::Unpin for proef_core::report::JsonlReporter<W> where W: co
 impl<W> core::marker::UnsafeUnpin for proef_core::report::JsonlReporter<W> where W: core::marker::UnsafeUnpin
 impl<W> core::panic::unwind_safe::RefUnwindSafe for proef_core::report::JsonlReporter<W> where W: core::panic::unwind_safe::RefUnwindSafe
 impl<W> core::panic::unwind_safe::UnwindSafe for proef_core::report::JsonlReporter<W> where W: core::panic::unwind_safe::UnwindSafe
-pub struct proef_core::report::NormalizeReporter
-impl proef_core::report::NormalizeReporter
-pub fn proef_core::report::NormalizeReporter::new(alloc::boxed::Box<dyn proef_core::report::Reporter>) -> Self
-impl proef_core::report::Reporter for proef_core::report::NormalizeReporter
-pub fn proef_core::report::NormalizeReporter::on_event(&mut self, &proef_core::event::Event)
-impl core::marker::Freeze for proef_core::report::NormalizeReporter
-impl core::marker::Send for proef_core::report::NormalizeReporter
-impl !core::marker::Sync for proef_core::report::NormalizeReporter
-impl core::marker::Unpin for proef_core::report::NormalizeReporter
-impl core::marker::UnsafeUnpin for proef_core::report::NormalizeReporter
-impl !core::panic::unwind_safe::RefUnwindSafe for proef_core::report::NormalizeReporter
-impl !core::panic::unwind_safe::UnwindSafe for proef_core::report::NormalizeReporter
 pub struct proef_core::report::Redactions(_)
 impl proef_core::report::Redactions
 pub fn proef_core::report::Redactions::apply(&self, &str) -> alloc::string::String
@@ -946,8 +907,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::report::RunTotals
 impl core::panic::unwind_safe::UnwindSafe for proef_core::report::RunTotals
 pub trait proef_core::report::Reporter: core::marker::Send
 pub fn proef_core::report::Reporter::on_event(&mut self, &proef_core::event::Event)
-impl proef_core::report::Reporter for proef_core::report::NormalizeReporter
-pub fn proef_core::report::NormalizeReporter::on_event(&mut self, &proef_core::event::Event)
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::ConsoleReporter<W>
 pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::JsonlReporter<W>
@@ -1037,7 +996,6 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::Resolution
 impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::Resolution
 pub struct proef_core::resolve::ResolveCtx<'a>
 pub proef_core::resolve::ResolveCtx::args: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
-pub proef_core::resolve::ResolveCtx::config: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::defaults: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::directives: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -1114,6 +1072,7 @@ impl core::marker::UnsafeUnpin for proef_core::runner::RunSummary
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::RunSummary
 impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::RunSummary
 pub struct proef_core::runner::ScenarioOutcome
+pub proef_core::runner::ScenarioOutcome::artifact_slug: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::runner::ScenarioOutcome::fault: core::option::Option<proef_core::runner::Fault>
 pub proef_core::runner::ScenarioOutcome::file: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioOutcome::line: usize
@@ -1135,7 +1094,6 @@ pub proef_core::runner::ScenarioSpec::file_root: core::option::Option<std::path:
 pub proef_core::runner::ScenarioSpec::line: usize
 pub proef_core::runner::ScenarioSpec::name: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioSpec::prepare: proef_core::runner::PrepareFn
-pub proef_core::runner::ScenarioSpec::tags: alloc::vec::Vec<alloc::string::String>
 impl core::marker::Freeze for proef_core::runner::ScenarioSpec
 impl core::marker::Send for proef_core::runner::ScenarioSpec
 impl !core::marker::Sync for proef_core::runner::ScenarioSpec
@@ -1173,6 +1131,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Status
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Status
 pub enum proef_core::step::StepPayload
 pub proef_core::step::StepPayload::HurlEntries(alloc::string::String)
+pub proef_core::step::StepPayload::MergedAsserts
+pub proef_core::step::StepPayload::MergedAsserts::lines: usize
 pub proef_core::step::StepPayload::Structured(serde_json::value::Value)
 impl core::clone::Clone for proef_core::step::StepPayload
 pub fn proef_core::step::StepPayload::clone(&self) -> proef_core::step::StepPayload
@@ -1225,7 +1185,6 @@ pub proef_core::step::LoweredStep::kind: proef_core::step::StepKindId
 pub proef_core::step::LoweredStep::label: core::option::Option<alloc::string::String>
 pub proef_core::step::LoweredStep::optional: bool
 pub proef_core::step::LoweredStep::payload: proef_core::step::StepPayload
-pub proef_core::step::LoweredStep::retry: core::option::Option<proef_core::step::Retry>
 pub proef_core::step::LoweredStep::save_as: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::step::LoweredStep::step: proef_core::step::StepRef
 pub proef_core::step::LoweredStep::when: core::option::Option<proef_core::step::Guard>
@@ -1313,7 +1272,6 @@ impl core::marker::UnsafeUnpin for proef_core::step::StepKindId
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepKindId
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepKindId
 pub struct proef_core::step::StepOutcome
-pub proef_core::step::StepOutcome::artifact_span: core::option::Option<(u32, u32)>
 pub proef_core::step::StepOutcome::attempts: u32
 pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::duration: core::time::Duration

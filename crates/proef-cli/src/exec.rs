@@ -234,13 +234,12 @@ pub fn execute(
                 );
             }
         }
-        // The artifact is re-executable — hand the exact command over.
-        if outcome.status == proef_core::step::Status::Failed {
-            let stem = Path::new(outcome.file.as_ref()).file_stem().map_or_else(
-                || "feature".to_owned(),
-                |s| s.to_string_lossy().into_owned(),
-            );
-            let slug = format!("{}--{}", emit::slugify(&stem), emit::slugify(&outcome.name));
+        // The artifact is re-executable — hand the exact command over. The
+        // slug travels with the outcome; the emitter's naming is never
+        // re-derived here (it would silently drift on emitter changes).
+        if outcome.status == proef_core::step::Status::Failed
+            && let Some(slug) = &outcome.artifact_slug
+        {
             let artifact = artifacts_dir.join(format!("{slug}.hurl"));
             if artifact.exists() {
                 let vars = artifacts_dir.join(format!("{slug}.vars"));
@@ -334,7 +333,6 @@ fn build_specs(
             let stem = Arc::clone(&stem);
             let artifacts_dir = artifacts_dir.to_path_buf();
             let prepare: runner::PrepareFn = Box::new(move |world| {
-                let empty = BTreeMap::new();
                 let ctx = LowerCtx {
                     feature: &feature_file,
                     packs: &packs,
@@ -342,7 +340,6 @@ fn build_specs(
                     env: &env,
                     run_id: &run_id,
                     world,
-                    config: &empty,
                     mode: ResolveMode::Strict,
                 };
                 let lowered = lower::lower(&bound, &ctx)?;
@@ -390,7 +387,6 @@ fn build_specs(
                 file: Arc::clone(&file_arc),
                 name: Arc::from(scenario.lowered.name.as_str()),
                 line: scenario.lowered.line,
-                tags: scenario.lowered.tags.clone(),
                 file_root: Path::new(feature.file.path.as_str())
                     .parent()
                     .map(Path::to_path_buf),

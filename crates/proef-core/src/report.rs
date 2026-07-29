@@ -239,62 +239,6 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
     }
 }
 
-/// Normalize decorator (ADR-0008, §12): repairs parallel-scenario interleaving
-/// by buffering each scenario's events and replaying them contiguously
-/// (`ScenarioStarted` … `ScenarioFinished`) in completion order. Run-level
-/// events pass straight through.
-pub struct NormalizeReporter {
-    inner: Box<dyn Reporter>,
-    buffers: Vec<(Arc<str>, Vec<Event>)>,
-}
-
-impl NormalizeReporter {
-    /// Wrap `inner` with interleaving repair.
-    pub fn new(inner: Box<dyn Reporter>) -> Self {
-        Self {
-            inner,
-            buffers: Vec::new(),
-        }
-    }
-
-    fn buffer(&mut self, scenario: &Arc<str>, event: Event) {
-        if let Some((_, events)) = self.buffers.iter_mut().find(|(name, _)| name == scenario) {
-            events.push(event);
-        } else {
-            self.buffers.push((Arc::clone(scenario), vec![event]));
-        }
-    }
-}
-
-impl Reporter for NormalizeReporter {
-    fn on_event(&mut self, event: &Event) {
-        match event {
-            Event::RunStarted { .. } | Event::RunFinished { .. } => {
-                self.inner.on_event(event);
-            }
-            Event::ScenarioStarted { scenario, .. }
-            | Event::BatchStarted { scenario, .. }
-            | Event::EntryRunning { scenario, .. }
-            | Event::StepFinished { scenario, .. } => {
-                let scenario = Arc::clone(scenario);
-                self.buffer(&scenario, event.clone());
-            }
-            Event::ScenarioFinished { scenario, .. } => {
-                let buffered = self
-                    .buffers
-                    .iter()
-                    .position(|(name, _)| name == scenario)
-                    .map(|position| self.buffers.remove(position).1)
-                    .unwrap_or_default();
-                for buffered_event in &buffered {
-                    self.inner.on_event(buffered_event);
-                }
-                self.inner.on_event(event);
-            }
-        }
-    }
-}
-
 /// Run totals derived from the event stream — the `Summarize` leg of the
 /// decorator stack (ADR-0008): leaves (GitHub summary, `--output json`, …)
 /// consume the totals at `RunFinished` instead of re-deriving them.
@@ -439,46 +383,6 @@ mod tests {
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         assert_eq!(parsed, sample_events());
-    }
-
-    #[test]
-    fn normalize_repairs_interleaving_in_completion_order() {
-        struct Capture(std::sync::Arc<Mutex<Vec<Event>>>);
-        impl Reporter for Capture {
-            fn on_event(&mut self, event: &Event) {
-                if let Ok(mut events) = self.0.lock() {
-                    events.push(event.clone());
-                }
-            }
-        }
-        let captured = std::sync::Arc::new(Mutex::new(Vec::new()));
-        let mut normalize =
-            NormalizeReporter::new(Box::new(Capture(std::sync::Arc::clone(&captured))));
-
-        let started = |name: &str| Event::ScenarioStarted {
-            scenario: Arc::from(name),
-            file: Arc::from("f"),
-        };
-        let finished = |name: &str| Event::ScenarioFinished {
-            scenario: Arc::from(name),
-            status: Status::Passed,
-        };
-        // a and b interleave; b completes first.
-        normalize.on_event(&started("a"));
-        normalize.on_event(&started("b"));
-        normalize.on_event(&finished("b"));
-        normalize.on_event(&finished("a"));
-
-        let events = captured.lock().unwrap().clone();
-        let names: Vec<String> = events
-            .iter()
-            .map(|e| match e {
-                Event::ScenarioStarted { scenario, .. } => format!("start-{scenario}"),
-                Event::ScenarioFinished { scenario, .. } => format!("finish-{scenario}"),
-                _ => "other".to_owned(),
-            })
-            .collect();
-        assert_eq!(names, ["start-b", "finish-b", "start-a", "finish-a"]);
     }
 
     #[test]

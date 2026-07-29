@@ -34,8 +34,6 @@ pub struct ScenarioSpec {
     pub name: Arc<str>,
     /// 1-based header line.
     pub line: usize,
-    /// Accumulated tags.
-    pub tags: Vec<String>,
     /// Root for file bodies referenced by the scenario's entries (the feature
     /// file's directory — hurl `context_dir` confinement, TECH-SPEC §13).
     pub file_root: Option<std::path::PathBuf>,
@@ -133,6 +131,9 @@ pub struct ScenarioOutcome {
     pub steps: Vec<StepOutcome>,
     /// Non-test fault, when one occurred.
     pub fault: Option<Fault>,
+    /// Slug of the emitted artifact, when one exists (drives the CLI's
+    /// `reproduce:` line — the emitter's naming is never re-derived).
+    pub artifact_slug: Option<Arc<str>>,
 }
 
 /// A non-test fault attributed per ADR-0009.
@@ -204,6 +205,7 @@ pub fn run(
                     status: Status::Skipped,
                     steps: Vec::new(),
                     fault: None,
+                    artifact_slug: None,
                 });
                 continue;
             }
@@ -318,6 +320,7 @@ fn sweep_expired(
             fault: Some(Fault::System(
                 "batch budget exceeded — scenario thread abandoned (ADR-0007)".to_owned(),
             )),
+            artifact_slug: None,
         };
         events.emit(&Event::ScenarioFinished {
             scenario: Arc::clone(&outcome.name),
@@ -375,6 +378,7 @@ fn spawn_scenario(
                 fault: Some(Fault::System(format!(
                     "scenario thread panicked: {message}"
                 ))),
+                artifact_slug: None,
             }
         });
         let _ = tx.send(Msg::Done {
@@ -396,13 +400,14 @@ fn run_scenario(
     heartbeat: impl Fn(Duration),
 ) -> ScenarioOutcome {
     let (file, name, line) = (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line);
-    let outcome = move |status, steps, fault| ScenarioOutcome {
+    let outcome = move |status, steps, fault, artifact_slug| ScenarioOutcome {
         file: Arc::clone(&file),
         name: Arc::clone(&name),
         line,
         status,
         steps,
         fault,
+        artifact_slug,
     };
 
     events.emit(&Event::ScenarioStarted {
@@ -418,6 +423,7 @@ fn run_scenario(
                 Status::Failed,
                 Vec::new(),
                 Some(Fault::System("global store lock poisoned".to_owned())),
+                None,
             );
         }
     };
@@ -430,7 +436,7 @@ fn run_scenario(
                 .map(|d| d.message.clone())
                 .collect::<Vec<_>>()
                 .join("; ");
-            return outcome(Status::Failed, Vec::new(), Some(Fault::User(detail)));
+            return outcome(Status::Failed, Vec::new(), Some(Fault::User(detail)), None);
         }
     };
 
@@ -546,7 +552,6 @@ fn run_scenario(
                 attempts: 0,
                 duration: std::time::Duration::ZERO,
                 detail: Some(unreached_reason.to_owned()),
-                artifact_span: None,
             });
         }
     }
@@ -571,5 +576,9 @@ fn run_scenario(
     } else {
         Status::Passed
     };
-    outcome(status, steps, fault)
+    let artifact_slug = prepared
+        .artifact
+        .as_ref()
+        .map(|artifact| Arc::clone(&artifact.slug));
+    outcome(status, steps, fault, artifact_slug)
 }

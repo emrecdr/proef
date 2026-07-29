@@ -66,11 +66,6 @@ impl CoreError {
         Self::User(message.into())
     }
 
-    /// A test-failure error (exit 1).
-    pub fn test_failure(message: impl Into<String>) -> Self {
-        Self::TestFailure(message.into())
-    }
-
     /// A system-fault error (exit 3) without an underlying cause.
     pub fn system(message: impl Into<String>) -> Self {
         Self::System {
@@ -97,12 +92,6 @@ impl CoreError {
             Self::TestFailure(_) => ExitCode::TestFailure,
             Self::System { .. } => ExitCode::SystemError,
         }
-    }
-}
-
-impl From<&CoreError> for ExitCode {
-    fn from(err: &CoreError) -> Self {
-        err.exit_code()
     }
 }
 
@@ -201,7 +190,9 @@ mod tests {
     fn core_error_exit_codes_are_stable() {
         assert_eq!(CoreError::user("bad flag").exit_code().code(), 2);
         assert_eq!(
-            CoreError::test_failure("assert failed").exit_code().code(),
+            CoreError::TestFailure("assert failed".to_owned())
+                .exit_code()
+                .code(),
             1
         );
         assert_eq!(CoreError::system("no network").exit_code().code(), 3);

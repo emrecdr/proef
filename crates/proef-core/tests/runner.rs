@@ -74,7 +74,6 @@ impl EngineSession for MockSession {
                 attempts: 1,
                 duration: Duration::ZERO,
                 detail: None,
-                artifact_span: None,
             })
             .collect();
         BatchResult { steps, error: None }
@@ -95,7 +94,6 @@ fn lowered_step(text: &str) -> LoweredStep {
         kind: "mock".into(),
         payload: StepPayload::Structured(serde_json::Value::Null),
         optional: false,
-        retry: None,
         when: None,
         label: None,
         save_as: BTreeMap::new(),
@@ -118,7 +116,6 @@ fn spec(name: &str, engines_by_batch: &[&'static str]) -> ScenarioSpec {
         file: Arc::from("mock.feature"),
         name: Arc::from(name),
         line: 1,
-        tags: Vec::new(),
         file_root: None,
         prepare: Box::new(move |_world| {
             Ok(Prepared {

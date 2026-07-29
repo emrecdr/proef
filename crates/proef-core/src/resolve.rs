@@ -7,11 +7,11 @@
 //! pass, so escaped text is never re-resolved).
 //!
 //! Reference forms: `${param}` (scope lookup: step args > macro defaults >
-//! feature directives > flow config) · `${env:NAME}` / `${env:NAME:-default}`
+//! feature directives) · `${env:NAME}` / `${env:NAME:-default}`
 //! (injected snapshot — core reads no environment) · `${run:id}` (injected) ·
 //! `${global:key}` (World read at lower time) · `${secret:NAME}` (emits the
 //! `{{NAME}}` run-time placeholder and records the name — values never enter
-//! lowered text) · `${fake:kind}` (reserved until M5).
+//! lowered text) · `${fake:kind}` (deterministic synthetic data).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,8 +45,6 @@ pub struct ResolveCtx<'a> {
     pub defaults: &'a BTreeMap<String, String>,
     /// Feature `# key: value` directives.
     pub directives: &'a BTreeMap<String, String>,
-    /// Flow/project config variables (empty until config loading lands, M3).
-    pub config: &'a BTreeMap<String, String>,
     /// Injected environment snapshot.
     pub env: &'a BTreeMap<String, String>,
     /// Injected run identifier (`${run:id}`).
@@ -281,7 +279,7 @@ fn lookup(
             "secret" => {
                 resolution.secrets.insert(arg.to_owned());
                 // The run-time placeholder; the engine injects the value via
-                // `insert_secret` (M3) — lowered text never carries it.
+                // `insert_secret` at run time — lowered text never carries it.
                 Ok(format!("{{{{{arg}}}}}"))
             }
             "fake" => {
@@ -312,8 +310,8 @@ fn lookup(
         };
     }
 
-    // Plain name: args > defaults > directives > config (TECH-SPEC §8).
-    for scope in [ctx.args, ctx.defaults, ctx.directives, ctx.config] {
+    // Plain name: args > defaults > directives (TECH-SPEC §8).
+    for scope in [ctx.args, ctx.defaults, ctx.directives] {
         if let Some(value) = scope.get(name) {
             return Ok(value.clone());
         }
@@ -322,8 +320,7 @@ fn lookup(
         .args
         .keys()
         .chain(ctx.defaults.keys())
-        .chain(ctx.directives.keys())
-        .chain(ctx.config.keys());
+        .chain(ctx.directives.keys());
     probe_or(
         ResolveError::UnknownVariable {
             name: name.to_owned(),
@@ -367,7 +364,6 @@ mod tests {
         args: BTreeMap<String, String>,
         defaults: BTreeMap<String, String>,
         directives: BTreeMap<String, String>,
-        config: BTreeMap<String, String>,
         env: BTreeMap<String, String>,
         world: World,
     }
@@ -380,7 +376,6 @@ mod tests {
                 args: map(&[("lastName", "Bakker-${run:id}")]),
                 defaults: map(&[("index", "clients")]),
                 directives: map(&[("baseURL", "http://fixture.local")]),
-                config: BTreeMap::new(),
                 env: map(&[("HOME", "/home/test")]),
                 world: World::new(store),
             }
@@ -391,7 +386,6 @@ mod tests {
                 args: &self.args,
                 defaults: &self.defaults,
                 directives: &self.directives,
-                config: &self.config,
                 env: &self.env,
                 run_id: "run-0001",
                 world: &self.world,

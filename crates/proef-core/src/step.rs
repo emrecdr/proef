@@ -91,8 +91,6 @@ pub struct LoweredStep {
     pub payload: StepPayload,
     /// `optional:` steps warn instead of failing (and segment the batch).
     pub optional: bool,
-    /// Finite retry policy, when configured.
-    pub retry: Option<Retry>,
     /// Skip guard, when configured (resolved text; the runtime skips the step
     /// when it is empty).
     pub when: Option<Guard>,
@@ -142,8 +140,6 @@ pub struct StepOutcome {
     pub duration: Duration,
     /// Engine-specific detail (assert message, timing breakdown, …).
     pub detail: Option<String>,
-    /// Line span in the emitted artifact, when one exists (ADR-0010 sidecar).
-    pub artifact_span: Option<(u32, u32)>,
 }
 
 /// Result of dispatching one [`StepBatch`] to an engine.

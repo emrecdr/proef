@@ -1,4 +1,4 @@
-//! `--watch` (M5): rerun on feature/pack changes via `notify` (pinned 8.2.0).
+//! `--watch`: rerun on feature/pack changes via `notify` (pinned 8.2.0).
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};

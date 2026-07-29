@@ -557,7 +557,6 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
             args: &args,
             defaults: &macro_.defaults,
             directives: &empty,
-            config: &empty,
             env: &empty,
             run_id: "probe-run",
             world: &world,
