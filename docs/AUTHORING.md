@@ -95,7 +95,9 @@ Reference with `${secret:NAME}`. Values come from `PROEF_SECRET_<NAME>`
 environment variables first, then the encrypted store (`proef secret set NAME`
 — XChaCha20-Poly1305, key auto-created `0600` under `~/.config/proef/`).
 Values never appear in artifacts, events, logs, or reports; events carry
-capture *names* only.
+capture *names* only. The store file (`.proef-secrets.json`, mode `0600`)
+holds ciphertext only and is gitignored by default; the key
+(`~/.config/proef/keys/default.key`) must never leave your machine.
 
 ## Artifacts — the executed input
 

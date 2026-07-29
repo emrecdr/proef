@@ -143,6 +143,7 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
     {
         return Err(diags);
     }
+    dedup_names(&mut scenarios);
     Ok(FeatureFile {
         name: feature.name.clone(),
         path: path.to_owned(),
@@ -279,19 +280,25 @@ fn expand_scenario(
         }
     }
 
-    // Disambiguate names only when expansion produced duplicates.
+    out.extend(expanded);
+}
+
+/// Disambiguate duplicate scenario names feature-wide with `#N` suffixes —
+/// names key artifact slugs, console buffers, and events, so two scenarios
+/// sharing a name would silently overwrite each other's artifact and drain
+/// each other's console output.
+fn dedup_names(scenarios: &mut [ScenarioDef]) {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    for scenario_def in &expanded {
+    for scenario_def in scenarios.iter() {
         *seen.entry(scenario_def.name.clone()).or_default() += 1;
     }
     let mut counters: BTreeMap<String, usize> = BTreeMap::new();
-    for mut scenario_def in expanded {
+    for scenario_def in scenarios.iter_mut() {
         if seen.get(&scenario_def.name).copied().unwrap_or(0) > 1 {
             let n = counters.entry(scenario_def.name.clone()).or_default();
             *n += 1;
             scenario_def.name = format!("{} #{n}", scenario_def.name);
         }
-        out.push(scenario_def);
     }
 }
 

@@ -141,7 +141,7 @@ fn main() -> std::process::ExitCode {
         } => {
             let run_once = |cancel| {
                 if dry_run {
-                    commands::dry_run(&path, &tags)
+                    commands::dry_run(&path, &tags, scenario.as_deref())
                 } else {
                     exec::execute(
                         &path,

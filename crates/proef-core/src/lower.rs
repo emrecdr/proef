@@ -460,13 +460,7 @@ fn bake_entry_options(
             in_entry_head = false;
             continue;
         }
-        let is_header = in_entry_head
-            && !trimmed.is_empty()
-            && !trimmed.starts_with('[')
-            && !trimmed.starts_with('{')
-            && !trimmed.starts_with('`')
-            && trimmed.contains(':')
-            && !trimmed.starts_with("HTTP");
+        let is_header = in_entry_head && is_header_line(trimmed);
         if in_entry_head && !is_header && !injected_current {
             out.push("[Options]".to_owned());
             out.push(retry_lines.clone());
@@ -540,6 +534,21 @@ fn merge_expect(
             push_line(text, line.trim_end());
         }
     }
+}
+
+/// Is this a `Name: value` HTTP header line per hurl's grammar? The name must
+/// be a non-empty run of token characters before the colon — an XML/JSON/text
+/// body line (`<root xmlns:x=…`, `{"a": 1}`, prose) never qualifies, so the
+/// `[Options]` injection can never land inside a body.
+fn is_header_line(trimmed: &str) -> bool {
+    let Some((name, _)) = trimmed.split_once(':') else {
+        return false;
+    };
+    !name.is_empty()
+        && name != "HTTP"
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
 }
 
 fn push_line(text: &mut String, line: &str) {
@@ -789,6 +798,35 @@ mod tests {
         assert_eq!(value["goto"], "http://fixture.local/page");
         assert_eq!(value["checks"][0], "http://fixture.local");
         assert_eq!(value["checks"][1], 7);
+    }
+
+    /// The `[Options]` injection must never land inside a body: fenced text,
+    /// XML (colon-bearing first line), and JSON bodies all stay untouched.
+    #[test]
+    fn baked_options_never_enter_bodies() {
+        let retry = Some(crate::step::Retry {
+            count: 2,
+            interval_ms: 100,
+        });
+        for body in [
+            "POST http://x/a\n```\nNOTE FOR REVIEW\nsecond line\n```\nHTTP 200\n",
+            "POST http://x/a\n<root xmlns:x=\"urn:example\">\n  <child>hi</child>\n</root>\nHTTP 200\n",
+            "POST http://x/a\n{\"note\": \"FOR REVIEW\"}\nHTTP 200\n",
+        ] {
+            let baked = bake_entry_options(body, retry, None);
+            assert_eq!(
+                baked.matches("[Options]").count(),
+                1,
+                "exactly one options block in:\n{baked}"
+            );
+            let options_at = baked.find("[Options]").unwrap_or(usize::MAX);
+            let body_at = baked
+                .find("```")
+                .or_else(|| baked.find('<'))
+                .or_else(|| baked.find('{'))
+                .unwrap_or(0);
+            assert!(options_at < body_at, "options precede the body:\n{baked}");
+        }
     }
 
     #[test]

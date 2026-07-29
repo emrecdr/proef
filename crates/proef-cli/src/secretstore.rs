@@ -127,7 +127,15 @@ fn save_store(store: &BTreeMap<String, String>) -> Result<(), String> {
     let json = serde_json::to_string_pretty(store)
         .map_err(|err| format!("cannot serialize store: {err}"))?;
     std::fs::write(STORE_FILE, format!("{json}\n"))
-        .map_err(|err| format!("cannot write {STORE_FILE}: {err}"))
+        .map_err(|err| format!("cannot write {STORE_FILE}: {err}"))?;
+    // Ciphertext-only, but private anyway (TECH-SPEC §13 discipline).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(STORE_FILE, std::fs::Permissions::from_mode(0o600))
+            .map_err(|err| format!("cannot set permissions on {STORE_FILE}: {err}"))?;
+    }
+    Ok(())
 }
 
 /// `proef secret set NAME [--value V]` — value via hidden prompt when absent.

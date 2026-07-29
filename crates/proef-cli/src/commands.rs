@@ -1,5 +1,6 @@
 //! CLI subcommand implementations.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use proef_core::engine::{DoctorStatus, EngineFactory};
@@ -53,7 +54,7 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
-pub fn dry_run(path: &Path, tags: &[String]) -> ExitCode {
+pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode {
     let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
@@ -82,6 +83,7 @@ pub fn dry_run(path: &Path, tags: &[String]) -> ExitCode {
             .scenarios
             .iter()
             .filter(|s| front::tag_selected(&s.lowered.tags, tags))
+            .filter(|s| scenario.is_none_or(|name| s.lowered.name == name))
             .count();
         println!(
             "  ok {} — {} scenario(s), {} step(s), {} batch(es)",
@@ -98,10 +100,14 @@ pub fn dry_run(path: &Path, tags: &[String]) -> ExitCode {
     }
 
     render::print_all(&front.warnings);
-    let selected_note = if tags.is_empty() {
+    if (!tags.is_empty() || scenario.is_some()) && totals.1 == 0 {
+        eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
+        return ExitCode::UserError;
+    }
+    let selected_note = if tags.is_empty() && scenario.is_none() {
         String::new()
     } else {
-        format!(" ({} selected by --tags)", totals.1)
+        format!(" ({} selected by the filters)", totals.1)
     };
     println!(
         "\ndry-run OK: {} feature(s), {} scenario(s){selected_note}, {} step(s), {} batch(es), {} artifact(s) parse-validated, {} warning(s)",
@@ -218,13 +224,14 @@ pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCod
                     }
                 }
             }
-            println!("  ok {}.hurl", artifact.slug);
+            let _ = writeln!(std::io::stdout(), "  ok {}.hurl", artifact.slug);
             written += 1;
         }
     }
 
     render::print_all(&front.warnings);
-    println!(
+    let _ = writeln!(
+        std::io::stdout(),
         "\n{written} artifact(s) written to {} ({} warning(s))",
         out_dir.display(),
         front.warnings.len()

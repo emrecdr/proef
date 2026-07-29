@@ -56,7 +56,7 @@ fn tags_filter_selects_scenarios() {
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    assert!(stdout.contains("(1 selected by --tags)"), "{stdout}");
+    assert!(stdout.contains("(1 selected by the filters)"), "{stdout}");
 }
 
 #[test]

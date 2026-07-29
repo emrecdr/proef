@@ -27,7 +27,7 @@ suite/
 `suite/case.feature`:
 
 ```gherkin
-# baseURL: ${env:API_URL:-http://127.0.0.1:8787}
+# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 Feature: Client search
   Scenario: A known client is found
     Given the service is healthy
@@ -37,7 +37,7 @@ Feature: Client search
 
 The `# baseURL:` line is a *directive*: a named value every step can use as
 `${baseURL}`. Directives resolve environment variables with defaults
-(`${env:API_URL:-…}`), so the same suite points at any environment.
+(`${env:PROEF_BASE_URL:-…}`), so the same suite points at any environment.
 
 ## 3. Bind the prose
 
@@ -92,7 +92,11 @@ blocks all fail here, with the file, line, and a "did you mean" where one
 exists. Wire your editor too: `proef schema --add-to suite/packs/api.yaml`
 gives packs autocomplete via the JSON Schema.
 
-## 5. Provide the secret, then run
+## 5. Provide the secret and a target, then run
+
+Point `PROEF_BASE_URL` at any HTTP API you can reach — or start proef's own
+dev fixture in a second terminal (`cargo run -p xtask -- fixture` from a
+checkout prints the URL to export). Then:
 
 ```console
 $ proef secret set apiToken        # encrypted store; or: export PROEF_SECRET_APITOKEN=…
