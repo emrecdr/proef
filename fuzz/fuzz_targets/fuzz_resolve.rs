@@ -19,7 +19,6 @@ fuzz_target!(|data: &[u8]| {
             args: &args,
             defaults: &empty,
             directives: &empty,
-            config: &empty,
             env: &empty,
             run_id: "fuzz-run",
             world: &world,
