@@ -30,7 +30,8 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
 
     let mut totals = RunTotals::default();
     let mut run_id_seen = String::new();
-    let mut failures: Vec<(String, String)> = Vec::new();
+    let mut failures: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
     let mut scenario_status: Vec<(String, Status)> = Vec::new();
     for line in text.lines() {
         let Ok(event) = serde_json::from_str::<Event>(line) else {
@@ -51,13 +52,13 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
                     .as_deref()
                     .map(|d| format!("\n      {d}"))
                     .unwrap_or_default();
-                failures.push((
-                    scenario.to_string(),
-                    format!(
+                failures
+                    .entry(scenario.to_string())
+                    .or_default()
+                    .push(format!(
                         "  ✗ {}:{} — {} ({attempts} attempt(s)){why}",
                         step.file, step.line, step.text
-                    ),
-                ));
+                    ));
             }
             Event::ScenarioFinished { scenario, status } => {
                 scenario_status.push((scenario.to_string(), *status));
@@ -78,7 +79,7 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     for (scenario, status) in &scenario_status {
         if *status == Status::Failed {
             crate::render::outln!("\nfailed: {scenario}");
-            for (_, line) in failures.iter().filter(|(s, _)| s == scenario) {
+            for line in failures.get(scenario).into_iter().flatten() {
                 crate::render::outln!("{line}");
             }
         }

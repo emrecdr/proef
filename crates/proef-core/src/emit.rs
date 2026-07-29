@@ -187,36 +187,41 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
 }
 
 /// Sidecar rows for the merged-asserts steps that follow one rendered entry
-/// (§2.7): line spans are assigned back-to-front from the entry's last line
-/// `entry_end` — the last merge sits closest to the end.
+/// (§2.7): the merges own the entry's trailing lines in order, so spans are
+/// one forward pass from `entry_end - total`. The caller guarantees every
+/// follower is `MergedAsserts` (that is how the range was delimited).
 fn merged_map_entries(
     followers: &[(usize, usize, &crate::step::LoweredStep)],
     entry_end: usize,
 ) -> Vec<MapEntry> {
-    let mut end = entry_end;
-    let mut spans: Vec<[usize; 2]> = Vec::new();
-    for &(_, _, merged) in followers.iter().rev() {
-        let StepPayload::MergedAsserts { lines } = merged.payload else {
-            continue;
-        };
-        spans.push([end.saturating_sub(lines) + 1, end]);
-        end = end.saturating_sub(lines);
-    }
-    spans.reverse();
+    let total: usize = followers
+        .iter()
+        .map(|&(_, _, merged)| match merged.payload {
+            StepPayload::MergedAsserts { lines } => lines,
+            _ => unreachable!("followers are delimited by the MergedAsserts match"),
+        })
+        .sum();
+    let mut start = entry_end.saturating_sub(total) + 1;
     followers
         .iter()
-        .zip(spans)
-        .map(|(&(batch, step, merged), span)| MapEntry {
-            hurl_lines: span,
-            feature: FeatureAnchor {
-                file: merged.step.file.to_string(),
-                line: merged.step.line,
-                text: merged.step.text.to_string(),
-            },
-            optional: merged.optional,
-            captures: Vec::new(),
-            batch,
-            step,
+        .map(|&(batch, step, merged)| {
+            let StepPayload::MergedAsserts { lines } = merged.payload else {
+                unreachable!("followers are delimited by the MergedAsserts match");
+            };
+            let span = [start, start + lines - 1];
+            start += lines;
+            MapEntry {
+                hurl_lines: span,
+                feature: FeatureAnchor {
+                    file: merged.step.file.to_string(),
+                    line: merged.step.line,
+                    text: merged.step.text.to_string(),
+                },
+                optional: merged.optional,
+                captures: Vec::new(),
+                batch,
+                step,
+            }
         })
         .collect()
 }

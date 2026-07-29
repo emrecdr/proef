@@ -281,13 +281,15 @@ pub fn discover_features(path: &Path) -> Result<Vec<PathBuf>, FrontError> {
     Ok(found)
 }
 
-fn walk_features(
+/// The one recursive directory walk behind feature and pack discovery:
+/// symlink-cycle guarded (each cycle copy would become a same-named scenario
+/// issuing real traffic). `on_file` receives the containing directory and
+/// the file path and applies the caller's predicate.
+fn walk_dir(
     dir: &Path,
-    out: &mut Vec<PathBuf>,
     visited: &mut std::collections::BTreeSet<PathBuf>,
+    on_file: &mut impl FnMut(&Path, PathBuf),
 ) -> Result<(), FrontError> {
-    // Symlink cycles must not multiply features (each copy would become a
-    // same-named scenario issuing real traffic).
     if let Ok(real) = dir.canonicalize()
         && !visited.insert(real)
     {
@@ -302,12 +304,24 @@ fn walk_features(
     for entry in entries.flatten() {
         let entry_path = entry.path();
         if entry_path.is_dir() {
-            walk_features(&entry_path, out, visited)?;
-        } else if entry_path.extension().is_some_and(|e| e == "feature") {
-            out.push(entry_path);
+            walk_dir(&entry_path, visited, on_file)?;
+        } else {
+            on_file(dir, entry_path);
         }
     }
     Ok(())
+}
+
+fn walk_features(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    visited: &mut std::collections::BTreeSet<PathBuf>,
+) -> Result<(), FrontError> {
+    walk_dir(dir, visited, &mut |_, file| {
+        if file.extension().is_some_and(|e| e == "feature") {
+            out.push(file);
+        }
+    })
 }
 
 /// Every pack file under `base`: the yaml files of `packs/` directories at
@@ -315,40 +329,15 @@ fn walk_features(
 /// packs too — symlink-cycle guarded and sorted for determinism. A `base`
 /// that itself is named `packs` contributes its own files.
 pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
-    fn walk(
-        dir: &Path,
-        out: &mut Vec<PathBuf>,
-        visited: &mut std::collections::BTreeSet<PathBuf>,
-    ) -> Result<(), FrontError> {
-        if let Ok(real) = dir.canonicalize()
-            && !visited.insert(real)
-        {
-            return Ok(());
-        }
-        let is_packs_dir = dir.file_name().is_some_and(|name| name == "packs");
-        let entries = std::fs::read_dir(dir).map_err(|err| {
-            FrontError::Core(CoreError::system_with(
-                format!("cannot read directory {}", dir.display()),
-                err,
-            ))
-        })?;
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                walk(&entry_path, out, visited)?;
-            } else if is_packs_dir
-                && entry_path
-                    .extension()
-                    .is_some_and(|e| e == "yaml" || e == "yml")
-            {
-                out.push(entry_path);
-            }
-        }
-        Ok(())
-    }
     let mut out = Vec::new();
     let mut visited = std::collections::BTreeSet::new();
-    walk(base, &mut out, &mut visited)?;
+    walk_dir(base, &mut visited, &mut |dir, file| {
+        if dir.file_name().is_some_and(|name| name == "packs")
+            && file.extension().is_some_and(|e| e == "yaml" || e == "yml")
+        {
+            out.push(file);
+        }
+    })?;
     out.sort();
     Ok(out)
 }
@@ -376,6 +365,13 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
         });
     }
     Ok(sources)
+}
+
+/// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
+/// must never produce a silent green run.
+pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
+    eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
+    proef_core::error::ExitCode::UserError
 }
 
 /// Does a scenario pass the `--tags` filter (csv, OR semantics, `@` optional)?

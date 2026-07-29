@@ -301,20 +301,13 @@ fn sweep_expired(
         .collect();
     for index in expired {
         active.remove(&index);
-        let (file, name, line) = identities.get(index).map_or_else(
-            || {
-                (
-                    Arc::from("(unknown)"),
-                    Arc::from(format!("scenario #{index}")),
-                    0,
-                )
-            },
-            |(f, n, l)| (Arc::clone(f), Arc::clone(n), *l),
-        );
+        // `active` keys are spec indices and `identities` is built 1:1 from
+        // the same specs — the lookup cannot miss.
+        let (file, name, line) = &identities[index];
         let outcome = ScenarioOutcome {
-            file,
-            name,
-            line,
+            file: Arc::clone(file),
+            name: Arc::clone(name),
+            line: *line,
             status: Status::Failed,
             steps: Vec::new(),
             fault: Some(Fault::System(

@@ -153,11 +153,11 @@ fn normalize_step(
 
     // Finite-retry lint, typed half (pass 6): count 0 is pointless.
     let retry = match &raw.retry {
-        Some(r) if r.count > 10_000 => {
+        Some(r) if i64::from(r.count) > MAX_COUNT => {
             diags.push(at(Diag::error(
                 "proef::pack::retry_not_finite",
                 format!(
-                    "macro `{macro_name}` step {index}: `retry.count` {} is budget-hostile — the cap is 10000",
+                    "macro `{macro_name}` step {index}: `retry.count` {} is budget-hostile — the cap is {MAX_COUNT}",
                     r.count
                 ),
             )));

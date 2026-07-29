@@ -358,10 +358,12 @@ impl EngineSession for HurlSession {
             // Map entry results to step outcomes. hurl computed expected/
             // actual and the true failing line — surface them, anchored on
             // the error's own source line, not the entry's first line.
+            // The line table feeds `fixme` for every rendered error — build
+            // it once per batch, not per error (retries multiply errors).
+            let artifact_lines: Vec<&str> = self.artifact.text.lines().collect();
             let render_error = |error: &runner::RunnerError| -> String {
-                let content: Vec<&str> = self.artifact.text.lines().collect();
                 let fixme = error
-                    .fixme(&content)
+                    .fixme(&artifact_lines)
                     .to_string(hurl_core::text::Format::Plain)
                     .split_whitespace()
                     .filter(|word| !word.chars().all(|c| c == '^'))
@@ -407,6 +409,15 @@ impl EngineSession for HurlSession {
                 let mut reached = false;
                 let mut assert_failure = false;
                 let mut user_fault = false;
+                // One classify-and-collect for both attribution branches.
+                let mut record_error = |error: &runner::RunnerError| {
+                    match classify_error(error) {
+                        HurlErrorClass::Assert => assert_failure = true,
+                        HurlErrorClass::UserInput => user_fault = true,
+                        HurlErrorClass::Infra => {}
+                    }
+                    errors.push(render_error(error));
+                };
                 if merged {
                     // §2.7: this step's asserts live on `span` lines inside
                     // the previous request's entry. Attribute that host
@@ -437,12 +448,7 @@ impl EngineSession for HurlSession {
                                 if line < span_start || line > span_end {
                                     continue;
                                 }
-                                match classify_error(error) {
-                                    HurlErrorClass::Assert => assert_failure = true,
-                                    HurlErrorClass::UserInput => user_fault = true,
-                                    HurlErrorClass::Infra => {}
-                                }
-                                errors.push(render_error(error));
+                                record_error(error);
                             }
                         }
                     }
@@ -466,12 +472,7 @@ impl EngineSession for HurlSession {
                             if in_merged_span(error.source_info.start.line) {
                                 continue;
                             }
-                            match classify_error(error) {
-                                HurlErrorClass::Assert => assert_failure = true,
-                                HurlErrorClass::UserInput => user_fault = true,
-                                HurlErrorClass::Infra => {}
-                            }
-                            errors.push(render_error(error));
+                            record_error(error);
                         }
                     }
                 }
@@ -832,23 +833,33 @@ fn from_hurl_value(value: &runner::Value) -> WorldValue {
     }
 }
 
+/// Every option of an entry's `[Options]` sections, flattened — the one
+/// traversal behind the per-entry accessors below.
+fn entry_options(entry: &hurl_core::ast::Entry) -> impl Iterator<Item = &OptionKind> {
+    entry
+        .request
+        .sections
+        .iter()
+        .filter_map(|section| match &section.value {
+            SectionValue::Options(options) => Some(options.iter().map(|option| &option.kind)),
+            _ => None,
+        })
+        .flatten()
+}
+
 /// Per-entry `[Options]` retry (finite by pack lint) and interval.
 fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
     let mut retries = 0u32;
     let mut interval = Duration::from_secs(1);
-    for section in &entry.request.sections {
-        if let SectionValue::Options(options) = &section.value {
-            for option in options {
-                match &option.kind {
-                    OptionKind::Retry(CountOption::Literal(Count::Finite(count))) => {
-                        retries = u32::try_from(*count).unwrap_or(u32::MAX);
-                    }
-                    OptionKind::RetryInterval(DurationOption::Literal(duration)) => {
-                        interval = ast_duration(duration);
-                    }
-                    _ => {}
-                }
+    for kind in entry_options(entry) {
+        match kind {
+            OptionKind::Retry(CountOption::Literal(Count::Finite(count))) => {
+                retries = u32::try_from(*count).unwrap_or(u32::MAX);
             }
+            OptionKind::RetryInterval(DurationOption::Literal(duration)) => {
+                interval = ast_duration(duration);
+            }
+            _ => {}
         }
     }
     (retries, interval)
@@ -859,50 +870,33 @@ fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
 /// blamed on the environment. Default 1; `repeat: -1` saturates (the load
 /// lint rejects it, this is the runtime backstop).
 fn entry_repeat(entry: &hurl_core::ast::Entry) -> u32 {
-    for section in &entry.request.sections {
-        if let SectionValue::Options(options) = &section.value {
-            for option in options {
-                match &option.kind {
-                    OptionKind::Repeat(CountOption::Literal(Count::Finite(count))) => {
-                        return u32::try_from(*count).unwrap_or(u32::MAX);
-                    }
-                    OptionKind::Repeat(CountOption::Literal(Count::Infinite)) => {
-                        return u32::MAX;
-                    }
-                    _ => {}
-                }
+    entry_options(entry)
+        .find_map(|kind| match kind {
+            OptionKind::Repeat(CountOption::Literal(Count::Finite(count))) => {
+                Some(u32::try_from(*count).unwrap_or(u32::MAX))
             }
-        }
-    }
-    1
+            OptionKind::Repeat(CountOption::Literal(Count::Infinite)) => Some(u32::MAX),
+            _ => None,
+        })
+        .unwrap_or(1)
 }
 
 /// Per-entry `[Options] delay:` — an uninterruptible sleep hurl applies per
 /// attempt; it must be part of the budget or the watchdog kills the scenario.
 fn entry_delay(entry: &hurl_core::ast::Entry) -> Duration {
-    for section in &entry.request.sections {
-        if let SectionValue::Options(options) = &section.value {
-            for option in options {
-                if let OptionKind::Delay(DurationOption::Literal(duration)) = &option.kind {
-                    return ast_duration(duration);
-                }
-            }
-        }
-    }
-    Duration::ZERO
+    entry_options(entry)
+        .find_map(|kind| match kind {
+            OptionKind::Delay(DurationOption::Literal(duration)) => Some(ast_duration(duration)),
+            _ => None,
+        })
+        .unwrap_or(Duration::ZERO)
 }
 
 fn entry_timeout(entry: &hurl_core::ast::Entry) -> Option<Duration> {
-    for section in &entry.request.sections {
-        if let SectionValue::Options(options) = &section.value {
-            for option in options {
-                if let OptionKind::MaxTime(DurationOption::Literal(duration)) = &option.kind {
-                    return Some(ast_duration(duration));
-                }
-            }
-        }
-    }
-    None
+    entry_options(entry).find_map(|kind| match kind {
+        OptionKind::MaxTime(DurationOption::Literal(duration)) => Some(ast_duration(duration)),
+        _ => None,
+    })
 }
 
 fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {

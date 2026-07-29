@@ -1,6 +1,5 @@
 //! CLI subcommand implementations.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use proef_core::engine::{DoctorStatus, EngineFactory};
@@ -14,6 +13,16 @@ use crate::render;
 /// Exit code: `0` when nothing failed (warnings allowed), `3` when any check
 /// failed — a broken environment is a system fault (ADR-0009).
 pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
+    fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
+        let glyph = match status {
+            DoctorStatus::Pass => "ok  ",
+            DoctorStatus::Warn => "warn",
+            DoctorStatus::Fail => "FAIL",
+        };
+        crate::render::outln!("  [{glyph}] {name:<24} {detail}");
+        *worst = (*worst).max(status);
+    }
+
     let mut worst = DoctorStatus::Pass;
 
     crate::render::outln!("proef doctor");
@@ -25,13 +34,7 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
         }
         for check in checks {
             let result = (check.run)();
-            let glyph = match result.status {
-                DoctorStatus::Pass => "ok  ",
-                DoctorStatus::Warn => "warn",
-                DoctorStatus::Fail => "FAIL",
-            };
-            crate::render::outln!("  [{glyph}] {:<24} {}", check.name, result.detail);
-            worst = worst.max(result.status);
+            row(&mut worst, check.name, result.status, &result.detail);
         }
     }
 
@@ -39,13 +42,7 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
     // its health gates runs just the same (corrupt store, unreadable key).
     crate::render::outln!("\nsecrets:");
     for (status, name, detail) in crate::secretstore::doctor_checks() {
-        let glyph = match status {
-            DoctorStatus::Pass => "ok  ",
-            DoctorStatus::Warn => "warn",
-            DoctorStatus::Fail => "FAIL",
-        };
-        crate::render::outln!("  [{glyph}] {name:<24} {detail}");
-        worst = worst.max(status);
+        row(&mut worst, name, status, &detail);
     }
 
     match worst {
@@ -114,8 +111,7 @@ pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode
 
     render::print_all(&front.warnings);
     if (!tags.is_empty() || scenario.is_some()) && totals.1 == 0 {
-        eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
-        return ExitCode::UserError;
+        return front::no_scenarios_matched();
     }
     let selected_note = if tags.is_empty() && scenario.is_none() {
         String::new()
@@ -243,8 +239,7 @@ pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCod
     }
 
     render::print_all(&front.warnings);
-    let _ = writeln!(
-        std::io::stdout(),
+    crate::render::outln!(
         "\n{written} artifact(s) written to {} ({} warning(s))",
         out_dir.display(),
         front.warnings.len()

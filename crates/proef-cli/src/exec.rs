@@ -3,7 +3,7 @@
 //! `.proef-runs/<run-id>/` (events.jsonl **is** the record, ADR-0008),
 //! Ctrl-C graceful/hard (ADR-0007), state persisted atomically (ADR-0005).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,64 +26,6 @@ use crate::{registry, render};
 
 /// How many run records to keep (TECH-SPEC §11).
 const RUN_RETENTION: usize = 200;
-
-/// Secret resolution order (US-10): `PROEF_SECRET_<NAME>` environment
-/// override → the encrypted store (`proef secret set`). The store and key
-/// are read **once** for the whole run — a per-name re-read would be O(N)
-/// IO and hand a concurrent `secret set` a torn view.
-fn collect_secrets(names: &BTreeSet<String>) -> Result<BTreeMap<String, String>, Vec<String>> {
-    let mut secrets = BTreeMap::new();
-    let mut missing = Vec::new();
-    let mut from_store: Vec<&String> = Vec::new();
-    for name in names {
-        let env_key = format!("PROEF_SECRET_{}", name.to_uppercase());
-        if let Ok(value) = std::env::var(&env_key) {
-            secrets.insert(name.clone(), value);
-        } else {
-            from_store.push(name);
-        }
-    }
-
-    if !from_store.is_empty() {
-        match crate::secretstore::load_store() {
-            Ok(store) => {
-                // The key loads lazily: a run whose remaining names are all
-                // absent must not create a key file as a side effect.
-                let mut key: Option<Result<[u8; 32], String>> = None;
-                for name in from_store {
-                    let Some(token) = store.get(name.as_str()) else {
-                        let env_key = format!("PROEF_SECRET_{}", name.to_uppercase());
-                        missing.push(format!(
-                            "`{name}` (run `proef secret set {name}`, or set {env_key})"
-                        ));
-                        continue;
-                    };
-                    let key = key.get_or_insert_with(crate::secretstore::load_or_create_key);
-                    match key {
-                        Ok(key) => match crate::secretstore::decrypt(token, key) {
-                            Ok(value) => {
-                                secrets.insert(name.clone(), value);
-                            }
-                            Err(message) => missing.push(format!("`{name}` ({message})")),
-                        },
-                        Err(message) => missing.push(format!("`{name}` ({message})")),
-                    }
-                }
-            }
-            Err(message) => {
-                for name in from_store {
-                    missing.push(format!("`{name}` ({message})"));
-                }
-            }
-        }
-    }
-
-    if missing.is_empty() {
-        Ok(secrets)
-    } else {
-        Err(missing)
-    }
-}
 
 /// Run the suite. Exit codes: 0 ok · 1 test failure · 2 user error · 3 system
 /// error (ADR-0009, worst-wins across scenarios).
@@ -120,7 +62,7 @@ pub fn execute(
         .flat_map(|f| f.scenarios.iter())
         .flat_map(|s| s.lowered.secrets.iter().cloned())
         .collect();
-    let secrets = match collect_secrets(&secret_names) {
+    let secrets = match crate::secretstore::resolve_all(&secret_names) {
         Ok(secrets) => Arc::new(secrets),
         Err(missing) => {
             eprintln!("error: missing secret value(s): {}", missing.join(", "));
@@ -198,8 +140,7 @@ pub fn execute(
     if selected == 0 {
         // A typo'd --tags/--scenario passing CI with zero tests run is the
         // silent-green failure mode; make it loud (ADR-0009: user error).
-        eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
-        return ExitCode::UserError;
+        return front::no_scenarios_matched();
     }
     let status_line = format!(
         "running {selected} scenario(s) with {} job(s) — run {}",
