@@ -179,7 +179,7 @@ pub fn execute(
     if output_json {
         eprintln!("{status_line}");
     } else {
-        println!("{status_line}");
+        crate::render::outln!("{status_line}");
     }
 
     let run_config = RunConfig {
@@ -284,7 +284,7 @@ pub fn execute(
             "exit_code": summary.exit_code().code(),
             "events": run_dir.join("events.jsonl").display().to_string(),
         });
-        println!("{json}");
+        crate::render::outln!("{json}");
     }
 
     if junit_failed {

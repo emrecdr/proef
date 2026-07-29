@@ -81,7 +81,13 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
         .collect();
 
     // Injected values — the core reads no environment, clock, or randomness.
-    let env: Arc<BTreeMap<String, String>> = Arc::new(std::env::vars().collect());
+    // `vars_os`: a foreign non-UTF-8 variable in the environment must not
+    // abort the run; it can never match a UTF-8 `${env:…}` reference anyway.
+    let env: Arc<BTreeMap<String, String>> = Arc::new(
+        std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .collect(),
+    );
     let run_id: Arc<str> = Arc::from(
         run_id
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string())

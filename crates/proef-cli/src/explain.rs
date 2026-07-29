@@ -66,21 +66,25 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         }
     }
 
-    println!("run {run_id_seen} — {}", record_dir.display());
-    println!(
+    crate::render::outln!("run {run_id_seen} — {}", record_dir.display());
+    crate::render::outln!(
         "{} passed · {} failed · {} skipped · {} step(s), {} attempt(s)",
-        totals.passed, totals.failed, totals.skipped, totals.steps, totals.attempts
+        totals.passed,
+        totals.failed,
+        totals.skipped,
+        totals.steps,
+        totals.attempts
     );
     for (scenario, status) in &scenario_status {
         if *status == Status::Failed {
-            println!("\nfailed: {scenario}");
+            crate::render::outln!("\nfailed: {scenario}");
             for (_, line) in failures.iter().filter(|(s, _)| s == scenario) {
-                println!("{line}");
+                crate::render::outln!("{line}");
             }
         }
     }
     if totals.failed > 0 {
-        println!(
+        crate::render::outln!(
             "\nartifacts: {} · console record: {}",
             record_dir.join("artifacts").display(),
             record_dir.join("run.log").display()

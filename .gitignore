@@ -41,6 +41,8 @@ fuzz/coverage/
 fuzz/Cargo.lock
 # encrypted secret store (ciphertext-only, but keep it out of history)
 .proef-secrets.json
+.proef-secrets.json.lock
+.proef-secrets.json.*.tmp
 
 # local session tooling
 .claude/

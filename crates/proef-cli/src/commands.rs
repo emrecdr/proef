@@ -16,12 +16,12 @@ use crate::render;
 pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
     let mut worst = DoctorStatus::Pass;
 
-    println!("proef doctor");
+    crate::render::outln!("proef doctor");
     for engine in engines {
-        println!("\nengine `{}`:", engine.id());
+        crate::render::outln!("\nengine `{}`:", engine.id());
         let checks = engine.doctor();
         if checks.is_empty() {
-            println!("  (no checks contributed)");
+            crate::render::outln!("  (no checks contributed)");
         }
         for check in checks {
             let result = (check.run)();
@@ -30,22 +30,22 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
                 DoctorStatus::Warn => "warn",
                 DoctorStatus::Fail => "FAIL",
             };
-            println!("  [{glyph}] {:<24} {}", check.name, result.detail);
+            crate::render::outln!("  [{glyph}] {:<24} {}", check.name, result.detail);
             worst = worst.max(result.status);
         }
     }
 
     match worst {
         DoctorStatus::Pass => {
-            println!("\nall checks passed");
+            crate::render::outln!("\nall checks passed");
             ExitCode::Success
         }
         DoctorStatus::Warn => {
-            println!("\nusable, with warnings");
+            crate::render::outln!("\nusable, with warnings");
             ExitCode::Success
         }
         DoctorStatus::Fail => {
-            println!("\nenvironment is not ready — see failed checks above");
+            crate::render::outln!("\nenvironment is not ready — see failed checks above");
             ExitCode::SystemError
         }
     }
@@ -85,7 +85,7 @@ pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode
             .filter(|s| front::tag_selected(&s.lowered.tags, tags))
             .filter(|s| scenario.is_none_or(|name| s.lowered.name == name))
             .count();
-        println!(
+        crate::render::outln!(
             "  ok {} — {} scenario(s), {} step(s), {} batch(es)",
             feature.file.path,
             feature.scenarios.len(),
@@ -109,7 +109,7 @@ pub fn dry_run(path: &Path, tags: &[String], scenario: Option<&str>) -> ExitCode
     } else {
         format!(" ({} selected by the filters)", totals.1)
     };
-    println!(
+    crate::render::outln!(
         "\ndry-run OK: {} feature(s), {} scenario(s){selected_note}, {} step(s), {} batch(es), {} artifact(s) parse-validated, {} warning(s)",
         front.features.len(),
         totals.0,
@@ -137,13 +137,13 @@ pub fn flows(path: &Path, output_json: bool) -> ExitCode {
                     "name": scenario.name,
                     "tags": scenario.tags,
                 });
-                println!("{json}");
+                crate::render::outln!("{json}");
             }
         }
         return ExitCode::Success;
     }
     for feature in &front.features {
-        println!("{} — {}", feature.file.path, feature.file.name);
+        crate::render::outln!("{} — {}", feature.file.path, feature.file.name);
         for scenario in &feature.scenarios {
             let scenario = &scenario.lowered;
             let tags = if scenario.tags.is_empty() {
@@ -151,15 +151,18 @@ pub fn flows(path: &Path, output_json: bool) -> ExitCode {
             } else {
                 format!("  [@{}]", scenario.tags.join(" @"))
             };
-            println!(
+            crate::render::outln!(
                 "  {}:{}  {}{tags}",
-                feature.file.path, scenario.line, scenario.name
+                feature.file.path,
+                scenario.line,
+                scenario.name
             );
         }
     }
-    println!(
+    crate::render::outln!(
         "\n{} macro(s) from {} pack(s)",
-        front.macros_loaded, front.packs_loaded
+        front.macros_loaded,
+        front.packs_loaded
     );
     ExitCode::Success
 }
@@ -221,7 +224,7 @@ pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCod
                     crate::assets::AssetCopyError::Io(_) => ExitCode::SystemError,
                 };
             }
-            let _ = writeln!(std::io::stdout(), "  ok {}.hurl", artifact.slug);
+            crate::render::outln!("  ok {}.hurl", artifact.slug);
             written += 1;
         }
     }
@@ -250,7 +253,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
     let rendered = serde_json::to_string_pretty(&schema).unwrap_or_else(|_| "true".to_owned());
 
     if add_to.is_empty() {
-        println!("{rendered}");
+        crate::render::outln!("{rendered}");
         return ExitCode::Success;
     }
 
@@ -260,7 +263,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         if !schema_dirs.contains(&dir) {
-            if let Err(err) = std::fs::write(dir.join(SCHEMA_FILE), &rendered) {
+            if let Err(err) = crate::fsutil::write_atomic(&dir.join(SCHEMA_FILE), &rendered) {
                 eprintln!(
                     "error: cannot write {}: {err}",
                     dir.join(SCHEMA_FILE).display()
@@ -277,14 +280,14 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
             }
         };
         if text.starts_with("# yaml-language-server:") {
-            println!("  ok {} (modeline already present)", pack_path.display());
+            crate::render::outln!("  ok {} (modeline already present)", pack_path.display());
             continue;
         }
-        if let Err(err) = std::fs::write(pack_path, format!("{MODELINE}\n{text}")) {
+        if let Err(err) = crate::fsutil::write_atomic(pack_path, &format!("{MODELINE}\n{text}")) {
             eprintln!("error: cannot write {}: {err}", pack_path.display());
             return ExitCode::SystemError;
         }
-        println!("  ok {} (modeline added)", pack_path.display());
+        crate::render::outln!("  ok {} (modeline added)", pack_path.display());
     }
     ExitCode::Success
 }

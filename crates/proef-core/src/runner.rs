@@ -508,6 +508,9 @@ fn run_scenario(
             }
             match err.class {
                 crate::error::EngineErrorClass::AssertFailed => {}
+                crate::error::EngineErrorClass::UserInput => {
+                    fault = Some(Fault::User(err.message.clone()));
+                }
                 crate::error::EngineErrorClass::Infra | crate::error::EngineErrorClass::Setup => {
                     fault = Some(Fault::System(err.message.clone()));
                 }

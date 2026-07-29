@@ -69,32 +69,40 @@ fn key_path() -> PathBuf {
 pub fn load_or_create_key() -> Result<[u8; 32], String> {
     let path = key_path();
     match std::fs::read_to_string(&path) {
-        Ok(text) => {
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(text.trim())
-                .map_err(|err| format!("key file {} is not base64: {err}", path.display()))?;
-            bytes
-                .try_into()
-                .map_err(|_| format!("key file {} must hold 32 bytes", path.display()))
-        }
+        Ok(text) => decode_key(&path, &text),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             let key: [u8; 32] = XChaCha20Poly1305::generate_key(&mut OsRng).into();
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|err| format!("cannot create {}: {err}", parent.display()))?;
             }
-            write_private(
-                &path,
-                base64::engine::general_purpose::STANDARD
-                    .encode(key)
-                    .as_bytes(),
-            )
-            .map_err(|err| format!("cannot write key file {}: {err}", path.display()))?;
-            eprintln!("created project key {}", path.display());
-            Ok(key)
+            let encoded = base64::engine::general_purpose::STANDARD.encode(key);
+            match write_private(&path, encoded.as_bytes()) {
+                Ok(()) => {
+                    eprintln!("created project key {}", path.display());
+                    Ok(key)
+                }
+                // Lost the creation race: a concurrent proef won a moment
+                // ago — its key is the project key, use it.
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let text = std::fs::read_to_string(&path)
+                        .map_err(|err| format!("cannot read key file {}: {err}", path.display()))?;
+                    decode_key(&path, &text)
+                }
+                Err(err) => Err(format!("cannot write key file {}: {err}", path.display())),
+            }
         }
         Err(err) => Err(format!("cannot read key file {}: {err}", path.display())),
     }
+}
+
+fn decode_key(path: &Path, text: &str) -> Result<[u8; 32], String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(text.trim())
+        .map_err(|err| format!("key file {} is not base64: {err}", path.display()))?;
+    bytes
+        .try_into()
+        .map_err(|_| format!("key file {} must hold 32 bytes", path.display()))
 }
 
 /// Create `path` private from the first byte: on unix the file is *opened*
@@ -123,12 +131,45 @@ pub fn load_store() -> Result<BTreeMap<String, String>, String> {
     }
 }
 
+/// Serialize store mutations across processes: an exclusive advisory lock
+/// on a sibling `.lock` file. The lock file (not the store itself) carries
+/// the lock because [`save_store`] renames over the store — a lock on the
+/// old inode would not stop a writer opening the new one.
+fn lock_store() -> Result<std::fs::File, String> {
+    let path = format!("{STORE_FILE}.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|err| format!("cannot open {path}: {err}"))?;
+    file.lock()
+        .map_err(|err| format!("cannot lock {path}: {err}"))?;
+    Ok(file)
+}
+
 fn save_store(store: &BTreeMap<String, String>) -> Result<(), String> {
+    use std::io::Write as _;
     let json = serde_json::to_string_pretty(store)
         .map_err(|err| format!("cannot serialize store: {err}"))?;
-    std::fs::write(STORE_FILE, format!("{json}\n"))
-        .map_err(|err| format!("cannot write {STORE_FILE}: {err}"))?;
-    // Ciphertext-only, but private anyway (TECH-SPEC §13 discipline).
+    // Temp + rename: an interrupt mid-write must never corrupt the store,
+    // and readers always see a complete file. Private from the first byte.
+    let tmp = format!("{STORE_FILE}.{}.tmp", std::process::id());
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(&tmp)
+        .and_then(|mut file| file.write_all(format!("{json}\n").as_bytes()))
+        .map_err(|err| format!("cannot write {tmp}: {err}"))?;
+    std::fs::rename(&tmp, STORE_FILE)
+        .map_err(|err| format!("cannot move {tmp} into place: {err}"))?;
+    // Ciphertext-only, but private anyway (TECH-SPEC §13 discipline) — the
+    // mode at open only applies on creation, not to a reused temp file.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -146,10 +187,13 @@ pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
             .map_err(|err| format!("cannot read value: {err}"))?,
     };
     let key = load_or_create_key()?;
+    // The whole read-modify-write is one critical section: concurrent
+    // `secret set` calls must all land (released on drop).
+    let _lock = lock_store()?;
     let mut store = load_store()?;
     store.insert(name.to_owned(), encrypt(&value, &key));
     save_store(&store)?;
-    println!("secret `{name}` stored in {STORE_FILE} (ciphertext only)");
+    crate::render::outln!("secret `{name}` stored in {STORE_FILE} (ciphertext only)");
     Ok(())
 }
 
@@ -157,10 +201,10 @@ pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
 pub fn list() -> Result<(), String> {
     let store = load_store()?;
     if store.is_empty() {
-        println!("no secrets stored ({STORE_FILE})");
+        crate::render::outln!("no secrets stored ({STORE_FILE})");
     }
     for name in store.keys() {
-        println!("{name}");
+        crate::render::outln!("{name}");
     }
     Ok(())
 }

@@ -2,9 +2,10 @@
 //!
 //! v1 canonicalization (documented scope): per `hurl:`/`hurl: |` block —
 //! trailing whitespace stripped, runs of blank lines collapsed to one,
-//! trailing blank lines dropped. The YAML skeleton (comments included) is
-//! never touched; blocks are located textually by indentation, exactly like
-//! the pack loader's span locator.
+//! trailing blank lines dropped. Fenced body regions (``` … ```) are the
+//! bytes the test sends and stay verbatim. The YAML skeleton (comments
+//! included) is never touched; blocks are located textually by indentation,
+//! exactly like the pack loader's span locator.
 
 use std::path::{Path, PathBuf};
 
@@ -28,12 +29,12 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
         if formatted != text {
             dirty = true;
             if check {
-                println!("  needs formatting: {}", pack.display());
-            } else if std::fs::write(&pack, &formatted).is_err() {
+                crate::render::outln!("  needs formatting: {}", pack.display());
+            } else if crate::fsutil::write_atomic(&pack, &formatted).is_err() {
                 eprintln!("error: cannot write {}", pack.display());
                 return ExitCode::SystemError;
             } else {
-                println!("  formatted: {}", pack.display());
+                crate::render::outln!("  formatted: {}", pack.display());
             }
         }
     }
@@ -41,7 +42,7 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
         ExitCode::TestFailure
     } else {
         if !dirty {
-            println!("all pack blocks already canonical");
+            crate::render::outln!("all pack blocks already canonical");
         }
         ExitCode::Success
     }
@@ -87,21 +88,34 @@ fn normalize_pack(text: &str) -> String {
             if !is_blank && indent <= key_indent {
                 break;
             }
-            body.push(lines.next().unwrap_or_default().trim_end().to_owned());
+            body.push(lines.next().unwrap_or_default().to_owned());
         }
-        // Canonicalize: collapse blank runs, drop trailing blanks.
+        // Canonicalize: collapse blank runs, drop trailing blanks — but a
+        // fenced region (``` … ```) is the exact body the test sends, so
+        // every byte inside it (blanks and trailing whitespace included)
+        // stays verbatim.
         let mut canonical: Vec<String> = Vec::new();
+        let mut in_fence = false;
         for body_line in body {
-            if body_line.trim().is_empty() {
+            let is_fence_delimiter = body_line.trim_start().starts_with("```");
+            if in_fence {
+                in_fence = !is_fence_delimiter;
+                canonical.push(body_line);
+                continue;
+            }
+            if is_fence_delimiter {
+                in_fence = true;
+                canonical.push(body_line.trim_end().to_owned());
+            } else if body_line.trim().is_empty() {
                 if canonical.last().is_some_and(|l| l.trim().is_empty()) {
                     continue;
                 }
                 canonical.push(String::new());
             } else {
-                canonical.push(body_line);
+                canonical.push(body_line.trim_end().to_owned());
             }
         }
-        while canonical.last().is_some_and(|l| l.trim().is_empty()) {
+        while !in_fence && canonical.last().is_some_and(|l| l.trim().is_empty()) {
             canonical.pop();
         }
         out.extend(canonical);
@@ -122,5 +136,13 @@ mod tests {
         assert_eq!(normalize_pack(input), expected);
         // Idempotent.
         assert_eq!(normalize_pack(expected), expected);
+    }
+
+    #[test]
+    fn fenced_bodies_stay_byte_verbatim() {
+        // Blank runs and trailing whitespace inside the ``` fence are the
+        // bytes the test sends — fmt must not touch them.
+        let input = "templates:\n  m:\n    steps:\n      - hurl: |\n          POST http://x\n          ```\n          line1  \n\n\n          line4\n          ```\n          HTTP 200\n";
+        assert_eq!(normalize_pack(input), input);
     }
 }

@@ -13,6 +13,7 @@ mod exec;
 mod explain;
 mod fmt;
 mod front;
+mod fsutil;
 mod registry;
 mod render;
 mod secretstore;

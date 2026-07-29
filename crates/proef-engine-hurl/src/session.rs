@@ -351,6 +351,7 @@ impl EngineSession for HurlSession {
                 let mut errors: Vec<String> = Vec::new();
                 let mut reached = false;
                 let mut assert_failure = false;
+                let mut user_fault = false;
                 for entry_result in &result.entries {
                     let line = entry_result.source_info.start.line;
                     let entry_index = entries.iter().copied().find(|&e| {
@@ -367,8 +368,10 @@ impl EngineSession for HurlSession {
                     duration += entry_result.transfer_duration;
                     captures.extend(entry_result.captures.iter().map(|c| c.name.clone()));
                     for error in &entry_result.errors {
-                        if is_assert_error(&error.kind) {
-                            assert_failure = true;
+                        match classify_error(error) {
+                            HurlErrorClass::Assert => assert_failure = true,
+                            HurlErrorClass::UserInput => user_fault = true,
+                            HurlErrorClass::Infra => {}
                         }
                         // hurl computed expected/actual and the true failing
                         // line — surface them, anchored on the error's own
@@ -427,7 +430,12 @@ impl EngineSession for HurlSession {
                 if status == Status::Failed {
                     failed = true;
                     let message = detail.clone().unwrap_or_default();
-                    batch_error = batch_error.or(Some(if assert_failure {
+                    // A user mistake outranks an assert result: with broken
+                    // input the verdict is unusable until the author fixes
+                    // the test (exit 2 over 1 over 3, ADR-0009).
+                    batch_error = batch_error.or(Some(if user_fault {
+                        EngineError::user_input(message)
+                    } else if assert_failure {
                         EngineError::assert_failed(message)
                     } else {
                         EngineError::infra(message)
@@ -481,10 +489,12 @@ impl EngineSession for HurlSession {
                 // Saturating throughout: user-authored durations must never
                 // panic the budget math (they cap at Duration::MAX instead).
                 let attempts = retries.saturating_add(1);
-                budget = budget
-                    .saturating_add(timeout.saturating_mul(attempts))
+                let per_run = timeout
+                    .saturating_mul(attempts)
                     .saturating_add(interval.saturating_mul(retries))
                     .saturating_add(delay.saturating_mul(attempts));
+                // `repeat:` runs the whole entry (with its retries) N times.
+                budget = budget.saturating_add(per_run.saturating_mul(entry_repeat(entry)));
             }
         }
         Some(budget.saturating_add(BUDGET_MARGIN))
@@ -628,24 +638,48 @@ fn last_result_failed(result: &runner::HurlResult, parsed: &HurlFile, entries: &
     false
 }
 
-fn is_assert_error(kind: &runner::RunnerErrorKind) -> bool {
+/// Where a hurl runner error folds in the seam taxonomy (ADR-0009).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HurlErrorClass {
+    /// The test's expectation failed against the live response → exit 1.
+    Assert,
+    /// A mistake in the test's own text the author must fix → exit 2.
+    UserInput,
+    /// Connection, native library, or other environment trouble → exit 3.
+    Infra,
+}
+
+fn classify_error(error: &runner::RunnerError) -> HurlErrorClass {
     use runner::RunnerErrorKind as K;
-    matches!(
-        kind,
+    match &error.kind {
+        // Static authoring mistakes — wrong independent of any response:
+        // the author fixes the test, not the environment (exit 2).
+        K::TemplateVariableNotDefined { .. }
+        | K::QueryInvalidJsonpathExpression { .. }
+        | K::InvalidRegex
+        | K::InvalidUrl { .. }
+        | K::InvalidOptionValue { .. }
+        | K::FileReadAccess { .. }
+        | K::UnauthorizedFileAccess { .. }
+        | K::FilterInvalidEncoding(_)
+        | K::FilterInvalidFormatSpecifier(_) => HurlErrorClass::UserInput,
+        // Query failures over the *response* are test failures: a backend
+        // answering malformed JSON/XML (or missing the queried header)
+        // failed the test's expectation — proef and the environment are
+        // fine (ADR-0009: exit 1, never 3). Everything else defers to
+        // hurl's own assert-context flag.
         K::AssertBodyDiffError { .. }
-            | K::AssertBodyValueError { .. }
-            | K::AssertFailure { .. }
-            | K::AssertHeaderValueError { .. }
-            | K::AssertStatus { .. }
-            | K::AssertVersion { .. }
-            // Query failures over the *response* are test failures too: a
-            // backend answering malformed JSON/XML (or missing the queried
-            // header) failed the test's expectation — proef and the
-            // environment are fine (ADR-0009: exit 1, never 3).
-            | K::QueryInvalidJson
-            | K::QueryInvalidXml
-            | K::QueryHeaderNotFound
-    )
+        | K::AssertBodyValueError { .. }
+        | K::AssertFailure { .. }
+        | K::AssertHeaderValueError { .. }
+        | K::AssertStatus { .. }
+        | K::AssertVersion { .. }
+        | K::QueryInvalidJson
+        | K::QueryInvalidXml
+        | K::QueryHeaderNotFound => HurlErrorClass::Assert,
+        _ if error.assert => HurlErrorClass::Assert,
+        _ => HurlErrorClass::Infra,
+    }
 }
 
 fn redact(text: &str, secrets: &BTreeMap<String, String>) -> String {
@@ -702,6 +736,29 @@ fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
         }
     }
     (retries, interval)
+}
+
+/// Per-entry `[Options] repeat:` — hurl runs the entry that many times; the
+/// budget must scale with it or legitimate long repeats get abandoned and
+/// blamed on the environment. Default 1; `repeat: -1` saturates (the load
+/// lint rejects it, this is the runtime backstop).
+fn entry_repeat(entry: &hurl_core::ast::Entry) -> u32 {
+    for section in &entry.request.sections {
+        if let SectionValue::Options(options) = &section.value {
+            for option in options {
+                match &option.kind {
+                    OptionKind::Repeat(CountOption::Literal(Count::Finite(count))) => {
+                        return u32::try_from(*count).unwrap_or(u32::MAX);
+                    }
+                    OptionKind::Repeat(CountOption::Literal(Count::Infinite)) => {
+                        return u32::MAX;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    1
 }
 
 /// Per-entry `[Options] delay:` — an uninterruptible sleep hurl applies per

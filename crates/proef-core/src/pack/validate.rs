@@ -243,15 +243,52 @@ fn normalize_step(
         }
     };
 
+    // Delay cap (pass 6, typed half): a pause no budget can absorb is a
+    // hang, not a test (ADR-0007).
+    let delay_ms = match raw.delay {
+        Some(ms) if ms > MAX_DELAY_MS => {
+            diags.push(at(Diag::error(
+                "proef::pack::delay_unbounded",
+                format!(
+                    "macro `{macro_name}` step {index}: `delay: {ms}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap"
+                ),
+            )));
+            None
+        }
+        other => other,
+    };
+
     Some(MacroStep {
         name: raw.name.clone(),
-        delay_ms: raw.delay,
+        delay_ms,
         kind,
         optional: raw.optional,
         when: raw.when.clone(),
         retry,
         save_as,
     })
+}
+
+/// Pass-6 caps (ADR-0007): counts or pauses above these cannot be absorbed
+/// by any batch budget — they are hangs, not tests.
+const MAX_COUNT: i64 = 10_000;
+const MAX_DELAY_MS: u64 = 3_600_000;
+
+/// Parse a raw `[Options]` duration value (`3000`, `500ms`, `3s`, `2m`) into
+/// milliseconds. Templates (`{{…}}`) and anything else non-numeric return
+/// `None` — the runtime budget still bounds those.
+fn raw_duration_ms(value: &str) -> Option<u64> {
+    let value = value.trim();
+    let (number, unit_ms) = if let Some(n) = value.strip_suffix("ms") {
+        (n, 1)
+    } else if let Some(n) = value.strip_suffix('s') {
+        (n, 1000)
+    } else if let Some(n) = value.strip_suffix('m') {
+        (n, 60_000)
+    } else {
+        (value, 1)
+    };
+    number.trim().parse::<u64>().ok()?.checked_mul(unit_ms)
 }
 
 /// Passes over the complete macro set: `use:` graph (4, 5), payload kinds (8),
@@ -391,31 +428,7 @@ fn payload_passes(
         }
     };
 
-    // Pass 6 (raw half): hurl allows infinite `retry`/`repeat` — reject them
-    // textually until the AST-level check lands with execution (M3).
-    for (line_no, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        for option in ["retry", "repeat"] {
-            if let Some(value) = trimmed.strip_prefix(&format!("{option}:"))
-                && value.trim() == "-1"
-            {
-                diags.push(at(Diag::error(
-                        "proef::pack::retry_not_finite",
-                        format!(
-                            "macro `{}` step {index}: `{option}: -1` is infinite — budgets require a finite count (ADR-0007)",
-                            macro_.name
-                        ),
-                    ))
-                    .maybe_span(locate::payload_line_span(
-                        &macro_.source,
-                        &macro_.name,
-                        kind,
-                        ordinal,
-                        line_no + 1,
-                    )));
-            }
-        }
-    }
+    lint_raw_options(macro_, index, kind, ordinal, text, at, diags);
 
     // Pass 7: probe-instantiation parse via the engine's validator.
     let Some(validate) = spec.validate else {
@@ -458,6 +471,68 @@ fn payload_passes(
                         )),
                     );
             }
+        }
+    }
+}
+
+/// Pass 6 (raw half): hurl allows infinite `retry`/`repeat` and unbounded
+/// `delay` — parse numeric raw-option values and reject what no budget can
+/// absorb (ADR-0007). Non-numeric values (`{{…}}` templates) pass: the
+/// runtime batch budget still bounds those.
+fn lint_raw_options(
+    macro_: &Macro,
+    index: usize,
+    kind: &str,
+    ordinal: usize,
+    text: &str,
+    at: &impl Fn(Diag) -> Diag,
+    diags: &mut Vec<Diag>,
+) {
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        let mut reject = |code: &'static str, message: String| {
+            diags.push(
+                at(Diag::error(
+                    code,
+                    format!("macro `{}` step {index}: {message}", macro_.name),
+                ))
+                .maybe_span(locate::payload_line_span(
+                    &macro_.source,
+                    &macro_.name,
+                    kind,
+                    ordinal,
+                    line_no + 1,
+                )),
+            );
+        };
+        for option in ["retry", "repeat"] {
+            if let Some(value) = trimmed.strip_prefix(&format!("{option}:")) {
+                match value.trim().parse::<i64>() {
+                    Ok(-1) => reject(
+                        "proef::pack::retry_not_finite",
+                        format!(
+                            "`{option}: -1` is infinite — budgets require a finite count (ADR-0007)"
+                        ),
+                    ),
+                    Ok(n) if n > MAX_COUNT => reject(
+                        "proef::pack::retry_not_finite",
+                        format!("`{option}: {n}` is budget-hostile — the cap is {MAX_COUNT}"),
+                    ),
+                    _ => {}
+                }
+            }
+        }
+        if let Some(value) = trimmed.strip_prefix("delay:")
+            && let Some(ms) = raw_duration_ms(value)
+            && ms > MAX_DELAY_MS
+        {
+            reject(
+                "proef::pack::delay_unbounded",
+                format!(
+                    "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
+                    value.trim()
+                ),
+            );
         }
     }
 }

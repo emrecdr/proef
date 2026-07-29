@@ -113,6 +113,10 @@ pub enum EngineErrorClass {
     Infra,
     /// An assertion in the system under test failed → [`CoreError::TestFailure`].
     AssertFailed,
+    /// A mistake in the test's own text the author must fix (bad query
+    /// expression, undefined runtime variable, unreadable body file) →
+    /// [`CoreError::User`].
+    UserInput,
     /// The engine could not be set up or configured → [`CoreError::System`].
     Setup,
 }
@@ -149,6 +153,15 @@ impl EngineError {
         }
     }
 
+    /// A user-input failure ([`EngineErrorClass::UserInput`]).
+    pub fn user_input(message: impl Into<String>) -> Self {
+        Self {
+            class: EngineErrorClass::UserInput,
+            message: message.into(),
+            source: None,
+        }
+    }
+
     /// A setup/configuration failure ([`EngineErrorClass::Setup`]).
     pub fn setup(message: impl Into<String>) -> Self {
         Self {
@@ -170,6 +183,7 @@ impl From<EngineError> for CoreError {
     fn from(err: EngineError) -> Self {
         match err.class {
             EngineErrorClass::AssertFailed => Self::TestFailure(err.message),
+            EngineErrorClass::UserInput => Self::User(err.message),
             EngineErrorClass::Infra | EngineErrorClass::Setup => Self::System {
                 message: err.message,
                 source: err.source,

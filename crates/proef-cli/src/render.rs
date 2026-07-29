@@ -7,6 +7,21 @@
 use miette::{Diagnostic, LabeledSpan, Severity};
 use proef_core::diag::Diag;
 
+/// Print a line to stdout, tolerating a closed pipe: `proef … | head` must
+/// end the pipeline quietly (exit contract, never a 101 panic), so
+/// `BrokenPipe` is swallowed; any other stdout failure surfaces on stderr.
+macro_rules! outln {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        if let Err(err) = writeln!(::std::io::stdout(), $($arg)*)
+            && err.kind() != ::std::io::ErrorKind::BrokenPipe
+        {
+            eprintln!("error: cannot write to stdout: {err}");
+        }
+    }};
+}
+pub(crate) use outln;
+
 /// Install the global miette hook: unicode graphics, color only when the
 /// terminal wants it.
 pub fn install() {
