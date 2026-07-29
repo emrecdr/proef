@@ -22,6 +22,13 @@ suite/
     api.yaml          # the vocabulary — what each sentence does
 ```
 
+Layout is convention, not configuration. `proef test suite` takes one path and
+discovers everything under it: every `*.feature` file is a test file (at any
+depth), and every `*.yaml`/`*.yml` file directly inside a directory named
+`packs` is a macro pack — the `packs` directory itself may sit at any depth.
+All packs merge into one vocabulary shared by all feature files — grow the
+suite by adding files; nothing needs registering.
+
 ## 2. Write the prose
 
 `suite/case.feature`:

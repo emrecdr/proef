@@ -20,3 +20,6 @@ fuzz/Cargo.lock
 
 # macOS
 .DS_Store
+
+# devt workflow state (recursive — catches sub-tree devt invocations)
+**/.devt/state/

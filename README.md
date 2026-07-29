@@ -19,7 +19,9 @@ for API testing.
 
 ## What it looks like
 
-A scenario is authored for humans:
+A scenario is authored for humans — this one is trimmed from
+[`tests/features/500_api_message.feature`](tests/features/500_api_message.feature),
+the repo's own example suite:
 
 ```gherkin
 Feature: API — message sync
@@ -30,7 +32,10 @@ Feature: API — message sync
     Then the client feed shows the message from the relative
 ```
 
-A pack binds each sentence to real HTTP work — raw hurl, parse-validated at load:
+A macro pack ([`tests/features/packs/api.yaml`](tests/features/packs/api.yaml))
+binds each sentence to real HTTP work — raw hurl, parse-validated at load. The
+runner matches every sentence against the `match:` patterns of the loaded
+packs, and a step's `hurl:` key names the engine that executes it:
 
 ```yaml
 templates:
@@ -56,7 +61,7 @@ running 12 scenario(s) with 4 job(s) — run 019f…
 
   Scenario: A message sent via the API appears in the client feed (tests/features/500_api_message.feature)
     ✓ tests/features/500_api_message.feature:11 — the client environment is provisioned (9ms)
-    ✓ tests/features/500_api_message.feature:15 — the client feed shows the message … (312ms, 2 attempts)
+    ✓ tests/features/500_api_message.feature:16 — the client feed shows the message … (312ms, 2 attempts)
 
 summary: 12 passed · 0 failed · 0 skipped
 ```
@@ -109,12 +114,28 @@ macOS: Xcode Command Line Tools; Windows: vcpkg (see
 
 ## Quick start
 
-Ten-minute walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) ·
-full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
+A suite is one directory; `proef test <dir>` discovers everything in it by two
+conventions — no configuration points files at each other:
+
+```
+suite/                  # any name, anywhere — this is the path you pass to proef
+  checkout.feature      # every *.feature under the tree is a test file…
+  flows/
+    refunds.feature     # …at any depth: feature discovery is recursive
+  packs/                # every *.yaml|*.yml directly inside a `packs` directory
+    api.yaml            # is a macro pack (the packs dir may sit at any depth)
+```
+
+All discovered packs — plus a small pack built into the binary — merge into one
+vocabulary shared by every feature file, so any sentence may be bound by any
+pack in the tree. [`tests/features/`](tests/features/) in this repo is a
+complete working suite in exactly this shape.
 
 ```bash
 mkdir -p suite/packs
-# 1. write suite/case.feature (prose) and suite/packs/api.yaml (bindings)
+# 1. write suite/case.feature (prose) and suite/packs/api.yaml (bindings);
+#    every sentence needs a binding — extend the snippets above the same way,
+#    or copy tests/features/ wholesale as a working start
 # 2. store secrets the packs reference
 proef secret set apiToken            # or: export PROEF_SECRET_APITOKEN=…
 # 3. validate everything without touching the network
@@ -123,11 +144,14 @@ proef test suite --dry-run
 proef test suite --jobs 4
 ```
 
+Ten-minute walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) ·
+full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
+
 ## CLI
 
 | Command | Purpose |
 |---|---|
-| `proef test <path>` | validate + execute (`--dry-run`, `--tags`, `--scenario`, `--jobs`, `--junit`, `--output json`, `--watch`) |
+| `proef test <path>` | validate + execute (`--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`) |
 | `proef flows <path>` | list scenarios with anchors and tags (`--output json` feeds the nextest harness) |
 | `proef artifacts <path> -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off |
 | `proef explain [run-id]` | summarize a run from its event record |
@@ -163,7 +187,8 @@ xtask/                     fixture runner, hurl-upgrade canary, automation
 ```bash
 cargo nextest run          # all tests
 cargo test --doc           # doctests (nextest doesn't run them)
-just gates                 # every CI gate locally (fmt, clippy -D, tests, doc, deny, audit)
+just gates                 # every CI gate locally (fmt, clippy -D, tests, doc, deny, machete, docs-check)
+just audit                 # security advisories (nightly in CI, on demand locally)
 cargo insta test --review  # snapshot changes are reviewed, never blind-accepted
 cargo run -p xtask -- fixture   # local fixture API server
 cargo run -p xtask -- canary    # build+test against the next hurl release
