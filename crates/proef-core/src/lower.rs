@@ -228,6 +228,7 @@ fn expand_macro(
 
     match &macro_.body {
         MacroBody::Expect(items) => {
+            let mut merged: Option<(StepKindId, bool, usize)> = None;
             for item in items {
                 let status = match &item.status {
                     Some(status) => match resolve_in(status, refs, warnings, diags) {
@@ -243,7 +244,27 @@ fn expand_macro(
                     },
                     None => None,
                 };
-                merge_expect(status.as_deref(), fragment.as_deref(), out, diags, at);
+                if let Some((kind, optional, lines)) =
+                    merge_expect(status.as_deref(), fragment.as_deref(), out, diags, at)
+                {
+                    let entry = merged.get_or_insert((kind, optional, 0));
+                    entry.2 += lines;
+                }
+            }
+            // The authored `Then` surfaces as its own step (§2.7): zero bytes
+            // of its own, anchored on the assert lines it appended to the
+            // host entry. It shares the host's fate (`optional` inherited).
+            if let Some((kind, optional, lines)) = merged {
+                out.push(LoweredStep {
+                    step: step_ref.clone(),
+                    kind,
+                    payload: StepPayload::MergedAsserts { lines },
+                    optional,
+                    retry: None,
+                    when: None,
+                    label: None,
+                    save_as: std::collections::BTreeMap::new(),
+                });
             }
         }
         MacroBody::Steps(steps) => {
@@ -483,13 +504,16 @@ fn bake_entry_options(
 /// The Then-merge rule (ADR-0004): fold a status assert and/or raw assert
 /// fragment into the previous request entry — error when no request precedes
 /// (Then-before-When).
+/// Merge one `expect:` item into the previous request entry. Returns the
+/// host's `(kind, optional)` plus how many assert lines were appended —
+/// the caller anchors an authored-step row on them (§2.7 visibility).
 fn merge_expect(
     status: Option<&str>,
     fragment: Option<&str>,
     out: &mut [LoweredStep],
     diags: &mut Vec<Diag>,
     at: &impl Fn(Diag) -> Diag,
-) {
+) -> Option<(StepKindId, bool, usize)> {
     let Some(previous) = out
         .iter_mut()
         .rev()
@@ -502,7 +526,7 @@ fn merge_expect(
             ))
             .with_help("a Then step asserts on the request made by an earlier When step"),
         );
-        return;
+        return None;
     };
 
     if let Some(status) = status
@@ -512,11 +536,13 @@ fn merge_expect(
             "proef::lower::bad_status",
             format!("expected an HTTP status number, got `{status}`"),
         )));
-        return;
+        return None;
     }
 
+    let host_kind = previous.kind.clone();
+    let host_optional = previous.optional;
     let StepPayload::HurlEntries(text) = &mut previous.payload else {
-        return;
+        return None;
     };
     // Ensure the last entry has a response section, then an [Asserts] section,
     // then append the asserts. (The emitter parse-validates the result.)
@@ -526,14 +552,18 @@ fn merge_expect(
     if !text.lines().any(|l| l.trim() == "[Asserts]") {
         push_line(text, "[Asserts]");
     }
+    let mut appended = 0usize;
     if let Some(status) = status {
         push_line(text, &format!("status == {status}"));
+        appended += 1;
     }
     if let Some(fragment) = fragment {
         for line in fragment.lines().filter(|l| !l.trim().is_empty()) {
             push_line(text, line.trim_end());
+            appended += 1;
         }
     }
+    Some((host_kind, host_optional, appended))
 }
 
 /// Is this a `Name: value` HTTP header line per hurl's grammar? The name must
@@ -568,12 +598,16 @@ fn segment(steps: Vec<LoweredStep>, kind_to_engine: &BTreeMap<String, String>) -
         let engine = kind_to_engine
             .get(step.kind.as_str())
             .map_or_else(|| step.kind.as_str().to_owned(), Clone::clone);
+        // A merged-asserts step never opens a batch: its asserts live inside
+        // the previous step's entry, so it must ride in the same dispatch.
+        let glued = matches!(step.payload, StepPayload::MergedAsserts { .. });
         let start_new = match batches.last() {
             None => true,
             Some(last) => {
-                last.engine.as_str() != engine
-                    || step.optional
-                    || last.steps.last().is_some_and(|s| s.optional)
+                !glued
+                    && (last.engine.as_str() != engine
+                        || step.optional
+                        || last.steps.last().is_some_and(|s| s.optional))
             }
         };
         if start_new {
@@ -702,11 +736,17 @@ mod tests {
         )
         .unwrap();
 
-        // Optional health check is a singleton batch; auth + search batch together.
+        // Optional health check is a singleton batch; auth + search batch
+        // together, and the authored `Then` rides along as a visible
+        // merged-asserts step (§2.7) glued to its host.
         assert_eq!(lowered.batches.len(), 2);
         assert_eq!(lowered.batches[0].steps.len(), 1);
         assert!(lowered.batches[0].steps[0].optional);
-        assert_eq!(lowered.batches[1].steps.len(), 2);
+        assert_eq!(lowered.batches[1].steps.len(), 3);
+        let StepPayload::MergedAsserts { lines } = lowered.batches[1].steps[2].payload else {
+            panic!("expected a merged-asserts step for the Then line");
+        };
+        assert_eq!(lines, 1, "the expect appended exactly `status == 200`");
 
         // use:/with: expansion resolved the parent's secret reference.
         let StepPayload::HurlEntries(auth) = &lowered.batches[1].steps[0].payload else {

@@ -81,17 +81,22 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
     let slug = format!("{}--{}", slugify(feature_stem), slugify(&scenario.name));
     let has_vars = !scenario.globals.is_empty() || !scenario.secrets.is_empty();
 
-    let mut steps: Vec<(usize, usize, &crate::step::LoweredStep, &str)> = Vec::new();
+    let mut steps: Vec<(usize, usize, &crate::step::LoweredStep)> = Vec::new();
     for (batch_index, batch) in scenario.batches.iter().enumerate() {
         for (step_index, step) in batch.steps.iter().enumerate() {
-            if let StepPayload::HurlEntries(text) = &step.payload {
-                steps.push((batch_index, step_index, step, text));
+            if matches!(
+                step.payload,
+                StepPayload::HurlEntries(_) | StepPayload::MergedAsserts { .. }
+            ) {
+                steps.push((batch_index, step_index, step));
             }
         }
     }
     // A mixed scenario may open with another engine's batch — the sidecar's
     // real batch/step indices carry the mapping; no positional assumption holds.
-    let (_, _, first_step, _) = *steps.first()?;
+    let (_, _, first_step) = *steps
+        .iter()
+        .find(|(_, _, s)| matches!(s.payload, StepPayload::HurlEntries(_)))?;
 
     let mut text = String::new();
     let mut line = 0usize;
@@ -122,7 +127,15 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
     push_line(&mut text, &mut line, &replay);
 
     let mut entries = Vec::new();
-    for (batch_index, step_index, step, payload) in steps {
+    let mut index = 0usize;
+    while index < steps.len() {
+        let (batch_index, step_index, step) = steps[index];
+        let StepPayload::HurlEntries(payload) = &step.payload else {
+            // A merged-asserts step before any request cannot lower (the
+            // `then_before_when` diagnostic fires) — nothing to render.
+            index += 1;
+            continue;
+        };
         push_line(&mut text, &mut line, "");
         push_line(
             &mut text,
@@ -149,6 +162,17 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
             batch: batch_index,
             step: step_index,
         });
+
+        // Merged-asserts steps own the trailing assert lines of the entry
+        // just rendered (§2.7); their text is already inside `body`.
+        index += 1;
+        let first_merged = index;
+        while index < steps.len()
+            && matches!(steps[index].2.payload, StepPayload::MergedAsserts { .. })
+        {
+            index += 1;
+        }
+        entries.extend(merged_map_entries(&steps[first_merged..index], line));
     }
 
     Some(Artifact {
@@ -160,6 +184,41 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
         vars: has_vars.then(|| vars_content(scenario, &slug, world)),
         slug,
     })
+}
+
+/// Sidecar rows for the merged-asserts steps that follow one rendered entry
+/// (§2.7): line spans are assigned back-to-front from the entry's last line
+/// `entry_end` — the last merge sits closest to the end.
+fn merged_map_entries(
+    followers: &[(usize, usize, &crate::step::LoweredStep)],
+    entry_end: usize,
+) -> Vec<MapEntry> {
+    let mut end = entry_end;
+    let mut spans: Vec<[usize; 2]> = Vec::new();
+    for &(_, _, merged) in followers.iter().rev() {
+        let StepPayload::MergedAsserts { lines } = merged.payload else {
+            continue;
+        };
+        spans.push([end.saturating_sub(lines) + 1, end]);
+        end = end.saturating_sub(lines);
+    }
+    spans.reverse();
+    followers
+        .iter()
+        .zip(spans)
+        .map(|(&(batch, step, merged), span)| MapEntry {
+            hurl_lines: span,
+            feature: FeatureAnchor {
+                file: merged.step.file.to_string(),
+                line: merged.step.line,
+                text: merged.step.text.to_string(),
+            },
+            optional: merged.optional,
+            captures: Vec::new(),
+            batch,
+            step,
+        })
+        .collect()
 }
 
 /// `# <file>:<line> — <step text>` (plus the pack entry label when present).

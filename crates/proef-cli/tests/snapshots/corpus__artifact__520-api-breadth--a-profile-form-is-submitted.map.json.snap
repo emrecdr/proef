@@ -19,6 +19,21 @@ expression: "String::from_utf8(content_a).unwrap()"
       "captures": [],
       "batch": 0,
       "step": 0
+    },
+    {
+      "hurl_lines": [
+        12,
+        12
+      ],
+      "feature": {
+        "file": "tests/features/520_api_breadth.feature",
+        "line": 15,
+        "text": "the response looks healthy"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 0,
+      "step": 1
     }
   ]
 }

@@ -10,8 +10,9 @@ expression: events
 {"event":"batch_started","scenario":"reference","engine":"hurl","steps":1}
 {"event":"entry_running","scenario":"reference","engine":"hurl","entry":1,"retry":0}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
-{"event":"batch_started","scenario":"reference","engine":"hurl","steps":1}
+{"event":"batch_started","scenario":"reference","engine":"hurl","steps":2}
 {"event":"entry_running","scenario":"reference","engine":"hurl","entry":2,"retry":0}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":5,"text":"the response status is 200"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
 {"event":"scenario_finished","scenario":"reference","status":"passed"}
 {"event":"run_finished","passed":1,"failed":0,"skipped":0}

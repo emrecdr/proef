@@ -343,8 +343,51 @@ impl EngineSession for HurlSession {
                 }
             }
 
-            // Map entry results to step outcomes.
+            // Map entry results to step outcomes. hurl computed expected/
+            // actual and the true failing line — surface them, anchored on
+            // the error's own source line, not the entry's first line.
+            let render_error = |error: &runner::RunnerError| -> String {
+                let content: Vec<&str> = self.artifact.text.lines().collect();
+                let fixme = error
+                    .fixme(&content)
+                    .to_string(hurl_core::text::Format::Plain)
+                    .split_whitespace()
+                    .filter(|word| !word.chars().all(|c| c == '^'))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let rendered = format!(
+                    "{} ({}.hurl:{}: {})",
+                    error.description(),
+                    self.artifact.slug,
+                    error.source_info.start.line,
+                    fixme
+                );
+                redact(&rendered, &self.secrets)
+            };
+            // Lines owned by merged-asserts steps (§2.7): their errors
+            // attribute to the authored `Then`, never to the host request —
+            // attribution moves, it does not duplicate.
+            let merged_spans: Vec<[usize; 2]> = run
+                .iter()
+                .filter(|(_, s, _)| {
+                    matches!(
+                        s.payload,
+                        proef_core::step::StepPayload::MergedAsserts { .. }
+                    )
+                })
+                .filter_map(|(i, _, _)| self.anchor(ordinal, *i).map(|(_, lines)| lines))
+                .collect();
+            let in_merged_span = |line: usize| {
+                merged_spans
+                    .iter()
+                    .any(|[start, end]| line >= *start && line <= *end)
+            };
             for (index, step, entries) in &run {
+                let span = self.anchor(ordinal, *index).map(|(_, lines)| lines);
+                let merged = matches!(
+                    step.payload,
+                    proef_core::step::StepPayload::MergedAsserts { .. }
+                );
                 let mut per_entry_results: BTreeMap<usize, u32> = BTreeMap::new();
                 let mut duration = Duration::ZERO;
                 let mut captures: Vec<String> = Vec::new();
@@ -352,46 +395,72 @@ impl EngineSession for HurlSession {
                 let mut reached = false;
                 let mut assert_failure = false;
                 let mut user_fault = false;
-                for entry_result in &result.entries {
-                    let line = entry_result.source_info.start.line;
-                    let entry_index = entries.iter().copied().find(|&e| {
-                        parsed
+                if merged {
+                    // §2.7: this step's asserts live on `span` lines inside
+                    // the previous request's entry. Attribute that host
+                    // entry's *final* attempt: errors on our lines are ours,
+                    // a clean final attempt passes us.
+                    // The host is the entry whose request starts closest
+                    // above our lines: merged asserts always extend the
+                    // response of the entry they follow (never a request
+                    // span, so `line_in_entry` cannot find them).
+                    if let Some([span_start, span_end]) = span
+                        && let Some(host_entry) = parsed
                             .entries
-                            .get(e)
-                            .is_some_and(|pe| line_in_entry(pe, line))
-                    });
-                    let Some(entry_index) = entry_index else {
-                        continue;
-                    };
-                    reached = true;
-                    *per_entry_results.entry(entry_index).or_default() += 1;
-                    duration += entry_result.transfer_duration;
-                    captures.extend(entry_result.captures.iter().map(|c| c.name.clone()));
-                    for error in &entry_result.errors {
-                        match classify_error(error) {
-                            HurlErrorClass::Assert => assert_failure = true,
-                            HurlErrorClass::UserInput => user_fault = true,
-                            HurlErrorClass::Infra => {}
+                            .iter()
+                            .filter(|pe| pe.request.source_info.start.line <= span_start)
+                            .max_by_key(|pe| pe.request.source_info.start.line)
+                    {
+                        let host_results: Vec<_> = result
+                            .entries
+                            .iter()
+                            .filter(|er| line_in_entry(host_entry, er.source_info.start.line))
+                            .collect();
+                        reached = !host_results.is_empty();
+                        per_entry_results
+                            .insert(0, u32::try_from(host_results.len()).unwrap_or(u32::MAX));
+                        if let Some(final_result) = host_results.last() {
+                            for error in &final_result.errors {
+                                let line = error.source_info.start.line;
+                                if line < span_start || line > span_end {
+                                    continue;
+                                }
+                                match classify_error(error) {
+                                    HurlErrorClass::Assert => assert_failure = true,
+                                    HurlErrorClass::UserInput => user_fault = true,
+                                    HurlErrorClass::Infra => {}
+                                }
+                                errors.push(render_error(error));
+                            }
                         }
-                        // hurl computed expected/actual and the true failing
-                        // line — surface them, anchored on the error's own
-                        // source line, not the entry's first line.
-                        let content: Vec<&str> = self.artifact.text.lines().collect();
-                        let fixme = error
-                            .fixme(&content)
-                            .to_string(hurl_core::text::Format::Plain)
-                            .split_whitespace()
-                            .filter(|word| !word.chars().all(|c| c == '^'))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        let rendered = format!(
-                            "{} ({}.hurl:{}: {})",
-                            error.description(),
-                            self.artifact.slug,
-                            error.source_info.start.line,
-                            fixme
-                        );
-                        errors.push(redact(&rendered, &self.secrets));
+                    }
+                } else {
+                    for entry_result in &result.entries {
+                        let line = entry_result.source_info.start.line;
+                        let entry_index = entries.iter().copied().find(|&e| {
+                            parsed
+                                .entries
+                                .get(e)
+                                .is_some_and(|pe| line_in_entry(pe, line))
+                        });
+                        let Some(entry_index) = entry_index else {
+                            continue;
+                        };
+                        reached = true;
+                        *per_entry_results.entry(entry_index).or_default() += 1;
+                        duration += entry_result.transfer_duration;
+                        captures.extend(entry_result.captures.iter().map(|c| c.name.clone()));
+                        for error in &entry_result.errors {
+                            if in_merged_span(error.source_info.start.line) {
+                                continue;
+                            }
+                            match classify_error(error) {
+                                HurlErrorClass::Assert => assert_failure = true,
+                                HurlErrorClass::UserInput => user_fault = true,
+                                HurlErrorClass::Infra => {}
+                            }
+                            errors.push(render_error(error));
+                        }
                     }
                 }
                 // Multiple results for the *same* entry are retries: attempts
@@ -399,7 +468,11 @@ impl EngineSession for HurlSession {
                 // multi-entry step (a 2-entry step is 1 attempt, not 2). Only
                 // the final result's errors decide (earlier ones retried).
                 let attempts = per_entry_results.values().copied().max().unwrap_or(0);
-                let final_failed = last_result_failed(&result, parsed, entries);
+                let final_failed = if merged {
+                    !errors.is_empty()
+                } else {
+                    last_result_failed(&result, parsed, entries, &in_merged_span)
+                };
                 let status = if !reached {
                     Status::Skipped
                 } else if final_failed {
@@ -416,13 +489,14 @@ impl EngineSession for HurlSession {
                 };
                 captures.sort();
                 captures.dedup();
-                let span = self.anchor(ordinal, *index).map(|(_, lines)| lines);
                 let detail = if matches!(status, Status::Failed | Status::Warned) {
                     let location = span.map_or_else(String::new, |[a, _]| {
                         format!(" (artifact {}.hurl:{a})", self.artifact.slug)
                     });
                     Some(format!("{}{location}", errors.join("; ")))
-                } else if entries.is_empty() {
+                } else if merged && !reached {
+                    Some("not run (its request entry did not run)".to_owned())
+                } else if entries.is_empty() && !merged {
                     Some(NO_ENTRIES_DETAIL.to_owned())
                 } else {
                     None
@@ -621,8 +695,15 @@ fn is_contiguous(
     }
 }
 
-/// Did the *final* attempt of any of these entries fail?
-fn last_result_failed(result: &runner::HurlResult, parsed: &HurlFile, entries: &[usize]) -> bool {
+/// Did the *final* attempt of any of these entries fail? Errors on lines for
+/// which `excluded` holds belong to a merged-asserts step (§2.7) and never
+/// fail the host request.
+fn last_result_failed(
+    result: &runner::HurlResult,
+    parsed: &HurlFile,
+    entries: &[usize],
+    excluded: &impl Fn(usize) -> bool,
+) -> bool {
     for &entry_index in entries {
         let Some(parsed_entry) = parsed.entries.get(entry_index) else {
             continue;
@@ -631,7 +712,11 @@ fn last_result_failed(result: &runner::HurlResult, parsed: &HurlFile, entries: &
             .entries
             .iter()
             .rfind(|er| line_in_entry(parsed_entry, er.source_info.start.line));
-        if last.is_some_and(|er| !er.errors.is_empty()) {
+        if last.is_some_and(|er| {
+            er.errors
+                .iter()
+                .any(|e| !excluded(e.source_info.start.line))
+        }) {
             return true;
         }
     }

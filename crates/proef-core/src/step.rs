@@ -53,6 +53,14 @@ impl std::fmt::Display for StepKindId {
 pub enum StepPayload {
     /// Lowered hurl text (`${…}` resolved, `{{…}}` untouched) — one or more entries.
     HurlEntries(String),
+    /// Asserts an `expect:` macro merged into the *previous* request entry
+    /// (ADR-0004): the step owns the last `lines` assert lines appended to
+    /// that entry's text. It renders no bytes of its own — the sidecar
+    /// anchors those lines so results attribute to the authored `Then`.
+    MergedAsserts {
+        /// How many assert lines this step appended to the previous entry.
+        lines: usize,
+    },
     /// Structured payload — reserved for future non-hurl engines (ADR-0004).
     Structured(serde_json::Value),
 }

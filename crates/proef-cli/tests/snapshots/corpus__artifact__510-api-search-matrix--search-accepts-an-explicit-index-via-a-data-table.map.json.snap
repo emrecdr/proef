@@ -51,6 +51,21 @@ expression: "String::from_utf8(content_a).unwrap()"
       "captures": [],
       "batch": 1,
       "step": 1
+    },
+    {
+      "hurl_lines": [
+        25,
+        25
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 13,
+        "text": "the response status is 200"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 2
     }
   ]
 }
