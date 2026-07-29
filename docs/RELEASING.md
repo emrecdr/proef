@@ -99,3 +99,8 @@ automated.
   exit 2, event schema grew additively
 - `v0.2.1` — review P0 (header grammar, pipe, filters, name dedup, secrets
   perms) + failure UX (hurl expected/actual, true error-line anchoring)
+- `v0.3.0` — data-safety blockers (asset copy, run rotation, zero-entry
+  false green), Then-step visibility with exact attribution, UserInput
+  taxonomy (user mistakes exit 2), option caps + repeat budget, atomic
+  locked stores — breaking: proef-core API pruned, `when:` skips on
+  literal false, zero-entry packs fail validation

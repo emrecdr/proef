@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-29 (data-safety blockers, Then visibility, taxonomy)
+
 ### Fixed (v0.2.1 review — every finding reproduced before fixing)
 
 - **Asset copy destroyed user files**: `proef artifacts -o` pointing at the
