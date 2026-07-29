@@ -1,0 +1,88 @@
+# proef — virtual workspace (TECH-SPEC §2)
+[workspace]
+resolver = "3"
+members = [
+    "crates/proef-core",
+    "crates/proef-engine-hurl",
+    "crates/proef-cli",
+    "crates/proef-fixture",
+    "crates/proef-harness",
+    "xtask",
+]
+# The fuzz crate is its own workspace: it builds on nightly (cargo-fuzz),
+# outside the pinned stable toolchain.
+exclude = ["fuzz"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/emrecdr/proef"
+publish = false
+
+[workspace.dependencies]
+# intra-workspace (version required for publish; all crates release in lockstep)
+proef-core = { path = "crates/proef-core", version = "0.1.0" }
+proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.1.0" }
+
+# The engine's `vendored-openssl` feature builds OpenSSL from source (release
+# macOS binaries: no Homebrew dependency, and cross-compiles become possible).
+openssl-sys = "0.9"
+
+# engine pins — exact and sacred (ADR-0003): the hurl crates break API in minor
+# releases; upgrades go through the canary + runbook (IMPLEMENTATION-PLAN §7) only.
+hurl = "=8.0.1"
+hurl_core = "=8.0.1"
+
+# core
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_norway = "0.9"
+gherkin = "0.16"
+schemars = "1"
+thiserror = "2"
+# CancellationToken only — no tokio runtime enters the tree (ADR-0006/0007)
+tokio-util = { version = "0.7", default-features = false }
+
+# cli
+clap = { version = "4", features = ["derive", "env"] }
+miette = { version = "7", features = ["fancy"] }
+uuid = { version = "1", features = ["v7"] }
+dotenvy = "0.15"
+ctrlc = "3"
+toml = "0.9"
+quick-junit = "0.5"
+quick-xml = "=0.38.4" # dev-only JUnit round-parse; pinned to quick-junit's in-tree copy
+notify = "=8.2.0"
+chacha20poly1305 = "0.10"
+rpassword = "7"
+base64 = "0.22"
+libtest-mimic = "0.8"
+
+# dev / fixture
+proef-fixture = { path = "crates/proef-fixture" }
+tiny_http = "0.12"
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+proptest = "1"
+insta = { version = "1", features = ["filters"] }
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# no unwrap/expect in library code paths (global definition of done);
+# tests and bin main opt out locally with #[allow] where appropriate.
+unwrap_used = "warn"
+expect_used = "warn"
+# curated pedantic allows (noise, not signal, at this codebase shape)
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

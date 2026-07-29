@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::lower::then_before_when
+
+  × this assert-only step has no previous request entry to attach to
+   ╭─[tests/errors/lower__then_before_when/case.feature:3:5]
+ 2 │   Scenario: S
+ 3 │     Then the response status is 200
+   ·     ───────────────────────────────
+   ╰────
+  help: a Then step asserts on the request made by an earlier When step
+
+1 error(s)

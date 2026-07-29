@@ -1,0 +1,14 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::yaml
+
+  × pack is not valid YAML for the pack schema: unknown field `bogus`, expected `templates` at line 2 column 1
+   ╭─[tests/errors/pack__yaml/packs/broken.yaml:2:1]
+ 1 │ templates: {}
+ 2 │ bogus: true
+   · ─
+   ╰────
+
+1 error(s)

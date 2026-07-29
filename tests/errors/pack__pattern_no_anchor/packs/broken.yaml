@@ -1,0 +1,7 @@
+templates:
+  bare:
+    params: [a]
+    match: "{a}"
+    steps:
+      - hurl: |
+          GET http://x

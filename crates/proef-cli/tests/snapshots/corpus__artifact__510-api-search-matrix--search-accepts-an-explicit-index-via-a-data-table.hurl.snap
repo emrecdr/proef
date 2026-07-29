@@ -1,0 +1,29 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+# proef artifact — Search accepts an explicit index via a data table
+# source: tests/features/510_api_search_matrix.feature:10
+# replay: hurl --test 510-api-search-matrix--search-accepts-an-explicit-index-via-a-data-table.hurl --variables-file 510-api-search-matrix--search-accepts-an-explicit-index-via-a-data-table.vars
+
+# tests/features/510_api_search_matrix.feature:8 — the client environment is provisioned (fixture warm-up probe)
+# optional
+GET http://127.0.0.1:8787/health
+HTTP 200
+
+# tests/features/510_api_search_matrix.feature:8 — the client environment is provisioned (provision the environment)
+POST http://127.0.0.1:8787/api/v1/env/provision
+Authorization: Bearer {{apiToken}}
+{"run": "proef-snapshot"}
+HTTP 201
+[Captures]
+envId: jsonpath "$.id"
+
+# tests/features/510_api_search_matrix.feature:11 — the admin searches for "Jansen, A." (search clients for Jansen, A.)
+GET http://127.0.0.1:8787/api/v1/admin/search/clients
+Authorization: Bearer {{apiToken}}
+[Query]
+q: Jansen, A.
+HTTP *
+[Asserts]
+status == 200

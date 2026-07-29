@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::missing_use_param
+
+  × macro `outer` step 0: `use: inner` needs `with: { q: … }` (no default exists)
+   ╭─[tests/errors/pack__missing_use_param/packs/broken.yaml:7:3]
+ 6 │           GET http://x?q=${q}
+ 7 │   outer:
+   ·   ─────
+ 8 │     match: I compose
+   ╰────
+
+1 error(s)

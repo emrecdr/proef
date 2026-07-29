@@ -1,0 +1,7 @@
+templates:
+  login:
+    params: [role]
+    match: "I log in as {rol}"
+    steps:
+      - hurl: |
+          GET http://x

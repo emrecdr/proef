@@ -1,0 +1,9 @@
+# A structured (mapping) payload under `hurl:` — the hurl engine takes raw
+# text; its validator must reject the shape at load with a stable code.
+templates:
+  broken:
+    match: the shape is wrong
+    steps:
+      - hurl:
+          method: GET
+          url: http://x/health

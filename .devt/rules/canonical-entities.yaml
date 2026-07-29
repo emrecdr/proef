@@ -1,0 +1,103 @@
+# Canonical Entity Registry (Rust)
+# ================================
+#
+# Drives the `canonical-entities` detector when an arch-scanner is wired for
+# Rust projects. Tells the detector which concepts (UserId, OrderId,
+# Currency, ...) have canonical newtype models, what their FK shapes look
+# like, and which ownership rules apply.
+#
+# Schema
+# ------
+# entities:
+#   <concept_key>:
+#     entity_status:        EXISTS | MISSING | ENUM
+#     import_path:          fully-qualified Rust path to the canonical type
+#                           (e.g. crate::domain::user::UserId)
+#     canonical_file:       repo-relative path where the type is defined
+#     pk_kind:              underlying primitive kind (i32, i64, u64, Uuid,
+#                           String — for documentation only)
+#     triggers:             list of field-name fragments that signal the
+#                           concept (snake_case, matches struct field names)
+#     allowed_fk_columns:   list of FK field names that legitimately bind to
+#                           this concept (snake_case)
+#     forbid_bare_primitive: bool — flag bare primitive (u64 / String / i32)
+#                            fields where a newtype is required
+#     must_belong_to:       struct/enum name this concept's value MUST appear
+#                           inside (ownership)
+#     forbid_owners:        list of struct/enum names this concept must NOT
+#                           appear inside
+#     allowed_types:        list of acceptable Rust type names (for ENUM)
+#     denylist_paths:       list of file-path globs where this entity's
+#                           triggers must NOT fire (use for cross-domain
+#                           homonyms — e.g. cryptographic `key` vs
+#                           HashMap-style `key`)
+#
+# Severity behavior
+# -----------------
+#   entity_status: EXISTS + forbid_bare_primitive violation        → high
+#   entity_status: EXISTS + forbid_owners hit                      → critical
+#   entity_status: EXISTS + must_belong_to violated                → high
+#   entity_status: MISSING + trigger fires                         → low (WARN)
+#   FK present but graph shows no use/import                       → medium
+#   Graph shows duplicate type definition (echo / shadow)          → medium
+#
+# Unknown keys are ignored — extend freely without breaking the detector.
+
+version: 1
+
+defaults:
+  forbid_bare_primitive: false
+  fk_column_pattern: "{entity_name}_id"
+
+# Populate this registry with the canonical entities your project depends on.
+# Three illustrative patterns are commented out below — uncomment and rename
+# them to match your domain. An empty `entities: {}` is a valid starting
+# state; the canonical-entities detector just produces zero CANONICAL-*
+# findings until the registry is populated.
+
+entities: {}
+
+# --- Example 1: EXISTS newtype with FK enforcement (most common pattern) ----
+# Models a concept that has a canonical newtype in the codebase. Bare-
+# primitive fields whose names match the triggers are flagged as missing
+# newtype wrapping.
+#
+#  user:
+#    entity_status: EXISTS
+#    import_path: crate::domain::user::UserId
+#    canonical_file: crates/domain/src/user.rs
+#    pk_kind: Uuid
+#    triggers:
+#      - user
+#      - user_id
+#      - owner_id
+#    allowed_fk_columns:
+#      - user_id
+#      - owner_id
+#    forbid_bare_primitive: true
+
+# --- Example 2: ENUM-backed concept (no newtype; enum in code) -------------
+# Use for concepts modeled as Rust enums (often `#[derive(strum::EnumString)]`
+# or plain `enum Currency { USD, EUR, ... }`). Bare-String fields whose names
+# match the triggers are flagged.
+#
+#  currency:
+#    entity_status: ENUM
+#    import_path: crate::domain::money::Currency
+#    triggers:
+#      - currency
+#      - currency_code
+#    allowed_types:
+#      - Currency
+#    forbid_bare_primitive: true
+
+# --- Example 3: MISSING concept (referenced project-wide, no canonical yet) -
+# Use when a concept is referenced project-wide but no canonical newtype or
+# enum exists yet. Produces low-severity WARN findings to track the gap.
+#
+#  region:
+#    entity_status: MISSING
+#    triggers:
+#      - region
+#      - region_code
+#    forbid_bare_primitive: false

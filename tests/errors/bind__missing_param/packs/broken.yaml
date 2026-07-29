@@ -1,0 +1,7 @@
+templates:
+  create:
+    params: [firstName]
+    match: I create a client
+    steps:
+      - hurl: |
+          POST http://x/${firstName}

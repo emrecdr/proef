@@ -1,0 +1,56 @@
+# Windows gates (TESTING-STRATEGY §3): per-PR since the port went green
+# (2026-07-28). Recipe mirrors hurl's own Windows CI: vcpkg-built curl +
+# libxml2, dynamic linkage, bindgen pointed at the vcpkg include dir. LF is
+# forced *before* checkout — the snapshot corpus is byte-exact and CRLF would
+# break it.
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gates-windows:
+    name: build + tests (windows)
+    runs-on: windows-latest
+    steps:
+      - name: Force LF line endings
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install gate tools
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install native build prerequisites (vcpkg + hurl icon + env)
+        uses: ./.github/actions/setup-hurl-windows
+        with:
+          build-roots: target\debug\build
+
+      - name: Build and test
+        shell: pwsh
+        run: |
+          cargo build --workspace --all-targets
+          if ($LASTEXITCODE) { Throw }
+          cargo nextest run --profile ci
+          if ($LASTEXITCODE) { Throw }

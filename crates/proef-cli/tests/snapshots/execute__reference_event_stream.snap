@@ -1,0 +1,17 @@
+---
+source: crates/proef-cli/tests/execute.rs
+expression: events
+---
+{"event":"run_started","schema":1,"run_id":"[run-id]"}
+{"event":"scenario_started","scenario":"reference","file":"suite/case.feature"}
+{"event":"batch_started","scenario":"reference","engine":"hurl","steps":1}
+{"event":"entry_running","scenario":"reference","engine":"hurl","entry":0,"retry":0}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
+{"event":"batch_started","scenario":"reference","engine":"hurl","steps":1}
+{"event":"entry_running","scenario":"reference","engine":"hurl","entry":1,"retry":0}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
+{"event":"batch_started","scenario":"reference","engine":"hurl","steps":1}
+{"event":"entry_running","scenario":"reference","engine":"hurl","entry":2,"retry":0}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
+{"event":"scenario_finished","scenario":"reference","status":"passed"}
+{"event":"run_finished","passed":1,"failed":0,"skipped":0}

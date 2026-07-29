@@ -1,0 +1,37 @@
+[package]
+name = "proef-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+proef-core = { path = "../crates/proef-core" }
+
+# Its own workspace: fuzz builds on nightly, outside the pinned root workspace.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_match_pattern"
+path = "fuzz_targets/fuzz_match_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_resolve"
+path = "fuzz_targets/fuzz_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_pack_load"
+path = "fuzz_targets/fuzz_pack_load.rs"
+test = false
+doc = false
+bench = false

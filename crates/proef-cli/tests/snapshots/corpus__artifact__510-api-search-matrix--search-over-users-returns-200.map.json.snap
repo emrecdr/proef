@@ -1,0 +1,56 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+{
+  "schema": 1,
+  "entries": [
+    {
+      "hurl_lines": [
+        7,
+        8
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 8,
+        "text": "the client environment is provisioned"
+      },
+      "optional": true,
+      "captures": [],
+      "batch": 0,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        11,
+        16
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 8,
+        "text": "the client environment is provisioned"
+      },
+      "optional": false,
+      "captures": [
+        "envId"
+      ],
+      "batch": 1,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        19,
+        25
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 16,
+        "text": "the admin searches for de Vries"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 1
+    }
+  ]
+}

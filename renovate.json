@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "packageRules": [
+    {
+      "description": "Group routine cargo bumps into one PR",
+      "matchManagers": ["cargo"],
+      "groupName": "cargo dependencies"
+    },
+    {
+      "description": "hurl pins are exact and sacred (ADR-0003): they move only through the upgrade-canary runbook (IMPLEMENTATION-PLAN §7). Dashboard-approval keeps releases visible without ever auto-PRing a bump",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["hurl", "hurl_core"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "notify is pinned 8.2.0 (9.x is a prerelease) — bump deliberately",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["notify"],
+      "enabled": false
+    }
+  ]
+}

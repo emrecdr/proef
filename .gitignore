@@ -1,0 +1,41 @@
+# devt workflow state (recursive — catches sub-tree devt invocations)
+**/.devt/state/
+
+# devt agent persistent memory (per-project)
+.claude/agent-memory/
+
+# devt memory FTS5 index (regenerable from markdown)
+.devt/memory/index.db
+
+# devt memory auto-index debounce marker (transient)
+.devt/memory/.auto-index-stamp
+
+# devt MCP tool-call trace (recursive)
+**/.devt/memory/_mcp-trace.jsonl
+
+# devt memory export bundles (transient — share via explicit channel)
+.devt/memory/export-*.json
+
+# Graphify ephemeral cache
+graphify-out/cache/
+
+# Graphify per-machine manifest
+graphify-out/manifest.json
+
+# Rust
+/target
+
+# proef runtime outputs
+.proef-runs/
+.proef-state.json
+proef.toml
+
+# macOS
+.DS_Store
+
+# cargo-fuzz outputs
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/
+fuzz/Cargo.lock

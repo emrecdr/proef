@@ -1,0 +1,344 @@
+//! Front-end orchestration at the CLI edge: discover inputs (IO lives here,
+//! never in core), inject environment/run-id/World, and run parse → bind →
+//! lower for every feature.
+//!
+//! `--dry-run` is a *validation gate*: every discovered feature is validated
+//! regardless of `--tags` — the filter only selects what an execution would
+//! run (and what the stats report as selected).
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use proef_core::bind;
+use proef_core::diag::{Diag, FrontError, Span};
+use proef_core::emit::{self, Artifact};
+use proef_core::error::CoreError;
+use proef_core::feature::{self, FeatureFile};
+use proef_core::lower::{self, LowerCtx, LoweredScenario};
+use proef_core::pack::{self, PackSet, PackSource};
+use proef_core::resolve::ResolveMode;
+use proef_core::world::{GlobalStore, World};
+
+use crate::registry;
+
+/// One fully-processed feature.
+pub struct LoadedFeature {
+    /// The parsed feature (directives, tags, source).
+    pub file: FeatureFile,
+    /// Processed scenarios, in authored order.
+    pub scenarios: Vec<ProcessedScenario>,
+}
+
+/// One scenario after lowering and emission.
+pub struct ProcessedScenario {
+    /// The bound scenario (kept for execution-time re-lowering with the live
+    /// World — `${global:key}` resolves at lower time of the scenario).
+    pub bound: bind::BoundScenario,
+    /// The lowered scenario (batches, secrets, globals, warnings).
+    pub lowered: LoweredScenario,
+    /// The emitted artifact set (absent when nothing lowers to hurl entries).
+    pub artifact: Option<Artifact>,
+}
+
+/// The complete front-end result.
+pub struct FrontEnd {
+    /// Processed features, sorted by path.
+    pub features: Vec<LoadedFeature>,
+    /// The loaded macro set (shared with execution-time re-lowering).
+    pub packs: Arc<PackSet>,
+    /// The injected environment snapshot.
+    pub env: Arc<BTreeMap<String, String>>,
+    /// Step kind prefix → engine id.
+    pub kind_to_engine: Arc<BTreeMap<String, String>>,
+    /// The run id used for this front-end pass.
+    pub run_id: Arc<str>,
+    /// How many pack sources loaded (builtin + project).
+    pub packs_loaded: usize,
+    /// Loaded macro count.
+    pub macros_loaded: usize,
+    /// All soft findings (rendered, but never fatal).
+    pub warnings: Vec<Diag>,
+}
+
+/// Run the front end over `path` (a `.feature` file or a directory tree).
+/// `run_id` overrides the generated uuid-v7 (deterministic artifact hand-off).
+// One cohesive listing of the pipeline; splitting hides the stage order.
+#[allow(clippy::too_many_lines)]
+pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<FrontEnd, FrontError> {
+    let engines = registry::engines();
+    let kinds: Vec<proef_core::engine::StepKindSpec> = engines
+        .iter()
+        .flat_map(|e| e.step_kinds().iter().copied())
+        .collect();
+    let kind_to_engine: BTreeMap<String, String> = engines
+        .iter()
+        .flat_map(|e| {
+            e.step_kinds()
+                .iter()
+                .map(|k| (k.prefix.to_owned(), e.id().to_owned()))
+        })
+        .collect();
+
+    // Injected values — the core reads no environment, clock, or randomness.
+    dotenvy::dotenv().ok();
+    let env: Arc<BTreeMap<String, String>> = Arc::new(std::env::vars().collect());
+    let run_id: Arc<str> = Arc::from(
+        run_id
+            .unwrap_or_else(|| uuid::Uuid::now_v7().to_string())
+            .as_str(),
+    );
+    let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
+    let config = BTreeMap::new(); // proef.toml loading lands with execution (M3)
+
+    let mut sources = pack::builtin_sources();
+    sources.extend(project_packs(path)?);
+    let packs_loaded = sources.len();
+    let packs: Arc<PackSet> = Arc::new(pack::load(&sources, &kinds)?);
+    let kind_to_engine = Arc::new(kind_to_engine);
+
+    let mut diags: Vec<Diag> = Vec::new();
+    let mut warnings: Vec<Diag> = Vec::new();
+    let mut features: Vec<LoadedFeature> = Vec::new();
+
+    for feature_path in discover_features(path)? {
+        let display = portable_display(&feature_path);
+        let text = std::fs::read_to_string(&feature_path).map_err(|err| {
+            FrontError::Core(CoreError::system_with(
+                format!("cannot read feature file {display}"),
+                err,
+            ))
+        })?;
+        let file = match feature::parse(&display, &text) {
+            Ok(file) => file,
+            Err(errs) => {
+                diags.extend(errs);
+                continue;
+            }
+        };
+        let bound = match bind::bind(&file, &packs) {
+            Ok(bound) => bound,
+            Err(errs) => {
+                diags.extend(errs);
+                continue;
+            }
+        };
+        let ctx = LowerCtx {
+            feature: &file,
+            packs: &packs,
+            kind_to_engine: &kind_to_engine,
+            env: &env,
+            run_id: &run_id,
+            world: &world,
+            config: &config,
+            mode,
+        };
+        let feature_stem = feature_path.file_stem().map_or_else(
+            || "feature".to_owned(),
+            |s| s.to_string_lossy().into_owned(),
+        );
+        let mut scenarios = Vec::new();
+        for scenario in bound {
+            match lower::lower(&scenario, &ctx) {
+                Ok(lowered) => {
+                    warnings.extend(lowered.warnings.iter().cloned());
+                    let artifact = emit::emit(&lowered, &feature_stem, &world);
+                    if let Some(artifact) = &artifact {
+                        validate_artifact(artifact, &lowered, &kinds, &mut diags);
+                    }
+                    scenarios.push(ProcessedScenario {
+                        bound: scenario,
+                        lowered,
+                        artifact,
+                    });
+                }
+                Err(errs) => diags.extend(errs),
+            }
+        }
+        features.push(LoadedFeature { file, scenarios });
+    }
+
+    // Bind/parse warnings travel inside diags; split them out.
+    let (errors, softs): (Vec<_>, Vec<_>) = diags
+        .into_iter()
+        .partition(|d| d.severity == proef_core::diag::Severity::Error);
+    warnings.extend(softs);
+
+    if errors.is_empty() {
+        Ok(FrontEnd {
+            macros_loaded: packs.macros.len(),
+            features,
+            packs,
+            env,
+            kind_to_engine,
+            run_id,
+            packs_loaded,
+            warnings,
+        })
+    } else {
+        let mut all = errors;
+        all.extend(warnings);
+        Err(FrontError::Diagnostics(all))
+    }
+}
+
+/// Parse-validate the exact emitted artifact text with the claiming engine's
+/// real parser (`--dry-run` = §4.1–4.5 including artifact parse-validation).
+/// The diagnostic's source is the emitted text itself, span at the broken line.
+fn validate_artifact(
+    artifact: &Artifact,
+    lowered: &LoweredScenario,
+    kinds: &[proef_core::engine::StepKindSpec],
+    diags: &mut Vec<Diag>,
+) {
+    let Some(kind) = lowered
+        .batches
+        .iter()
+        .flat_map(|b| b.steps.iter())
+        .find(|s| matches!(s.payload, proef_core::step::StepPayload::HurlEntries(_)))
+        .map(|s| s.kind.as_str().to_owned())
+    else {
+        return;
+    };
+    let Some(validate) = kinds
+        .iter()
+        .find(|k| k.prefix == kind)
+        .and_then(|k| k.validate)
+    else {
+        return;
+    };
+    if let Err(err) = validate(&artifact.hurl_text) {
+        let offset: usize = artifact
+            .hurl_text
+            .split_inclusive('\n')
+            .take(err.line.saturating_sub(1))
+            .map(str::len)
+            .sum();
+        let line_len = artifact.hurl_text[offset..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .len();
+        diags.push(
+            Diag::error(
+                "proef::emit::invalid_artifact",
+                format!(
+                    "emitted artifact `{}.hurl` does not parse: {} (line {}, column {})",
+                    artifact.slug, err.message, err.line, err.column
+                ),
+            )
+            .with_source(
+                format!("{}.hurl (emitted)", artifact.slug),
+                std::sync::Arc::from(artifact.hurl_text.as_str()),
+            )
+            .with_span(Span::clamped(
+                offset,
+                offset + line_len.max(1),
+                artifact.hurl_text.len(),
+            )),
+        );
+    }
+}
+
+/// A path as it appears in events, artifacts, and diagnostics: always
+/// `/`-separated. The run record and snapshot corpus are a cross-platform
+/// contract — a Windows run must not render `suite\case.feature` where every
+/// other platform (and the golden corpus) says `suite/case.feature`. Windows
+/// APIs accept `/`, so the same string still opens the file.
+fn portable_display(path: &Path) -> String {
+    let display = path.display().to_string();
+    if cfg!(windows) {
+        display.replace('\\', "/")
+    } else {
+        display
+    }
+}
+
+/// Every `.feature` under `path` (or `path` itself), sorted for determinism.
+pub fn discover_features(path: &Path) -> Result<Vec<PathBuf>, FrontError> {
+    let mut found = Vec::new();
+    if path.is_file() {
+        found.push(path.to_path_buf());
+    } else if path.is_dir() {
+        walk_features(path, &mut found)?;
+    } else {
+        return Err(FrontError::Core(CoreError::user(format!(
+            "`{}` is neither a feature file nor a directory",
+            path.display()
+        ))));
+    }
+    if found.is_empty() {
+        return Err(FrontError::Core(CoreError::user(format!(
+            "no `.feature` files found under `{}`",
+            path.display()
+        ))));
+    }
+    found.sort();
+    Ok(found)
+}
+
+fn walk_features(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FrontError> {
+    let entries = std::fs::read_dir(dir).map_err(|err| {
+        FrontError::Core(CoreError::system_with(
+            format!("cannot read directory {}", dir.display()),
+            err,
+        ))
+    })?;
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path.is_dir() {
+            walk_features(&entry_path, out)?;
+        } else if entry_path.extension().is_some_and(|e| e == "feature") {
+            out.push(entry_path);
+        }
+    }
+    Ok(())
+}
+
+/// Project packs: `<dir>/packs/*.yml|yaml` where `<dir>` is the input
+/// directory (or the input file's parent), sorted for determinism.
+fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
+    let base = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    };
+    let packs_dir = base.join("packs");
+    let mut sources = Vec::new();
+    if packs_dir.is_dir() {
+        let entries = std::fs::read_dir(&packs_dir).map_err(|err| {
+            FrontError::Core(CoreError::system_with(
+                format!("cannot read packs directory {}", packs_dir.display()),
+                err,
+            ))
+        })?;
+        let mut paths: Vec<PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "yaml" || e == "yml"))
+            .collect();
+        paths.sort();
+        for pack_path in paths {
+            let text = std::fs::read_to_string(&pack_path).map_err(|err| {
+                FrontError::Core(CoreError::system_with(
+                    format!("cannot read pack {}", pack_path.display()),
+                    err,
+                ))
+            })?;
+            sources.push(PackSource {
+                name: portable_display(&pack_path),
+                text: Arc::from(text.as_str()),
+            });
+        }
+    }
+    Ok(sources)
+}
+
+/// Does a scenario pass the `--tags` filter (csv, OR semantics, `@` optional)?
+pub fn tag_selected(tags: &[String], filter: &[String]) -> bool {
+    filter.is_empty()
+        || tags
+            .iter()
+            .any(|t| filter.iter().any(|f| f.trim_start_matches('@') == t))
+}

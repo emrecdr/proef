@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::default_not_param
+
+  × macro `search`: default `index` is not a declared param
+   ╭─[tests/errors/pack__default_not_param/packs/broken.yaml:2:3]
+ 1 │ templates:
+ 2 │   search:
+   ·   ──────
+ 3 │     params: [term]
+   ╰────
+
+1 error(s)

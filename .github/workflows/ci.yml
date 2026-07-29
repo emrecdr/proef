@@ -1,0 +1,136 @@
+# CI gates (TECH-SPEC §15) — every milestone lands green on all of these.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gates:
+    name: gates (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install native build prerequisites (Linux)
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/native-deps
+
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install gate tools
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-nextest,cargo-deny,cargo-machete,zizmor
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: tests (nextest)
+        run: cargo nextest run --profile ci --locked
+
+      - name: doctests
+        run: cargo test --doc --locked
+
+      - name: rustdoc
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
+
+      - name: cargo deny
+        run: cargo deny check
+
+      # cargo audit runs nightly instead: deny covers PRs, and the case bare
+      # deny misses — a fresh advisory against unchanged code — needs a schedule.
+      - name: unused dependencies (machete)
+        run: cargo machete
+
+      - name: workflow static analysis (zizmor)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor .github/workflows/
+
+      - name: doctor smoke
+        run: cargo run -p proef --locked -- doctor
+
+  # PR fuzz smoke (TESTING-STRATEGY): 30 s per target; the full run is nightly.
+  fuzz-smoke:
+    name: fuzz smoke (30s/target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz smoke
+        # Explicit host triple: the prebuilt cargo-fuzz defaults to its own
+        # musl build target, and sanitizers reject statically linked libc.
+        run: |
+          host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load; do
+            cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=30
+          done
+
+  # The real upgrade canary (ADR-0003, M4): fast no-op while the pin is the
+  # latest hurl release. Runs on main pushes and nightly — not on PRs, so an
+  # upstream release cannot turn unrelated PRs red (pins still never move here).
+  canary:
+    name: canary (next hurl release)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install native build prerequisites
+        uses: ./.github/actions/native-deps
+
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install gate tools
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Canary — build + test against the next hurl release
+        run: cargo run -p xtask -- canary

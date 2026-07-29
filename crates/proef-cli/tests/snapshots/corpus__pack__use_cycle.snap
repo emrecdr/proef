@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::use_cycle
+
+  × `use:` cycle: `alpha` → `beta` → `alpha`
+   ╭─[tests/errors/pack__use_cycle/packs/broken.yaml:6:3]
+ 5 │       - use: beta
+ 6 │   beta:
+   ·   ────
+ 7 │     steps:
+   ╰────
+
+1 error(s)

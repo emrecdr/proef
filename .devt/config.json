@@ -1,0 +1,13 @@
+{
+  "model_profile": "balanced",
+  "git": {
+    "provider": null,
+    "workspace": null,
+    "slug": null,
+    "primary_branch": "main",
+    "contributors": []
+  },
+  "graphify": {
+    "enabled": true
+  }
+}

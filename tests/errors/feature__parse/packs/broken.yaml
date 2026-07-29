@@ -1,0 +1,6 @@
+templates:
+  ping:
+    match: I ping
+    steps:
+      - hurl: |
+          GET http://x

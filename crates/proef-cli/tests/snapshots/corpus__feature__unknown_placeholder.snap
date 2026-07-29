@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::feature::unknown_placeholder
+
+  × a step references `<wrong>`, which is not an Examples column
+   ╭─[tests/errors/feature__unknown_placeholder/case.feature:3:5]
+ 2 │   Scenario Outline: S
+ 3 │     When I search for <wrong>
+   ·     ─────────────────────────
+ 4 │ 
+   ╰────
+
+1 error(s)

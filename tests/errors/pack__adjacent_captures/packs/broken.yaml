@@ -1,0 +1,7 @@
+templates:
+  glued:
+    params: [a, b]
+    match: "do {a}{b} now"
+    steps:
+      - hurl: |
+          GET http://x

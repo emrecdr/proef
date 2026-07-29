@@ -1,0 +1,103 @@
+# Nightly deep runs (TESTING-STRATEGY §3): full fuzz, 10 min per target.
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Scheduled upgrade canary (ADR-0003): red opens an issue with the runbook.
+  canary:
+    name: canary (next hurl release)
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install native build prerequisites
+        uses: ./.github/actions/native-deps
+
+      - name: Install pinned toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install gate tools
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Canary — build + test against the next hurl release
+        id: canary
+        run: cargo run -p xtask -- canary 2>&1 | tee canary.log
+
+      - name: Open an issue on red
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "canary RED: next hurl release breaks proef" \
+            --label canary \
+            --body "The scheduled upgrade canary failed. Runbook: docs/IMPLEMENTATION-PLAN.md §7 · thin-fork: docs/runbooks/thin-fork.md
+
+          \`\`\`
+          $(tail -60 canary.log)
+          \`\`\`" || true
+
+  fuzz-full:
+    name: fuzz full (10min/target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: fuzz
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Fuzz
+        # Explicit host triple: see the CI fuzz-smoke note.
+        run: |
+          host=$(rustc +nightly -vV | sed -n 's/^host: //p')
+          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load; do
+            cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=600
+          done
+
+  # Advisory sweep against unchanged code (deny gates PRs; audit catches the
+  # advisory published after the code last moved).
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

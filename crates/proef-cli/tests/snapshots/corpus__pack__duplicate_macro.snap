@@ -1,0 +1,16 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::duplicate_macro
+
+  × macro `ping` is defined in both `tests/errors/pack__duplicate_macro/packs/broken.yaml` and `tests/errors/pack__duplicate_macro/packs/other.yaml`
+   ╭─[tests/errors/pack__duplicate_macro/packs/other.yaml:2:3]
+ 1 │ templates:
+ 2 │   ping:
+   ·   ────
+ 3 │     match: I ping again
+   ╰────
+  help: macro names are global — rename one of the definitions
+
+1 error(s)

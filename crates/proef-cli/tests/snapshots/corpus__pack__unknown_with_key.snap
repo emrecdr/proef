@@ -1,0 +1,25 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::unknown_with_key
+
+  × macro `outer` step 0: `with:` key `qq` is not a param of `inner` — did you mean `q`?
+   ╭─[tests/errors/pack__unknown_with_key/packs/broken.yaml:7:3]
+ 6 │           GET http://x?q=${q}
+ 7 │   outer:
+   ·   ─────
+ 8 │     match: I compose
+   ╰────
+
+proef::pack::missing_use_param
+
+  × macro `outer` step 0: `use: inner` needs `with: { q: … }` (no default exists)
+   ╭─[tests/errors/pack__unknown_with_key/packs/broken.yaml:7:3]
+ 6 │           GET http://x?q=${q}
+ 7 │   outer:
+   ·   ─────
+ 8 │     match: I compose
+   ╰────
+
+2 error(s)

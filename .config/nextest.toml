@@ -1,0 +1,10 @@
+# cargo-nextest configuration (preferred test runner — TESTING-STRATEGY §3)
+
+[profile.default]
+fail-fast = false
+slow-timeout = { period = "60s" }
+
+[profile.ci]
+retries = 0
+fail-fast = false
+failure-output = "immediate-final"

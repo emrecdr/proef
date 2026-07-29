@@ -1,0 +1,9 @@
+templates:
+  forever:
+    match: I retry forever
+    steps:
+      - hurl: |
+          GET http://x
+          [Options]
+          retry: -1
+          HTTP 200

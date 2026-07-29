@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::payload_invalid
+
+  × macro `broken` step 0: `hurl:` payload is invalid — Method { name: "" }
+   ╭─[tests/errors/pack__payload_invalid/packs/p.yaml:4:3]
+ 3 │ templates:
+ 4 │   broken:
+   ·   ──────
+ 5 │     match: the shape is wrong
+   ╰────
+
+1 error(s)

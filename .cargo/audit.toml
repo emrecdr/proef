@@ -1,0 +1,4 @@
+# cargo-audit configuration. Mirrors deny.toml's advisory ignores — see the
+# justification there (quick-xml parse-side advisories; we only serialize).
+[advisories]
+ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]

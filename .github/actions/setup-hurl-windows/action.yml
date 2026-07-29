@@ -1,0 +1,53 @@
+# The one home for the Windows half of the hurl toolchain (ADR-0003: the hurl
+# pin's upgrade runbook must touch exactly one workflow location):
+#   - vcpkg-built libcurl + libxml2 (cached — these are ~20 min of C builds),
+#   - the hurl 8.0.1 crates.io icon workaround (the published crate omits the
+#     logo.ico its build script embeds; RC2135 otherwise — reported upstream),
+#   - the build environment exports every consumer needs (VCPKG_ROOT,
+#     VCPKGRS_DYNAMIC, bindgen include path, DLL dir on PATH).
+name: setup-hurl-windows
+description: vcpkg libcurl/libxml2 + hurl icon workaround + build env (Windows)
+inputs:
+  build-roots:
+    description: >-
+      Space-separated cargo build dirs (relative to the workspace) the icon
+      must be reachable from — e.g. "target\debug\build" for host builds,
+      "target\<triple>\release\build" for --target release builds.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Cache the vcpkg installed tree
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: C:\vcpkg\installed
+        key: vcpkg-x64-windows-curl-libxml2-v1
+
+    - name: Install libcurl + libxml2 (vcpkg)
+      shell: pwsh
+      run: |
+        vcpkg install --recurse curl[core,sspi,http2,non-http,ssl]:x64-windows
+        vcpkg install --recurse libxml2[core,iconv]:x64-windows
+
+    - name: Provide hurl's icon (missing from the crates.io package)
+      shell: pwsh
+      run: |
+        $ico = Join-Path $env:RUNNER_TEMP "logo.ico"
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Orange-OpenSource/hurl/8.0.1/bin/windows/logo.ico" -OutFile $ico
+        $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
+        $roots = @("$cargoHome\registry\src") + ("${{ inputs.build-roots }}" -split ' ')
+        foreach ($root in $roots) {
+          $dir = Join-Path $root "bin\windows"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item $ico (Join-Path $dir "logo.ico")
+        }
+
+    - name: Export the build environment
+      shell: pwsh
+      run: |
+        $vcpkg_dir = (Split-Path -Parent (Get-Command vcpkg).Source)
+        $fwd = $vcpkg_dir -replace '\\','/'
+        "VCPKG_ROOT=$vcpkg_dir" >> $env:GITHUB_ENV
+        "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+        "BINDGEN_EXTRA_CLANG_ARGS=-I$fwd/installed/x64-windows/include/libxml2" >> $env:GITHUB_ENV
+        "$vcpkg_dir\installed\x64-windows\bin" >> $env:GITHUB_PATH

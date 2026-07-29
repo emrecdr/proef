@@ -1,0 +1,6 @@
+templates:
+  unusedRequest:
+    match: I make a request
+    steps:
+      - hurl: |
+          GET http://x

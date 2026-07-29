@@ -1,0 +1,5 @@
+templates:
+  clicky:
+    match: I click around
+    steps:
+      - web: "button.submit"

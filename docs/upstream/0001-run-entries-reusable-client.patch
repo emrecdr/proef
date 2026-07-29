@@ -1,0 +1,73 @@
+diff --color -ur a/packages/hurl/src/parallel/worker.rs b/packages/hurl/src/parallel/worker.rs
+--- a/packages/hurl/src/parallel/worker.rs	2026-07-28 15:37:51
++++ b/packages/hurl/src/parallel/worker.rs	2026-07-28 15:37:51
+@@ -21,6 +21,7 @@
+ 
+ use super::job::{Job, JobResult};
+ use super::message::{CompletedMsg, InputReadErrorMsg, ParsingErrorMsg, RunningMsg, WorkerMessage};
++use crate::http::Client;
+ use crate::runner;
+ use crate::runner::EventListener;
+ use crate::util::logger::Logger;
+@@ -121,10 +122,12 @@
+                 };
+ 
+                 // Now, we have a syntactically correct HurlFile instance, we can run it.
++                let mut http_client = Client::new();
+                 let result = runner::run_entries(
+                     &hurl_file.entries,
+                     &content,
+                     Some(&job.filename),
++                    &mut http_client,
+                     &job.runner_options,
+                     &job.variables,
+                     &mut stdout,
+diff --color -ur a/packages/hurl/src/runner/hurl_file.rs b/packages/hurl/src/runner/hurl_file.rs
+--- a/packages/hurl/src/runner/hurl_file.rs	2026-07-28 15:37:51
++++ b/packages/hurl/src/runner/hurl_file.rs	2026-07-28 15:39:44
+@@ -122,10 +122,12 @@
+     };
+ 
+     // Now, we have a syntactically correct HurlFile instance, we can run it.
++    let mut http_client = Client::new();
+     let result = run_entries(
+         &hurl_file.entries,
+         content,
+         filename,
++        &mut http_client,
+         runner_options,
+         variables,
+         &mut stdout,
+@@ -146,12 +148,15 @@
+ ///
+ /// `content` is the original source content, used to construct `entries`. It is used to construct
+ /// rich error messages with annotated source code.
++/// HTTP exchanges run on `http_client`; reusing one client across calls keeps its connection
++/// cache and cookie store alive when a caller executes a file in several `run_entries` calls.
+ /// New entry run events are reported to `progress` and are usually used to display a progress bar
+ /// in test mode.
+ pub fn run_entries(
+     entries: &[Entry],
+     content: &str,
+     filename: Option<&Input>,
++    http_client: &mut Client,
+     runner_options: &RunnerOptions,
+     variables: &VariableSet,
+     stdout: &mut Stdout,
+@@ -167,7 +172,6 @@
+         };
+     }
+ 
+-    let mut http_client = Client::new();
+     let mut entries_result = vec![];
+     let mut variables = variables.clone();
+     let mut current = Index::new(runner_options.from_entry.unwrap_or(1));
+@@ -265,7 +269,7 @@
+             last,
+             content,
+             filename,
+-            &mut http_client,
++            http_client,
+             &options,
+             &mut variables,
+             stdout,

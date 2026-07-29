@@ -1,0 +1,42 @@
+From 68c57af7eeef52c70cb22c5f73f6ccf37faf015f Mon Sep 17 00:00:00 2001
+From: Emre Camdere <emre@valocom.nl>
+Date: Tue, 28 Jul 2026 23:56:53 +0300
+Subject: [PATCH] Skip Windows icon embedding when logo.ico is absent
+
+bin/windows/logo.ico lives at the repository root, outside packages/hurl,
+so cargo cannot include it in the published crate: every Windows build of
+hurl from crates.io fails in the build script with RC2135 (file not
+found). Embed the icon only when the file exists and emit a warning
+otherwise; in-repository builds are unchanged.
+---
+ packages/hurl/build.rs | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/packages/hurl/build.rs b/packages/hurl/build.rs
+index 6e935b72..6461fc88 100644
+--- a/packages/hurl/build.rs
++++ b/packages/hurl/build.rs
+@@ -24,8 +24,19 @@ use winres::WindowsResource;
+ 
+ #[cfg(windows)]
+ fn set_icon() {
++    // The icon lives at the repository root, outside packages/hurl, so it is
++    // not part of the published crates.io package. Skip embedding when it is
++    // absent instead of failing every downstream Windows build with RC2135.
++    let icon = "../../bin/windows/logo.ico";
++    if !Path::new(icon).exists() {
++        println!(
++            "cargo:warning=logo.ico not found (building outside the Hurl repository?); \
++             the binary is built without an embedded icon"
++        );
++        return;
++    }
+     let mut res = WindowsResource::new();
+-    res.set_icon("../../bin/windows/logo.ico");
++    res.set_icon(icon);
+     res.compile().unwrap();
+ }
+ 
+-- 
+2.55.0
+

@@ -1,0 +1,19 @@
+# proef project configuration — example (TECH-SPEC §11)
+#
+# Copy to `proef.toml` and adjust. Precedence (low → high):
+#   built-in defaults < proef.toml < CLI flags
+#
+# Loaded by `proef test` (execution) — `[run] jobs`/`runs-dir` and the `[http]`
+# batch defaults below are live; per-entry `[Options]` in packs override them.
+
+[run]
+# Parallel scenario workers. Default: available parallelism, capped by scenario count.
+# jobs = 4
+
+# Where per-run records and artifacts are written. Default: .proef-runs/
+# runs-dir = ".proef-runs"
+
+[http]
+# Batch-level defaults for the hurl engine; per-entry [Options] in packs override.
+# timeout-ms = 30000
+# follow-location = false

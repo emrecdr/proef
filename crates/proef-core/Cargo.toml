@@ -1,0 +1,27 @@
+[package]
+name = "proef-core"
+description = "Engine-agnostic core of proef: parsing, binding, lowering, IR, emit, dispatch, World, events, errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["testing", "e2e", "gherkin"]
+categories = ["development-tools::testing"]
+publish = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_norway = { workspace = true }
+gherkin = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
+
+[lints]
+workspace = true

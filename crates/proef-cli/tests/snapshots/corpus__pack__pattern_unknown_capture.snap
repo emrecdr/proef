@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::pattern_unknown_capture
+
+  × macro `login`: capture `{rol}` is not a declared param (did you mean `role`?)
+   ╭─[tests/errors/pack__pattern_unknown_capture/packs/broken.yaml:2:3]
+ 1 │ templates:
+ 2 │   login:
+   ·   ─────
+ 3 │     params: [role]
+   ╰────
+
+1 error(s)

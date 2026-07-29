@@ -1,0 +1,7 @@
+templates:
+  search:
+    params: [term]
+    match: "I search for {term}"
+    steps:
+      - hurl: |
+          GET http://x?q=${term}

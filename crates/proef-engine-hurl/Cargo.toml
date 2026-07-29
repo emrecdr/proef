@@ -1,0 +1,34 @@
+[package]
+name = "proef-engine-hurl"
+description = "proef API engine: EngineFactory/EngineSession over embedded hurl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["testing", "e2e", "hurl", "http"]
+categories = ["development-tools::testing"]
+publish = true
+
+[features]
+# Build OpenSSL from source instead of probing the host: release macOS
+# binaries carry no Homebrew library dependency, and cross-compilation
+# (arm64 host → x86_64-apple-darwin) becomes possible. The engine owns
+# native-linkage concerns — consumers embedding this crate get the same knob.
+vendored-openssl = ["dep:openssl-sys", "openssl-sys/vendored"]
+
+# openssl-sys is a feature carrier (vendored-openssl flips the graph copy);
+# no code references it, which is exactly what cargo-machete would flag.
+[package.metadata.cargo-machete]
+ignored = ["openssl-sys"]
+
+[dependencies]
+proef-core = { workspace = true }
+openssl-sys = { workspace = true, optional = true }
+# Exact pins — never bump casually (ADR-0003); upgrades go through the canary runbook.
+hurl = { workspace = true }
+hurl_core = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

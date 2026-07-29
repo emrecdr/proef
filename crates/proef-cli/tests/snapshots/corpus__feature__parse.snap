@@ -1,0 +1,14 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::feature::parse
+
+  × the feature file does not parse: Error at 1:14: {"success"}
+   ╭─[tests/errors/feature__parse/case.feature:1:14]
+ 1 │ Feature broken here
+   ·              ─
+ 2 │ Scenario: S
+   ╰────
+
+1 error(s)

@@ -1,0 +1,8 @@
+templates:
+  broken:
+    match: I break the section
+    steps:
+      - hurl: |
+          GET http://x
+          HTTP 200
+          [Wrong]

@@ -1,0 +1,284 @@
+# Release pipeline (docs/RELEASING.md): a pushed vX.Y.Z tag becomes a GitHub
+# Release carrying that version's CHANGELOG section plus prebuilt binaries for
+# five targets. Build provenance is attested per artifact once the repo is
+# public (attestations are unavailable on private repos); verify with
+# `gh attestation verify <archive> --owner emrecdr`. The Homebrew tap formula
+# regenerates from the same artifacts. `workflow_dispatch` runs the build
+# matrix only — a full smoke without publishing anything.
+#
+# proef links native libraries through the hurl engine (libcurl, libxml2):
+#   - macOS: vendored OpenSSL (no Homebrew library dependency in the shipped
+#     binary; also what makes the x86_64 cross-compile possible).
+#   - Linux: dynamic against distro libs (libcurl4, libxml2); documented in
+#     the README install section.
+#   - Windows: the vcpkg-built DLLs ship inside the zip next to proef.exe
+#     (mirrors how hurl distributes its own Windows build).
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # The release tag, or a stable per-run smoke name under workflow_dispatch.
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('smoke-{0}', github.run_id) }}
+
+jobs:
+  build:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Both macOS rows vendor OpenSSL: identical linkage for the pair and
+          # no dependency on the runner's Homebrew libraries; the arm64 host
+          # cannot probe x86_64 OpenSSL for the cross build anyway.
+          - target: aarch64-apple-darwin
+            os: macos-15
+            cargo_flags: "--features vendored-openssl"
+          - target: x86_64-apple-darwin
+            os: macos-15
+            cargo_flags: "--features vendored-openssl"
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write       # OIDC for sigstore attestation signing
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: "1.97.1"
+          targets: ${{ matrix.target }}
+
+      - name: Install native build prerequisites (Linux)
+        if: contains(matrix.os, 'ubuntu')
+        uses: ./.github/actions/native-deps
+
+      - name: Install native build prerequisites (Windows)
+        if: contains(matrix.os, 'windows')
+        uses: ./.github/actions/setup-hurl-windows
+        with:
+          build-roots: target\${{ matrix.target }}\release\build
+
+      - name: Install cargo-auditable
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: cargo-auditable
+
+      # `cargo auditable` embeds the exact dependency list in the binary
+      # (<4 KiB) so shipped artifacts stay scannable by cargo-audit/trivy/syft.
+      # On macOS, LIBXML2 points the libxml crate at the SDK's stub so the
+      # binary links /usr/lib/libxml2 (present on every Mac) — pkg-config
+      # would bind it to Homebrew's dylib (absent on end-user machines) and
+      # refuses cross targets anyway.
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == *apple* ]]; then
+            export LIBXML2="$(xcrun --sdk macosx --show-sdk-path)/usr/lib/libxml2.tbd"
+          fi
+          cargo auditable build --release --locked -p proef --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
+
+      - name: Stage artifact
+        id: stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_name="proef-${RELEASE_TAG}-${{ matrix.target }}"
+          stage_dir="dist/stage"
+          mkdir -p "$stage_dir"
+          cp LICENSE-MIT LICENSE-APACHE README.md CHANGELOG.md "$stage_dir/"
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            cp "target/${{ matrix.target }}/release/proef.exe" "$stage_dir/proef.exe"
+            # The vcpkg runtime DLLs ride along — the binary is unusable
+            # without them and Windows has no system libcurl/libxml2.
+            vcpkg_dir="$(dirname "$(command -v vcpkg)")"
+            cp "$vcpkg_dir"/installed/x64-windows/bin/*.dll "$stage_dir/"
+            (cd "$stage_dir" && 7z a "../${archive_name}.zip" ./* >/dev/null)
+            echo "archive=dist/${archive_name}.zip" >> "$GITHUB_OUTPUT"
+          else
+            cp "target/${{ matrix.target }}/release/proef" "$stage_dir/proef"
+            tar -C "$stage_dir" -czf "dist/${archive_name}.tar.gz" .
+            echo "archive=dist/${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+          rm -rf "$stage_dir"
+
+      # Attestations require a public repo (or Enterprise); gate instead of
+      # fail so the pipeline works today and provenance switches on the day
+      # the repo goes public. Never continue-on-error — a real attestation
+      # failure on a public repo must stay loud.
+      - name: Attest build provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
+        with:
+          subject-path: ${{ steps.stage.outputs.archive }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: proef-${{ matrix.target }}
+          path: dist/
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read       # download the run's own artifacts
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Extract this version's CHANGELOG section
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! [ -s release-notes.md ]; then
+            echo "no CHANGELOG section found for $version" >&2
+            exit 1
+          fi
+
+      - name: Create the release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # 5 = build-matrix cardinality — update together with the matrix.
+          count=$(ls dist/proef-*.tar.gz dist/proef-*.zip | wc -l)
+          [ "$count" -eq 5 ] || { echo "expected 5 archives, found $count" >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" \
+            --title "proef $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            dist/proef-*.tar.gz dist/proef-*.zip
+
+  # Regenerate emrecdr/homebrew-proef/Formula/proef.rb from this run's own
+  # artifacts (bit-identical to the Release assets — no CDN race).
+  homebrew-publish:
+    if: github.ref_type == 'tag'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read       # download the run's own artifacts
+    steps:
+      # Only the four unix tarballs enter the formula — skip the Windows zip
+      # (the largest artifact) instead of downloading and discarding it.
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: proef-*-apple-darwin
+          path: dist/
+          merge-multiple: true
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: proef-*-linux-gnu
+          path: dist/
+          merge-multiple: true
+
+      - name: Render Formula/proef.rb
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          BASE="https://github.com/${{ github.repository }}/releases/download/${TAG}"
+          sha() { sha256sum "dist/$1" | awk '{print $1}'; }
+          ARM_MAC=$(sha "proef-${TAG}-aarch64-apple-darwin.tar.gz")
+          INTEL_MAC=$(sha "proef-${TAG}-x86_64-apple-darwin.tar.gz")
+          ARM_LIN=$(sha "proef-${TAG}-aarch64-unknown-linux-gnu.tar.gz")
+          INTEL_LIN=$(sha "proef-${TAG}-x86_64-unknown-linux-gnu.tar.gz")
+
+          cat > proef.rb <<RUBY
+          class Proef < Formula
+            desc "Declarative multi-engine e2e test runner: Gherkin prose over embedded hurl"
+            homepage "https://github.com/${{ github.repository }}"
+            version "${VERSION}"
+            license any_of: ["MIT", "Apache-2.0"]
+
+            on_macos do
+              on_arm do
+                url "${BASE}/proef-${TAG}-aarch64-apple-darwin.tar.gz"
+                sha256 "${ARM_MAC}"
+              end
+              on_intel do
+                url "${BASE}/proef-${TAG}-x86_64-apple-darwin.tar.gz"
+                sha256 "${INTEL_MAC}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "${BASE}/proef-${TAG}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${ARM_LIN}"
+              end
+              on_intel do
+                url "${BASE}/proef-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${INTEL_LIN}"
+              end
+            end
+
+            def install
+              bin.install "proef"
+            end
+
+            test do
+              assert_match "proef", shell_output("#{bin}/proef --version")
+            end
+          end
+          RUBY
+
+      - name: Check out tap (deploy-key auth)
+        # zizmor: ignore[artipacked] — the push step below needs the deploy key.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: emrecdr/homebrew-proef
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: Commit and push regenerated formula
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          mkdir -p tap/Formula
+          cp proef.rb tap/Formula/proef.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/proef.rb
+          git diff --cached --quiet || git commit -m "proef ${TAG}"
+          git push

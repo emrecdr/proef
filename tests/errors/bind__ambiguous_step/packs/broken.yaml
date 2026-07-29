@@ -1,0 +1,11 @@
+templates:
+  one:
+    match: I do the thing
+    steps:
+      - hurl: |
+          GET http://x
+  two:
+    match: I do the thing
+    steps:
+      - hurl: |
+          GET http://y

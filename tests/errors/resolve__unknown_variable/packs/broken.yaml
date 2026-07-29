@@ -1,0 +1,6 @@
+templates:
+  fetch:
+    match: I fetch the page
+    steps:
+      - hurl: |
+          GET http://x/${nope}

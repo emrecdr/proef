@@ -1,0 +1,10 @@
+templates:
+  inner:
+    params: [q]
+    steps:
+      - hurl: |
+          GET http://x?q=${q}
+  outer:
+    match: I compose
+    steps:
+      - use: inner

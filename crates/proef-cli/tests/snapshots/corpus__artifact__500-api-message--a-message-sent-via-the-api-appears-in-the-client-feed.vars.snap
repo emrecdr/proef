@@ -1,0 +1,6 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+# proef variables for 500-api-message--a-message-sent-via-the-api-appears-in-the-client-feed.hurl
+# secret `apiToken` — supply at replay: --secret apiToken=<value>

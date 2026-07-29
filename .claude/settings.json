@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Grep",
+      "Glob",
+      "WebFetch",
+      "WebSearch",
+      "Skill",
+      "Task",
+      "Bash(node \"/Users/emrec/Projects/devt/bin/devt-tools.cjs\" *)",
+      "Bash(node /Users/emrec/Projects/devt/bin/devt-tools.cjs *)"
+    ],
+    "ask": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(npm publish:*)",
+      "Bash(yarn publish:*)",
+      "Bash(pip install:*)"
+    ]
+  }
+}

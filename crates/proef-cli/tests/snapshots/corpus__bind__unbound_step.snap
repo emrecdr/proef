@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::bind::unbound_step
+
+  × no macro matches `I serch for Jansen` — did you mean `I search for {term}`?
+   ╭─[tests/errors/bind__unbound_step/case.feature:3:5]
+ 2 │   Scenario: S
+ 3 │     When I serch for Jansen
+   ·     ───────────────────────
+   ╰────
+  help: add a `match:` pattern to a pack macro, or fix the step text
+
+1 error(s)

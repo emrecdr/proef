@@ -1,0 +1,56 @@
+[package]
+name = "proef"
+description = "Declarative, modular, multi-engine end-to-end test runner: Gherkin prose bound to embedded-hurl HTTP steps by YAML macro packs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["testing", "e2e", "gherkin", "bdd", "hurl"]
+categories = ["development-tools::testing", "command-line-utilities"]
+publish = true
+
+# `cargo binstall proef` resolves the release archives directly (asset names
+# are produced by .github/workflows/release.yml — keep in sync).
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/proef-v{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+[features]
+default = ["engine-hurl"]
+# One cargo feature per engine (ADR-0002); the registry adds one line per engine.
+engine-hurl = ["dep:proef-engine-hurl"]
+# Forwarded to the engine (native linkage is the engine's concern).
+vendored-openssl = ["proef-engine-hurl?/vendored-openssl"]
+
+[dependencies]
+proef-core = { workspace = true }
+proef-engine-hurl = { workspace = true, optional = true }
+clap = { workspace = true }
+miette = { workspace = true }
+uuid = { workspace = true }
+dotenvy = { workspace = true }
+ctrlc = { workspace = true }
+toml = { workspace = true }
+quick-junit = { workspace = true }
+notify = { workspace = true }
+chacha20poly1305 = { workspace = true }
+rpassword = { workspace = true }
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+quick-xml = { workspace = true }
+proef-fixture = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+insta = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

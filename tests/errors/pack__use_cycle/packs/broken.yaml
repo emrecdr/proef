@@ -1,0 +1,8 @@
+templates:
+  alpha:
+    match: I loop
+    steps:
+      - use: beta
+  beta:
+    steps:
+      - use: alpha

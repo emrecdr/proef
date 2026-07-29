@@ -1,0 +1,5 @@
+templates:
+  outer:
+    match: I compose
+    steps:
+      - use: doesNotExist

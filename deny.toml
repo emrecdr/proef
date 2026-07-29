@@ -1,0 +1,56 @@
+# cargo-deny configuration (CI gate — TECH-SPEC §15)
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # quick-xml parsing DoS advisories (RUSTSEC-2026-0194/0195): both require
+    # parsing untrusted XML; quick-junit (our only consumer) uses quick-xml
+    # strictly as a serializer and proef never parses XML. quick-junit pins
+    # quick-xml <0.41 so the patched release is unreachable — drop these
+    # ignores when quick-junit bumps its quick-xml requirement.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "curl",
+    "OpenSSL",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Intra-workspace path deps carry no version (publish = false) — not real wildcards.
+allow-wildcard-paths = true
+# Banned crates (CLAUDE.md hard constraints)
+deny = [
+    { crate = "serde_yaml", reason = "archived — use serde_norway (ADR-0004)" },
+    { crate = "serde_yml", reason = "bad fork — use serde_norway (ADR-0004)" },
+    { crate = "reqwest", reason = "superseded by the embedded hurl engine (ADR-0001)" },
+    { crate = "async-trait", reason = "sync dyn traits only in v1 (ADR-0006)" },
+    { crate = "maybe-async", reason = "non-additive feature hazard (ADR-0006)" },
+    # No async runtime (ADR-0006/0007): the tokio *crate* is a non-optional dep of
+    # tokio-util (sync primitives only, default-features = false) — that one edge is
+    # sanctioned; any other crate introducing tokio trips this ban.
+    { crate = "tokio", reason = "no async runtime — tokio-util CancellationToken only (ADR-0006/0007)", wrappers = ["tokio-util"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

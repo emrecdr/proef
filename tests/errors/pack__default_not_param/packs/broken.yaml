@@ -1,0 +1,8 @@
+templates:
+  search:
+    params: [term]
+    defaults: { index: clients }
+    match: "I search for {term}"
+    steps:
+      - hurl: |
+          GET http://x

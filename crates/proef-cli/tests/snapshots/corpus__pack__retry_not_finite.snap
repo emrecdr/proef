@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::retry_not_finite
+
+  × macro `forever` step 0: `retry: -1` is infinite — budgets require a finite count (ADR-0007)
+   ╭─[tests/errors/pack__retry_not_finite/packs/broken.yaml:8:11]
+ 7 │           [Options]
+ 8 │           retry: -1
+   ·           ─────────
+ 9 │           HTTP 200
+   ╰────
+
+1 error(s)
