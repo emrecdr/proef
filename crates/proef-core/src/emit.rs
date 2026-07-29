@@ -12,6 +12,8 @@
 //! The canonical format is a compatibility surface, locked by the insta
 //! snapshot corpus — emitter changes require deliberate `cargo insta review`.
 
+use std::fmt::Write as _;
+
 use serde::Serialize;
 
 use crate::lower::LoweredScenario;
@@ -109,7 +111,6 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
         &mut line,
         &format!("# source: {}:{}", first_step.step.file, scenario.line),
     );
-    use std::fmt::Write as _;
     let mut replay = format!("# replay: hurl --test {slug}.hurl");
     if has_vars {
         let _ = write!(replay, " --variables-file {slug}.vars");
