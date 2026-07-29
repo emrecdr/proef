@@ -123,6 +123,11 @@ enum SecretAction {
     },
     /// List stored secret names (never values)
     List,
+    /// Remove a stored secret
+    Rm {
+        /// Secret name to remove
+        name: String,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -177,6 +182,7 @@ fn main() -> std::process::ExitCode {
             let result = match action {
                 SecretAction::Set { name, value } => secretstore::set(&name, value.as_deref()),
                 SecretAction::List => secretstore::list(),
+                SecretAction::Rm { name } => secretstore::rm(&name),
             };
             match result {
                 Ok(()) => proef_core::error::ExitCode::Success,

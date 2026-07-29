@@ -45,3 +45,28 @@ fn doctor_reports_engine_contributed_checks() {
         .code(0)
         .stdout(contains("engine `hurl`"));
 }
+
+#[test]
+fn secret_lifecycle_set_list_rm() {
+    // Isolated store (cwd) and key (config dir) — never the developer's.
+    let tmp = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let mut cmd = proef();
+        cmd.current_dir(tmp.path())
+            .env("PROEF_CONFIG_DIR", tmp.path().join("cfg"))
+            .args(["secret"])
+            .args(args);
+        cmd
+    };
+    run(&["set", "apiToken", "--value", "hunter2"])
+        .assert()
+        .code(0);
+    run(&["list"]).assert().code(0).stdout(contains("apiToken"));
+    run(&["rm", "apiToken"]).assert().code(0);
+    run(&["list"])
+        .assert()
+        .code(0)
+        .stdout(contains("no secrets stored"));
+    // Removing an absent name is a user error, not a silent success.
+    run(&["rm", "apiToken"]).assert().code(2);
+}

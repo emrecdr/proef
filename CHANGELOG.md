@@ -6,6 +6,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- `proef secret rm NAME` removes a stored secret (locked atomic rewrite;
+  removing an absent name exits 2).
+
 ## [0.3.0] - 2026-07-29 (data-safety blockers, Then visibility, taxonomy)
 
 ### Fixed (v0.2.1 review — every finding reproduced before fixing)

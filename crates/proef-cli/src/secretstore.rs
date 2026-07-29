@@ -197,6 +197,22 @@ pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// `proef secret rm NAME` — remove a stored secret (same locked
+/// read-modify-write as `set`). Removing an absent name is a user error:
+/// a typo'd cleanup must not report success.
+pub fn rm(name: &str) -> Result<(), String> {
+    let _lock = lock_store()?;
+    let mut store = load_store()?;
+    if store.remove(name).is_none() {
+        return Err(format!(
+            "no secret named `{name}` in {STORE_FILE} (see `proef secret list`)"
+        ));
+    }
+    save_store(&store)?;
+    crate::render::outln!("secret `{name}` removed from {STORE_FILE}");
+    Ok(())
+}
+
 /// `proef secret list` — names only, never values (ADR-0005).
 pub fn list() -> Result<(), String> {
     let store = load_store()?;

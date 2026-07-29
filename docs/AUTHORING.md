@@ -93,7 +93,8 @@ within a run, fresh across runs: `firstName`, `lastName`, `name`, `fullName`,
 
 Reference with `${secret:NAME}`. Values come from `PROEF_SECRET_<NAME>`
 environment variables first, then the encrypted store (`proef secret set NAME`,
-or `proef secret set NAME --value V` for scripts
+or `proef secret set NAME --value V` for scripts; `proef secret list` names,
+`proef secret rm NAME` removes
 — XChaCha20-Poly1305, key auto-created `0600` under `~/.config/proef/`).
 Values never appear in artifacts, events, logs, or reports; events carry
 capture *names* only. The store file (`.proef-secrets.json`, mode `0600`)
