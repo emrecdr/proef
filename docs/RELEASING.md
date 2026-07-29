@@ -104,3 +104,6 @@ automated.
   taxonomy (user mistakes exit 2), option caps + repeat budget, atomic
   locked stores — breaking: proef-core API pruned, `when:` skips on
   literal false, zero-entry packs fail validation
+- `v0.3.1` — secret hardening: `secret rm`, `PROEF_KEY` CI override, the
+  saveAs-vs-secret promotion guard, doctor store/key health, corrupt-store
+  recovery, warned-step reasons on the console

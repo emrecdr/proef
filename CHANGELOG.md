@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-29 (secret-management hardening)
+
 ### Added
 
 - `proef secret rm NAME` removes a stored secret (locked atomic rewrite;
