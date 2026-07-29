@@ -1,0 +1,100 @@
+# Diagnostic codes — the greppable index
+
+Every proef diagnostic carries a stable code (`proef::<area>::<name>`), printed
+above the rendered message. Codes are a contract: they never change meaning,
+and searching this file (or `tests/errors/`) for a code you hit is the fastest
+route to the cause. The **corpus** column marks codes with a seeded broken
+example under `tests/errors/<area>__<name>/` — dry-running one shows the exact
+rendered output.
+
+Severity is **error** (fails validation/exit 2) unless marked *warning*.
+
+## `proef::feature::*` — feature-file parsing and expansion
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `feature::parse` | The file is not valid Gherkin (parser error, located) | ✓ |
+| `feature::empty_file` | The file is empty — a `Feature:` header is required | |
+| `feature::no_examples` | A `Scenario Outline` has no Examples rows | |
+| `feature::ragged_examples` | An Examples row's cell count differs from the header | |
+| `feature::bad_examples_header` | Duplicate or empty Examples column name | |
+| `feature::unknown_placeholder` | An outline step uses `<name>` not present in the header | ✓ |
+
+## `proef::pack::*` — macro-pack loading and validation
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `pack::yaml` | The pack file is not valid YAML | ✓ |
+| `pack::duplicate_macro` | Two macros share a name | ✓ |
+| `pack::empty_macro` | A macro has neither `steps:` nor `expect:` | |
+| `pack::steps_and_expect` | A macro has both `steps:` and `expect:` | |
+| `pack::empty_expect` | An `expect:` item asserts nothing | |
+| `pack::empty_step` | A step has no payload and no `use:` | |
+| `pack::multiple_payloads` | A step has more than one payload key | |
+| `pack::unknown_step_kind` | The payload key names no registered engine | ✓ |
+| `pack::invalid_hurl` | The payload does not parse as hurl (incl. zero-entry payloads) | ✓ |
+| `pack::payload_invalid` | A structured payload fails the engine's validator | ✓ |
+| `pack::bad_reference` | A `${…}` reference in the payload cannot resolve at probe time | |
+| `pack::retry_not_finite` | `retry`/`repeat` is `-1`, `0`, or above the 10000 cap | ✓ |
+| `pack::delay_unbounded` | `delay` exceeds the 1-hour cap | |
+| `pack::pattern_braces` | Unbalanced `{`/`}` in a `match:` pattern | |
+| `pack::pattern_empty_capture` | `{}` with no capture name | |
+| `pack::pattern_no_anchor` | A pattern with no literal word (capture-only) | ✓ |
+| `pack::pattern_unknown_capture` | A `{capture}` that is not a declared param | ✓ |
+| `pack::adjacent_captures` | `{a} {b}` with no literal between captures | ✓ |
+| `pack::default_not_param` | A `defaults:` key that is not a declared param | ✓ |
+| `pack::bad_save_target` | `saveAs:` target other than `global` | |
+| `pack::unknown_use` | `use:` names no known macro | ✓ |
+| `pack::use_cycle` | `use:` composition forms a cycle | ✓ |
+| `pack::use_too_deep` | `use:` nesting exceeds depth 32 | |
+| `pack::use_with_modifiers` | A `use:` step carries modifiers that belong on the target | |
+| `pack::use_with_payload` | A step is both `use:` and a payload | |
+| `pack::with_without_use` | `with:` on a step that has no `use:` | |
+| `pack::missing_use_param` | The `use:` target requires a param `with:` does not supply | ✓ |
+| `pack::unknown_with_key` | A `with:` key the target macro does not declare | ✓ |
+
+## `proef::bind::*` — matching prose to macros
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `bind::unbound_step` | No macro pattern matches the sentence (suggests the closest) | ✓ |
+| `bind::ambiguous_step` | More than one macro matches (all candidates listed) | ✓ |
+| `bind::missing_param` | A required param has no capture, table value, or default | ✓ |
+| `bind::bad_table` | A data table has an unusable shape | |
+| `bind::unknown_table_key` | A table key that is not a declared param | |
+| `bind::table_conflict` | A table value collides with a pattern capture | ✓ |
+| `bind::docstring_unused` | A docstring the macro never references (*warning*) | |
+
+## `proef::lower::*` — lowering to engine batches
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `lower::then_before_when` | An `expect:` step with no previous request to attach to | ✓ |
+| `lower::bad_status` | `expect: status:` is not an HTTP status number | |
+| `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
+| `lower::dry_run_unknown` | A runtime-only global under `--dry-run` (*warning*) | |
+
+## `proef::resolve::*` — `${…}` variable resolution
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `resolve::unknown_variable` | `${name}` found in no scope (suggests the closest) | ✓ |
+| `resolve::missing_env` | `${env:NAME}` unset and no `:-default` given | |
+| `resolve::missing_global` | `${global:key}` absent from the World (strict mode) | |
+| `resolve::unknown_namespace` | `${ns:…}` with an unknown namespace | |
+| `resolve::unknown_run_field` | `${run:…}` other than `${run:id}` | |
+| `resolve::fake_unknown` | `${fake:kind}` names no generator (suggests the closest) | |
+| `resolve::empty_reference` | An empty `${}` | |
+| `resolve::depth_exceeded` | Resolution passed depth 8 — a reference cycle | |
+
+## `proef::emit::*` — artifact emission
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `emit::invalid_artifact` | The emitted artifact does not parse with the engine's parser | |
+
+## Coverage note
+
+22 of the 54 codes carry a seeded corpus case today; the corpus guard asserts
+a minimum, not parity. When you add a diagnostic, add its code here and prefer
+seeding a `tests/errors/<area>__<name>/` case alongside it.

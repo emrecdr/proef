@@ -18,11 +18,18 @@ repo-root `CLAUDE.md` carry the live status.
 |---|---|---|---|
 | 0 | [GETTING-STARTED.md](GETTING-STARTED.md) | Your first suite in ten minutes | test authors |
 | 0 | [AUTHORING.md](AUTHORING.md) | The pack/feature reference from the author's seat | test authors |
+| 0 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Exit codes, glyphs, frequent failures, digging into runs | test authors |
+| 0 | [CONFIG.md](CONFIG.md) | Every `proef.toml` key with defaults | test authors |
+| 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | test authors |
+| 0 | [EVENTS.md](EVENTS.md) | The `events.jsonl` wire schema for CI consumers | CI engineers |
 | 1 | [PRD.md](PRD.md) | What are we building, for whom, and how do we know it works? | everyone |
 | 2 | [adr/](adr/) — ADR-0001…0011 | Why is it built this way? Each decision, alternatives, consequences | engineers |
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
+| — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
+| — | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
+| — | [../SECURITY.md](../SECURITY.md) | Threat model and vulnerability reporting | everyone |
 | — | [../CLAUDE.md](../CLAUDE.md) | Repo-root guidance for Claude Code: constraints, seam facts, commands, status | coding agents |
 
 ## Decision log (ADR index)

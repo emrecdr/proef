@@ -133,6 +133,9 @@ machine-readable event stream), `run.log` (the console mirror), and
 
 - [`AUTHORING.md`](AUTHORING.md) — the full pack reference: composition with
   `use:`, retries, optional steps, guards, captures across scenarios, fakes.
+- [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — exit codes, the glyph legend,
+  and the frequent failures; [`DIAGNOSTICS.md`](DIAGNOSTICS.md) indexes every
+  error code you might hit.
 - `proef flows suite` lists every scenario with tags; `--output json` feeds
   the nextest harness (one IDE test per scenario).
 - `proef test suite --watch` reruns on every file change.

@@ -6,6 +6,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- Documentation set completing the corpus: `docs/DIAGNOSTICS.md` (all 54
+  diagnostic codes, corpus coverage marked), `docs/CONFIG.md` (`proef.toml`
+  reference), `docs/EVENTS.md` (the `events.jsonl` wire schema for CI),
+  `docs/TROUBLESHOOTING.md` (exit codes, glyph legend, frequent failures),
+  root `CONTRIBUTING.md` and `SECURITY.md` (threat model, private
+  vulnerability reporting), and an IDE-integration section in AUTHORING.
+
 ## [0.3.1] - 2026-07-29 (secret-management hardening)
 
 ### Added

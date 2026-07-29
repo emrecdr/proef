@@ -1,0 +1,69 @@
+# Event schema — the run record for machine consumers
+
+`.proef-runs/<run-id>/events.jsonl` **is** the run record (ADR-0008): one JSON
+object per line, in emission order, no second format. Everything else —
+console tree, `--junit`, the GitHub summary, `proef explain` — derives from
+this stream. Consume it with `jq`, a log shipper, or anything line-oriented.
+
+Wire shape: serde-tagged with `"event"`, `snake_case` names. The first line is
+always `run_started` and declares `schema` (currently `1`); the last is
+`run_finished`. The schema is **additive-only**: new variants and new
+optional fields may appear, existing fields never change meaning or vanish.
+Consumers must ignore unknown variants and unknown fields.
+
+## Variants
+
+**`run_started`** — head of every stream.
+`schema` (u32) · `run_id` (string, uuid-v7).
+
+**`scenario_started`** — `scenario` (string) · `file` (string).
+
+**`batch_started`** — a contiguous same-engine step batch was dispatched.
+`scenario` · `engine` (e.g. `"hurl"`) · `steps` (count).
+
+**`entry_running`** — live progress: one event per execution *attempt* of an
+artifact entry, retries included. `scenario` · `engine` · `entry` (0-based
+ordinal within the scenario's artifact) · `retry` (0 = first attempt).
+
+**`step_finished`** — `scenario` · `engine` · `step` (`{file, line, text}`,
+the authored feature anchor) · `status` (`passed | failed | skipped |
+warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
+*names* only — never values) · `detail` (string, **only present** on
+failures/warnings/skips-with-reason).
+
+**`scenario_finished`** — `scenario` · `status`.
+
+**`run_finished`** — tail. `passed` · `failed` · `skipped` (scenario counts)
+· `cancelled` (bool, **only present when true**).
+
+## Example stream
+
+```json
+{"event":"run_started","schema":1,"run_id":"019f…"}
+{"event":"scenario_started","scenario":"reference","file":"suite/case.feature"}
+{"event":"batch_started","scenario":"reference","engine":"hurl","steps":2}
+{"event":"entry_running","scenario":"reference","engine":"hurl","entry":0,"retry":0}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":12,"captures":[]}
+{"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":5,"text":"the response status is 200"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
+{"event":"scenario_finished","scenario":"reference","status":"passed"}
+{"event":"run_finished","passed":1,"failed":0,"skipped":0}
+```
+
+## Guarantees
+
+- **Secrets never appear.** Redaction applies once at the sink boundary
+  before any reporter (property-tested); `captures` carries names only.
+- **Order:** events of one scenario are internally ordered; scenarios
+  running in parallel interleave. Group by `scenario` before assuming
+  sequence across the stream.
+- **Flake-safe assertions:** assert on `attempts` counts and normalized
+  event order, never wall-clock (`duration_ms` is engine-measured and
+  varies).
+
+## Recipes
+
+```bash
+jq -r 'select(.event=="step_finished" and .status=="failed") | "\(.step.file):\(.step.line) \(.detail)"' events.jsonl
+jq -r 'select(.event=="run_finished")' events.jsonl          # the totals
+jq -r 'select(.event=="entry_running") | .retry' events.jsonl | sort | uniq -c   # retry pressure
+```

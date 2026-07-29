@@ -122,9 +122,23 @@ The header's `# replay:` line is a complete stock-hurl command, including
   human report moves to stderr); `--jobs N` controls parallelism;
   `proef.toml` holds project defaults (`[run] jobs`, `[http] timeout-ms`).
 - `proef fmt suite --check` keeps hurl blocks canonically formatted;
-  `proef flows` lists scenarios; the nextest harness
-  (`PROEF_HARNESS_SUITE=<dir> cargo nextest run -p proef-harness`) exposes
-  one test per scenario to IDEs.
+  `proef flows` lists scenarios.
+
+### IDE integration — one test per scenario
+
+The harness crate bridges proef into any nextest/libtest UI (rust-analyzer,
+RustRover, `cargo nextest run`): it lists scenarios via
+`proef flows --output json` and runs each as its own test via
+`proef test --scenario <name>`.
+
+```bash
+PROEF_HARNESS_SUITE=suite cargo nextest run -p proef-harness
+```
+
+Set `PROEF_BIN=/path/to/proef` when the binary is not on `PATH`. With
+`PROEF_HARNESS_SUITE` unset the harness exposes nothing, so a plain
+`cargo test` stays green. Each scenario appears as a separate test in the
+IDE's runner — click-to-run one scenario without touching the terminal.
 
 ### Secrets in CI
 

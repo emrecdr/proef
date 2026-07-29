@@ -169,8 +169,12 @@ cargo run -p xtask -- fixture   # local fixture API server
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 
-Author-facing guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) and
-[`docs/AUTHORING.md`](docs/AUTHORING.md).
+Author-facing guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md),
+[`docs/AUTHORING.md`](docs/AUTHORING.md),
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md),
+[`docs/CONFIG.md`](docs/CONFIG.md),
+[`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md), and — for CI consumers of the
+run record — [`docs/EVENTS.md`](docs/EVENTS.md).
 The maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
 (ADR-0001…0011), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.

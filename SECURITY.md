@@ -1,0 +1,48 @@
+# Security policy
+
+## Reporting a vulnerability
+
+Use GitHub's private vulnerability reporting on this repository
+(Security → Report a vulnerability). Please do not open public issues for
+security reports. You will get an acknowledgment within a week; fixes ship as
+patch releases with a CHANGELOG entry.
+
+## Supported versions
+
+The latest released `0.x` version. Pre-1.0, fixes are not backported.
+
+## Threat model
+
+proef is a **test tool with a deliberately modest threat model**: it protects
+secret material *at rest* and keeps it *out of every output*, and it does not
+attempt to defend a compromised host.
+
+**What proef guarantees:**
+
+- The secret store (`.proef-secrets.json`) holds only XChaCha20-Poly1305
+  ciphertext (`enc:v1:` envelope) — safe to commit and share.
+- Secret **values never appear in any sink**: artifacts carry `{{name}}`
+  placeholders, events/logs/reports are value-redacted at the sink boundary
+  (property-tested), and a `saveAs: global` capture whose value equals a
+  known secret is refused rather than persisted to the plaintext
+  `.proef-state.json`.
+- Sensitive files (`.proef-secrets.json`, the key file, `.proef-state.json`)
+  are created `0600`, private from the first byte. `proef doctor` warns when
+  permissions have drifted.
+- Request file bodies are confined to the suite directory (hurl's
+  `context_dir` sandbox); artifact asset copying rejects absolute and `..`
+  paths.
+- Release binaries are built with `cargo auditable` (dependency trees stay
+  scannable) on cache-isolated CI runners.
+
+**What proef does not defend against:**
+
+- A compromised host or user account: the key file lives on disk, decrypted
+  values live in process memory (no zeroize — hurl holds its own copies),
+  and `PROEF_KEY`/`PROEF_SECRET_*` are readable from the process
+  environment.
+- Malicious suites: packs execute arbitrary HTTP requests by design; run
+  suites you trust.
+
+If your environment needs more than this, inject secrets per run via
+`PROEF_SECRET_<NAME>` from a real secret manager and skip the store entirely.
