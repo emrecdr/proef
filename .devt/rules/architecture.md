@@ -1,323 +1,89 @@
-# Architecture
+# Architecture — proef
 
-> Template baseline — the project's own `CLAUDE.md` and documented conventions WIN on any conflict with this file. Tailor it to the project (`/devt:setup`); untailored copies are flagged by `/devt:setup --health`.
+> Grounded in `CLAUDE.md` (Workspace architecture) and `docs/` (ADR-0001 onward, TECH-SPEC).
+> Those sources WIN on any conflict. Read by the `architect` agent and arch-scanner.
 
-Devt-integration document for Rust projects. Read by the `architect` agent and `architecture-health-scanner` skill. Defines layering rules, structural patterns, and the trade-off space agents should respect when making architectural changes.
+proef is a declarative, multi-engine end-to-end **API** test runner. Gherkin `.feature`
+files carry business prose; YAML macro packs (with embedded raw hurl blocks) bind prose to
+steps; an engine-agnostic core lowers and dispatches batches to a pluggable engine. The
+only engine embeds hurl in-process. The seam is architectural readiness — nothing else is
+scheduled (see `[[hurl-engine-only]]`).
 
-## Pattern: Clean Architecture (Hexagonal / Ports-and-Adapters)
-
-Same shape as the Python clean-architecture template: pure domain at the center, application use-cases above, infrastructure at the periphery, presentation outside everything.
-
-```
-+------------------------------------------+
-|         Presentation (api / cli)         |   <- HTTP handlers, CLI commands, gRPC services
-|  +----------------------------------+    |
-|  |     Application (use cases)      |    |   <- orchestration; depends on domain + ports
-|  |  +---------------------------+   |    |
-|  |  |       Domain (core)       |   |    |   <- pure types, business invariants, NO deps
-|  |  +---------------------------+   |    |
-|  +----------------------------------+    |
-|        Infrastructure (adapters)         |   <- repository impls, HTTP clients, file I/O
-+------------------------------------------+
-```
-
-## Layer Responsibilities
-
-### Domain Layer (`crate::domain` or `crates/domain`)
-
-Pure business logic. The domain crate MUST NOT depend on:
-
-- Infrastructure (databases, HTTP clients, file system, env vars)
-- Application or Presentation
-- Any crate that performs I/O
-
-The domain crate MAY depend on:
-
-- `std` (when no_std support is not a requirement)
-- `serde` for serialization (when domain values cross network/storage boundaries)
-- Validation crates (`validator`, `garde`) for declarative invariants
-- Time crates (`chrono`, `time`) — but inject `Clock` as a trait for testability
-
-Contents:
-
-- Newtype wrappers for primitives that carry semantic meaning (`UserId`, `Email`, `IsoCountryCode`)
-- Domain value objects (immutable types with invariants enforced at construction)
-- Domain events (structs/enums representing things that happened)
-- Domain errors (`thiserror`-based) describing business-rule violations
-- Repository TRAITS only — never implementations
-
-### Application Layer (`crate::application` or `crates/application`)
-
-Use cases / interactors orchestrate domain logic with injected ports. The application crate depends on:
-
-- Domain (always)
-- Port traits defined locally (or in domain when they describe domain-driven boundaries)
-
-The application crate MUST NOT depend on:
-
-- Infrastructure (concrete adapters)
-- Presentation
-
-Contents:
-
-- Use-case structs/functions taking dependencies via trait bounds
-- Command and query types (input DTOs)
-- Result types (output DTOs)
-- Workflow orchestration that composes domain operations
-
-### Infrastructure Layer (`crate::infrastructure` or `crates/infrastructure`)
-
-Concrete adapters for ports. Lives outside the dependency direction — depends on domain + application but is depended upon by NOBODY at compile time (only at runtime via DI wiring at the composition root).
-
-Contents:
-
-- Repository implementations (`SqlxUserRepository`, `RedisCacheRepository`)
-- HTTP client adapters
-- File system access
-- Time provider concrete implementations
-- External service clients
-
-Depends on:
-
-- Domain (for entity types)
-- Application (for port traits)
-- External crates (sqlx, reqwest, etc.)
-
-### Presentation Layer (`crate::api`, `crate::cli`, or `crates/api`)
-
-User-facing surfaces. Depends on application use-cases (NOT on infrastructure directly). Each presentation channel is independent:
-
-- HTTP/REST: route handlers using axum, actix-web, or rocket
-- gRPC: tonic services
-- CLI: clap-based command parsers
-- WebSocket: tokio-tungstenite session handlers
-- GraphQL: async-graphql resolvers
-
-Composition root (typically `main.rs`) wires concrete infrastructure adapters into application use-cases.
-
-## Dependency Direction (Hard Invariant)
+## The pipeline (all in `proef-core`, pure)
 
 ```
-Presentation -> Application -> Domain
-Infrastructure -> Application -> Domain
-Presentation -> Infrastructure  (only at the composition root, via main.rs DI wiring)
+.feature + packs → parse (gherkin) → bind (matcher) → lower (${…} resolve, batch)
+                 → emit (.hurl + sidecars) → dispatch (Box<dyn EngineSession>) → events
 ```
 
-Domain depends on NOTHING. Application depends only on Domain. Infrastructure and Presentation depend only on lower layers.
+Core is pure: no IO, no clock, no env, no randomness — `run_id`, `now`, and env snapshots
+are injected. This determinism is a hard invariant, not a convenience (ADR-0005, TECH-SPEC
+§4). Do not break it.
 
-Violations:
-
-- `domain/` importing `infrastructure/` — CRITICAL violation (logic depending on adapters)
-- `application/` importing `infrastructure/` — CRITICAL violation (use case depending on concrete DB)
-- `domain/` importing `application/` — HIGH violation (core depending on orchestration)
-- `presentation/` importing `infrastructure/` outside `main.rs` — HIGH violation (handler escaping DI)
-
-## Crate Organization
-
-### Single-Crate Projects
-
-For libraries and small applications, use a single crate with modules expressing layers:
+## Crates
 
 ```
-src/
-├── lib.rs              # crate root
-├── domain.rs           # or domain/
-├── application.rs      # or application/
-├── infrastructure.rs   # or infrastructure/
-└── api.rs              # or api/
-```
-
-`lib.rs` re-exports the public API. Private modules stay private.
-
-### Workspace Projects (multi-crate)
-
-For larger applications, prefer a Cargo workspace with one crate per layer:
-
-```
-Cargo.toml              # workspace manifest
 crates/
-├── domain/
-│   ├── Cargo.toml      # no external deps beyond std/serde/thiserror
-│   └── src/lib.rs
-├── application/
-│   ├── Cargo.toml      # depends on domain
-│   └── src/lib.rs
-├── infrastructure/
-│   ├── Cargo.toml      # depends on domain + application + external adapters
-│   └── src/lib.rs
-└── api/                # the main binary
-    ├── Cargo.toml      # depends on application + infrastructure
-    └── src/main.rs
+  proef-core/         engine-agnostic: parse, packs, bind, lower, IR, emit, dispatch,
+    helpers/          World/state, events, errors, reporters; built-in packs embedded
+  proef-engine-hurl/  the API engine: EngineFactory/EngineSession over embedded hurl
+  proef-cli/          bin `proef`: clap, engine registry assembly, miette rendering
+  proef-fixture/      dev-only in-process sync fixture API server (tiny_http, ADR-0011)
+  proef-harness/      libtest-mimic bridge: one Trial per scenario (US-12)
+xtask/                automation as Rust; `just` = thin aliases (no shell scripts)
 ```
 
-Crate-level enforcement: Cargo refuses cyclic dependencies, so workspace layouts mechanically prevent layer violations. Single-crate layouts rely on convention + reviewer discipline (or the arch-scanner when shipped).
+## Dependency direction (hard invariant)
 
-## Structural Patterns
-
-### Newtype
-
-Wrap primitives that carry semantic meaning:
-
-```rust
-pub struct UserId(uuid::Uuid);
-
-impl UserId {
-    pub fn new() -> Self { Self(uuid::Uuid::new_v4()) }
-    pub fn as_uuid(&self) -> &uuid::Uuid { &self.0 }
-}
+```
+proef-cli → proef-core, proef-engine-hurl      (cli is the only miette user — ADR-0009)
+proef-engine-hurl → proef-core
+proef-core → (no engine, no engine-specific type)
+engines never import each other
 ```
 
-Apply when the primitive's identity matters beyond its value: IDs, codes, prefixes, classifiers. Reject when the value is purely numeric (counter, port number, line count).
+- `proef-core` importing an engine or engine-specific type — CRITICAL violation.
+- miette used outside `proef-cli` — CRITICAL (ADR-0009: typed errors in core/engines,
+  miette only at the CLI edge).
+- IO / clock / env / rand inside `proef-core` — CRITICAL (breaks determinism).
+- Cargo refuses inter-crate cycles; the same discipline applies intra-crate.
 
-### Type-State
+**Structural acceptance test:** adding a future engine must leave `proef-core` diff-empty
+(`git diff --stat proef-core` empty — ADR-0002, IMPLEMENTATION-PLAN M6).
 
-Encode state machines in the type system. Compile-time prevention of misuse:
+## The central seam (ADR-0002, ADR-0006)
 
-```rust
-pub struct Request<S> { ... , _state: PhantomData<S> }
-pub struct Unvalidated;
-pub struct Validated;
+`EngineFactory` (`id`, `step_kinds()` schema contribution, `doctor()`, `open`) +
+`EngineSession` (`run_batch`, `finish`) — both **sync**, used as `Box<dyn …>`. No async
+machinery in v1 (no async-trait/maybe-async, no tokio runtime). Routing: a macro step's
+kind names its engine (`hurl:` → engine-hurl); other kind prefixes are reserved. The core
+batches **contiguous same-engine steps** and dispatches in order; the **World** (typed vars
++ persistent global store) threads captures between batches. The engine registry lives in
+`proef-cli`, one cargo-feature-gated line per engine.
 
-impl Request<Unvalidated> {
-    pub fn validate(self) -> Result<Request<Validated>, ValidationError> { ... }
-}
+## Engine-hurl seam facts (TECH-SPEC §5 — verified, file:line there)
 
-impl Request<Validated> {
-    pub fn execute(self) -> Response { ... }  // only callable after validate
-}
-```
+- `run_entries` builds its HTTP client **per call** → batch maximally; split only at
+  `optional:` boundaries and engine changes.
+- On forced splits, chain `HurlResult.variables` and round-trip cookies via a Netscape
+  temp file (`SessionState`).
+- hurl has no cancellation and allows infinite retries → finite-retry pack lint + batch
+  budgets + watchdog; token checked between batches only (ADR-0007).
+- Per-entry `[Options]` override batch `RunnerOptions` (clone-then-override).
+- Always `WriteMode::Buffered` in library paths.
 
-Apply when a sequence of operations must happen in a specific order. Defer when runtime branching captures the same constraint clearly.
+## Contracts that shape structure
 
-### Builder
+- **Artifacts = executed input** (ADR-0010): emitted `.hurl` bytes == bytes parsed;
+  canonical format snapshot-locked.
+- **Events** (ADR-0008): one versioned serde `Event` spine; the JSONL stream is the run
+  record; additive-only.
+- **Scenario** is the unit of isolation, parallelism, retry, and artifact emission
+  (scenario-per-OS-thread, `--jobs` bounded).
 
-Idiomatic for constructing types with many optional fields:
+## Newtypes carry meaning
 
-```rust
-#[derive(Default)]
-pub struct ClientBuilder {
-    timeout: Option<Duration>,
-    retries: Option<u32>,
-}
-
-impl ClientBuilder {
-    pub fn timeout(mut self, d: Duration) -> Self { self.timeout = Some(d); self }
-    pub fn retries(mut self, n: u32) -> Self { self.retries = Some(n); self }
-    pub fn build(self) -> Client { Client { ... } }
-}
-```
-
-Annotate the builder with `#[must_use = "Builder does nothing until .build()"]`.
-
-### Trait-Based Dependency Injection
-
-Define ports in the application layer; inject concrete impls at the composition root.
-
-```rust
-// application/src/ports.rs
-pub trait UserRepository: Send + Sync {
-    async fn find(&self, id: &UserId) -> Result<Option<User>, RepoError>;
-    async fn save(&self, user: &User) -> Result<(), RepoError>;
-}
-
-// application/src/use_cases/get_user.rs
-pub struct GetUserUseCase<R: UserRepository> {
-    repo: Arc<R>,
-}
-
-impl<R: UserRepository> GetUserUseCase<R> {
-    pub fn new(repo: Arc<R>) -> Self { Self { repo } }
-    pub async fn execute(&self, id: UserId) -> Result<User, GetUserError> {
-        self.repo.find(&id).await?.ok_or(GetUserError::NotFound)
-    }
-}
-```
-
-### Generics vs `Box<dyn Trait>` Trade-off
-
-| Use generics | Use `Box<dyn Trait>` |
-|---|---|
-| Hot paths where monomorphization helps | Heterogeneous collections (`Vec<Box<dyn Handler>>`) |
-| Library APIs (caller picks the concrete type) | Plugin systems with runtime selection |
-| Compile-time guarantees about the impl | Closed extension (sealed trait + impls) |
-| When binary size is acceptable | When binary size matters more than dispatch cost |
-
-Default to generics. Switch to `Box<dyn Trait>` when monomorphization explodes the binary or when truly heterogeneous storage is required.
-
-### Sealed Traits
-
-Restrict trait implementation to within your crate:
-
-```rust
-mod private {
-    pub trait Sealed {}
-}
-
-pub trait MyTrait: private::Sealed {
-    fn method(&self) -> String;
-}
-
-impl private::Sealed for ConcreteType {}
-impl MyTrait for ConcreteType { ... }
-```
-
-Apply when the trait is your API but you want to control all implementations (e.g., to add methods without breaking changes).
-
-## Async + Concurrency Patterns
-
-- **Send + Sync bounds**: trait objects crossing tasks need `Send + Sync` bounds. Define traits as `pub trait X: Send + Sync` when they will be passed across `.await` points.
-- **Arc vs Rc**: use `Arc<T>` for shared ownership across tasks; `Rc<T>` only for single-threaded contexts.
-- **Mutex selection**: `tokio::sync::Mutex` only when holding the lock across `.await`; otherwise `std::sync::Mutex` (faster, no async overhead).
-- **Cancellation**: every async fn should be cancellation-safe — document at top of file when not.
-- **Backpressure**: `tokio::sync::mpsc::channel(buffer)` instead of `unbounded_channel()` unless the unbounded case is justified.
-
-## Error Categorization
-
-Domain errors are not application errors are not infrastructure errors:
-
-- **Domain errors**: business rule violations (`EmailAlreadyTaken`, `InsufficientBalance`). Surface to callers as-is.
-- **Application errors**: use-case-specific composition (`GetUserError::NotFound`, `GetUserError::RepoFailure`). Wrap domain errors via `#[from]`.
-- **Infrastructure errors**: I/O failures, network timeouts, serialization errors. Wrap as `Repo::Failure(source)` — never leak the concrete `sqlx::Error` upward.
-
-The `thiserror` derive expresses these layers cleanly:
-
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum GetUserError {
-    #[error("user not found")]
-    NotFound,
-    #[error(transparent)]
-    Repo(#[from] RepoError),
-}
-```
-
-## Workspace Configuration
-
-For workspace projects, root `Cargo.toml` enforces consistency:
-
-```toml
-[workspace.package]
-edition = "2024"
-rust-version = "1.83"
-license = "MIT OR Apache-2.0"
-
-[workspace.lints.clippy]
-pedantic = "warn"
-nursery = "warn"
-cargo = "warn"
-
-[workspace.lints.rust]
-unsafe_code = "forbid"
-missing_docs = "warn"
-```
-
-Member crates inherit via `package.lints.workspace = true`.
-
-## Forbidden Patterns
-
-- Domain crate depending on a database driver (`sqlx`, `diesel`, `mongodb`)
-- Application crate depending on a specific web framework (`axum`, `actix-web`)
-- Public function returning `Result<T, Box<dyn Error>>` from a library
-- `unwrap()` / `expect("invariant")` outside `tests/`, `main.rs`, or `lib.rs::tests`
-- Cyclic module dependencies (Cargo prevents inter-crate cycles; same discipline applies intra-crate)
-- Re-exporting infrastructure types from the domain crate via `pub use`
+Domain identity lives in newtypes (`StepKindId`, `EngineId`, `StepRef`, `Value`), not bare
+primitives. `Value` uses hand-rolled scalar visitors — never a `#[serde(untagged)]` enum
+carrying numbers (arbitrary_precision hazard, `[[hurl-engine-only]]` build note in
+`golden-rules.md` §8).

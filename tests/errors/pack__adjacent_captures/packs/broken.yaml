@@ -1,4 +1,4 @@
-templates:
+macros:
   glued:
     params: [a, b]
     match: "do {a}{b} now"

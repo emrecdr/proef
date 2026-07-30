@@ -1,4 +1,4 @@
-templates:
+macros:
   ping:
     match: I ping again
     steps:

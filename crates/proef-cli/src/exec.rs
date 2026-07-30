@@ -40,6 +40,7 @@ pub fn execute(
     junit: Option<&str>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
+    active_env: Option<&str>,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
     let config = match ProjectConfig::load() {
@@ -50,9 +51,23 @@ pub fn execute(
         }
     };
 
+    // Resolve the active environment once: config_vars validates the `--env`
+    // name (unknown env = user error), and jobs/http cannot fail afterwards.
+    let (config_vars, effective_jobs, http_defaults) = match (
+        config.config_vars(active_env),
+        config.jobs(jobs, active_env),
+        config.http_defaults(active_env),
+    ) {
+        (Ok(vars), Ok(jobs), Ok(http)) => (Arc::new(vars), jobs, http),
+        (Err(message), _, _) | (_, Err(message), _) | (_, _, Err(message)) => {
+            eprintln!("error: {message}");
+            return ExitCode::UserError;
+        }
+    };
+
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let front = match front::run(path, ResolveMode::DryRun, None) {
+    let front = match front::run(path, ResolveMode::DryRun, None, Arc::clone(&config_vars)) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
     };
@@ -158,8 +173,7 @@ pub fn execute(
         return front::no_scenarios_matched();
     }
     let status_line = format!(
-        "running {selected} scenario(s) with {} job(s) — run {}",
-        config.jobs(jobs),
+        "running {selected} scenario(s) with {effective_jobs} job(s) — run {}",
         front.run_id
     );
     if output_json {
@@ -170,16 +184,12 @@ pub fn execute(
 
     let run_config = RunConfig {
         run_id: Arc::clone(&front.run_id),
-        jobs: config.jobs(jobs),
+        jobs: effective_jobs,
         default_batch_budget: Duration::from_millis(
-            config
-                .http_defaults()
-                .timeout_ms
-                .saturating_mul(4)
-                .max(60_000),
+            http_defaults.timeout_ms.saturating_mul(4).max(60_000),
         ),
         secrets,
-        http: config.http_defaults(),
+        http: http_defaults,
     };
     let engines = Arc::new(registry::engines());
     let summary = runner::run(specs, &engines, &store, &run_config, &sink, &cancel);
@@ -322,6 +332,7 @@ fn build_specs(
             let bound = scenario.bound.clone();
             let packs = Arc::clone(&front.packs);
             let env = Arc::clone(&front.env);
+            let config_vars = Arc::clone(&front.config_vars);
             let kind_to_engine = Arc::clone(&front.kind_to_engine);
             let run_id = Arc::clone(&front.run_id);
             let feature_file = Arc::clone(&feature_arc);
@@ -333,6 +344,7 @@ fn build_specs(
                     packs: &packs,
                     kind_to_engine: &kind_to_engine,
                     env: &env,
+                    config_vars: &config_vars,
                     run_id: &run_id,
                     world,
                     mode: ResolveMode::Strict,

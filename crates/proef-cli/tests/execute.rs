@@ -1,5 +1,5 @@
 //! The execution integration suite (M3 acceptance, TESTING-STRATEGY):
-//! the ported 50x corpus runs green against the fixture with prose unchanged
+//! the reference corpus runs green against the fixture with prose unchanged
 //! (US-1); failures map to feature line + artifact span; `optional:` warns and
 //! continues; World/global chains across scenarios; cookies survive batch
 //! splits; runaway scenarios are bounded; parallel runs are deterministic
@@ -69,10 +69,10 @@ fn latest_run_dir(cwd: &Path) -> PathBuf {
     runs.pop().unwrap()
 }
 
-/// US-1 + ADR-0010: the ported corpus runs green; the executed artifacts are
+/// US-1 + ADR-0010: the reference corpus runs green; the executed artifacts are
 /// byte-identical to a separate emission with the same run id and env.
 #[test]
-fn ported_50x_corpus_runs_green_with_same_bytes_artifacts() {
+fn reference_corpus_runs_green_with_same_bytes_artifacts() {
     let fixture = Fixture::start().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let corpus = workspace_root().join("tests/features");
@@ -182,7 +182,7 @@ fn failure_maps_to_feature_line_and_artifact_span() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${baseURL}/health\n          HTTP 500\n",
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${baseURL}/health\n          HTTP 500\n",
     )
     .unwrap();
 
@@ -237,7 +237,7 @@ fn optional_failure_warns_and_continues() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  probe:\n    match: the flaky probe runs\n    steps:\n      - name: doomed but optional\n        optional: true\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/missing\n          HTTP 200\n      - name: the real check\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n",
+        "macros:\n  probe:\n    match: the flaky probe runs\n    steps:\n      - name: doomed but optional\n        optional: true\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/missing\n          HTTP 200\n      - name: the real check\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n",
     )
     .unwrap();
 
@@ -256,12 +256,12 @@ fn world_chains_globals_across_scenarios_and_runs() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("suite/case.feature"),
-        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: a — capture the client id\n    When the client is resolved\n  Scenario: b — reuse the remembered id\n    When the remembered client is fetched\n",
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: a — capture the record id\n    When the record is resolved\n  Scenario: b — reuse the remembered id\n    When the remembered record is fetched\n",
     )
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  resolve:\n    match: the client is resolved\n    steps:\n      - saveAs: { clientId: global }\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/clients\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          clientId: jsonpath \"$[0].id\"\n  fetch:\n    match: the remembered client is fetched\n    steps:\n      - hurl: |\n          GET ${baseURL}/api/v1/clients/${global:clientId}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n",
+        "macros:\n  resolve:\n    match: the record is resolved\n    steps:\n      - saveAs: { recordId: global }\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/records\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          recordId: jsonpath \"$[0].id\"\n  fetch:\n    match: the remembered record is fetched\n    steps:\n      - hurl: |\n          GET ${baseURL}/api/v1/records/${global:recordId}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n",
     )
     .unwrap();
 
@@ -271,7 +271,7 @@ fn world_chains_globals_across_scenarios_and_runs() {
         .assert()
         .code(0);
     let state = std::fs::read_to_string(cwd.path().join(".proef-state.json")).unwrap();
-    assert!(state.contains("\"clientId\": \"c-1\""), "{state}");
+    assert!(state.contains("\"recordId\": \"r-1\""), "{state}");
 
     // ADR-0010 executed-bytes: the run-dir artifact holds the *strict*
     // lower-time resolution — scenario b's URL carries the promoted value.
@@ -286,7 +286,7 @@ fn world_chains_globals_across_scenarios_and_runs() {
         .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
         .collect();
     assert!(
-        executed.contains("/api/v1/clients/c-1"),
+        executed.contains("/api/v1/records/r-1"),
         "executed artifact must carry the strict-resolved global: {executed}"
     );
     // Without the persisted state a dry-run emission cannot know the value
@@ -303,7 +303,7 @@ fn world_chains_globals_across_scenarios_and_runs() {
         .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
         .collect();
     assert!(
-        !emitted.contains("c-1"),
+        !emitted.contains("r-1"),
         "a dry-run emission cannot know run-time globals: {emitted}"
     );
 }
@@ -322,7 +322,7 @@ fn cookies_survive_batch_splits() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  cookies:\n    match: the cookie session is exercised\n    steps:\n      - name: obtain the session cookie\n        hurl: |\n          GET ${baseURL}/cookie/set\n          HTTP 200\n      - name: unrelated optional probe (forces a batch split)\n        optional: true\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n      - name: cookie must still be sent after the split\n        hurl: |\n          GET ${baseURL}/cookie/check\n          HTTP 200\n",
+        "macros:\n  cookies:\n    match: the cookie session is exercised\n    steps:\n      - name: obtain the session cookie\n        hurl: |\n          GET ${baseURL}/cookie/set\n          HTTP 200\n      - name: unrelated optional probe (forces a batch split)\n        optional: true\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n      - name: cookie must still be sent after the split\n        hurl: |\n          GET ${baseURL}/cookie/check\n          HTTP 200\n",
     )
     .unwrap();
 
@@ -348,7 +348,7 @@ fn runaway_scenarios_are_bounded() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  slow:\n    match: the slow endpoint is called\n    steps:\n      - hurl: |\n          GET ${baseURL}/slow\n          HTTP 200\n",
+        "macros:\n  slow:\n    match: the slow endpoint is called\n    steps:\n      - hurl: |\n          GET ${baseURL}/slow\n          HTTP 200\n",
     )
     .unwrap();
 
@@ -379,7 +379,7 @@ fn event_stream_snapshot_reference_run() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  cookies:\n    match: the cookie session is exercised\n    steps:\n      - name: obtain the session cookie\n        hurl: |\n          GET ${baseURL}/cookie/set\n          HTTP 200\n      - name: optional probe (forces a split)\n        optional: true\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n      - name: cookie survives the split\n        hurl: |\n          GET ${baseURL}/cookie/check\n",
+        "macros:\n  cookies:\n    match: the cookie session is exercised\n    steps:\n      - name: obtain the session cookie\n        hurl: |\n          GET ${baseURL}/cookie/set\n          HTTP 200\n      - name: optional probe (forces a split)\n        optional: true\n        hurl: |\n          GET ${baseURL}/health\n          HTTP 200\n      - name: cookie survives the split\n        hurl: |\n          GET ${baseURL}/cookie/check\n",
     )
     .unwrap();
 
@@ -411,7 +411,7 @@ fn encrypted_secret_store_drives_a_run() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  secured:\n    match: the secured search runs\n    steps:\n      - hurl: |\n          GET ${baseURL}/api/v1/admin/search/clients\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n",
+        "macros:\n  secured:\n    match: the secured search runs\n    steps:\n      - hurl: |\n          GET ${baseURL}/api/v1/admin/search/records\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n",
     )
     .unwrap();
 
@@ -498,7 +498,7 @@ fn auth_rejection_and_malformed_bodies_are_exercised() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  denied:\n    match: an invalid token is rejected\n    steps:\n      - name: wrong bearer is refused with the 401 contract\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/clients\n          Authorization: Bearer wrong-token\n          HTTP 401\n          [Asserts]\n          jsonpath \"$.error\" == \"unauthorized\"\n",
+        "macros:\n  denied:\n    match: an invalid token is rejected\n    steps:\n      - name: wrong bearer is refused with the 401 contract\n        hurl: |\n          GET ${baseURL}/api/v1/admin/search/records\n          Authorization: Bearer wrong-token\n          HTTP 401\n          [Asserts]\n          jsonpath \"$.error\" == \"unauthorized\"\n",
     )
     .unwrap();
     proef_in(cwd.path(), &fixture)
@@ -515,7 +515,7 @@ fn auth_rejection_and_malformed_bodies_are_exercised() {
     .unwrap();
     std::fs::write(
         broken.path().join("suite/packs/p.yaml"),
-        "templates:\n  broken:\n    match: the malformed payload is parsed\n    steps:\n      - name: jsonpath over a truncated body\n        hurl: |\n          GET ${baseURL}/malformed\n          HTTP 200\n          [Asserts]\n          jsonpath \"$.broken\" == \"x\"\n",
+        "macros:\n  broken:\n    match: the malformed payload is parsed\n    steps:\n      - name: jsonpath over a truncated body\n        hurl: |\n          GET ${baseURL}/malformed\n          HTTP 200\n          [Asserts]\n          jsonpath \"$.broken\" == \"x\"\n",
     )
     .unwrap();
     let assert = proef_in(broken.path(), &fixture)
@@ -543,7 +543,7 @@ fn explain_summarizes_the_latest_run() {
     .unwrap();
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${baseURL}/health\n          HTTP 500\n",
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${baseURL}/health\n          HTTP 500\n",
     )
     .unwrap();
     proef_in(cwd.path(), &fixture)
@@ -594,9 +594,8 @@ fn harness_lists_and_runs_scenarios() {
     assert!(list.status.success(), "{listing}");
     assert_eq!(listing.matches(": test").count(), 12, "{listing}");
     assert!(
-        listing.contains("500-api-message::A message sent via the API appears in the client feed")
-            || listing
-                .contains("500_api_message::A message sent via the API appears in the client feed"),
+        listing.contains("500-api-note::A note posted via the API appears on the board")
+            || listing.contains("500_api_note::A note posted via the API appears on the board"),
         "{listing}"
     );
 
@@ -646,14 +645,14 @@ fn secret_valued_captures_never_promote_to_global_state() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("suite/case.feature"),
-        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: leak guard\n    When the client is fetched\n",
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: leak guard\n    When the record is fetched\n",
     )
     .unwrap();
-    // `clientRef`'s secret value is `c-1` — exactly what the endpoint echoes
+    // `recordRef`'s secret value is `r-1` — exactly what the endpoint echoes
     // back as `$.id`, so the capture is secret-valued by construction.
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
-        "templates:\n  fetch:\n    match: the client is fetched\n    steps:\n      - saveAs: { leaked: global }\n        hurl: |\n          GET ${baseURL}/api/v1/clients/${secret:clientRef}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          leaked: jsonpath \"$.id\"\n",
+        "macros:\n  fetch:\n    match: the record is fetched\n    steps:\n      - saveAs: { leaked: global }\n        hurl: |\n          GET ${baseURL}/api/v1/records/${secret:recordRef}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          leaked: jsonpath \"$.id\"\n",
     )
     .unwrap();
 
@@ -662,7 +661,7 @@ fn secret_valued_captures_never_promote_to_global_state() {
         .current_dir(cwd.path())
         .env("PROEF_BASE_URL", &fixture.base_url)
         .env("PROEF_SECRET_APITOKEN", API_TOKEN)
-        .env("PROEF_SECRET_CLIENTREF", "c-1")
+        .env("PROEF_SECRET_RECORDREF", "r-1")
         .args(["test", "suite", "--jobs", "1"])
         .assert()
         .code(0);
@@ -676,7 +675,7 @@ fn secret_valued_captures_never_promote_to_global_state() {
     if state.exists() {
         let text = std::fs::read_to_string(&state).unwrap();
         assert!(
-            !text.contains("leaked") && !text.contains("c-1"),
+            !text.contains("leaked") && !text.contains("r-1"),
             "secret-valued capture persisted: {text}"
         );
     }

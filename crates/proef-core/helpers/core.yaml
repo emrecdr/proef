@@ -1,6 +1,6 @@
 # proef built-in macro pack (embedded at build time — TECH-SPEC §4.1).
 # Generic assert vocabulary usable by every suite.
-templates:
+macros:
   expectStatus:
     params: [status]
     match: "the response status is {status}"

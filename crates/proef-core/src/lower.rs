@@ -31,6 +31,9 @@ pub struct LowerCtx<'a> {
     pub kind_to_engine: &'a BTreeMap<String, String>,
     /// Injected environment snapshot.
     pub env: &'a BTreeMap<String, String>,
+    /// Injected `proef.toml` config scope (`${url:key}` / `${vars:key}`), keyed
+    /// `"<namespace>:<key>"` — the active `[env.<name>]` already deep-merged in.
+    pub config_vars: &'a BTreeMap<String, String>,
     /// Injected run identifier.
     pub run_id: &'a str,
     /// World (globals read at lower time).
@@ -163,6 +166,7 @@ fn resolve_directives(
             defaults: &empty,
             directives: &resolved, // earlier directives are visible to later ones
             env: ctx.env,
+            config_vars: ctx.config_vars,
             run_id: ctx.run_id,
             world: ctx.world,
             mode: ctx.mode,
@@ -225,6 +229,7 @@ fn expand_macro(
             defaults: &macro_.defaults,
             directives,
             env: ctx.env,
+            config_vars: ctx.config_vars,
             run_id: ctx.run_id,
             world: ctx.world,
             mode: ctx.mode,
@@ -733,7 +738,7 @@ mod tests {
         validate: None,
     }];
 
-    const PACK: &str = r#"templates:
+    const PACK: &str = r#"macros:
   auth:
     params: [token]
     steps:
@@ -753,7 +758,7 @@ mod tests {
           GET ${baseURL}/search?q=${term}
           HTTP 200
           [Captures]
-          clientId: jsonpath "$[0].id"
+          recordId: jsonpath "$[0].id"
   checkHealth:
     match: the service is healthy
     steps:
@@ -794,6 +799,7 @@ mod tests {
         packs: &'a PackSet,
         kind_to_engine: &'a BTreeMap<String, String>,
         env: &'a BTreeMap<String, String>,
+        config_vars: &'a BTreeMap<String, String>,
         world: &'a World,
     ) -> LowerCtx<'a> {
         LowerCtx {
@@ -801,6 +807,7 @@ mod tests {
             packs,
             kind_to_engine,
             env,
+            config_vars,
             run_id: "run-0001",
             world,
             mode: ResolveMode::DryRun,
@@ -813,10 +820,18 @@ mod tests {
         let kind_to_engine: BTreeMap<String, String> =
             [("hurl".to_owned(), "hurl".to_owned())].into();
         let env = BTreeMap::new();
+        let config_vars = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
         )
         .unwrap();
 
@@ -873,10 +888,18 @@ mod tests {
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
         let kind_to_engine = BTreeMap::new();
         let env = BTreeMap::new();
+        let config_vars = BTreeMap::new();
         let world = World::default();
         let errs = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
         )
         .unwrap_err();
         assert_eq!(errs[0].code, "proef::lower::then_before_when");
@@ -895,7 +918,7 @@ mod tests {
             &[PackSource {
                 name: "alt.yaml".into(),
                 text: Arc::from(
-                    "templates:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${baseURL}/item\"\n          checks: [\"${baseURL}\", 7]\n",
+                    "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${baseURL}/item\"\n          checks: [\"${baseURL}\", 7]\n",
                 ),
             }],
             ALT_KINDS,
@@ -910,10 +933,18 @@ mod tests {
         let kind_to_engine: BTreeMap<String, String> =
             [("alt".to_owned(), "alt".to_owned())].into();
         let env = BTreeMap::new();
+        let config_vars = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
         )
         .unwrap();
         let StepPayload::Structured(value) = &lowered.batches[0].steps[0].payload else {
@@ -933,7 +964,7 @@ mod tests {
             &[PackSource {
                 name: "multi.yaml".into(),
                 text: Arc::from(
-                    "templates:\n  pair:\n    match: both calls run\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n          [Asserts]\n          status == 200\n          GET http://x/b\n  expectStatus:\n    params: [status]\n    match: \"the response status is {status}\"\n    expect:\n      - status: \"${status}\"\n",
+                    "macros:\n  pair:\n    match: both calls run\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n          [Asserts]\n          status == 200\n          GET http://x/b\n  expectStatus:\n    params: [status]\n    match: \"the response status is {status}\"\n    expect:\n      - status: \"${status}\"\n",
                 ),
             }],
             KINDS,
@@ -948,10 +979,18 @@ mod tests {
         let kind_to_engine: BTreeMap<String, String> =
             [("hurl".to_owned(), "hurl".to_owned())].into();
         let env = BTreeMap::new();
+        let config_vars = BTreeMap::new();
         let world = World::default();
         let lowered = lower(
             &scenario,
-            &ctx(&feature, &packs, &kind_to_engine, &env, &world),
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
         )
         .unwrap();
         let StepPayload::HurlEntries(text) = &lowered.batches[0].steps[0].payload else {

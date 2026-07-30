@@ -286,17 +286,17 @@ mod tests {
     fn literal_pattern_matches_exactly() {
         assert_eq!(
             match_pattern(
-                "the client feed is activated and ready",
-                "the client feed is activated and ready"
+                "the activity channel is activated and ready",
+                "the activity channel is activated and ready"
             ),
             Some(BTreeMap::new())
         );
         assert_eq!(
-            match_pattern("I create a client", "I create a clients"),
+            match_pattern("I create a record", "I create a records"),
             None
         );
         assert_eq!(
-            match_pattern("I create a client", "so I create a client"),
+            match_pattern("I create a record", "so I create a record"),
             None
         );
     }
@@ -304,18 +304,18 @@ mod tests {
     #[test]
     fn captures_split_on_leftmost_literal() {
         let args = match_pattern(
-            "the client {name} is resolved",
-            "the client Bakker-${run:id} is resolved",
+            "the record {name} is resolved",
+            "the record W-${run:id} is resolved",
         )
         .unwrap();
-        assert_eq!(args["name"], "Bakker-${run:id}");
+        assert_eq!(args["name"], "W-${run:id}");
     }
 
     #[test]
     fn multi_capture_binds_in_order() {
         let args =
-            match_pattern("I search {index} for {term}", "I search clients for Jansen").unwrap();
-        assert_eq!(args["index"], "clients");
+            match_pattern("I search {index} for {term}", "I search records for Jansen").unwrap();
+        assert_eq!(args["index"], "records");
         assert_eq!(args["term"], "Jansen");
     }
 
@@ -429,8 +429,8 @@ mod tests {
             /// noise survives bind → args intact (modulo the documented trim).
             #[test]
             fn unquoted_round_trip(value in "[a-zA-Z0-9_-]{1,30}") {
-                let text = format!("the client {value} is resolved");
-                let args = match_pattern("the client {name} is resolved", &text).unwrap();
+                let text = format!("the record {value} is resolved");
+                let args = match_pattern("the record {name} is resolved", &text).unwrap();
                 prop_assert_eq!(args["name"].as_str(), value.as_str());
             }
         }

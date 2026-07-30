@@ -11,9 +11,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         8
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 11,
-        "text": "the client environment is provisioned"
+        "text": "the workspace is provisioned"
       },
       "optional": true,
       "captures": [],
@@ -26,9 +26,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         16
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 11,
-        "text": "the client environment is provisioned"
+        "text": "the workspace is provisioned"
       },
       "optional": false,
       "captures": [
@@ -43,13 +43,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         25
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 12,
-        "text": "the client feed is activated and ready"
+        "text": "the activity channel is activated and ready"
       },
       "optional": false,
       "captures": [
-        "feedId"
+        "channelId"
       ],
       "batch": 1,
       "step": 1
@@ -60,9 +60,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         35
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 12,
-        "text": "the client feed is activated and ready"
+        "text": "the activity channel is activated and ready"
       },
       "optional": false,
       "captures": [],
@@ -75,13 +75,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         44
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 13,
-        "text": "the client Bakker-${run:id} is resolved"
+        "text": "the record W-${run:id} is resolved"
       },
       "optional": false,
       "captures": [
-        "clientId"
+        "recordId"
       ],
       "batch": 1,
       "step": 3
@@ -92,9 +92,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         51
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 13,
-        "text": "the client Bakker-${run:id} is resolved"
+        "text": "the record W-${run:id} is resolved"
       },
       "optional": false,
       "captures": [],
@@ -107,13 +107,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         60
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 14,
-        "text": "the relative places a video call"
+        "text": "a member posts a note to the board"
       },
       "optional": false,
       "captures": [
-        "callId"
+        "noteId"
       ],
       "batch": 1,
       "step": 5
@@ -124,9 +124,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         71
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 15,
-        "text": "the call feed shows the incoming call"
+        "text": "the service records a delivery"
       },
       "optional": false,
       "captures": [],
@@ -136,32 +136,17 @@ expression: "String::from_utf8(content_a).unwrap()"
     {
       "hurl_lines": [
         74,
-        76
+        81
       ],
       "feature": {
-        "file": "tests/features/503_api_call.feature",
+        "file": "tests/features/500_api_note.feature",
         "line": 16,
-        "text": "the call can be denied via the API"
+        "text": "the board shows the note"
       },
       "optional": false,
       "captures": [],
       "batch": 1,
       "step": 7
-    },
-    {
-      "hurl_lines": [
-        79,
-        83
-      ],
-      "feature": {
-        "file": "tests/features/503_api_call.feature",
-        "line": 16,
-        "text": "the call can be denied via the API"
-      },
-      "optional": false,
-      "captures": [],
-      "batch": 1,
-      "step": 8
     }
   ]
 }

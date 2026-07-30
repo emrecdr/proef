@@ -1,0 +1,16 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+# proef artifact — A synthetic name searches cleanly
+# source: tests/features/520_api_breadth.feature:21
+# replay: hurl --test 520-api-breadth--a-synthetic-name-searches-cleanly.hurl --variables-file 520-api-breadth--a-synthetic-name-searches-cleanly.vars --secret apiToken=<value>
+
+# tests/features/520_api_breadth.feature:22 — the operator searches for ${fake:lastName} (search records for Jones)
+GET http://127.0.0.1:8787/api/v1/admin/search/records
+Authorization: Bearer {{apiToken}}
+[Query]
+q: Jones
+HTTP *
+[Asserts]
+status == 200

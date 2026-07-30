@@ -49,6 +49,9 @@ pub struct FrontEnd {
     pub packs: Arc<PackSet>,
     /// The injected environment snapshot.
     pub env: Arc<BTreeMap<String, String>>,
+    /// The injected `proef.toml` config scope (`${url:…}` / `${vars:…}`), with
+    /// the active `[env.<name>]` already deep-merged in by the caller.
+    pub config_vars: Arc<BTreeMap<String, String>>,
     /// Step kind prefix → engine id.
     pub kind_to_engine: Arc<BTreeMap<String, String>>,
     /// The run id used for this front-end pass.
@@ -65,7 +68,12 @@ pub struct FrontEnd {
 /// `run_id` overrides the generated uuid-v7 (deterministic artifact hand-off).
 // One cohesive listing of the pipeline; splitting hides the stage order.
 #[allow(clippy::too_many_lines)]
-pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<FrontEnd, FrontError> {
+pub fn run(
+    path: &Path,
+    mode: ResolveMode,
+    run_id: Option<String>,
+    config_vars: Arc<BTreeMap<String, String>>,
+) -> Result<FrontEnd, FrontError> {
     let engines = registry::engines();
     let kinds: Vec<proef_core::engine::StepKindSpec> = engines
         .iter()
@@ -132,6 +140,7 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             packs: &packs,
             kind_to_engine: &kind_to_engine,
             env: &env,
+            config_vars: &config_vars,
             run_id: &run_id,
             world: &world,
             mode,
@@ -173,6 +182,7 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             features,
             packs,
             env,
+            config_vars,
             kind_to_engine,
             run_id,
             packs_loaded,

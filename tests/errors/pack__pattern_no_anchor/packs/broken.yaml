@@ -1,4 +1,4 @@
-templates:
+macros:
   bare:
     params: [a]
     match: "{a}"

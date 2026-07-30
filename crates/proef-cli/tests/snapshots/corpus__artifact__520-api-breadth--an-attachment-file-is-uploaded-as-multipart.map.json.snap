@@ -8,12 +8,12 @@ expression: "String::from_utf8(content_a).unwrap()"
     {
       "hurl_lines": [
         6,
-        15
+        11
       ],
       "feature": {
         "file": "tests/features/520_api_breadth.feature",
-        "line": 7,
-        "text": "the relative sends a custom message"
+        "line": 18,
+        "text": "the attachment file is uploaded"
       },
       "optional": false,
       "captures": [],
@@ -22,12 +22,12 @@ expression: "String::from_utf8(content_a).unwrap()"
     },
     {
       "hurl_lines": [
-        15,
-        15
+        11,
+        11
       ],
       "feature": {
         "file": "tests/features/520_api_breadth.feature",
-        "line": 11,
+        "line": 19,
         "text": "the response status is 201"
       },
       "optional": false,

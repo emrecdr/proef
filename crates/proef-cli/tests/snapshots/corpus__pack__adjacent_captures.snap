@@ -6,7 +6,7 @@ proef::pack::adjacent_captures
 
   × macro `glued`: adjacent captures `{a}{b}` are ambiguous — put literal text between them
    ╭─[tests/errors/pack__adjacent_captures/packs/broken.yaml:2:3]
- 1 │ templates:
+ 1 │ macros:
  2 │   glued:
    ·   ─────
  3 │     params: [a, b]

@@ -164,7 +164,7 @@ mod tests {
     #[test]
     fn events_round_trip_through_jsonl() {
         let event = Event::StepFinished {
-            scenario: Arc::from("Search finds a client"),
+            scenario: Arc::from("Search finds a record"),
             engine: Arc::from("http"),
             step: StepRef {
                 file: Arc::from("tests/features/501_search.feature"),
@@ -174,7 +174,7 @@ mod tests {
             status: Status::Passed,
             attempts: 1,
             duration_ms: 42,
-            captures: vec!["clientId".to_owned()],
+            captures: vec!["recordId".to_owned()],
             detail: None,
         };
         let json = serde_json::to_string(&event).unwrap_or_default();

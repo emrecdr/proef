@@ -1,4 +1,4 @@
-templates:
+macros:
   forever:
     match: I retry forever
     steps:

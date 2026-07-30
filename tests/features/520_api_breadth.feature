@@ -3,21 +3,21 @@
 @api @breadth
 Feature: API — breadth (bodies, forms, uploads, fakes)
 
-  Scenario: A custom message body is sent from a docstring
-    When the relative sends a custom message
+  Scenario: A custom note body is sent from a docstring
+    When a member posts a custom note
       """
-      {"body": "Fijne verjaardag!", "priority": "high"}
+      {"body": "A custom note body", "priority": "high"}
       """
     Then the response status is 201
 
   Scenario: A profile form is submitted
-    When the profile form is submitted for Bakker
+    When the profile form is submitted for Acme
     Then the response looks healthy
 
-  Scenario: A photo file is uploaded as multipart
-    When the photo file is uploaded
+  Scenario: An attachment file is uploaded as multipart
+    When the attachment file is uploaded
     Then the response status is 201
 
-  Scenario: A synthetic client name searches cleanly
-    When the admin searches for ${fake:lastName}
+  Scenario: A synthetic name searches cleanly
+    When the operator searches for ${fake:lastName}
     Then the response status is 200

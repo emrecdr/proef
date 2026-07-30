@@ -6,10 +6,10 @@ expression: "String::from_utf8(content_a).unwrap()"
 # source: tests/features/520_api_breadth.feature:13
 # replay: hurl --test 520-api-breadth--a-profile-form-is-submitted.hurl
 
-# tests/features/520_api_breadth.feature:14 — the profile form is submitted for Bakker
+# tests/features/520_api_breadth.feature:14 — the profile form is submitted for Acme
 POST http://127.0.0.1:8787/form
 [Form]
-lastName: Bakker
+name: Acme
 city: Den Haag
 HTTP *
 [Asserts]

@@ -1,4 +1,4 @@
-templates:
+macros:
   move:
     params: [x]
     match: move {x} to {x}

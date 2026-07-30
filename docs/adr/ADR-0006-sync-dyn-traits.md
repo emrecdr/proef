@@ -4,9 +4,9 @@
 
 ## Context
 
-All planned engines are blocking at the edge: hurl is synchronous libcurl; adb_client is
-blocking; a CDP engine can be driven blocking or
-async. Verified ecosystem facts (mid-2026, stable 1.97): `async fn` in traits is stable
+All planned engines are blocking at the edge: hurl is synchronous libcurl, and a future
+non-hurl engine's driver can be driven blocking — even one that also offers an
+async API. Verified ecosystem facts (mid-2026, stable 1.97): `async fn` in traits is stable
 for static dispatch but **still not dyn-compatible** (AFIDT is nightly-only, no
 timeline; RTN unstable); `maybe-async`'s sync/async toggle is a non-additive cargo
 feature with documented ecosystem breakage. Calls across the seam are coarse
@@ -34,5 +34,5 @@ acceptable at e2e-suite scale.
 Async-first trait via `async-trait` — boxes every call, forces an executor decision on
 every consumer, and models nothing real while engines block. `maybe-async` dual API —
 non-additive feature hazard. Callback/actor-per-engine threading model — more machinery
-than batch dispatch needs; revisit only if an engine genuinely multiplexes (e.g. CDP
-event streams), and then *inside* that engine crate, invisible to the seam.
+than batch dispatch needs; revisit only if an engine genuinely multiplexes (e.g. a driver
+with concurrent event streams), and then *inside* that engine crate, invisible to the seam.

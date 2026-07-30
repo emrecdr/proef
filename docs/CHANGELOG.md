@@ -8,12 +8,58 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
-- Documentation set completing the corpus: `docs/DIAGNOSTICS.md` (all 54
+- **External config & environments (`proef.toml`, ADR-0012).** New `[url]` and
+  `[vars]` tables hold non-secret suite variables, referenced in packs as
+  `${url:<key>}` / `${vars:<key>}`; `[env.<name>.<section>]` profiles deep-merge
+  per-environment overrides over the base tables (`url`/`vars`/`http`/`run`).
+  `proef test --env <name>` (or `PROEF_ENV`) selects the active environment.
+  Feature files no longer need a `# baseURL:` directive — variables live outside
+  the tests. Adds the `proef::resolve::missing_config_var` diagnostic.
+- **Default suite path.** `[run] suite` sets the path `proef test`/`flows`/
+  `artifacts` use when given none (falling back to the `tests/` convention), so
+  `proef test` runs with no argument. An explicit path still wins.
+- Documentation set completing the corpus: `docs/DIAGNOSTICS.md` (all 57
   diagnostic codes, corpus coverage marked), `docs/CONFIG.md` (`proef.toml`
   reference), `docs/EVENTS.md` (the `events.jsonl` wire schema for CI),
   `docs/TROUBLESHOOTING.md` (exit codes, glyph legend, frequent failures),
-  root `CONTRIBUTING.md` and `SECURITY.md` (threat model, private
+  `docs/CONTRIBUTING.md` and `docs/SECURITY.md` (threat model, private
   vulnerability reporting), and an IDE-integration section in AUTHORING.
+- `proef test --scenario-file <file>`: scope a `--scenario` name filter to
+  one feature file (duplicate scenario names across files stay disjoint;
+  the libtest-mimic harness uses it to keep the Trial↔scenario bijection).
+- `scenario_finished` events now carry a `file` field — the run-wide scenario
+  identity alongside `scenario` (additive, ADR-0008; absent in older records).
+- Diagnostics `pack::pattern_duplicate_capture` (a `{capture}` written twice)
+  and `lower::kind_unrouted` (internal registry-drift safety net).
+
+### Changed
+
+- `--output` is a typed value: an unknown format (e.g. a `jsonl` typo) is a
+  user error (exit 2) instead of silently degrading to the human report.
+- `--watch` reruns only on `.feature`/`.yaml`/`.yml` changes — the watched
+  tree can now contain proef's own run output without a self-trigger loop.
+- The example corpus (`tests/features/`) and the dev fixture use a neutral
+  workspace / activity-board domain (record · note · event · attachment ·
+  session · channel) — no product-specific vocabulary.
+- `CHANGELOG.md`, `CONTRIBUTING.md`, and `SECURITY.md` moved under `docs/`
+  (root keeps only `README.md` and `CLAUDE.md`).
+- **Pack root key renamed `templates:` → `macros:`** (ADR-0004 amendment): one
+  canonical spelling for the prose→engine binding layer (the entry is a *macro*,
+  the file a *pack*). No `templates:` alias — packs using the old key fail to load.
+
+### Fixed
+
+- Optional-batch error path no longer double-reports later batches into the
+  JSONL run record (ADR-0008); `saveAs: global` promotions are no longer
+  dropped when the store lock is poisoned; the event sink recovers from a
+  poisoned lock instead of truncating the record.
+- `expect:` merge scopes to the last entry (fence-aware); `[Options]`
+  injection can no longer duplicate a section; the `use:` graph walk is
+  node-linear instead of exponential on multi-edge chains.
+- The embedded-hurl version lockstep is now asserted by a test; the encrypted
+  secret store maps user vs. environment faults to exit 2 vs. 3 (ADR-0009);
+  run.log / artifact-write / malformed-`proef.toml` failures surface instead
+  of being swallowed.
 
 ## [0.3.1] - 2026-07-29 (secret-management hardening)
 

@@ -110,10 +110,14 @@ engine-hurl via embedded `run_entries` with buffered I/O; per-entry `[Options]` 
 batch defaults (verified); World seeding/merge-back; cooperative cancellation + budgets.
 **Artifacts:** canonical emit, sidecars, vars files, `# optional` markers. **Reporting:**
 event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotation.
-**CLI:** `test` (`--dry-run --tags --jobs --junit --output json --watch`), `flows`,
-`artifacts`, `schema [--add-to]`, `secret set|list`, `explain`, `doctor`. **Config:**
-defaults < `proef.toml` < flags; secrets via `PROEF_SECRET_<NAME>` env override →
-the encrypted store (`proef secret set [--value]`).
+**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json --watch
+--scenario[-file]`; path optional — `[run] suite` then the `tests/` convention), `flows`,
+`artifacts`, `schema [--add-to]`, `secret set|list`, `explain`, `doctor`. **Config
+(`proef.toml`, ADR-0012):** runner settings (`[run]`/`[http]`) + suite variables
+(`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
+(`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via
+`--env`/`PROEF_ENV`) < flags. Secrets via `PROEF_SECRET_<NAME>` env override → the
+encrypted store (`proef secret set [--value]`), never in `proef.toml`.
 
 ## 7. Non-functional requirements
 
@@ -140,7 +144,7 @@ port-fidelity bar. M-2: artifact parity — stock hurl CLI verdicts match proef 
 every artifact in the integration suite (already spike-proven; kept as a CI invariant
 until M4, then by construction). M-3: `--dry-run` catches 100% of the seeded
 pack/feature error corpus with line-accurate diagnostics. M-4: one hurl upstream release
-absorbed via the canary runbook with zero suite regressions. M-5: engine-web lands (M6)
+absorbed via the canary runbook with zero suite regressions. M-5: a future non-hurl engine lands (M6)
 with `git diff --stat proef-core` empty.
 
 ## 9. Release phasing

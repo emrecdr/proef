@@ -1,4 +1,4 @@
-templates:
+macros:
   one:
     match: I do the thing
     steps:

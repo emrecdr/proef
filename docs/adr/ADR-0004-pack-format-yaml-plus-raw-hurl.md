@@ -22,20 +22,20 @@ as the **thin binding skeleton**: macro name, `match:` pattern, `params`, `defau
 
 ```yaml
 steps:
-  - name: Resolve the client surname to its id
+  - name: Resolve the record name to its id
     hurl: |
-      GET ${baseURL}/api/v1/admin/search/clients
+      GET ${baseURL}/api/v1/admin/search/records
       Authorization: Bearer ${secret:apiToken}
       [Query]
-      q: ${lastName}
+      q: ${name}
       HTTP 200
       [Captures]
-      clientId: jsonpath "$[0].id"
+      recordId: jsonpath "$[0].id"
 ```
 
 Blocks are validated at pack load by `parse_hurl_file` after `${…}` lowering — real hurl
-syntax errors with real spans. Structured step trees are *reserved for future non-hurl
-engines* (`web:`/`tablet:`), which have no native text DSL. Assert-only macros use
+syntax errors with real spans. Structured step trees are *reserved for a future non-hurl
+engine*, which would have no native text DSL. Assert-only macros use
 `expect:` (merged into the previous request entry — the Then-step rule).
 
 ## Consequences
@@ -56,3 +56,12 @@ over-architecture at this size. Rhai/Lua — packs become programs; kills static
 validation and `--dry-run` guarantees. Custom DSL — a parser/LSP/formatter to own
 forever. Karate-style callable feature files — collapses the macro/test distinction;
 a typed params/defaults/validation model is strictly stronger.
+
+## Amendment (2026-07-30): the top-level key is `macros:`
+
+The pack root key was renamed `templates:` → `macros:` to end a three-way naming
+split (the YAML key said `templates`, the docs and internal model said *macro*, the
+file/dir said *pack*). The entry is now uniformly a **macro**; a **pack** is a file of
+macros. Pure rename — format, schema, and semantics are unchanged (error-corpus
+snapshots regenerated, diff verified as `templates:`→`macros:` only). No `templates:`
+alias is kept — one canonical spelling (golden rule: one way to do one thing).

@@ -7,7 +7,7 @@ proef::bind::missing_param
   × macro `create` needs `firstName` — add a `{firstName}` capture, a data-table row, or a default
    ╭─[tests/errors/bind__missing_param/case.feature:3:5]
  2 │   Scenario: S
- 3 │     When I create a client
+ 3 │     When I create a record
    ·     ──────────────────────
    ╰────
 

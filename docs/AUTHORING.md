@@ -20,14 +20,14 @@ file. Convention: `# baseURL:` for the target host.
 selects scenarios carrying any of them (a selection matching nothing is an
 error, not a silent green run).
 
-## Macros (`templates:` in a pack)
+## Macros (`macros:` in a pack)
 
 ```yaml
-templates:
+macros:
   name:
-    match: the client {name} is resolved   # sentence pattern (optional)
+    match: the record {name} is resolved   # sentence pattern (optional)
     params: [name]                         # declared parameters
-    defaults: { index: clients }           # defaults for optional params
+    defaults: { index: records }           # defaults for optional params
     description: One line for humans.
     tags: [Admin]
     steps: [...]                           # OR expect: [...] — never both
@@ -51,9 +51,9 @@ steps:
     retry: { count: 10, interval_ms: 300 }   # finite; 1..=10000
     delay: 250                        # ms before the request (capped at 1 hour)
     when: "${env:RUN_SLOW:-}"         # skips when empty or false/0 after resolution
-    saveAs: { clientId: global }      # promote a capture to the global store
+    saveAs: { recordId: global }      # promote a capture to the global store
     hurl: |                           # the payload — raw hurl, one or more entries
-      GET ${baseURL}/api/v1/clients/{{clientId}}
+      GET ${baseURL}/api/v1/records/{{recordId}}
       HTTP 200
   - use: otherMacro                   # composition (cycle-checked, depth ≤ 32)
     with: { term: "${name}" }
@@ -71,13 +71,18 @@ assert lines merge into the *previous* request entry (a `Then` before any
 
 | Syntax | Resolves | When | Examples |
 |---|---|---|---|
-| `${…}` | proef | at lowering (before execution) | `${param}`, `${env:NAME:-default}`, `${run:id}`, `${global:key}`, `${secret:NAME}`, `${fake:name}` |
-| `{{…}}` | hurl | at run time | captures (`{{clientId}}`), secrets (`{{apiToken}}`) |
+| `${…}` | proef | at lowering (before execution) | `${param}`, `${env:NAME:-default}`, `${url:key}`, `${vars:key}`, `${run:id}`, `${global:key}`, `${secret:NAME}`, `${fake:name}` |
+| `{{…}}` | hurl | at run time | captures (`{{recordId}}`), secrets (`{{apiToken}}`) |
 
 `${…}` is recursive (captured arguments may themselves contain `${…}`, depth
 ≤ 8) and `$${` escapes a literal `${`. `${secret:NAME}` never inlines the
 value — it lowers to `{{NAME}}` and the engine injects it through hurl's
 redaction, so artifacts carry placeholders only.
+
+**Config variables** — `${url:key}` and `${vars:key}` come from `proef.toml`'s
+`[url]` / `[vars]` tables, deep-merged with the active `--env` profile. This is how
+you keep URLs and settings out of the feature files entirely; a referenced-but-undefined
+one is a lower-time error. See [`CONFIG.md`](CONFIG.md) (ADR-0012).
 
 **Captures** (`[Captures]` in a hurl block) flow forward within the scenario
 as `{{name}}`. `saveAs: { name: global }` additionally promotes the captured

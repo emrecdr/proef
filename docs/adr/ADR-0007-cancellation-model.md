@@ -19,7 +19,7 @@ and `child_token()` work from plain threads.
 Cancellation is **cooperative at batch boundaries**: the orchestrator checks a per-run
 `CancellationToken` (child token per scenario) before opening sessions and before each
 batch; `EngineSession::run_batch` receives the token so engines *may* honor it at finer
-grain when they can (a future CDP engine can; engine-hurl cannot mid-`run_entries`).
+grain when they can (a future non-hurl engine might; engine-hurl cannot mid-`run_entries`).
 Stuck-batch policy, layered: (1) the pack lint **rejects infinite retries** (`retry:`
 must carry a finite count) and unbounded `repeat`; (2) engine-hurl clamps per-request
 timeouts and computes a **batch budget** = Σ(entry timeout × (retries+1)) + retry

@@ -1,263 +1,76 @@
-# Testing Patterns — Rust
+# Testing Patterns — proef
 
-> Template baseline — the project's own `CLAUDE.md` and documented conventions WIN on any conflict with this file. Tailor it to the project (`/devt:setup`); untailored copies are flagged by `/devt:setup --health`.
+> Grounded in `docs/TESTING-STRATEGY.md` (normative) and `CLAUDE.md` (Testing
+> expectations). Those sources WIN on any conflict. Read by `tester`, `programmer`,
+> `code-reviewer`, and `verifier`.
 
-Devt-integration document. Read by `tester`, `programmer`, `code-reviewer`, and `verifier` agents. Defines how tests are written, organized, and run in Rust projects.
+Everything is **device-free and network-free except the fixture-server integration
+suite**. No test merges without covering the new behavior (definition of done).
 
-## Test Pyramid
+## The layers
 
-1. **Integration tests** (`tests/`) — verify crate boundaries; each `tests/*.rs` file is a separate test binary linked against the public API
-2. **Doc tests** (`///` examples) — verify public API examples in rustdoc; run as part of `cargo test`
-3. **Unit tests** (`#[cfg(test)] mod tests`) — isolated logic per module, fastest feedback
+- **Unit** (every crate): matcher tokenization/matching edges; resolver escapes + depth
+  cap; Then-merge (`expect:` → previous entry) rules; batch segmentation boundaries;
+  sidecar math; World error → exit-code mapping. Unit tests live in
+  `#[cfg(test)] mod tests` at the bottom of the source file — never a separate file.
+- **Property (proptest):** matcher never panics on arbitrary pattern×text and round-trips
+  captures; resolver `$${…}` escape round-trips, is idempotent once resolved, and always
+  terminates at the depth cap; **secret-mask invariant** — for arbitrary events/reports
+  containing a known secret, rendered output never contains it (ADR-0005); World
+  snapshot/restore is an involution.
+- **Fuzz (cargo-fuzz):** `fuzz_match_pattern`, `fuzz_resolve`, `fuzz_pack_load` (YAML bytes
+  → the loader must error, never panic). Smoke in PR CI, full nightly.
+- **Snapshot (insta):** emitter golden corpus (features+packs → artifacts+sidecars,
+  byte-stable — the canonical-format surface, ADR-0010); rendered miette diagnostics for
+  the seeded error corpus; `proef schema` output; event-stream JSONL for a reference run.
+- **Integration (fixture server):** the sync `tiny_http` `proef-fixture` crate (ADR-0011 —
+  axum's tokio requirement conflicts with the runtime ban). Covers the green path (the
+  reference-corpus features), capture chaining, World/global across scenarios, `optional:`
+  warn-and-continue, cancellation-within-budget, parallel `--jobs` determinism, and the
+  artifact↔execution same-bytes assertion.
+- **Corpus:** `--dry-run` over every `.feature` in `tests/` — the suite's own features are
+  the regression corpus.
+- **CLI (assert_cmd):** exit codes `0/1/2/3` pinned per command and failure class;
+  `--output json` schema-checked; `--junit` round-parsed with quick-junit.
 
-## TDD Workflow (Red-Green-Refactor)
+## Test data
 
-When implementing new features or fixing bugs, consider test-first development:
+- `tests/features/` — the real suite (also corpus input).
+- `tests/errors/` — one directory per diagnostic code, name = the expected code; dry-running
+  it **fails by design**. A new diagnostic code adds a case here (where reachable) plus a
+  `docs/DIAGNOSTICS.md` row.
+- insta snapshots live next to their suites (e.g. `crates/proef-cli/tests/snapshots/`),
+  reviewed via `cargo insta review` — never blind-accepted.
 
-### RED: Write Failing Test
+## Determinism & the flake rule (structural, not cultural)
 
-```rust
-#[test]
-fn validates_email_rejects_empty_string() {
-    assert!(!validate_email(""));  // function doesn't exist yet
-}
+Core purity (no IO/clock/rand — inject `now`/`run_id`/env) makes every non-integration
+layer bit-deterministic. In the integration layer: fixture delays are **token-driven**
+(visibility timestamps), not sleep-raced. **Assert attempt counts** and **normalized event
+order** — wall-clock only as a generous upper bound, never raw interleaving. Any test
+needing "now" receives it as a parameter.
+
+## What is deliberately NOT tested here
+
+Hurl's own HTTP semantics (asserts, filters, templating execution) — that is upstream's
+surface (ADR-0001). proef tests the **adapter contract** (options mapping, variable
+bridging, span mapping, segmentation) against the fixture, not hurl's behavior.
+
+## Running tests
+
+```bash
+cargo nextest run                             # all tests (preferred; skips doctests)
+cargo nextest run -p proef-core <substring>   # one crate / one test
+cargo test --doc                              # doctests
+cargo insta test --review                     # snapshots
+cargo run -p xtask -- fixture                 # standalone fixture server for the integration suite
 ```
 
-Run `cargo test validates_email_rejects_empty_string` — the test MUST fail (compile error or assertion failure). If it passes, the feature already exists or the test is wrong.
+## Anti-patterns
 
-### GREEN: Make It Pass
-
-Minimal code to make the test pass — no future-proofing.
-
-### REFACTOR: Clean Up (only if needed)
-
-Improve code (naming, structure, DRY) — run ALL tests; they MUST still pass. If tests break, undo the refactor. Working > clean.
-
-### Why TDD?
-
-- A test that passes immediately proves nothing — see it fail first
-- Minimal implementation prevents over-engineering
-- Refactoring with tests is safe; without tests is gambling
-
-## Regression Test Pattern
-
-When fixing a bug:
-
-1. Write a test that reproduces the bug
-2. Run it — MUST fail (proves the test catches the bug)
-3. Apply the fix
-4. Run it — MUST pass
-5. Revert the fix temporarily — MUST fail again (proves causation)
-6. Re-apply the fix and commit
-
-This proves the test catches the specific bug, not something else.
-
-## File Naming + Organization
-
-```
-src/
-├── lib.rs
-├── user.rs                       # source with inline #[cfg(test)] mod tests
-└── repository.rs
-
-tests/                            # integration tests — each file is a test crate
-├── api_integration.rs
-├── repository_integration.rs
-└── common/
-    └── mod.rs                    # shared helpers (use `mod common;` from each test file)
-
-benches/                          # criterion benchmarks (optional)
-└── parse_bench.rs
-```
-
-- Unit tests stay in the source file under `#[cfg(test)] mod tests { ... }` — never split unit tests into separate files
-- Integration tests live in `tests/` and link against the crate's public API only
-- Shared helpers for integration tests live in `tests/common/mod.rs` — loaded via `mod common;` in each test file
-
-## Unit Test Structure
-
-```rust
-// src/user.rs
-pub fn validate_email(email: &str) -> bool {
-    !email.is_empty() && email.contains('@')
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_empty_string() {
-        assert!(!validate_email(""));
-    }
-
-    #[test]
-    fn rejects_missing_at_sign() {
-        assert!(!validate_email("user.example.com"));
-    }
-
-    #[test]
-    fn accepts_minimal_valid_email() {
-        assert!(validate_email("a@b"));
-    }
-}
-```
-
-- Arrange / Act / Assert pattern — separated by blank lines when helpful
-- One assertion concept per test (multiple `assert!` on the same object are fine)
-- Descriptive names that explain the scenario + expected behavior — `validates_email_rejects_empty_string`, not `test_1`
-- Never use temporal markers in names ("new_test", "old_logic") — describe behavior
-
-## Async Test Patterns
-
-```rust
-#[tokio::test]
-async fn loads_user_from_repo() {
-    let repo = InMemoryUserRepository::new();
-    repo.save(User::new("a@b.com")).await.unwrap();
-
-    let loaded = repo.find_by_email("a@b.com").await.unwrap();
-    assert!(loaded.is_some());
-}
-```
-
-- Use `#[tokio::test]` for async test functions (assumes the project uses Tokio)
-- Use `#[tokio::test(flavor = "multi_thread")]` when concurrency under test matters
-- Alternative runtimes: `#[async_std::test]` (async-std), `#[smol_potat::test]` (smol)
-
-## Integration Tests
-
-```rust
-// tests/api_integration.rs
-use my_crate::application::GetUserUseCase;
-use my_crate::infrastructure::InMemoryUserRepository;
-
-#[tokio::test]
-async fn get_user_returns_not_found_for_unknown_id() {
-    let repo = InMemoryUserRepository::new();
-    let use_case = GetUserUseCase::new(Arc::new(repo));
-
-    let result = use_case.execute(UserId::new()).await;
-    assert!(matches!(result, Err(GetUserError::NotFound)));
-}
-```
-
-- Each file in `tests/` is compiled as a separate test binary — slower to compile, isolated at runtime
-- Integration tests use ONLY the crate's public API (no `pub(crate)` access)
-- For repository tests with real databases, use `testcontainers` (Rust crate) or `sqlx::test` (sqlx-managed transactions)
-
-## Doc Tests
-
-```rust
-/// Validates an email address.
-///
-/// # Example
-///
-/// ```
-/// use my_crate::validate_email;
-///
-/// assert!(validate_email("user@example.com"));
-/// assert!(!validate_email(""));
-/// ```
-pub fn validate_email(email: &str) -> bool {
-    !email.is_empty() && email.contains('@')
-}
-```
-
-- Run via `cargo test --doc` or as part of `cargo test`
-- Doc examples are first-class tests — broken examples are broken tests
-- For setup-heavy examples, use ` ```no_run` (compiles but doesn't execute) or ` ```ignore` (skipped entirely)
-
-## Frameworks + Tools
-
-- `cargo test` — built-in test runner; no external test framework needed
-- `tokio-test` — async test utilities (`tokio_test::block_on`, mocking)
-- `assert_matches` — pattern-matching assertions cleaner than nested `match`
-- `pretty_assertions` — diff output for `assert_eq!` on large structs
-- `rstest` — parameterized tests + fixtures
-- `mockall` — mock generation for trait-based DI
-- `proptest` / `quickcheck` — property-based testing
-- `criterion` — benchmarking (in `benches/`)
-- `testcontainers` — ephemeral databases / services in CI
-- `cargo-tarpaulin` / `cargo-llvm-cov` — coverage measurement
-
-## Mocking Rules
-
-- Mock at trait boundaries only (repository traits, external clients)
-- Never mock the type under test
-- `mockall` is the standard mock-generator; manual mocks are fine for small trait surfaces
-- Integration tests using real databases — no mocking the database layer
-- Each `mock!` declaration carries a comment explaining the boundary it's mocking
-
-```rust
-mockall::mock! {
-    pub UserRepository {}
-    #[async_trait::async_trait]
-    impl UserRepository for UserRepository {
-        async fn find(&self, id: &UserId) -> Result<Option<User>, RepoError>;
-    }
-}
-```
-
-## Speed Targets
-
-| Tier              | Target  | Scope                                        |
-| ----------------- | ------- | -------------------------------------------- |
-| Unit              | < 1 min | Per-module logic, no I/O                     |
-| Doc tests         | < 30s   | Public-API examples                          |
-| Integration       | < 5 min | Real DB / external service via testcontainers|
-| Property + bench  | n/a     | Run on perf-investigation cycles, not CI     |
-
-## Coverage Requirements
-
-- Every public function has tests
-- Edge cases: empty inputs, boundary values, error conditions
-- Error paths: verify correct error variant via `matches!` or destructuring
-- No placeholder tests — every test asserts meaningful behavior
-
-## Property-Based Tests
-
-For invariant-style properties (input space is huge, hand-written cases miss edge cases):
-
-```rust
-use proptest::prelude::*;
-
-proptest! {
-    #[test]
-    fn validate_email_never_panics(s in ".*") {
-        let _ = validate_email(&s);  // assert: doesn't panic
-    }
-
-    #[test]
-    fn parse_then_format_roundtrips(n in 0u32..1_000_000) {
-        let s = format!("{}", n);
-        assert_eq!(s.parse::<u32>().unwrap(), n);
-    }
-}
-```
-
-## Benchmarks
-
-```rust
-// benches/parse_bench.rs
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-
-fn bench_parse(c: &mut Criterion) {
-    c.bench_function("parse_email", |b| {
-        b.iter(|| validate_email(black_box("user@example.com")))
-    });
-}
-
-criterion_group!(benches, bench_parse);
-criterion_main!(benches);
-```
-
-Run with `cargo bench`. Not part of the gate stack — run on perf-investigation cycles.
-
-## Test Anti-Patterns
-
-- **Tests that don't assert**: `assert!(true)`, `()` return, no panic — vacuously passing
-- **Order-dependent tests**: tests that fail when run in isolation — use `--test-threads=1` to diagnose
-- **`#[ignore]` without justification**: every ignored test has a comment explaining why + when to re-enable
-- **`unwrap()` chains masking the real assertion**: use `.expect("specific invariant")` so failures explain themselves
-- **Time-dependent tests**: never use `std::time::SystemTime::now()` — inject a `Clock` trait so tests can advance virtual time
+- Weakening or deleting a test/gate/assertion to make a run pass — fix the code (see
+  `golden-rules.md` §14). Snapshot/property/exit-code suites are load-bearing.
+- Wall-clock or raw-interleaving assertions in parallel/retry tests.
+- Blind `cargo insta accept` — every snapshot diff is justified.
+- New `#[serde(untagged)]` enum carrying numbers in test fixtures (arbitrary_precision
+  hazard). Time-dependent tests using `SystemTime::now()` instead of an injected value.

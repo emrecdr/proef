@@ -1,4 +1,4 @@
-templates:
+macros:
   fetch:
     match: I fetch the page
     steps:

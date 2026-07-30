@@ -1,5 +1,11 @@
 //! The proef fixture API server (TESTING-STRATEGY): a synchronous in-process
-//! backend the integration suite runs the ported 50x corpus against.
+//! backend the integration suite runs the reference corpus against.
+//!
+//! The domain is a deliberately generic **workspace / activity board**: a
+//! member posts items (a note, a scheduled event, an attachment, a live
+//! session) to a record, and they surface on the record's synced activity
+//! channel. It exercises proef's mechanics (create + poll-until-visible,
+//! search, multipart, action + cancel), nothing product-specific.
 //!
 //! Determinism rule: delayed visibility is **token-driven** (poll counters),
 //! never sleep-raced — a resource becomes visible on the Nth poll, so retry
@@ -7,7 +13,7 @@
 //! `/slow`, which sleeps to exercise budgets/watchdog.
 //!
 //! Auth: `Authorization: Bearer fixture-token` on `/api/v1/*` admin routes;
-//! per-feed read routes are unauthenticated (the sync-consumer side).
+//! per-channel read routes are unauthenticated (the sync-consumer side).
 //!
 //! **Single-threaded by design**: one accept loop, one request at a time —
 //! request handling needs no internal synchronization discipline beyond the
@@ -38,11 +44,11 @@ struct Envs {
 #[derive(Default)]
 struct State {
     ready_polls: u32,
-    push_polls: u32,
-    messages: Vec<String>,
+    delivery_polls: u32,
+    notes: Vec<String>,
     events: Vec<String>,
-    photos: Vec<String>,
-    call: Option<(String, &'static str)>,
+    attachments: Vec<String>,
+    session: Option<(String, &'static str)>,
 }
 
 /// A running fixture server (drops = shutdown + join).
@@ -115,10 +121,10 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
             && h.value.as_str().contains("proefsession=abc123")
     });
 
-    // Per-feed read/interaction routes are unauthenticated (sync-consumer
+    // Per-channel read/interaction routes are unauthenticated (sync-consumer
     // side); everything else under /api/v1/ needs the bearer.
-    let feed_read_side = path.contains("/feed/") && !path.ends_with("/activate");
-    let needs_auth = path.starts_with("/api/v1/") && !feed_read_side;
+    let channel_read_side = path.contains("/channel/") && !path.ends_with("/activate");
+    let needs_auth = path.starts_with("/api/v1/") && !channel_read_side;
     if needs_auth && !authed {
         respond_json(request, 401, r#"{"error":"unauthorized"}"#);
         return;
@@ -161,11 +167,11 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
         ("GET", "/health") | ("POST", "/form") => {
             respond_json(request, 200, r#"{"status":"ok"}"#);
         }
-        ("POST", "/api/v1/feed/activate") => {
+        ("POST", "/api/v1/channel/activate") => {
             st.ready_polls = 0;
-            respond_json(request, 200, r#"{"feedId":"feed-1"}"#);
+            respond_json(request, 200, r#"{"channelId":"ch-1"}"#);
         }
-        ("GET", "/api/v1/feed/feed-1/state") => {
+        ("GET", "/api/v1/channel/ch-1/state") => {
             st.ready_polls += 1;
             let status = if st.ready_polls >= VISIBLE_AFTER {
                 "ready"
@@ -174,48 +180,44 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
             };
             respond_json(request, 200, &format!(r#"{{"status":"{status}"}}"#));
         }
-        ("GET", "/api/v1/admin/search/clients") => {
-            respond_json(request, 200, r#"[{"id":"c-1","name":"Bakker"}]"#);
+        ("GET", "/api/v1/admin/search/records") => {
+            respond_json(request, 200, r#"[{"id":"r-1","name":"Acme"}]"#);
         }
-        ("GET", "/api/v1/admin/search/users") => {
-            respond_json(request, 200, r#"[{"id":"u-1","name":"de Vries"}]"#);
+        ("GET", "/api/v1/admin/search/people") => {
+            respond_json(request, 200, r#"[{"id":"pe-1","name":"Jordan Lee"}]"#);
         }
         ("GET", "/api/v1/admin/search/missing") => {
             respond_json(request, 404, r#"{"error":"unknown index"}"#);
         }
-        ("GET", "/api/v1/clients/c-1") => respond_json(request, 200, r#"{"id":"c-1"}"#),
-        ("POST", "/api/v1/clients/c-1/messages") => {
-            st.messages.push("m-1".to_owned());
-            st.push_polls = 0;
-            respond_json(request, 201, r#"{"id":"m-1"}"#);
+        ("GET", "/api/v1/records/r-1") => respond_json(request, 200, r#"{"id":"r-1"}"#),
+        ("POST", "/api/v1/records/r-1/notes") => {
+            st.notes.push("n-1".to_owned());
+            st.delivery_polls = 0;
+            respond_json(request, 201, r#"{"id":"n-1"}"#);
         }
-        ("GET", "/api/v1/push/queue") => {
-            st.push_polls += 1;
-            let items = if st.push_polls >= VISIBLE_AFTER {
-                r#"[{"kind":"push"}]"#
+        ("GET", "/api/v1/deliveries/queue") => {
+            st.delivery_polls += 1;
+            let items = if st.delivery_polls >= VISIBLE_AFTER {
+                r#"[{"kind":"delivery"}]"#
             } else {
                 "[]"
             };
             respond_json(request, 200, &format!(r#"{{"items":{items}}}"#));
         }
-        ("GET", "/api/v1/feed/feed-1/messages") => {
+        ("GET", "/api/v1/channel/ch-1/notes") => {
             let ids: Vec<String> = st
-                .messages
+                .notes
                 .iter()
-                .map(|m| format!(r#"{{"id":"{m}"}}"#))
+                .map(|n| format!(r#"{{"id":"{n}"}}"#))
                 .collect();
-            respond_json(
-                request,
-                200,
-                &format!(r#"{{"messages":[{}]}}"#, ids.join(",")),
-            );
+            respond_json(request, 200, &format!(r#"{{"notes":[{}]}}"#, ids.join(",")));
         }
-        ("POST", "/api/v1/clients/c-1/agenda/events") => {
+        ("POST", "/api/v1/records/r-1/events") => {
             st.events.push("e-1".to_owned());
-            st.push_polls = 0;
+            st.delivery_polls = 0;
             respond_json(request, 201, r#"{"id":"e-1"}"#);
         }
-        ("GET", "/api/v1/feed/feed-1/calendar") => {
+        ("GET", "/api/v1/channel/ch-1/events") => {
             let ids: Vec<String> = st
                 .events
                 .iter()
@@ -227,41 +229,41 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
                 &format!(r#"{{"events":[{}]}}"#, ids.join(",")),
             );
         }
-        ("POST", "/api/v1/clients/c-1/photos") => {
-            st.photos.push("p-1".to_owned());
-            st.push_polls = 0;
-            respond_json(request, 201, r#"{"id":"p-1"}"#);
+        ("POST", "/api/v1/records/r-1/attachments") => {
+            st.attachments.push("a-1".to_owned());
+            st.delivery_polls = 0;
+            respond_json(request, 201, r#"{"id":"a-1"}"#);
         }
-        ("GET", "/api/v1/feed/feed-1/photos") => {
+        ("GET", "/api/v1/channel/ch-1/attachments") => {
             let ids: Vec<String> = st
-                .photos
+                .attachments
                 .iter()
-                .map(|p| format!(r#"{{"id":"{p}"}}"#))
+                .map(|a| format!(r#"{{"id":"{a}"}}"#))
                 .collect();
             respond_json(
                 request,
                 200,
-                &format!(r#"{{"photos":[{}]}}"#, ids.join(",")),
+                &format!(r#"{{"attachments":[{}]}}"#, ids.join(",")),
             );
         }
-        ("POST", "/api/v1/clients/c-1/calls") => {
-            st.call = Some(("call-1".to_owned(), "incoming"));
-            respond_json(request, 201, r#"{"id":"call-1"}"#);
+        ("POST", "/api/v1/records/r-1/sessions") => {
+            st.session = Some(("s-1".to_owned(), "pending"));
+            respond_json(request, 201, r#"{"id":"s-1"}"#);
         }
-        ("GET", "/api/v1/feed/feed-1/call") => {
-            let (id, call_state) = st
-                .call
+        ("GET", "/api/v1/channel/ch-1/session") => {
+            let (id, session_state) = st
+                .session
                 .as_ref()
                 .map_or(("", "idle"), |(id, s)| (id.as_str(), *s));
             respond_json(
                 request,
                 200,
-                &format!(r#"{{"state":"{call_state}","callId":"{id}"}}"#),
+                &format!(r#"{{"state":"{session_state}","sessionId":"{id}"}}"#),
             );
         }
-        ("POST", "/api/v1/feed/feed-1/call/call-1/deny") => {
-            if let Some(call) = st.call.as_mut() {
-                call.1 = "idle";
+        ("POST", "/api/v1/channel/ch-1/session/s-1/cancel") => {
+            if let Some(session) = st.session.as_mut() {
+                session.1 = "idle";
             }
             respond_json(request, 200, r#"{"ok":true}"#);
         }
@@ -280,7 +282,7 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
                 respond_json(request, 403, r#"{"error":"no session cookie"}"#);
             }
         }
-        ("POST", "/upload") => respond_json(request, 201, r#"{"id":"ph-1"}"#),
+        ("POST", "/upload") => respond_json(request, 201, r#"{"id":"up-1"}"#),
         ("GET", "/malformed") => respond_json(request, 200, r#"{"broken": "#),
         _ => respond_json(request, 404, r#"{"error":"no such route"}"#),
     }

@@ -244,7 +244,7 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  search:\n    params: [term, index]\n    defaults: { index: clients }\n    match: \"I search for {term}\"\n    steps:\n      - hurl: |\n          GET http://x/${index}?q=${term}\n          HTTP 200\n",
+                "macros:\n  search:\n    params: [term, index]\n    defaults: { index: records }\n    match: \"I search for {term}\"\n    steps:\n      - hurl: |\n          GET http://x/${index}?q=${term}\n          HTTP 200\n",
             ),
         }];
         pack::load(&sources, KINDS).unwrap()
@@ -261,14 +261,14 @@ mod tests {
         let step = &bound[0].steps[0];
         assert_eq!(step.macro_name, "search");
         assert_eq!(step.args["term"], "Jansen");
-        assert_eq!(step.args["index"], "clients", "default filled");
+        assert_eq!(step.args["index"], "records", "default filled");
     }
 
     #[test]
     fn table_overrides_defaults_but_not_captures() {
-        let feature = make_feature("    When I search for Jansen\n      | index | users |\n");
+        let feature = make_feature("    When I search for Jansen\n      | index | people |\n");
         let bound = bind(&feature, &packs()).unwrap();
-        assert_eq!(bound[0].steps[0].args["index"], "users");
+        assert_eq!(bound[0].steps[0].args["index"], "people");
 
         let feature = make_feature("    When I search for Jansen\n      | term | other |\n");
         let errs = bind(&feature, &packs()).unwrap_err();
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn unknown_table_key_and_bad_table_shape_error() {
-        let feature = make_feature("    When I search for Jansen\n      | indx | users |\n");
+        let feature = make_feature("    When I search for Jansen\n      | indx | people |\n");
         let errs = bind(&feature, &packs()).unwrap_err();
         assert_eq!(errs[0].code, "proef::bind::unknown_table_key");
         assert!(errs[0].message.contains("did you mean `index`?"));
@@ -304,7 +304,7 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  a:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://x\n  b:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://y\n",
+                "macros:\n  a:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://x\n  b:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://y\n",
             ),
         }];
         let packs = pack::load(&sources, KINDS).unwrap();
@@ -319,11 +319,11 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  create:\n    params: [firstName, lastName]\n    match: I create a client\n    steps:\n      - hurl: |\n          POST http://x/${firstName}/${lastName}\n",
+                "macros:\n  create:\n    params: [firstName, lastName]\n    match: I create a record\n    steps:\n      - hurl: |\n          POST http://x/${firstName}/${lastName}\n",
             ),
         }];
         let packs = pack::load(&sources, KINDS).unwrap();
-        let feature = make_feature("    When I create a client\n");
+        let feature = make_feature("    When I create a record\n");
         let errs = bind(&feature, &packs).unwrap_err();
         assert_eq!(errs.len(), 2);
         assert!(errs.iter().all(|d| d.code == "proef::bind::missing_param"));

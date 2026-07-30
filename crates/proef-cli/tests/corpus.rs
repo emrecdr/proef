@@ -46,13 +46,7 @@ fn green_corpus_dry_runs_clean() {
 #[test]
 fn tags_filter_selects_scenarios() {
     let assert = proef()
-        .args([
-            "test",
-            "tests/features",
-            "--dry-run",
-            "--tags",
-            "sync-message",
-        ])
+        .args(["test", "tests/features", "--dry-run", "--tags", "sync-note"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -64,12 +58,12 @@ fn flows_lists_the_corpus() {
     let assert = proef().args(["flows", "tests/features"]).assert().code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        stdout.contains("A message sent via the API appears in the client feed"),
+        stdout.contains("A note posted via the API appears on the board"),
         "{stdout}"
     );
-    assert!(stdout.contains("@sync-message"), "{stdout}");
+    assert!(stdout.contains("@sync-note"), "{stdout}");
     assert!(
-        stdout.contains("Search over clients returns 200"),
+        stdout.contains("Search over records returns 200"),
         "{stdout}"
     );
 }
@@ -110,7 +104,7 @@ fn artifact_corpus_is_deterministic_and_snapshot_locked() {
         proef()
             // The corpus directives read these env vars; scrub for determinism.
             .env_remove("PROEF_BASE_URL")
-            .env_remove("RUNTIME_PHOTO")
+            .env_remove("RUNTIME_ATTACHMENT")
             .args([
                 "artifacts",
                 "tests/features",

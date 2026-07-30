@@ -48,8 +48,8 @@ struct Cli {
 enum Command {
     /// Validate and run feature files against the configured target
     Test {
-        /// A .feature file or a directory tree containing them
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Validate everything (bind + lower + emit + parse), execute nothing
         #[arg(long)]
         dry_run: bool,
@@ -76,26 +76,34 @@ enum Command {
         /// Rerun on feature/pack changes (Ctrl-C to stop)
         #[arg(long)]
         watch: bool,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
-        /// A .feature file or a directory tree containing them
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Machine output: `json` prints one object per scenario
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// Emit canonical .hurl artifacts + sidecars for a stable hand-off
     Artifacts {
-        /// A .feature file or a directory tree containing them
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Output directory for .hurl / .map.json / .vars files
         #[arg(short, long)]
         output: PathBuf,
         /// Override the injected run id (deterministic artifacts for CI)
         #[arg(long)]
         run_id: Option<String>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// Print the pack JSON Schema (or install it next to pack files)
     Schema {
@@ -144,6 +152,33 @@ enum SecretAction {
     },
 }
 
+/// Resolve the suite path when a command is given none: `[run] suite` from
+/// proef.toml, else the `tests/` convention. An explicit path always wins; a
+/// missing default with no `tests/` present is a user error (exit 2) — never a
+/// silent no-op.
+fn resolve_suite_path(path: Option<PathBuf>) -> Result<PathBuf, proef_core::error::ExitCode> {
+    if let Some(path) = path {
+        return Ok(path);
+    }
+    let config = config::ProjectConfig::load().map_err(|message| {
+        eprintln!("error: {message}");
+        proef_core::error::ExitCode::UserError
+    })?;
+    if let Some(suite) = config.suite() {
+        return Ok(PathBuf::from(suite));
+    }
+    let convention = PathBuf::from("tests");
+    if convention.is_dir() {
+        return Ok(convention);
+    }
+    eprintln!(
+        "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"
+    );
+    Err(proef_core::error::ExitCode::UserError)
+}
+
+// One dispatch table over the CLI surface; splitting arms hides the routing.
+#[allow(clippy::too_many_lines)]
 fn main() -> std::process::ExitCode {
     render::install();
     // clap renders usage errors itself and exits 2 — which is exactly the
@@ -160,38 +195,65 @@ fn main() -> std::process::ExitCode {
             scenario,
             scenario_file,
             watch: watch_mode,
-        } => {
-            let run_once = |cancel| {
-                if dry_run {
-                    commands::dry_run(&path, &tags, scenario.as_deref(), scenario_file.as_deref())
+            env,
+        } => match resolve_suite_path(path) {
+            Err(code) => code,
+            Ok(path) => {
+                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
+                let run_once = |cancel| {
+                    if dry_run {
+                        commands::dry_run(
+                            &path,
+                            &tags,
+                            scenario.as_deref(),
+                            scenario_file.as_deref(),
+                            active_env.as_deref(),
+                        )
+                    } else {
+                        exec::execute(
+                            &path,
+                            &tags,
+                            jobs,
+                            output == Some(OutputFormat::Json),
+                            junit.as_deref(),
+                            scenario.as_deref(),
+                            scenario_file.as_deref(),
+                            active_env.as_deref(),
+                            cancel, // None = execute installs its own Ctrl-C handler
+                        )
+                    }
+                };
+                if watch_mode {
+                    // The loop owns Ctrl-C and hands each run its token.
+                    watch::watch_loop(&path, |token| run_once(Some(token)))
                 } else {
-                    exec::execute(
-                        &path,
-                        &tags,
-                        jobs,
-                        output == Some(OutputFormat::Json),
-                        junit.as_deref(),
-                        scenario.as_deref(),
-                        scenario_file.as_deref(),
-                        cancel, // None = execute installs its own Ctrl-C handler
-                    )
+                    run_once(None)
                 }
-            };
-            if watch_mode {
-                // The loop owns Ctrl-C and hands each run its token.
-                watch::watch_loop(&path, |token| run_once(Some(token)))
-            } else {
-                run_once(None)
             }
-        }
-        Command::Flows { path, output } => {
-            commands::flows(&path, output == Some(OutputFormat::Json))
-        }
+        },
+        Command::Flows { path, output, env } => match resolve_suite_path(path) {
+            Err(code) => code,
+            Ok(path) => {
+                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
+                commands::flows(
+                    &path,
+                    output == Some(OutputFormat::Json),
+                    active_env.as_deref(),
+                )
+            }
+        },
         Command::Artifacts {
             path,
             output,
             run_id,
-        } => commands::artifacts(&path, &output, run_id),
+            env,
+        } => match resolve_suite_path(path) {
+            Err(code) => code,
+            Ok(path) => {
+                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
+                commands::artifacts(&path, &output, run_id, active_env.as_deref())
+            }
+        },
         Command::Schema { add_to } => commands::schema(&add_to),
         Command::Doctor => commands::doctor(&registry::engines()),
         Command::Secret { action } => {

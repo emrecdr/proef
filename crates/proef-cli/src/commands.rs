@@ -1,12 +1,32 @@
 //! CLI subcommand implementations.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use proef_core::engine::{DoctorStatus, EngineFactory};
 use proef_core::error::ExitCode;
 
+use crate::config::ProjectConfig;
 use crate::front;
 use crate::render;
+
+/// Load `proef.toml` and build the injected `${url:…}` / `${vars:…}` scope for
+/// the active environment (base deep-merged with `[env.<name>]`). An absent file
+/// yields an empty scope; a malformed file or an unknown `--env` is a user error.
+fn config_vars_for(active_env: Option<&str>) -> Result<Arc<BTreeMap<String, String>>, ExitCode> {
+    let config = ProjectConfig::load().map_err(|message| {
+        eprintln!("error: {message}");
+        ExitCode::UserError
+    })?;
+    config
+        .config_vars(active_env)
+        .map(Arc::new)
+        .map_err(|message| {
+            eprintln!("error: {message}");
+            ExitCode::UserError
+        })
+}
 
 /// `proef doctor` — run every engine-contributed environment check and report.
 ///
@@ -69,8 +89,18 @@ pub fn dry_run(
     tags: &[String],
     scenario: Option<&str>,
     scenario_file: Option<&str>,
+    active_env: Option<&str>,
 ) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
+    let config_vars = match config_vars_for(active_env) {
+        Ok(vars) => vars,
+        Err(code) => return code,
+    };
+    let front = match front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        None,
+        config_vars,
+    ) {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };
@@ -137,8 +167,17 @@ pub fn dry_run(
 }
 
 /// `proef flows` — list every scenario with its anchor and tags.
-pub fn flows(path: &Path, output_json: bool) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
+pub fn flows(path: &Path, output_json: bool, active_env: Option<&str>) -> ExitCode {
+    let config_vars = match config_vars_for(active_env) {
+        Ok(vars) => vars,
+        Err(code) => return code,
+    };
+    let front = match front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        None,
+        config_vars,
+    ) {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };
@@ -185,8 +224,22 @@ pub fn flows(path: &Path, output_json: bool) -> ExitCode {
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`
 /// plus sidecars (`.map.json`, `.vars`) for a stable CI hand-off (ADR-0010).
 /// The written bytes are exactly the parse-validated emission.
-pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, run_id) {
+pub fn artifacts(
+    path: &Path,
+    out_dir: &Path,
+    run_id: Option<String>,
+    active_env: Option<&str>,
+) -> ExitCode {
+    let config_vars = match config_vars_for(active_env) {
+        Ok(vars) => vars,
+        Err(code) => return code,
+    };
+    let front = match front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        run_id,
+        config_vars,
+    ) {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };

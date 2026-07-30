@@ -6,7 +6,7 @@ proef::pack::pattern_duplicate_capture
 
   × macro `move`: capture `{x}` appears more than once — a later match would silently overwrite the earlier value
    ╭─[tests/errors/pack__pattern_duplicate_capture/packs/broken.yaml:2:3]
- 1 │ templates:
+ 1 │ macros:
  2 │   move:
    ·   ────
  3 │     params: [x]

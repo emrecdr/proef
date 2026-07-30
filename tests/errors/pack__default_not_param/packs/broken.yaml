@@ -1,7 +1,7 @@
-templates:
+macros:
   search:
     params: [term]
-    defaults: { index: clients }
+    defaults: { index: records }
     match: "I search for {term}"
     steps:
       - hurl: |

@@ -1,14 +1,14 @@
 //! Best-effort locators mapping semantic pack findings onto pack-file spans.
 //!
 //! serde gives no spans for *valid* YAML, so these scan the raw text for the
-//! well-formed layout (`templates:` at the root, template names at indent 2).
+//! well-formed layout (`macros:` at the root, macro names at indent 2).
 //! Every locator degrades to `None` — diagnostics then render without a span
-//! but still name the template and step.
+//! but still name the macro and step.
 
 use crate::diag::Span;
 
-/// Byte span of a template's name key (`  <name>:`), when locatable.
-pub(crate) fn template_span(text: &str, name: &str) -> Option<Span> {
+/// Byte span of a macro's name key (`  <name>:`), when locatable.
+pub(crate) fn macro_span(text: &str, name: &str) -> Option<Span> {
     for (offset, line) in lines_with_offsets(text) {
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
@@ -23,9 +23,9 @@ pub(crate) fn template_span(text: &str, name: &str) -> Option<Span> {
     None
 }
 
-/// Byte range of a template's block: from its header line to the next
-/// template header (indent-2 key) or end of file.
-fn template_region(text: &str, name: &str) -> Option<(usize, usize)> {
+/// Byte range of a macro's block: from its header line to the next
+/// macro header (indent-2 key) or end of file.
+fn macro_region(text: &str, name: &str) -> Option<(usize, usize)> {
     let mut start = None;
     for (offset, line) in lines_with_offsets(text) {
         let trimmed = line.trim_start();
@@ -48,11 +48,11 @@ fn template_region(text: &str, name: &str) -> Option<(usize, usize)> {
 }
 
 /// Span of line `rel_line` (1-based) inside the `ordinal`-th (0-based)
-/// `<payload_key>:` block of `template`, for mapping engine probe errors
+/// `<payload_key>:` block of `macro_name`, for mapping engine probe errors
 /// (block-relative positions) onto the pack file.
 pub(crate) fn payload_line_span(
     text: &str,
-    template: &str,
+    macro_name: &str,
     payload_key: &str,
     ordinal: usize,
     rel_line: usize,
@@ -60,7 +60,7 @@ pub(crate) fn payload_line_span(
     if rel_line == 0 {
         return None; // 1-based by contract — degrade, never underflow
     }
-    let (begin, end) = template_region(text, template)?;
+    let (begin, end) = macro_region(text, macro_name)?;
     let region = &text[begin..end];
     let mut seen = 0usize;
     let mut lines = lines_with_offsets(region);
@@ -107,13 +107,13 @@ mod tests {
 
     use super::*;
 
-    const PACK: &str = "templates:\n  first:\n    match: do it\n    steps:\n      - name: a\n        hurl: |\n          GET http://x/one\n          HTTP 200\n  second:\n    steps:\n      - hurl: |\n          GET http://x/two\n";
+    const PACK: &str = "macros:\n  first:\n    match: do it\n    steps:\n      - name: a\n        hurl: |\n          GET http://x/one\n          HTTP 200\n  second:\n    steps:\n      - hurl: |\n          GET http://x/two\n";
 
     #[test]
-    fn template_names_are_located() {
-        let span = template_span(PACK, "second").expect("span");
+    fn macro_names_are_located() {
+        let span = macro_span(PACK, "second").expect("span");
         assert_eq!(&PACK[span.start..span.end], "second");
-        assert!(template_span(PACK, "absent").is_none());
+        assert!(macro_span(PACK, "absent").is_none());
     }
 
     #[test]

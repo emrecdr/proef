@@ -2,5 +2,5 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: "String::from_utf8(content_a).unwrap()"
 ---
-# proef variables for 503-api-call--a-call-invite-appears-in-the-call-feed-and-can-be-denied.hurl
+# proef variables for 503-api-session--a-live-session-appears-as-pending-and-can-be-cancelled.hurl
 # secret `apiToken` — supply at replay: --secret apiToken=<value>

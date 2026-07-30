@@ -40,10 +40,6 @@ mod tests {
             Some(&serde_json::Value::String("string".into()))
         );
         // The fixed schema part is still present.
-        assert!(
-            schema
-                .pointer("/$defs/RawTemplate/properties/match")
-                .is_some()
-        );
+        assert!(schema.pointer("/$defs/RawMacro/properties/match").is_some());
     }
 }

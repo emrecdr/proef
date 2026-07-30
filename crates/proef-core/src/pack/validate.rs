@@ -15,7 +15,7 @@ use std::sync::Arc;
 use super::locate;
 use super::{
     ExpectItem, Macro, MacroBody, MacroStep, MacroStepKind, PackSet, PackSource, PayloadForm,
-    RawStep, RawTemplate,
+    RawMacro, RawStep,
 };
 use crate::diag::Diag;
 use crate::engine::StepKindSpec;
@@ -27,17 +27,17 @@ use crate::world::World;
 /// Maximum `use:` nesting depth (TECH-SPEC §4.1 pass 4).
 pub const MAX_USE_DEPTH: usize = 32;
 
-/// Normalize one raw template into a [`Macro`], emitting structural
+/// Normalize one raw macro into a [`Macro`], emitting structural
 /// diagnostics (passes 1, 2, and the per-step shape rules) along the way.
-/// Returns `None` only when the template is too malformed to keep.
-pub(crate) fn normalize_template(
+/// Returns `None` only when the macro is too malformed to keep.
+pub(crate) fn normalize_macro(
     name: &str,
-    raw: &RawTemplate,
+    raw: &RawMacro,
     pack_name: &str,
     source: &PackSource,
     diags: &mut Vec<Diag>,
 ) -> Option<Macro> {
-    let span = locate::template_span(&source.text, name);
+    let span = locate::macro_span(&source.text, name);
     let at = |diag: Diag| {
         diag.with_source(source.name.clone(), Arc::clone(&source.text))
             .maybe_span(span)
@@ -566,6 +566,7 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
             defaults: &macro_.defaults,
             directives: &empty,
             env: &empty,
+            config_vars: &empty,
             run_id: "probe-run",
             world: &world,
             mode: ResolveMode::Probe,
@@ -771,7 +772,7 @@ mod tests {
         let source = PackSource {
             name: "alt.yaml".into(),
             text: Arc::from(
-                "templates:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
+                "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
             ),
         };
         let err = pack::load(&[source], KINDS).unwrap_err();
@@ -798,7 +799,7 @@ mod tests {
             validate: None,
         }];
         use std::fmt::Write as _;
-        let mut yaml = String::from("templates:\n");
+        let mut yaml = String::from("macros:\n");
         for i in 0..31 {
             writeln!(yaml, "  m{i:02}:").unwrap();
             if i == 0 {

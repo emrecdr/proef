@@ -1,12 +1,18 @@
-# proef project configuration — example (TECH-SPEC §11)
+# proef project configuration — example (see docs/CONFIG.md, ADR-0012)
 #
 # Copy to `proef.toml` and adjust. Precedence (low → high):
-#   built-in defaults < proef.toml < CLI flags
+#   built-in defaults < proef.toml base tables < active [env.<name>] < CLI flags
 #
-# Loaded by `proef test` (execution) — `[run] jobs`/`runs-dir` and the `[http]`
-# batch defaults below are live; per-entry `[Options]` in packs override them.
+# Two kinds of thing live here: runner config ([run], [http]) and suite
+# variables ([url], [vars]) — plus per-environment overrides ([env.<name>]).
+# Secrets NEVER live here (use `proef secret set` / PROEF_SECRET_<NAME>).
 
+# ── runner config ───────────────────────────────────────────────
 [run]
+# Default suite path — with this set, `proef test` needs no path argument.
+# Unset falls back to the `tests/` convention. An explicit path always wins.
+# suite = "tests"
+
 # Parallel scenario workers. Default: available parallelism, capped by scenario count.
 # jobs = 4
 
@@ -17,3 +23,22 @@
 # Batch-level defaults for the hurl engine; per-entry [Options] in packs override.
 # timeout-ms = 30000
 # follow-location = false
+
+# ── suite variables (referenced in packs as ${url:key} / ${vars:key}) ──
+[url]
+# base = "http://127.0.0.1:8787"
+
+[vars]
+# apiVersion = "v1"
+# username   = "dev@example.com"
+
+# ── per-environment overrides (select with --env <name> or PROEF_ENV) ──
+# Each [env.<name>.<section>] mirrors a base table and deep-merges over it,
+# key by key — list only what changes; everything else inherits the base.
+# [env.staging.url]
+# base = "https://staging.example.com"
+
+# [env.prod.url]
+# base = "https://api.example.com"
+# [env.prod.http]
+# timeout-ms = 60000

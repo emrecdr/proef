@@ -15,7 +15,7 @@ sanctioned extension point (architectural readiness only, nothing scheduled).
 ## Read before large changes
 
 1. `docs/README.md` — corpus index and ADR decision log.
-2. The relevant **ADR** (`docs/adr/ADR-0001…0011`) — decisions with alternatives and
+2. The relevant **ADR** (`docs/adr/ADR-0001` onward) — decisions with alternatives and
    consequences. Diverging from an ADR without writing a superseding ADR is a bug.
 3. `docs/TECH-SPEC.md` — normative types, pipeline, pack schema, and the **verified
    hurl seam facts with file:line citations** (§5). Do not re-derive these from priors.
@@ -51,6 +51,7 @@ cargo deny check && cargo audit
 
 cargo run -p proef -- test tests/features --dry-run  # validate: bind + lower + emit + parse
 cargo run -p proef -- test tests/features --jobs 4   # execute (secrets: store via `proef secret set`, or PROEF_SECRET_<NAME> env)
+cargo run -p proef -- test --env staging             # path-less (default [run] suite / tests/) + a proef.toml [env.<name>] profile
 cargo run -p proef -- artifacts tests/features -o out/ --run-id ci  # emit .hurl + sidecars
 cargo run -p proef -- flows tests/features           # list scenarios with anchors + tags
 # tests/errors/ is the seeded broken corpus (one dir per diagnostic code) — dry-running it fails by design
@@ -119,7 +120,10 @@ never import each other. The structural acceptance test: *adding an engine leave
   convenience.
 - **Two-tier variables (ADR-0005):** `${…}` resolves at lower time (recursive, depth ≤ 8,
   `$${` escape — captured step args may themselves contain `${…}`); `{{…}}` is hurl
-  run-time and must pass through core untouched. Secrets go through
+  run-time and must pass through core untouched. External config variables
+  `${url:key}` / `${vars:key}` come from `proef.toml` (`[url]`/`[vars]`, deep-merged with
+  the active `[env.<name>]` via `--env`/`PROEF_ENV`), injected into the sans-IO core as
+  `LowerCtx::config_vars` — the CLI does the file IO, not core (ADR-0012). Secrets go through
   `VariableSet::insert_secret` and **never** appear in artifacts, events, logs,
   reports, or the persistent World — `saveAs: global` refuses secret-valued
   captures (property-tested invariant — keep it green; events carry capture
@@ -137,7 +141,8 @@ never import each other. The structural acceptance test: *adding an engine leave
 - **Exit codes are a contract:** `0` ok · `1` test failure · `2` user error · `3` system
   error — typed enum, pinned by assert_cmd integration tests; error variants map via the
   fault taxonomy (ADR-0009).
-- **Pack rules (ADR-0004):** hurl steps use raw `hurl:` block scalars (validated by
+- **Pack rules (ADR-0004):** the pack root key is `macros:` (renamed from `templates:`,
+  ADR-0004 amendment — no alias); hurl steps use raw `hurl:` block scalars (validated by
   `parse_hurl_file` at load); structured payloads are reserved for future engines;
   `expect:` macros merge asserts into the *previous* request entry; `retry:` must be
   finite; `use:` nesting is cycle-checked, depth ≤ 32.
@@ -147,7 +152,7 @@ never import each other. The structural acceptance test: *adding an engine leave
 Every layer device-free and network-free except the fixture-server integration suite.
 Unit + proptest (matcher, resolver, secret-mask, World) + cargo-fuzz (matcher, resolver,
 pack loader; smoke in PR CI, full nightly) + insta snapshots (artifacts, diagnostics,
-schema, event streams) + fixture integration (green path = the ported 50x features;
+schema, event streams) + fixture integration (green path = the reference-corpus features;
 retry/cookies/optional/World/cancellation cases) + `--dry-run` corpus over `tests/` +
 assert_cmd CLI/exit-code suite + the hurl upgrade canary. Flake rule: assert attempt
 counts and normalized event order, never wall-clock or raw interleaving.
@@ -160,6 +165,7 @@ counts and normalized event order, never wall-clock or raw interleaving.
 - [x] M3 — engine-hurl execution: adapter, World bridge, parallelism, budgets, console+JSONL
 - [x] M4 — upstream tracking: real canary, thin-fork rehearsal, upstream PR #1, JUnit/GH summary
 - [x] M5 — breadth: bodies (multipart/form/docstring), watch, explain, secrets CLI, fakes, libtest-mimic harness, `proef fmt`
+- [x] post-M5 — external config & environments (`proef.toml` `[url]`/`[vars]`/`[env.<name>]`, `${url:}`/`${vars:}`, `--env`/`PROEF_ENV`, ADR-0012); default suite path (`[run] suite`); pack root key `templates:` → `macros:` (ADR-0004 amendment)
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

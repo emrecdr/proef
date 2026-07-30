@@ -19,11 +19,12 @@ Verified upstream facts cite hurl master @ `03fcb84c` (2026-07-27) as `file:line
  │  same-engine batches ──┼── events ──────┼──► reporter stack
  └────────────┬───────────┴────────────────┘    (console/JUnit/JSONL/GH)
               ▼ Box<dyn EngineSession>
-   ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐
-   │ proef-engine-hurl│  │ engine-web   │  │ engine-adb   │
-   │ parse_hurl_file +│  │ (future, CDP)│  │ (future, adb)│
-   │ run_entries      │  └──────────────┘  └──────────────┘
-   └──────────────────┘
+   ┌──────────────────┐  ┌──────────────────┐
+   │ proef-engine-hurl│  │ future non-hurl  │
+   │ parse_hurl_file +│  │ engine (seam-    │
+   │ run_entries      │  │ ready, none      │
+   └──────────────────┘  │ scheduled)       │
+                         └──────────────────┘
         World (typed vars + persistent global store) threads through every batch
 ```
 
@@ -53,7 +54,8 @@ proef/
 
 Dependency rules: engines depend on core; core depends on no engine; cli depends on both
 and is the only miette user (ADR-0009). Engines sit behind cargo features in cli
-(`engine-hurl` default-on; future `engine-web`, `engine-adb`). Only `proef-engine-hurl`
+(`engine-hurl` default-on; any future non-hurl engine would be added the same way — none
+scheduled). Only `proef-engine-hurl`
 carries native build prereqs; `proef-core` is pure Rust. Lints/conventions: a strict
 workspace lints table verbatim (clippy all=warn + curated pedantic slice), `publish =
 false` initially (reserve names with 0.0.0 placeholders), MIT OR Apache-2.0.
@@ -179,7 +181,7 @@ field), the console, JUnit, and the GitHub summary.
 ## 6. Pack schema v1 (normative field reference)
 
 ```yaml
-templates:
+macros:
   <macroName>:                # unique across packs; qualify as pack.yaml#name on clash
     params: [a, b]            # required unless defaulted
     defaults: { b: "x" }      # optional params
@@ -220,7 +222,8 @@ against patterns.
 ## 8. Variables reference (ADR-0005)
 
 Author-time (`${…}`, resolved in §4.4, recursive ≤ 8): `${param}` · `${env:NAME}` /
-`${env:NAME:-default}` · `${run:id}` (uuid-v7-derived, injected) · `${global:key}`
+`${env:NAME:-default}` · `${url:key}` / `${vars:key}` (proef.toml `[url]`/`[vars]`, base +
+active `[env.<name>]` deep-merged; injected — ADR-0012) · `${run:id}` (uuid-v7-derived, injected) · `${global:key}`
 (World read at lower time of the scenario) · `${secret:NAME}` (encrypted store; emits
 `{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id; port
 deterministic NL generators) · `$${…}` literal escape. Run-time (`{{…}}`): hurl captures and
@@ -240,30 +243,34 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ## 10. CLI reference (v1)
 
 ```
-proef test <file|dir> [--dry-run] [--tags csv] [--jobs N] [--junit path|auto]
-                      [--output json] [--watch] [--scenario NAME]
-proef flows [dir] [--output json]
-proef artifacts <file|dir> -o DIR [--run-id ID]
+proef test [file|dir] [--env NAME] [--dry-run] [--tags csv] [--jobs N] [--junit path|auto]
+                      [--output json] [--watch] [--scenario NAME] [--scenario-file FILE]
+proef flows [file|dir] [--env NAME] [--output json]
+proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
 proef fmt <file|dir> [--check]
 ```
 
-Exit codes: 0 ok · 1 test failure · 2 user error · 3 system error (typed enum,
-assert_cmd-pinned). Config precedence: built-in defaults < `proef.toml` < flags;
-secrets additionally resolve `PROEF_SECRET_<NAME>` env overrides before the store,
-and `PROEF_KEY` (base64) overrides the key file — CI decrypts a committed
-ciphertext store without the key ever touching disk (there is no generic
-`PROEF_*` config layer). `--dry-run` = §4.1–4.5 including artifact
-parse-validation; no engine sessions, no network.
+A path-less `test`/`flows`/`artifacts` resolves `[run] suite` then the `tests/`
+convention (else exit 2). Exit codes: 0 ok · 1 test failure · 2 user error · 3
+system error (typed enum, assert_cmd-pinned). Config precedence: built-in defaults
+< `proef.toml` base tables < active `[env.<name>]` (selected by `--env`/`PROEF_ENV`)
+< flags; suite variables `${url:key}`/`${vars:key}` resolve from `[url]`/`[vars]`
+deep-merged with the active env (ADR-0012). Secrets additionally resolve
+`PROEF_SECRET_<NAME>` env overrides before the store, and `PROEF_KEY` (base64)
+overrides the key file — CI decrypts a committed ciphertext store without the key
+ever touching disk. `--dry-run` = §4.1–4.5 including artifact parse-validation;
+no engine sessions, no network.
 
 ## 11. State & files
 
 `.proef-runs/<run-id>/` → `events.jsonl` (the record, ADR-0008), `run.log` (console tee),
 `artifacts/*.hurl|.map.json|.vars`, `report.junit.xml` (when requested); 200-run
 rotation (only uuid-named run records rotate; the in-flight run never does).
-`.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config
-(base timeouts, jobs default, artifact dir, engine settings).
+`.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
+runner settings (`[run]` jobs/runs-dir/suite, `[http]` timeouts) + suite variables
+(`[url]`/`[vars]`) + per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
 
 ## 12. Parallelism & cancellation
 

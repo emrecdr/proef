@@ -1,4 +1,4 @@
-templates:
+macros:
   search:
     params: [term]
     match: "I search for {term}"

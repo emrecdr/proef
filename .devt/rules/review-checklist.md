@@ -1,131 +1,94 @@
-# Review Checklist — Rust
+# Review Checklist — proef
 
-> Template baseline — the project's own `CLAUDE.md` and documented conventions WIN on any conflict with this file. Tailor it to the project (`/devt:setup`); untailored copies are flagged by `/devt:setup --health`.
+> Grounded in `CLAUDE.md` (Hard constraints) and `docs/` (ADRs, TECH-SPEC). Those sources
+> WIN on any conflict. The `code-reviewer` reads this alongside `coding-standards.md` and
+> `golden-rules.md`.
 
-Language-specific review priorities. The code-reviewer reads this alongside `coding-standards.md` and `golden-rules.md`.
+Severity: **CRITICAL** blocks merge · **HIGH** requires revision unless explicitly accepted
+· **MEDIUM** requires justification · **LOW** auto-fix.
 
----
+## CRITICAL — proef invariants
 
-## CRITICAL — Soundness + Safety
+- [ ] **hurl pins bumped** (`=8.0.1` / `hurl_core`) outside the canary + runbook — reject
+      (ADR-0003).
+- [ ] **`proef-core` does IO / reads clock / env / randomness** — breaks determinism;
+      values must be injected (ADR-0005, TECH-SPEC §4).
+- [ ] **`proef-core` imports an engine or engine-specific type** — the seam is one-way
+      (engines → core).
+- [ ] **miette used outside `proef-cli`** — typed errors in core/engines, miette only at
+      the edge (ADR-0009).
+- [ ] **Secret reaches an artifact, event, log, report, or the persistent World** — or
+      `saveAs: global` accepts a secret-valued capture (ADR-0005). Redaction is
+      property-tested; keep it green.
+- [ ] **Emitted `.hurl` bytes ≠ bytes handed to `parse_hurl_file`** — artifacts are the
+      executed input (ADR-0010).
+- [ ] **New `#[serde(untagged)]` enum carrying numbers** — arbitrary_precision breaks it;
+      use hand-rolled scalar visitors.
+- [ ] **Another engine's vocabulary introduced** (web/CDP, adb/tablet, browser) — hurl is
+      the only engine (`[[hurl-engine-only]]`).
 
-- [ ] **`unsafe` without `SAFETY:` comment** — every `unsafe` block must explain the invariant that makes it safe
-- [ ] **`unsafe fn` missing `# Safety` rustdoc section** — public unsafe API must document caller preconditions
-- [ ] **`static mut`** — undefined behavior under concurrent access; use atomics or `OnceLock`
-- [ ] **Data races**: shared `&mut` across threads without `Mutex` / `RwLock` / atomic ordering
-- [ ] **Send/Sync bounds wrong**: `Send`/`Sync` impl on types that hold non-thread-safe inner state
-- [ ] **Transmute / pointer casts** between incompatible types
-- [ ] **Drop ordering assumptions**: relying on specific drop order across fields or scopes
+## CRITICAL — soundness & errors
 
-## CRITICAL — Error Handling
+- [ ] `unsafe` block without a `// SAFETY:` comment; `unsafe fn` without a `# Safety`
+      section (rare in proef — scrutinize any new `unsafe`).
+- [ ] `unwrap()`/`expect()` in a library path (`proef-core`, engines) outside proven
+      invariants — CLI `main` excepted.
+- [ ] **Swallowed error**: `let _ = result;` without warning or classification into a
+      fault. Poisoned `Mutex` recovered wrongly (recover via `PoisonError::into_inner` only
+      when no cross-invariant was broken; else System fault).
+- [ ] `Box<dyn Error>` in a library public API — callers can't match variants.
 
-- [ ] **`unwrap()` / `expect()` in production paths** — outside `tests/`, `main`, or proven invariants
-- [ ] **`Box<dyn Error>` in library public API** — callers can't match on variants
-- [ ] **Mixing `anyhow` + `thiserror` in the same crate** without justification
-- [ ] **Swallowed errors**: `let _ = result;` without comment explaining why
-- [ ] **Panic in library public API** without `# Panics` rustdoc section
-- [ ] **`?` on a `Result<T, E1>` returned from a `-> Result<T, E2>` fn without `From<E1> for E2`** (compile error, but watch for placeholder `From` impls that lose context)
+## HIGH — contracts & schema
 
-## CRITICAL — Security
+- [ ] **Event schema change that is not additive**, or a second run-record format invented
+      alongside the JSONL stream (ADR-0008).
+- [ ] **Exit-code mapping changed** without updating the assert_cmd suite (`0/1/2/3`,
+      ADR-0009).
+- [ ] **Snapshot diff (artifacts/sidecars/diagnostics/events) blind-accepted** — each must
+      be `insta review`ed and justified.
+- [ ] **`${…}` vs `{{…}}` confused**: `${…}` resolves at lower time; `{{…}}` must pass
+      through core untouched (ADR-0005).
+- [ ] **`retry:` without a finite count** — the finite-retry lint exists for a reason
+      (ADR-0007).
+- [ ] **`proef-core` public API widened** without regenerating `public-api.txt`
+      deliberately.
+- [ ] **Architectural change without a new/superseding ADR** in the same PR; `CLAUDE.md`
+      Status not updated.
+- [ ] **New diagnostic code** without a `docs/DIAGNOSTICS.md` row + `tests/errors/` case
+      where reachable.
 
-- [ ] **SQL injection**: string concatenation in queries — use parameterized queries (`sqlx::query!`, `diesel::sql_query` with bound params)
-- [ ] **Command injection**: unvalidated input in `std::process::Command::arg` — never shell-pipe untrusted input
-- [ ] **Path traversal**: user-controlled paths without `Path::canonicalize` + prefix check
-- [ ] **Hardcoded secrets**: API keys, passwords, tokens in source — use `std::env::var` or a config crate
-- [ ] **Weak crypto**: MD5/SHA1 for security purposes — use SHA-256+ (`sha2`) or `argon2` for passwords
-- [ ] **Unsafe deserialization**: `serde_json::from_str` on untrusted input WITHOUT a size limit upstream
+## HIGH — dependencies & idioms
 
-## HIGH — Type Safety
+- [ ] Banned dep introduced: `reqwest`, `async-trait`/`maybe-async`, a tokio runtime,
+      `chrono` (ours), `serde_yaml`/`serde_yml`. `notify` not `=8.2.0`.
+- [ ] `WriteMode::Immediate` in a library path (must be `Buffered` — interleaves under
+      threads).
+- [ ] Diagnostics: `LineCol.column` (char-counted) used in byte math; span not treated as
+      0-based byte offset.
+- [ ] Bare primitives where a newtype carries identity (`StepKindId`, `EngineId`, …);
+      excessive `.clone()` where borrowing works.
 
-- [ ] **Bare primitives where newtypes belong**: `u64` for IDs, `String` for codes — see `canonical-entities.yaml`
-- [ ] **`Option<T>` flattened to defaults silently**: `unwrap_or_default()` hiding logical errors
-- [ ] **`as` casts that may truncate** (`i64 as i32`) without bounds check or `try_from`
-- [ ] **Public function returns `()` losing information** that could be a `Result` or output type
-- [ ] **Generic over too many params** when associated types would express the constraint
+## MEDIUM — quality, docs, tests
 
-## HIGH — Borrowing + Lifetimes
+- [ ] Public item missing rustdoc (`#![warn(missing_docs)]` is on); `# Errors`/`# Panics`
+      missing where needed; broken intra-doc link.
+- [ ] New behavior without unit + (where applicable) snapshot/property coverage.
+- [ ] Parallel/retry test asserting wall-clock or raw interleaving instead of attempt
+      counts + normalized event order.
+- [ ] A gate/test/assertion weakened to pass (see `golden-rules.md` §14).
+- [ ] Comment narrates the code instead of stating a constraint the code can't show.
 
-- [ ] **Excessive `.clone()`** — could borrow / use `Cow` / use `Arc`
-- [ ] **`String` where `&str` would do** in function parameters
-- [ ] **`Vec<T>` parameter where `&[T]` would do**
-- [ ] **Explicit lifetimes that compiler would elide** — noise without value
-- [ ] **`'static` bound where a generic lifetime would work** — over-restrictive API
+## LOW — style
 
-## HIGH — Idiomatic Rust
+- [ ] `cargo fmt --all --check` clean · `cargo clippy … -D warnings` clean.
+- [ ] No `#[allow(...)]` without a `// Why:` justification.
 
-- [ ] **Manual `match` where `?` would propagate** (and the only logic IS propagation)
-- [ ] **C-style `for i in 0..vec.len()` indexed loop** when `vec.iter()` works
-- [ ] **`Vec::new()` + `.push()` in a loop** when `iter().collect()` works
-- [ ] **`map(|x| x.foo()).collect::<Vec<_>>()` followed by `for` loop** — chain inline
-- [ ] **Builder pattern missing `#[must_use]`**
-- [ ] **`pub` on items only used by tests** — should be `pub(crate)` or test-only re-export
-
-## HIGH — Async + Concurrency
-
-- [ ] **`.await` while holding a `std::sync::Mutex`** — deadlock risk; use `tokio::sync::Mutex`
-- [ ] **`tokio::sync::Mutex` held across NO awaits** — unnecessary overhead; use `std::sync::Mutex`
-- [ ] **Async fn doing CPU-bound work** without `tokio::task::spawn_blocking`
-- [ ] **Unbounded channel (`mpsc::unbounded_channel`)** without backpressure justification
-- [ ] **Cancellation safety unstated** for async fn holding mutable state across `.await`
-- [ ] **`tokio::spawn` without joining the handle** — fire-and-forget without error logging
-
-## MEDIUM — Code Quality
-
-- [ ] **Functions over 50 lines** — extract helper
-- [ ] **Functions with > 5 parameters** — group into a struct (consider builder)
-- [ ] **Deep nesting (> 4 levels)** — use early returns / `?` propagation
-- [ ] **Duplicate code patterns** — extract shared fn or trait
-- [ ] **Magic numbers without named `const`**
-- [ ] **`println!` / `eprintln!` for logging** — use `tracing` macros
-- [ ] **`pub use` re-exports outside crate root** without intent
-
-## MEDIUM — Documentation
-
-- [ ] **Public items missing rustdoc** (when `#![warn(missing_docs)]` is set)
-- [ ] **Doc examples that don't `cargo test --doc`** — broken intra-doc behavior
-- [ ] **`# Panics` / `# Errors` / `# Safety` sections missing** on functions that need them
-- [ ] **Broken `[\`OtherType\`]` intra-doc links**
-
-## MEDIUM — Testing Gaps
-
-- [ ] **New public function without tests**
-- [ ] **Error paths not tested** — every `Err` variant should have a regression test
-- [ ] **Mock overuse** — prefer integration tests with real services where feasible
-- [ ] **Missing edge case tests** for boundary values (0, MAX, empty collections, unicode)
-- [ ] **`#[ignore]` without comment** explaining why + when to re-enable
-- [ ] **Time-dependent test** using `SystemTime::now()` without injected `Clock`
-
-## MEDIUM — Dependency Hygiene
-
-- [ ] **New dependency for trivial functionality** — could be 20 lines of `std`?
-- [ ] **Dependency with permissive license that conflicts with project license** (check `cargo deny`)
-- [ ] **Dependency with active RustSec advisory** (check `cargo audit`)
-- [ ] **Duplicate dependency versions** in `Cargo.lock` — increases binary size
-- [ ] **Pinned exact version (`= "1.2.3"`)** without justification — blocks downstream upgrades
-
-## LOW — Style
-
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] No `#[allow(...)]` without a justification comment
-- [ ] No `#[allow(dead_code)]` on production code (only test scaffolding)
-
-## Diagnostic Commands
+## Diagnostic commands
 
 ```bash
-cargo check --all-targets --all-features                  # Compile check
-cargo clippy --all-targets --all-features -- -D warnings  # Lints
-cargo fmt --all -- --check                                # Format
-cargo test --all-targets --all-features                   # Tests
-cargo test --doc                                          # Doc tests
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps            # Doc build
-cargo audit                                               # RustSec advisories
-cargo deny check                                          # License / ban policy
-cargo tree --duplicates                                   # Duplicate dependency versions
+cargo clippy --all-targets --all-features -- -D warnings
+cargo run -p proef -- test tests/features --dry-run    # bind+lower+emit+parse
+cargo run -p proef -- test tests/errors --dry-run      # must fail by design
+cargo insta test --review                              # snapshot review
+cargo run -p xtask -- public-api                       # core surface drift
 ```
-
-## Severity Rubric
-
-- **CRITICAL**: soundness, safety, security — block merge
-- **HIGH**: type safety, error handling, idiomatic violations — require revision unless explicitly accepted
-- **MEDIUM**: quality, docs, tests, deps — require justification to accept as-is
-- **LOW**: style, formatting — auto-fix via `cargo fmt` / `cargo clippy --fix`

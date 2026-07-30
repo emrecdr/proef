@@ -1,16 +1,16 @@
 # Breadth macros (M5): docstring bodies, [Form], [Multipart], fakes, delay,
 # and a raw-fragment expect macro.
-templates:
-  sendCustomMessage:
+macros:
+  postCustomNote:
     params: [docstring]
-    match: the relative sends a custom message
+    match: a member posts a custom note
     description: POST the step's docstring verbatim as the request body.
-    tags: [Messaging]
+    tags: [Notes]
     steps:
-      - name: send the custom body
+      - name: post the custom body
         delay: 25
         hurl: |
-          POST ${baseURL}/api/v1/clients/c-1/messages
+          POST ${baseURL}/api/v1/records/r-1/notes
           Authorization: Bearer ${secret:apiToken}
           ${docstring}
   submitProfileForm:
@@ -22,18 +22,18 @@ templates:
       - hurl: |
           POST ${baseURL}/form
           [Form]
-          lastName: ${name}
+          name: ${name}
           city: ${fake:city}
-  uploadPhotoFile:
-    match: the photo file is uploaded
+  uploadAttachmentFile:
+    match: the attachment file is uploaded
     description: Multipart upload; fixture.jpg resolves via the feature-dir
       context root (§13 confinement).
-    tags: [Photos]
+    tags: [Attachments]
     steps:
       - hurl: |
           POST ${baseURL}/upload
           [Multipart]
-          photo: file,fixture.jpg;
+          attachment: file,fixture.jpg;
   expectHealthy:
     match: the response looks healthy
     description: Raw-fragment assert merged into the previous entry.

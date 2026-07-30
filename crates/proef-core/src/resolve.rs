@@ -47,6 +47,10 @@ pub struct ResolveCtx<'a> {
     pub directives: &'a BTreeMap<String, String>,
     /// Injected environment snapshot.
     pub env: &'a BTreeMap<String, String>,
+    /// Injected `proef.toml` config scope (`${url:key}`, `${vars:key}`), keyed
+    /// `"<namespace>:<key>"` — the CLI deep-merges the active `[env.<name>]` over
+    /// the base tables before injecting, so the core reads no file itself.
+    pub config_vars: &'a BTreeMap<String, String>,
     /// Injected run identifier (`${run:id}`).
     pub run_id: &'a str,
     /// World, for `${global:key}` reads at lower time.
@@ -70,7 +74,7 @@ pub struct Resolution {
     pub warnings: Vec<String>,
 }
 
-/// Why a template failed to resolve. Codes are stable diagnostic identifiers.
+/// Why a `${…}` reference failed to resolve. Codes are stable diagnostic identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResolveError {
     /// A plain `${name}` found in no scope.
@@ -95,8 +99,21 @@ pub enum ResolveError {
         /// The missing global key.
         key: String,
     },
+    /// `${url:key}` / `${vars:key}` referencing a value defined in neither the
+    /// base `proef.toml` table nor the active `[env.<name>]` profile.
+    #[error(
+        "{namespace} variable `{key}` is not set — define `[{namespace}]` `{key}` in proef.toml (or in the active `[env.<name>.{namespace}]`)"
+    )]
+    MissingConfigVar {
+        /// The namespace as written (`url` or `vars`).
+        namespace: String,
+        /// The referenced key.
+        key: String,
+    },
     /// `${ns:…}` with an unrecognized namespace.
-    #[error("unknown variable namespace `{namespace}:` (known: env, run, global, secret, fake)")]
+    #[error(
+        "unknown variable namespace `{namespace}:` (known: env, run, global, secret, fake, url, vars)"
+    )]
     UnknownNamespace {
         /// The namespace as written.
         namespace: String,
@@ -134,6 +151,7 @@ impl ResolveError {
         match self {
             Self::UnknownVariable { .. } => "proef::resolve::unknown_variable",
             Self::MissingEnv { .. } => "proef::resolve::missing_env",
+            Self::MissingConfigVar { .. } => "proef::resolve::missing_config_var",
             Self::MissingGlobal { .. } => "proef::resolve::missing_global",
             Self::UnknownNamespace { .. } => "proef::resolve::unknown_namespace",
             Self::UnknownRunField { .. } => "proef::resolve::unknown_run_field",
@@ -304,6 +322,7 @@ fn lookup(
                     }
                 })
             }
+            "url" | "vars" => resolve_config_var(namespace, arg, ctx),
             other => Err(ResolveError::UnknownNamespace {
                 namespace: other.to_owned(),
             }),
@@ -329,6 +348,26 @@ fn lookup(
         },
         ctx.mode,
     )
+}
+
+/// `${url:key}` / `${vars:key}` — the injected `proef.toml` scope (base + active
+/// `[env.<name>]`, already deep-merged by the CLI). Lower-time values, so a
+/// missing one errors like `${env:…}` (Probe tolerates it for the pack lint).
+fn resolve_config_var(
+    namespace: &str,
+    arg: &str,
+    ctx: &ResolveCtx<'_>,
+) -> Result<String, ResolveError> {
+    match ctx.config_vars.get(&format!("{namespace}:{arg}")) {
+        Some(value) => Ok(value.clone()),
+        None => probe_or(
+            ResolveError::MissingConfigVar {
+                namespace: namespace.to_owned(),
+                key: arg.to_owned(),
+            },
+            ctx.mode,
+        ),
+    }
 }
 
 /// In [`ResolveMode::Probe`], soften might-resolve-later failures to the
@@ -365,18 +404,23 @@ mod tests {
         defaults: BTreeMap<String, String>,
         directives: BTreeMap<String, String>,
         env: BTreeMap<String, String>,
+        config_vars: BTreeMap<String, String>,
         world: World,
     }
 
     impl Fixture {
         fn new() -> Self {
             let mut store = GlobalStore::new();
-            store.insert("clientId", Value::String("c-42".into()));
+            store.insert("recordId", Value::String("r-42".into()));
             Self {
-                args: map(&[("lastName", "Bakker-${run:id}")]),
-                defaults: map(&[("index", "clients")]),
+                args: map(&[("recordRef", "r-${run:id}")]),
+                defaults: map(&[("index", "records")]),
                 directives: map(&[("baseURL", "http://fixture.local")]),
                 env: map(&[("HOME", "/home/test")]),
+                config_vars: map(&[
+                    ("url:base", "https://api.example"),
+                    ("vars:apiVersion", "v1"),
+                ]),
                 world: World::new(store),
             }
         }
@@ -387,6 +431,7 @@ mod tests {
                 defaults: &self.defaults,
                 directives: &self.directives,
                 env: &self.env,
+                config_vars: &self.config_vars,
                 run_id: "run-0001",
                 world: &self.world,
                 mode,
@@ -399,11 +444,11 @@ mod tests {
         let f = Fixture::new();
         // The captured arg itself contains ${run:id} — the spike-verified case.
         let r = resolve(
-            "GET ${baseURL}/search?q=${lastName}",
+            "GET ${baseURL}/search?q=${recordRef}",
             &f.ctx(ResolveMode::Strict),
         )
         .unwrap();
-        assert_eq!(r.text, "GET http://fixture.local/search?q=Bakker-run-0001");
+        assert_eq!(r.text, "GET http://fixture.local/search?q=r-run-0001");
     }
 
     #[test]
@@ -448,8 +493,30 @@ mod tests {
     #[test]
     fn globals_read_from_the_world() {
         let f = Fixture::new();
-        let r = resolve("id=${global:clientId}", &f.ctx(ResolveMode::Strict)).unwrap();
-        assert_eq!(r.text, "id=c-42");
+        let r = resolve("id=${global:recordId}", &f.ctx(ResolveMode::Strict)).unwrap();
+        assert_eq!(r.text, "id=r-42");
+    }
+
+    #[test]
+    fn config_vars_resolve_from_the_injected_scope() {
+        let f = Fixture::new();
+        let r = resolve(
+            "${url:base}/v/${vars:apiVersion}",
+            &f.ctx(ResolveMode::Strict),
+        )
+        .unwrap();
+        assert_eq!(r.text, "https://api.example/v/v1");
+    }
+
+    #[test]
+    fn missing_config_var_errors_in_strict_and_dry_run_but_probes() {
+        let f = Fixture::new();
+        let err = resolve("${url:admin}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        assert_eq!(err.code(), "proef::resolve::missing_config_var");
+        // Lower-time, not runtime: dry-run must also reject (unlike ${global:…}).
+        assert!(resolve("${vars:nope}", &f.ctx(ResolveMode::DryRun)).is_err());
+        // Probe (pack-lint) tolerates it.
+        assert!(resolve("${url:admin}", &f.ctx(ResolveMode::Probe)).is_ok());
     }
 
     #[test]
@@ -466,11 +533,11 @@ mod tests {
     #[test]
     fn unknown_variable_suggests_the_closest_name() {
         let f = Fixture::new();
-        let err = resolve("${lastNam}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${recordRe}", &f.ctx(ResolveMode::Strict)).unwrap_err();
         let ResolveError::UnknownVariable { suggestion, .. } = &err else {
             panic!("wrong variant: {err:?}");
         };
-        assert_eq!(suggestion.as_deref(), Some("lastName"));
+        assert_eq!(suggestion.as_deref(), Some("recordRef"));
     }
 
     #[test]

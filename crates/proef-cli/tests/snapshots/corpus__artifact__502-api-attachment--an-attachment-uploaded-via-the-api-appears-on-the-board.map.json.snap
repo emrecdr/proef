@@ -11,9 +11,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         8
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 11,
-        "text": "the client environment is provisioned"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 10,
+        "text": "the workspace is provisioned"
       },
       "optional": true,
       "captures": [],
@@ -26,9 +26,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         16
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 11,
-        "text": "the client environment is provisioned"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 10,
+        "text": "the workspace is provisioned"
       },
       "optional": false,
       "captures": [
@@ -43,13 +43,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         25
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 12,
-        "text": "the client feed is activated and ready"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 11,
+        "text": "the activity channel is activated and ready"
       },
       "optional": false,
       "captures": [
-        "feedId"
+        "channelId"
       ],
       "batch": 1,
       "step": 1
@@ -60,9 +60,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         35
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 12,
-        "text": "the client feed is activated and ready"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 11,
+        "text": "the activity channel is activated and ready"
       },
       "optional": false,
       "captures": [],
@@ -75,13 +75,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         44
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 13,
-        "text": "the client Bakker-${run:id} is resolved"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 12,
+        "text": "the record W-${run:id} is resolved"
       },
       "optional": false,
       "captures": [
-        "clientId"
+        "recordId"
       ],
       "batch": 1,
       "step": 3
@@ -92,9 +92,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         51
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 13,
-        "text": "the client Bakker-${run:id} is resolved"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 12,
+        "text": "the record W-${run:id} is resolved"
       },
       "optional": false,
       "captures": [],
@@ -107,13 +107,13 @@ expression: "String::from_utf8(content_a).unwrap()"
         60
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 14,
-        "text": "the relative schedules an appointment"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 13,
+        "text": "a member uploads an attachment"
       },
       "optional": false,
       "captures": [
-        "eventId"
+        "attachmentId"
       ],
       "batch": 1,
       "step": 5
@@ -124,9 +124,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         71
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 15,
-        "text": "the backend dispatches a push notification"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 14,
+        "text": "the service records a delivery"
       },
       "optional": false,
       "captures": [],
@@ -139,9 +139,9 @@ expression: "String::from_utf8(content_a).unwrap()"
         81
       ],
       "feature": {
-        "file": "tests/features/501_api_calendar.feature",
-        "line": 16,
-        "text": "the client calendar feed shows the appointment"
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 15,
+        "text": "the board shows the attachment"
       },
       "optional": false,
       "captures": [],

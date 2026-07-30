@@ -8,12 +8,12 @@ expression: "String::from_utf8(content_a).unwrap()"
     {
       "hurl_lines": [
         6,
-        11
+        12
       ],
       "feature": {
         "file": "tests/features/520_api_breadth.feature",
-        "line": 18,
-        "text": "the photo file is uploaded"
+        "line": 22,
+        "text": "the operator searches for ${fake:lastName}"
       },
       "optional": false,
       "captures": [],
@@ -22,13 +22,13 @@ expression: "String::from_utf8(content_a).unwrap()"
     },
     {
       "hurl_lines": [
-        11,
-        11
+        12,
+        12
       ],
       "feature": {
         "file": "tests/features/520_api_breadth.feature",
-        "line": 19,
-        "text": "the response status is 201"
+        "line": 23,
+        "text": "the response status is 200"
       },
       "optional": false,
       "captures": [],

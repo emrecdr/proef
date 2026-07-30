@@ -32,10 +32,23 @@ value available. Fix: `proef secret set NAME` (or `export
 PROEF_SECRET_<NAME>=…`). In CI, see
 [AUTHORING — Secrets in CI](AUTHORING.md#secrets-in-ci).
 
-**Exit 3 with connection errors** — the target is unreachable. Check the URL
-your `# baseURL:` directive resolves to (a `--dry-run` prints nothing wrong
-because no request is sent), then the network. The dev fixture
-(`cargo run -p xtask -- fixture`) gives you a local target.
+**"unknown environment `<name>`"** — `--env <name>` (or `PROEF_ENV`) names an
+environment `proef.toml` doesn't define; the error lists the known ones. Fix the
+name or add the `[env.<name>]` section. Exit 2.
+
+**"<url|vars> variable `<key>` is not set"** (`resolve::missing_config_var`) — a
+pack references `${url:key}` / `${vars:key}` that neither the base `[url]`/`[vars]`
+nor the active `[env.<name>]` defines. Add it, or select the environment that has
+it with `--env`. See [CONFIG.md](CONFIG.md).
+
+**"no path given and no default suite found"** — `proef test` got no path and there
+is no `[run] suite` in `proef.toml` nor a `tests/` directory. Pass a path, set
+`[run] suite`, or create `tests/`. Exit 2.
+
+**Exit 3 with connection errors** — the target is unreachable. Check the URL your
+`${url:base}` (or a `# baseURL:` directive) resolves to for the active `--env` (a
+`--dry-run` prints nothing wrong because no request is sent), then the network. The
+dev fixture (`cargo run -p xtask -- fixture`) gives you a local target.
 
 **"batch budget exceeded — scenario thread abandoned"** — the watchdog killed
 a batch that outran its computed budget (timeouts × attempts + delays +

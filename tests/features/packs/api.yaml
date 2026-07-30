@@ -1,8 +1,10 @@
 # API pack for the 500-series suite: every step binds business prose to hurl
-# entries against the fixture backend.
-templates:
+# entries against the fixture backend. The domain is a generic workspace /
+# activity board — a member posts items to a record, they surface on the
+# record's synced activity channel.
+macros:
   provisionEnvironment:
-    match: the client environment is provisioned
+    match: the workspace is provisioned
     description: Create a fresh backend environment for one scenario run.
     tags: [Setup]
     steps:
@@ -19,31 +21,31 @@ templates:
           HTTP 201
           [Captures]
           envId: jsonpath "$.id"
-  activateFeed:
-    match: the client feed is activated and ready
-    description: Activate the provisioned client feed and poll until it reports ready.
+  activateChannel:
+    match: the activity channel is activated and ready
+    description: Activate the record's activity channel and poll until it reports ready.
     tags: [Setup]
     steps:
       - name: request activation
         hurl: |
-          POST ${baseURL}/api/v1/feed/activate
+          POST ${baseURL}/api/v1/channel/activate
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"env": "{{envId}}"}
           HTTP 200
           [Captures]
-          feedId: jsonpath "$.feedId"
-      - name: feed reports ready
+          channelId: jsonpath "$.channelId"
+      - name: channel reports ready
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/state
+          GET ${baseURL}/api/v1/channel/{{channelId}}/state
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
           jsonpath "$.status" == "ready"
-  searchClients:
+  searchRecords:
     params: [q, index]
-    defaults: { index: clients }
+    defaults: { index: records }
     description: Admin search over an index; captures the first hit's id.
     tags: [Admin]
     steps:
@@ -55,27 +57,27 @@ templates:
           q: ${q}
           HTTP 200
           [Captures]
-          clientId: jsonpath "$[0].id"
-  resolveClient:
+          recordId: jsonpath "$[0].id"
+  resolveRecord:
     params: [name]
-    match: "the client {name} is resolved"
-    description: Resolve a client by (run-scoped) surname; remembers the id globally.
+    match: "the record {name} is resolved"
+    description: Resolve a record by (run-scoped) name; remembers the id globally.
     tags: [Admin]
     steps:
-      - use: searchClients
+      - use: searchRecords
         with: { q: "${name}" }
-      - name: confirm the client exists
-        saveAs: { clientId: global }
+      - name: confirm the record exists
+        saveAs: { recordId: global }
         hurl: |
-          GET ${baseURL}/api/v1/clients/{{clientId}}
+          GET ${baseURL}/api/v1/records/{{recordId}}
           Authorization: Bearer ${secret:apiToken}
           HTTP 200
           [Asserts]
-          jsonpath "$.id" == "{{clientId}}"
+          jsonpath "$.id" == "{{recordId}}"
   adminSearch:
     params: [term, index]
-    defaults: { index: clients }
-    match: "the admin searches for {term}"
+    defaults: { index: records }
+    match: "the operator searches for {term}"
     description: Search step for the matrix suite (index via data table). No
       response block — the Then-step's expectStatus merge supplies `HTTP *`
       plus the status assert.
@@ -87,142 +89,142 @@ templates:
           Authorization: Bearer ${secret:apiToken}
           [Query]
           q: ${term}
-  sendMessage:
-    match: the relative sends a message to the client
-    description: Post a message to the resolved client as the relative.
-    tags: [Messaging]
+  postNote:
+    match: a member posts a note to the board
+    description: Post a note to the resolved record.
+    tags: [Notes]
     steps:
-      - name: send the message
+      - name: post the note
         hurl: |
-          POST ${baseURL}/api/v1/clients/{{clientId}}/messages
+          POST ${baseURL}/api/v1/records/{{recordId}}/notes
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
-          {"body": "Hallo from proef ${run:id}"}
+          {"body": "Note from proef ${run:id}"}
           HTTP 201
           [Captures]
-          messageId: jsonpath "$.id"
-  pushDispatched:
-    match: the backend dispatches a push notification
-    description: Poll the push queue until the latest item becomes visible.
-    tags: [Messaging]
+          noteId: jsonpath "$.id"
+  deliveryRecorded:
+    match: the service records a delivery
+    description: Poll the delivery queue until the latest item becomes visible.
+    tags: [Notes]
     steps:
-      - name: push visible in queue
+      - name: delivery visible in queue
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/push/queue
+          GET ${baseURL}/api/v1/deliveries/queue
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           HTTP 200
           [Asserts]
           jsonpath "$.items" count > 0
-  feedShowsMessage:
-    match: the client feed shows the message from the relative
-    description: The client's synced message feed contains the sent message.
-    tags: [Messaging]
+  boardShowsNote:
+    match: the board shows the note
+    description: The record's synced note channel contains the posted note.
+    tags: [Notes]
     steps:
-      - name: message visible in the feed
+      - name: note visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/messages
+          GET ${baseURL}/api/v1/channel/{{channelId}}/notes
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
-          jsonpath "$.messages[0].id" == "{{messageId}}"
-  scheduleAppointment:
-    match: the relative schedules an appointment
-    description: Create an agenda event for the resolved client.
-    tags: [Calendar]
+          jsonpath "$.notes[0].id" == "{{noteId}}"
+  scheduleItem:
+    match: a member adds a scheduled item
+    description: Create a scheduled event on the resolved record.
+    tags: [Events]
     steps:
-      - name: create the agenda event
+      - name: create the event
         hurl: |
-          POST ${baseURL}/api/v1/clients/{{clientId}}/agenda/events
+          POST ${baseURL}/api/v1/records/{{recordId}}/events
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
-          {"title": "Koffie", "run": "${run:id}"}
+          {"title": "Review", "run": "${run:id}"}
           HTTP 201
           [Captures]
           eventId: jsonpath "$.id"
-  feedShowsAppointment:
-    match: the client calendar feed shows the appointment
-    description: The client's calendar feed contains the created event.
-    tags: [Calendar]
+  boardShowsItem:
+    match: the board shows the scheduled item
+    description: The record's event channel contains the created event.
+    tags: [Events]
     steps:
-      - name: appointment visible in the feed
+      - name: item visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/calendar
+          GET ${baseURL}/api/v1/channel/{{channelId}}/events
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
           jsonpath "$.events[0].id" == "{{eventId}}"
-  uploadPhoto:
-    match: the relative uploads a photo
-    description: Register a photo for the client (JSON body at M1; multipart lands M5).
-    tags: [Photos]
+  uploadAttachment:
+    match: a member uploads an attachment
+    description: Register an attachment for the record (JSON body at M1; multipart lands M5).
+    tags: [Attachments]
     steps:
-      - name: upload the photo
+      - name: upload the attachment
         hurl: |
-          POST ${baseURL}/api/v1/clients/{{clientId}}/photos
+          POST ${baseURL}/api/v1/records/{{recordId}}/attachments
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
-          {"source": "${env:RUNTIME_PHOTO:-fixture.jpg}", "run": "${run:id}"}
+          {"source": "${env:RUNTIME_ATTACHMENT:-fixture.jpg}", "run": "${run:id}"}
           HTTP 201
           [Captures]
-          photoId: jsonpath "$.id"
-  feedShowsPhoto:
-    match: the client photo feed shows the photo
-    description: The client's photo feed contains the uploaded photo.
-    tags: [Photos]
+          attachmentId: jsonpath "$.id"
+  boardShowsAttachment:
+    match: the board shows the attachment
+    description: The record's attachment channel contains the uploaded attachment.
+    tags: [Attachments]
     steps:
-      - name: photo visible in the feed
+      - name: attachment visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/photos
+          GET ${baseURL}/api/v1/channel/{{channelId}}/attachments
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
-          jsonpath "$.photos[0].id" == "{{photoId}}"
-  placeCall:
-    match: the relative places a video call
-    description: Start a video call for the resolved client.
-    tags: [Calls]
+          jsonpath "$.attachments[0].id" == "{{attachmentId}}"
+  startSession:
+    match: a member starts a live session
+    description: Start a live session on the resolved record.
+    tags: [Sessions]
     steps:
-      - name: place the call
+      - name: start the session
         hurl: |
-          POST ${baseURL}/api/v1/clients/{{clientId}}/calls
+          POST ${baseURL}/api/v1/records/{{recordId}}/sessions
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
-          {"kind": "video", "run": "${run:id}"}
+          {"kind": "live", "run": "${run:id}"}
           HTTP 201
           [Captures]
-          callId: jsonpath "$.id"
-  feedShowsIncomingCall:
-    match: the call feed shows the incoming call
-    description: The client's call feed reports the incoming state.
-    tags: [Calls]
+          sessionId: jsonpath "$.id"
+  boardShowsPendingSession:
+    match: the board shows the pending session
+    description: The record's session channel reports the pending state.
+    tags: [Sessions]
     steps:
-      - name: incoming call visible
+      - name: pending session visible
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/call
+          GET ${baseURL}/api/v1/channel/{{channelId}}/session
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
-          jsonpath "$.state" == "incoming"
-          jsonpath "$.callId" == "{{callId}}"
-  denyCall:
-    match: the call can be denied via the API
-    description: Deny the incoming call and verify the feed returns to idle.
-    tags: [Calls]
+          jsonpath "$.state" == "pending"
+          jsonpath "$.sessionId" == "{{sessionId}}"
+  cancelSession:
+    match: the session can be cancelled via the API
+    description: Cancel the pending session and verify the channel returns to idle.
+    tags: [Sessions]
     steps:
-      - name: deny the call
+      - name: cancel the session
         hurl: |
-          POST ${baseURL}/api/v1/feed/{{feedId}}/call/{{callId}}/deny
+          POST ${baseURL}/api/v1/channel/{{channelId}}/session/{{sessionId}}/cancel
           X-Proef-Env: {{envId}}
           HTTP 200
-      - name: call state back to idle
+      - name: session state back to idle
         hurl: |
-          GET ${baseURL}/api/v1/feed/{{feedId}}/call
+          GET ${baseURL}/api/v1/channel/{{channelId}}/session
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]

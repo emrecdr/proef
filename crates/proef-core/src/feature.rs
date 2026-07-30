@@ -495,7 +495,7 @@ mod tests {
 
     use super::*;
 
-    const FEATURE: &str = "# baseURL: http://fixture.local\n# app: backend\n@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a client\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
+    const FEATURE: &str = "# baseURL: http://fixture.local\n# app: backend\n@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a record\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
 
     #[test]
     fn directives_tags_background_and_outline_expand() {

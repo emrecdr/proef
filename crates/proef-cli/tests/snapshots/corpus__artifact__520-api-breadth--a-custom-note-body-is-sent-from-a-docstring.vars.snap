@@ -2,5 +2,5 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: "String::from_utf8(content_a).unwrap()"
 ---
-# proef variables for 510-api-search-matrix--search-over-users-returns-200.hurl
+# proef variables for 520-api-breadth--a-custom-note-body-is-sent-from-a-docstring.hurl
 # secret `apiToken` — supply at replay: --secret apiToken=<value>
