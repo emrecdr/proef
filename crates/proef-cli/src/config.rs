@@ -200,6 +200,8 @@ impl ProjectConfig {
 
 #[cfg(test)]
 mod tests {
+    // Why: unwrap/expect are acceptable in `#[cfg(test)]` — a broken assumption
+    // surfaces as a test failure, which is exactly the intent.
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;

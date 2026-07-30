@@ -41,18 +41,12 @@ pub fn execute(
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     active_env: Option<&str>,
+    config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
-    let config = match ProjectConfig::load() {
-        Ok(config) => config,
-        Err(message) => {
-            eprintln!("error: {message}");
-            return ExitCode::UserError;
-        }
-    };
-
-    // Resolve the active environment once: config_vars validates the `--env`
-    // name (unknown env = user error), and jobs/http cannot fail afterwards.
+    // Resolve the active environment once. All three calls consult `env_profile`,
+    // so any of them surfaces an unknown `--env` (user error); the match below
+    // reports the first such error.
     let (config_vars, effective_jobs, http_defaults) = match (
         config.config_vars(active_env),
         config.jobs(jobs, active_env),

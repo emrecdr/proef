@@ -1,5 +1,5 @@
-# API attachment sync: a member uploads an attachment via the API (multipart;
-# provide a file via ${env:RUNTIME_ATTACHMENT}); the record's board shows it.
+# API attachment sync: a member uploads an attachment via the API (JSON body — real
+# multipart upload lives in the 520 breadth suite); the record's board shows it.
 # baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 @e2e @api @sync-attachment
 Feature: API — attachment sync

@@ -11,14 +11,13 @@ use crate::config::ProjectConfig;
 use crate::front;
 use crate::render;
 
-/// Load `proef.toml` and build the injected `${url:…}` / `${vars:…}` scope for
-/// the active environment (base deep-merged with `[env.<name>]`). An absent file
-/// yields an empty scope; a malformed file or an unknown `--env` is a user error.
-fn config_vars_for(active_env: Option<&str>) -> Result<Arc<BTreeMap<String, String>>, ExitCode> {
-    let config = ProjectConfig::load().map_err(|message| {
-        eprintln!("error: {message}");
-        ExitCode::UserError
-    })?;
+/// Build the injected `${url:…}` / `${vars:…}` scope for the active environment
+/// (base deep-merged with `[env.<name>]`) from an already-loaded config. An absent
+/// file yields an empty scope; an unknown `--env` is a user error.
+fn config_vars_for(
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> Result<Arc<BTreeMap<String, String>>, ExitCode> {
     config
         .config_vars(active_env)
         .map(Arc::new)
@@ -90,8 +89,9 @@ pub fn dry_run(
     scenario: Option<&str>,
     scenario_file: Option<&str>,
     active_env: Option<&str>,
+    config: &ProjectConfig,
 ) -> ExitCode {
-    let config_vars = match config_vars_for(active_env) {
+    let config_vars = match config_vars_for(active_env, config) {
         Ok(vars) => vars,
         Err(code) => return code,
     };
@@ -167,8 +167,13 @@ pub fn dry_run(
 }
 
 /// `proef flows` — list every scenario with its anchor and tags.
-pub fn flows(path: &Path, output_json: bool, active_env: Option<&str>) -> ExitCode {
-    let config_vars = match config_vars_for(active_env) {
+pub fn flows(
+    path: &Path,
+    output_json: bool,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let config_vars = match config_vars_for(active_env, config) {
         Ok(vars) => vars,
         Err(code) => return code,
     };
@@ -229,8 +234,9 @@ pub fn artifacts(
     out_dir: &Path,
     run_id: Option<String>,
     active_env: Option<&str>,
+    config: &ProjectConfig,
 ) -> ExitCode {
-    let config_vars = match config_vars_for(active_env) {
+    let config_vars = match config_vars_for(active_env, config) {
         Ok(vars) => vars,
         Err(code) => return code,
     };

@@ -104,6 +104,7 @@ impl Drop for Fixture {
 #[allow(clippy::too_many_lines)]
 fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
     let mut body = String::new();
+    // best-effort: these fixture routes act on method + path, not the body.
     let _ = std::io::Read::read_to_string(request.as_reader(), &mut body);
     let method = request.method().as_str().to_owned();
     let url = request.url().to_owned();

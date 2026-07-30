@@ -96,7 +96,7 @@ project root and reference them as `${url:…}` / `${vars:…}`:
 ```toml
 # proef.toml
 [run]
-suite = "tests"                    # `proef test` now needs no path argument
+suite = "suite"                    # `proef test` now needs no path argument
 
 [url]
 base = "http://127.0.0.1:8787"     # → ${url:base}

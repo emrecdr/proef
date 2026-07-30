@@ -156,14 +156,13 @@ enum SecretAction {
 /// proef.toml, else the `tests/` convention. An explicit path always wins; a
 /// missing default with no `tests/` present is a user error (exit 2) — never a
 /// silent no-op.
-fn resolve_suite_path(path: Option<PathBuf>) -> Result<PathBuf, proef_core::error::ExitCode> {
+fn resolve_suite_path(
+    path: Option<PathBuf>,
+    config: &config::ProjectConfig,
+) -> Result<PathBuf, proef_core::error::ExitCode> {
     if let Some(path) = path {
         return Ok(path);
     }
-    let config = config::ProjectConfig::load().map_err(|message| {
-        eprintln!("error: {message}");
-        proef_core::error::ExitCode::UserError
-    })?;
     if let Some(suite) = config.suite() {
         return Ok(PathBuf::from(suite));
     }
@@ -175,6 +174,21 @@ fn resolve_suite_path(path: Option<PathBuf>) -> Result<PathBuf, proef_core::erro
         "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"
     );
     Err(proef_core::error::ExitCode::UserError)
+}
+
+/// Load `proef.toml` once per invocation (absent file = defaults; a malformed
+/// file is a user error). Threaded into suite resolution and the command so the
+/// config is read a single time, not once per consumer.
+fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
+    config::ProjectConfig::load().map_err(|message| {
+        eprintln!("error: {message}");
+        proef_core::error::ExitCode::UserError
+    })
+}
+
+/// The active environment: the `--env` flag wins, else `PROEF_ENV`, else none.
+fn active_env(flag: Option<String>) -> Option<String> {
+    flag.or_else(|| std::env::var("PROEF_ENV").ok())
 }
 
 // One dispatch table over the CLI surface; splitting arms hides the routing.
@@ -196,63 +210,75 @@ fn main() -> std::process::ExitCode {
             scenario_file,
             watch: watch_mode,
             env,
-        } => match resolve_suite_path(path) {
+        } => match load_config() {
             Err(code) => code,
-            Ok(path) => {
-                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
-                let run_once = |cancel| {
-                    if dry_run {
-                        commands::dry_run(
-                            &path,
-                            &tags,
-                            scenario.as_deref(),
-                            scenario_file.as_deref(),
-                            active_env.as_deref(),
-                        )
+            Ok(config) => match resolve_suite_path(path, &config) {
+                Err(code) => code,
+                Ok(path) => {
+                    let active_env = active_env(env);
+                    let run_once = |cancel| {
+                        if dry_run {
+                            commands::dry_run(
+                                &path,
+                                &tags,
+                                scenario.as_deref(),
+                                scenario_file.as_deref(),
+                                active_env.as_deref(),
+                                &config,
+                            )
+                        } else {
+                            exec::execute(
+                                &path,
+                                &tags,
+                                jobs,
+                                output == Some(OutputFormat::Json),
+                                junit.as_deref(),
+                                scenario.as_deref(),
+                                scenario_file.as_deref(),
+                                active_env.as_deref(),
+                                &config,
+                                cancel, // None = execute installs its own Ctrl-C handler
+                            )
+                        }
+                    };
+                    if watch_mode {
+                        // The loop owns Ctrl-C and hands each run its token.
+                        watch::watch_loop(&path, |token| run_once(Some(token)))
                     } else {
-                        exec::execute(
-                            &path,
-                            &tags,
-                            jobs,
-                            output == Some(OutputFormat::Json),
-                            junit.as_deref(),
-                            scenario.as_deref(),
-                            scenario_file.as_deref(),
-                            active_env.as_deref(),
-                            cancel, // None = execute installs its own Ctrl-C handler
-                        )
+                        run_once(None)
                     }
-                };
-                if watch_mode {
-                    // The loop owns Ctrl-C and hands each run its token.
-                    watch::watch_loop(&path, |token| run_once(Some(token)))
-                } else {
-                    run_once(None)
                 }
-            }
+            },
         },
-        Command::Flows { path, output, env } => match resolve_suite_path(path) {
+        Command::Flows { path, output, env } => match load_config() {
             Err(code) => code,
-            Ok(path) => {
-                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
-                commands::flows(
-                    &path,
-                    output == Some(OutputFormat::Json),
-                    active_env.as_deref(),
-                )
-            }
+            Ok(config) => match resolve_suite_path(path, &config) {
+                Err(code) => code,
+                Ok(path) => {
+                    let active_env = active_env(env);
+                    commands::flows(
+                        &path,
+                        output == Some(OutputFormat::Json),
+                        active_env.as_deref(),
+                        &config,
+                    )
+                }
+            },
         },
         Command::Artifacts {
             path,
             output,
             run_id,
             env,
-        } => match resolve_suite_path(path) {
+        } => match load_config() {
             Err(code) => code,
-            Ok(path) => {
-                let active_env = env.or_else(|| std::env::var("PROEF_ENV").ok());
-                commands::artifacts(&path, &output, run_id, active_env.as_deref())
-            }
+            Ok(config) => match resolve_suite_path(path, &config) {
+                Err(code) => code,
+                Ok(path) => {
+                    let active_env = active_env(env);
+                    commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
+                }
+            },
         },
         Command::Schema { add_to } => commands::schema(&add_to),
         Command::Doctor => commands::doctor(&registry::engines()),

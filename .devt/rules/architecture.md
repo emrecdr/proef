@@ -85,5 +85,4 @@ batches **contiguous same-engine steps** and dispatches in order; the **World** 
 
 Domain identity lives in newtypes (`StepKindId`, `EngineId`, `StepRef`, `Value`), not bare
 primitives. `Value` uses hand-rolled scalar visitors — never a `#[serde(untagged)]` enum
-carrying numbers (arbitrary_precision hazard, `[[hurl-engine-only]]` build note in
-`golden-rules.md` §8).
+carrying numbers (arbitrary_precision hazard — see `golden-rules.md` §8).
