@@ -3,15 +3,15 @@ source: crates/proef-cli/tests/corpus.rs
 expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — Search over missing returns 404
-# source: tests/features/510_api_search_matrix.feature:15
+# source: tests/features/510_api_search_matrix.feature:14
 # replay: hurl --test 510-api-search-matrix--search-over-missing-returns-404.hurl --variables-file 510-api-search-matrix--search-over-missing-returns-404.vars --secret apiToken=<value>
 
-# tests/features/510_api_search_matrix.feature:8 — the workspace is provisioned (fixture warm-up probe)
+# tests/features/510_api_search_matrix.feature:7 — the workspace is provisioned (fixture warm-up probe)
 # optional
 GET http://127.0.0.1:8787/health
 HTTP 200
 
-# tests/features/510_api_search_matrix.feature:8 — the workspace is provisioned (provision the environment)
+# tests/features/510_api_search_matrix.feature:7 — the workspace is provisioned (provision the environment)
 POST http://127.0.0.1:8787/api/v1/env/provision
 Authorization: Bearer {{apiToken}}
 {"run": "proef-snapshot"}
@@ -19,7 +19,7 @@ HTTP 201
 [Captures]
 envId: jsonpath "$.id"
 
-# tests/features/510_api_search_matrix.feature:16 — the operator searches for nobody (search missing for nobody)
+# tests/features/510_api_search_matrix.feature:15 — the operator searches for nobody (search missing for nobody)
 GET http://127.0.0.1:8787/api/v1/admin/search/missing
 Authorization: Bearer {{apiToken}}
 [Query]

@@ -23,7 +23,7 @@ use crate::world::World;
 /// Everything lowering needs, all injected (core purity).
 #[derive(Debug, Clone, Copy)]
 pub struct LowerCtx<'a> {
-    /// The feature the scenario came from (directives + source for diags).
+    /// The feature the scenario came from (source for diags).
     pub feature: &'a FeatureFile,
     /// Loaded macros.
     pub packs: &'a PackSet,
@@ -76,12 +76,6 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
     let mut diags: Vec<Diag> = Vec::new();
     let mut warnings: Vec<Diag> = Vec::new();
     let mut refs = Refs::default();
-
-    // Directives resolve first (env/run only — no step scope).
-    let Some(directives) = resolve_directives(ctx, &mut refs, &mut warnings, &mut diags) else {
-        return Err(diags);
-    };
-
     let mut lowered: Vec<LoweredStep> = Vec::new();
     for step in &scenario.steps {
         let step_ref = StepRef {
@@ -100,7 +94,6 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
             macro_,
             &step.args,
             &step_ref,
-            &directives,
             ctx,
             0,
             &mut lowered,
@@ -150,56 +143,12 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
     })
 }
 
-/// Resolve `# key: value` directive values (they may reference env/run).
-/// Failures land in `diags`; `None` means at least one directive is broken.
-fn resolve_directives(
-    ctx: &LowerCtx<'_>,
-    refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
-) -> Option<BTreeMap<String, String>> {
-    let empty = BTreeMap::new();
-    let mut resolved = BTreeMap::new();
-    for (key, value) in &ctx.feature.directives {
-        let resolve_ctx = ResolveCtx {
-            args: &empty,
-            defaults: &empty,
-            directives: &resolved, // earlier directives are visible to later ones
-            env: ctx.env,
-            config_vars: ctx.config_vars,
-            run_id: ctx.run_id,
-            world: ctx.world,
-            mode: ctx.mode,
-        };
-        match resolve::resolve(value, &resolve_ctx) {
-            Ok(resolution) => {
-                refs.secrets.extend(resolution.secrets);
-                refs.globals.extend(resolution.globals);
-                push_warnings(warnings, &resolution.warnings, ctx, key);
-                resolved.insert(key.clone(), resolution.text);
-            }
-            Err(err) => {
-                diags.push(
-                    Diag::error(
-                        err.code(),
-                        format!("directive `# {key}:` does not resolve: {err}"),
-                    )
-                    .with_source(ctx.feature.path.clone(), Arc::clone(&ctx.feature.source)),
-                );
-                return None;
-            }
-        }
-    }
-    Some(resolved)
-}
-
 /// Expand one macro invocation into lowered steps (recursing through `use:`).
 #[allow(clippy::too_many_arguments)]
 fn expand_macro(
     macro_: &Macro,
     args: &BTreeMap<String, String>,
     step_ref: &StepRef,
-    directives: &BTreeMap<String, String>,
     ctx: &LowerCtx<'_>,
     depth: usize,
     out: &mut Vec<LoweredStep>,
@@ -227,7 +176,6 @@ fn expand_macro(
         let resolve_ctx = ResolveCtx {
             args,
             defaults: &macro_.defaults,
-            directives,
             env: ctx.env,
             config_vars: ctx.config_vars,
             run_id: ctx.run_id,
@@ -296,7 +244,6 @@ fn expand_macro(
                 expand_step(
                     macro_step,
                     step_ref,
-                    directives,
                     ctx,
                     depth,
                     out,
@@ -316,7 +263,6 @@ fn expand_macro(
 fn expand_step(
     macro_step: &MacroStep,
     step_ref: &StepRef,
-    directives: &BTreeMap<String, String>,
     ctx: &LowerCtx<'_>,
     depth: usize,
     out: &mut Vec<LoweredStep>,
@@ -343,7 +289,6 @@ fn expand_step(
                 target_macro,
                 &child_args,
                 step_ref,
-                directives,
                 ctx,
                 depth + 1,
                 out,
@@ -744,7 +689,7 @@ mod tests {
     steps:
       - name: authenticate
         hurl: |
-          POST ${baseURL}/auth
+          POST ${url:base}/auth
           Authorization: Bearer ${token}
           HTTP 200
   search:
@@ -755,7 +700,7 @@ mod tests {
         with: { token: "${secret:apiToken}" }
       - name: run the search
         hurl: |
-          GET ${baseURL}/search?q=${term}
+          GET ${url:base}/search?q=${term}
           HTTP 200
           [Captures]
           recordId: jsonpath "$[0].id"
@@ -764,7 +709,7 @@ mod tests {
     steps:
       - optional: true
         hurl: |
-          GET ${baseURL}/health
+          GET ${url:base}/health
   expectStatus:
     params: [status]
     match: "the response status is {status}"
@@ -787,7 +732,7 @@ mod tests {
         .unwrap();
         let feature = crate::feature::parse(
             "t.feature",
-            "# baseURL: http://fixture.local\nFeature: F\n  Scenario: S\n    Given the service is healthy\n    When I search for \"Jansen\"\n    Then the response status is 200\n",
+            "Feature: F\n  Scenario: S\n    Given the service is healthy\n    When I search for \"Jansen\"\n    Then the response status is 200\n",
         )
         .unwrap();
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
@@ -820,7 +765,8 @@ mod tests {
         let kind_to_engine: BTreeMap<String, String> =
             [("hurl".to_owned(), "hurl".to_owned())].into();
         let env = BTreeMap::new();
-        let config_vars = BTreeMap::new();
+        let config_vars =
+            BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
         let world = World::default();
         let lowered = lower(
             &scenario,
@@ -870,7 +816,7 @@ mod tests {
         assert!(search.trim_end().ends_with("status == 200"), "{search}");
 
         // Anchors point at the feature lines.
-        assert_eq!(lowered.batches[1].steps[1].step.line, 5);
+        assert_eq!(lowered.batches[1].steps[1].step.line, 4);
         assert_eq!(
             lowered.batches[1].steps[0].label.as_deref(),
             Some("authenticate")
@@ -918,7 +864,7 @@ mod tests {
             &[PackSource {
                 name: "alt.yaml".into(),
                 text: Arc::from(
-                    "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${baseURL}/item\"\n          checks: [\"${baseURL}\", 7]\n",
+                    "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${url:base}/item\"\n          checks: [\"${url:base}\", 7]\n",
                 ),
             }],
             ALT_KINDS,
@@ -926,14 +872,15 @@ mod tests {
         .unwrap();
         let feature = crate::feature::parse(
             "t.feature",
-            "# baseURL: http://fixture.local\nFeature: F\n  Scenario: S\n    When the alternate step runs\n",
+            "Feature: F\n  Scenario: S\n    When the alternate step runs\n",
         )
         .unwrap();
         let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
         let kind_to_engine: BTreeMap<String, String> =
             [("alt".to_owned(), "alt".to_owned())].into();
         let env = BTreeMap::new();
-        let config_vars = BTreeMap::new();
+        let config_vars =
+            BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
         let world = World::default();
         let lowered = lower(
             &scenario,

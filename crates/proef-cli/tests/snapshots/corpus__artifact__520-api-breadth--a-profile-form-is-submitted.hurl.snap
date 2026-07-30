@@ -3,10 +3,10 @@ source: crates/proef-cli/tests/corpus.rs
 expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — A profile form is submitted
-# source: tests/features/520_api_breadth.feature:13
+# source: tests/features/520_api_breadth.feature:12
 # replay: hurl --test 520-api-breadth--a-profile-form-is-submitted.hurl
 
-# tests/features/520_api_breadth.feature:14 — the profile form is submitted for Acme
+# tests/features/520_api_breadth.feature:13 — the profile form is submitted for Acme
 POST http://127.0.0.1:8787/form
 [Form]
 name: Acme

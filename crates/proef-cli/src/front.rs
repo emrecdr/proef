@@ -24,7 +24,7 @@ use crate::registry;
 
 /// One fully-processed feature.
 pub struct LoadedFeature {
-    /// The parsed feature (directives, tags, source).
+    /// The parsed feature (tags, source).
     pub file: FeatureFile,
     /// Processed scenarios, in authored order.
     pub scenarios: Vec<ProcessedScenario>,

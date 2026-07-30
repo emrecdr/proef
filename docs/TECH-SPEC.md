@@ -105,9 +105,10 @@ lower a probe instantiation with placeholder params and `parse_hurl_file` it —
 errors reported with block-relative spans mapped to pack file/line; (8) engine kinds:
 every step kind must be claimed by a registered engine's `StepKindSpec`.
 
-**4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); `# key: value` directive
-comments before `Feature:` (resolved through `${…}` immediately); tags from
+**4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); tags from
 Feature/Rule/Scenario accumulate. i18n via `# language:` honored by the crate.
+`#` comment lines are plain gherkin comments (no `# key:` directive mechanism —
+variables live in `proef.toml`, ADR-0012).
 
 **4.3 Bind.** For each step (keyword stripped): first macro whose `match:` pattern
 matches wins; ambiguity (2+ matches) is an error listing candidates. Captured `{name}`
@@ -148,7 +149,7 @@ threading mode: `parallel/worker.rs:76,124-133`) → map `EntryResult`s to `Step
 via the sidecar (SourceInfo spans → feature lines) → merge `HurlResult.variables` back
 into the World (typed).
 
-**RunnerOptions mapping.** Batch-level `RunnerOptionsBuilder` from config/directives
+**RunnerOptions mapping.** Batch-level `RunnerOptionsBuilder` from config
 (timeouts, follow-location, insecure, user-agent, context_dir…); per-entry `[Options]`
 override batch defaults by clone-then-override (`runner/options.rs:43-58`), `variable=`
 inserts persist for the rest of the call — verified semantics, relied upon.
@@ -214,8 +215,7 @@ mechanism).
 One scenario = one flow/run-record/artifact set. `Background:` prepends. `Rule:` groups
 pass through (tags accumulate). Outline/Examples per §4.4. Data tables per §4.3.
 Docstrings: reserved for raw request bodies in generic steps (M5). Tags: `@tag` →
-flow tags, `--tags` filters (csv, OR semantics). Directives: `# baseURL:`,
-`# app:` (+ open set stored into the directive scope). Step keywords: And/But resolve to
+flow tags, `--tags` filters (csv, OR semantics). Step keywords: And/But resolve to
 the previous primary keyword (gherkin crate `StepType`); keyword itself is not matched
 against patterns.
 
@@ -228,7 +228,7 @@ active `[env.<name>]` deep-merged; injected — ADR-0012) · `${run:id}` (uuid-v
 `{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id; port
 deterministic NL generators) · `$${…}` literal escape. Run-time (`{{…}}`): hurl captures and
 secret placeholders — resolved by the engine. Resolution order within a scope: step args
-> macro defaults > directives.
+> macro defaults.
 
 ## 9. Diagnostics (ADR-0009)
 

@@ -60,7 +60,7 @@ Tasks:
 3. Matcher: `{name}` tokenizer + leftmost matcher + guard rails (cucumber-expression
    semantics;
    property tests: no-panic, quote round-trip, adjacent-capture rejection).
-4. Gherkin: parse, directives, tags, Background, Rule pass-through, outline expansion,
+4. Gherkin: parse, tags, Background, Rule pass-through, outline expansion,
    data-table merge; binding with ambiguity detection + closest-pattern suggestions.
 5. Lowering: macro expansion (cycle/depth), recursive `${…}` resolver (depth 8, `$${`
    escape; property + fuzz targets), Then-merge (`expect:` → previous entry), batch
@@ -96,7 +96,7 @@ Tasks:
 1. Adapter: `VariableSet` seeding (World + secrets via `insert_secret`),
    `parse_hurl_file` + `run_entries` with Buffered terms + `EventListener` → events;
    `EntryResult` → `StepOutcome` mapping via sidecar spans.
-2. RunnerOptions mapping (config/directives → builder; per-entry `[Options]` override
+2. RunnerOptions mapping (config → builder; per-entry `[Options]` override
    relied on as verified); `HurlResult.variables` merge-back; `saveAs: global`
    promotion; typed Value bridging.
 3. Segmentation runtime: `optional:` warn-and-continue; `SessionState` cookie

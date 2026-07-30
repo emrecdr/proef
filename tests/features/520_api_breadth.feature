@@ -1,5 +1,4 @@
 # Breadth coverage (M5): docstring bodies, form + multipart uploads, fakes.
-# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 @api @breadth
 Feature: API — breadth (bodies, forms, uploads, fakes)
 

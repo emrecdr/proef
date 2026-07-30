@@ -12,10 +12,19 @@
 //! secrets stay on their own encrypted channel and never appear here.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::PathBuf;
 
 use proef_core::engine::HttpDefaults;
 use serde::Deserialize;
+
+/// The nearest `proef.toml` walking up from the working directory (like
+/// cargo/git), or `None` if none exists in any ancestor.
+fn find_config() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors()
+        .map(|dir| dir.join("proef.toml"))
+        .find(|candidate| candidate.is_file())
+}
 
 /// Loaded `proef.toml` (all fields optional — defaults apply).
 #[derive(Debug, Default, Deserialize)]
@@ -96,16 +105,16 @@ pub struct EnvProfile {
 }
 
 impl ProjectConfig {
-    /// Load `proef.toml` from the working directory (absent file = defaults;
-    /// a malformed file is a user error worth failing loudly on).
+    /// Load the nearest `proef.toml`, searching up from the working directory
+    /// (like cargo/git) so config is found from any subdirectory. Absent file =
+    /// defaults; a malformed file is a user error worth failing loudly on.
     pub fn load() -> Result<Self, String> {
-        let path = Path::new("proef.toml");
-        if !path.exists() {
+        let Some(path) = find_config() else {
             return Ok(Self::default());
-        }
-        let text = std::fs::read_to_string(path)
-            .map_err(|err| format!("cannot read proef.toml: {err}"))?;
-        toml::from_str(&text).map_err(|err| format!("proef.toml is invalid: {err}"))
+        };
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
+        toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))
     }
 
     /// The active `[env.<name>]` profile, or `None` when no environment is

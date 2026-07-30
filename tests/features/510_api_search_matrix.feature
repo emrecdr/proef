@@ -1,6 +1,5 @@
 # Search matrix: proef-native coverage for Scenario Outlines, data tables, and
 # the built-in expectStatus assert macro (Then-merge).
-# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 @api @search
 Feature: API — admin search matrix
 

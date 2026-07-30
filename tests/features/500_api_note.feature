@@ -1,7 +1,6 @@
 # API note sync: a member posts a note via the API (POST /records/{id}/notes);
 # the record's synced board shows it. Setup provisions the workspace, then
 # activates the activity channel.
-# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 @e2e @api @sync-note
 Feature: API — note sync
   A member posts a note through the API; it reaches the record's synced board —

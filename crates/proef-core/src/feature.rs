@@ -1,6 +1,6 @@
-//! Feature front end (TECH-SPEC §4.2, §4.4, §7): gherkin parse, `# key: value`
-//! directives, tag accumulation, Background prepending, Rule pass-through,
-//! Scenario Outline expansion, and data-table capture.
+//! Feature front end (TECH-SPEC §4.2, §4.4, §7): gherkin parse, tag
+//! accumulation, Background prepending, Rule pass-through, Scenario Outline
+//! expansion, and data-table capture.
 //!
 //! Span discipline (TECH-SPEC §9): the gherkin crate's `Span` is 0-based byte
 //! offsets (end-exclusive) into the **normalized** source (a trailing newline
@@ -26,11 +26,6 @@ pub struct FeatureFile {
     pub path: String,
     /// Normalized source text (trailing newline guaranteed).
     pub source: Arc<str>,
-    /// `# key: value` directives found before `Feature:` (values unresolved —
-    /// `${…}` in them resolves at lowering, before any step uses them), in
-    /// authored order: cross-references resolve top-down, so a directive sees
-    /// exactly the ones written above it.
-    pub directives: Vec<(String, String)>,
     /// Feature-level tags (without `@`).
     pub tags: Vec<String>,
     /// All concrete scenarios, in authored order.
@@ -101,7 +96,6 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
         }
     };
 
-    let directives = collect_directives(&source);
     let mut diags: Vec<Diag> = Vec::new();
     let mut scenarios: Vec<ScenarioDef> = Vec::new();
 
@@ -144,39 +138,9 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
         name: feature.name.clone(),
         path: path.to_owned(),
         source,
-        directives,
         tags: strip_tag_markers(&feature.tags),
         scenarios,
     })
-}
-
-/// `# key: value` comment lines before the `Feature:` (or first tag) line,
-/// in authored order — order is meaning (top-down cross-reference
-/// visibility), not presentation.
-fn collect_directives(source: &str) -> Vec<(String, String)> {
-    let mut directives: Vec<(String, String)> = Vec::new();
-    for line in source.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('@') || trimmed.starts_with("Feature:") {
-            break;
-        }
-        if let Some(comment) = trimmed.strip_prefix('#')
-            && let Some((key, value)) = comment.split_once(':')
-        {
-            let key = key.trim();
-            if !key.is_empty() && !key.contains(char::is_whitespace) {
-                // A re-authored key overwrites in place (last wins, as the
-                // map used to behave) without duplicating the entry.
-                let value = value.trim().to_owned();
-                if let Some(entry) = directives.iter_mut().find(|(k, _)| k == key) {
-                    entry.1 = value;
-                } else {
-                    directives.push((key.to_owned(), value));
-                }
-            }
-        }
-    }
-    directives
 }
 
 /// Expand one (possibly outlined) scenario into concrete [`ScenarioDef`]s.
@@ -495,19 +459,11 @@ mod tests {
 
     use super::*;
 
-    const FEATURE: &str = "# baseURL: http://fixture.local\n# app: backend\n@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a record\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
+    const FEATURE: &str = "@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a record\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
 
     #[test]
-    fn directives_tags_background_and_outline_expand() {
+    fn tags_background_and_outline_expand() {
         let feature = parse("search.feature", FEATURE).unwrap();
-        assert_eq!(
-            feature.directives,
-            vec![
-                ("baseURL".to_owned(), "http://fixture.local".to_owned()),
-                ("app".to_owned(), "backend".to_owned()),
-            ],
-            "authored order preserved — cross-references resolve top-down"
-        );
         assert_eq!(feature.tags, vec!["e2e", "api"]);
         assert_eq!(feature.scenarios.len(), 3);
 

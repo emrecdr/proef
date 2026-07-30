@@ -44,7 +44,7 @@ macros:
     steps:
       - name: provision the environment
         hurl: |
-          POST ${baseURL}/api/v1/env/provision
+          POST ${url:base}/api/v1/env/provision
           Authorization: Bearer ${secret:apiToken}
           {"run": "${run:id}"}
           HTTP 201

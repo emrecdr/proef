@@ -564,7 +564,6 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
         let ctx = ResolveCtx {
             args: &args,
             defaults: &macro_.defaults,
-            directives: &empty,
             env: &empty,
             config_vars: &empty,
             run_id: "probe-run",

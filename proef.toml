@@ -1,0 +1,9 @@
+# proef project configuration — full reference in docs/CONFIG.md (see also
+# proef.toml.example). Variables live here, never in the .feature files.
+#
+# The reference suite (tests/features) targets the dev fixture by default;
+# set PROEF_BASE_URL to point it at another backend, or add a per-environment
+# override under [env.<name>.url].
+
+[url]
+base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"

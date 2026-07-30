@@ -188,7 +188,7 @@ impl std::fmt::Debug for DoctorCheck {
 }
 
 /// Per-scenario context handed to [`EngineFactory::open`]. Fields grow additively
-/// as milestones land (artifact dirs, config, directives, …).
+/// as milestones land (artifact dirs, config, …).
 #[derive(Debug, Clone)]
 pub struct ScenarioCtx {
     /// Injected run identifier.

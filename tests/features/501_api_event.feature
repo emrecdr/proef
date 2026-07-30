@@ -1,6 +1,5 @@
 # API event sync: a member adds a scheduled item via the API
 # (POST /records/{id}/events); the record's board shows it.
-# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 @e2e @api @sync-event
 Feature: API — event sync
   A member schedules an item through the API; it appears on the record's synced

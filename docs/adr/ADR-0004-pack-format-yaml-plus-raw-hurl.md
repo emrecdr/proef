@@ -24,7 +24,7 @@ as the **thin binding skeleton**: macro name, `match:` pattern, `params`, `defau
 steps:
   - name: Resolve the record name to its id
     hurl: |
-      GET ${baseURL}/api/v1/admin/search/records
+      GET ${url:base}/api/v1/admin/search/records
       Authorization: Bearer ${secret:apiToken}
       [Query]
       q: ${name}

@@ -12,9 +12,9 @@ data tables (rows become step arguments), and docstrings (delivered to the
 macro as the `docstring` param). Keywords (`Given/When/Then/And`) don't affect
 binding — only the sentence text does.
 
-**Directives** are `# key: value` comment lines before `Feature:`. They resolve
-`${env:NAME:-default}` / `${run:id}` and become `${key}` in every step of the
-file. Convention: `# baseURL:` for the target host.
+**Variables** are declared in `proef.toml` (`[url]` / `[vars]`), never in the
+feature file, and referenced from packs as `${url:key}` / `${vars:key}` — see
+[CONFIG.md](CONFIG.md). Feature files stay free of URLs and environment data.
 
 **Tags** (`@smoke`) accumulate feature→scenario; `proef test --tags a,b`
 selects scenarios carrying any of them (a selection matching nothing is an
@@ -53,7 +53,7 @@ steps:
     when: "${env:RUN_SLOW:-}"         # skips when empty or false/0 after resolution
     saveAs: { recordId: global }      # promote a capture to the global store
     hurl: |                           # the payload — raw hurl, one or more entries
-      GET ${baseURL}/api/v1/records/{{recordId}}
+      GET ${url:base}/api/v1/records/{{recordId}}
       HTTP 200
   - use: otherMacro                   # composition (cycle-checked, depth ≤ 32)
     with: { term: "${name}" }
@@ -171,8 +171,8 @@ persists (`proef doctor` also reports store/key health).
 | `PROEF_HARNESS_SUITE` | nextest harness | Suite directory the harness lists and runs |
 | `PROEF_BIN` | nextest harness | Path to the `proef` binary the harness invokes |
 
-Suite-defined variables (like `PROEF_BASE_URL` in the guides) are a
-convention of `${env:…}` directives, not built-ins — name yours freely.
+Suite-defined env vars (like `PROEF_BASE_URL` in the guides) are a convention
+of `${env:…}` references in `proef.toml`, not built-ins — name yours freely.
 
 ## Style
 

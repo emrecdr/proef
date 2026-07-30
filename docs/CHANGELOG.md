@@ -13,8 +13,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `${url:<key>}` / `${vars:<key>}`; `[env.<name>.<section>]` profiles deep-merge
   per-environment overrides over the base tables (`url`/`vars`/`http`/`run`).
   `proef test --env <name>` (or `PROEF_ENV`) selects the active environment.
-  Feature files no longer need a `# baseURL:` directive — variables live outside
-  the tests. Adds the `proef::resolve::missing_config_var` diagnostic.
+  `proef.toml` is discovered by searching up from the working directory (like
+  cargo/git), so it is found from any subdirectory. Adds the
+  `proef::resolve::missing_config_var` diagnostic.
 - **Default suite path.** `[run] suite` sets the path `proef test`/`flows`/
   `artifacts` use when given none (falling back to the `tests/` convention), so
   `proef test` runs with no argument. An explicit path still wins.
@@ -46,6 +47,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **Pack root key renamed `templates:` → `macros:`** (ADR-0004 amendment): one
   canonical spelling for the prose→engine binding layer (the entry is a *macro*,
   the file a *pack*). No `templates:` alias — packs using the old key fail to load.
+
+### Removed
+
+- **The `# key: value` feature-file directive mechanism** (e.g. `# baseURL:`,
+  ADR-0012 amendment). Variables now have exactly one home — `proef.toml`
+  (`[url]`/`[vars]`) — so a `.feature` file can no longer define a variable
+  (one-way-to-do-one-thing). `#` comment lines stay valid gherkin comments; they
+  are simply no longer parsed. The env-override the directive provided is
+  preserved by embedding `${env:NAME:-default}` in a config value (resolved
+  recursively). `${…}` plain-name resolution is now `args > defaults` only.
 
 ### Fixed
 

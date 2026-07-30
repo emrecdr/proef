@@ -89,7 +89,8 @@ in a pack but defined in neither the base nor the active environment fails at lo
   or an environment profile you don't commit.
 
 Feature files reference `${url:…}` / `${vars:…}` / `${secret:…}` and declare **none**
-of them — test files stay pure prose. The in-feature `# baseURL:` directive still works
-for one-off per-file overrides, but the external tables are the default home.
+of them — variables have exactly one home, this file, and test files stay pure prose.
+proef discovers the nearest `proef.toml` by searching up from the working directory
+(like cargo/git), so it is found from any subdirectory.
 
 A starter file ships as `proef.toml.example` in the repository root.

@@ -46,7 +46,7 @@ is no `[run] suite` in `proef.toml` nor a `tests/` directory. Pass a path, set
 `[run] suite`, or create `tests/`. Exit 2.
 
 **Exit 3 with connection errors** — the target is unreachable. Check the URL your
-`${url:base}` (or a `# baseURL:` directive) resolves to for the active `--env` (a
+`${url:base}` resolves to for the active `--env` (a
 `--dry-run` prints nothing wrong because no request is sent), then the network. The
 dev fixture (`cargo run -p xtask -- fixture`) gives you a local target.
 

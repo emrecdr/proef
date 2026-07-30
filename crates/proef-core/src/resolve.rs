@@ -6,8 +6,8 @@
 //! through untouched. `$${` escapes to a literal `${` (applied after the final
 //! pass, so escaped text is never re-resolved).
 //!
-//! Reference forms: `${param}` (scope lookup: step args > macro defaults >
-//! feature directives) · `${env:NAME}` / `${env:NAME:-default}`
+//! Reference forms: `${param}` (scope lookup: step args > macro defaults) ·
+//! `${env:NAME}` / `${env:NAME:-default}`
 //! (injected snapshot — core reads no environment) · `${run:id}` (injected) ·
 //! `${global:key}` (World read at lower time) · `${secret:NAME}` (emits the
 //! `{{NAME}}` run-time placeholder and records the name — values never enter
@@ -43,8 +43,6 @@ pub struct ResolveCtx<'a> {
     pub args: &'a BTreeMap<String, String>,
     /// Macro `defaults:`.
     pub defaults: &'a BTreeMap<String, String>,
-    /// Feature `# key: value` directives.
-    pub directives: &'a BTreeMap<String, String>,
     /// Injected environment snapshot.
     pub env: &'a BTreeMap<String, String>,
     /// Injected `proef.toml` config scope (`${url:key}`, `${vars:key}`), keyed
@@ -329,17 +327,13 @@ fn lookup(
         };
     }
 
-    // Plain name: args > defaults > directives (TECH-SPEC §8).
-    for scope in [ctx.args, ctx.defaults, ctx.directives] {
+    // Plain name: args > defaults (TECH-SPEC §8).
+    for scope in [ctx.args, ctx.defaults] {
         if let Some(value) = scope.get(name) {
             return Ok(value.clone());
         }
     }
-    let known = ctx
-        .args
-        .keys()
-        .chain(ctx.defaults.keys())
-        .chain(ctx.directives.keys());
+    let known = ctx.args.keys().chain(ctx.defaults.keys());
     probe_or(
         ResolveError::UnknownVariable {
             name: name.to_owned(),
@@ -402,7 +396,6 @@ mod tests {
     struct Fixture {
         args: BTreeMap<String, String>,
         defaults: BTreeMap<String, String>,
-        directives: BTreeMap<String, String>,
         env: BTreeMap<String, String>,
         config_vars: BTreeMap<String, String>,
         world: World,
@@ -415,7 +408,6 @@ mod tests {
             Self {
                 args: map(&[("recordRef", "r-${run:id}")]),
                 defaults: map(&[("index", "records")]),
-                directives: map(&[("baseURL", "http://fixture.local")]),
                 env: map(&[("HOME", "/home/test")]),
                 config_vars: map(&[
                     ("url:base", "https://api.example"),
@@ -429,7 +421,6 @@ mod tests {
             ResolveCtx {
                 args: &self.args,
                 defaults: &self.defaults,
-                directives: &self.directives,
                 env: &self.env,
                 config_vars: &self.config_vars,
                 run_id: "run-0001",
@@ -444,11 +435,11 @@ mod tests {
         let f = Fixture::new();
         // The captured arg itself contains ${run:id} — the spike-verified case.
         let r = resolve(
-            "GET ${baseURL}/search?q=${recordRef}",
+            "GET ${url:base}/search?q=${recordRef}",
             &f.ctx(ResolveMode::Strict),
         )
         .unwrap();
-        assert_eq!(r.text, "GET http://fixture.local/search?q=r-run-0001");
+        assert_eq!(r.text, "GET https://api.example/search?q=r-run-0001");
     }
 
     #[test]
@@ -590,7 +581,6 @@ mod tests {
             let mut f = Fixture::new();
             f.args = BTreeMap::new();
             f.defaults = BTreeMap::new();
-            f.directives = BTreeMap::new();
             f
         }
 

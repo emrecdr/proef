@@ -34,7 +34,6 @@ suite by adding files; nothing needs registering.
 `suite/case.feature`:
 
 ```gherkin
-# baseURL: ${env:PROEF_BASE_URL:-http://127.0.0.1:8787}
 Feature: Directory search
   Scenario: A known record is found
     Given the service is healthy
@@ -42,9 +41,9 @@ Feature: Directory search
     Then the first hit is record "r-1"
 ```
 
-The `# baseURL:` line is a *directive*: a named value every step can use as
-`${baseURL}`. Directives resolve environment variables with defaults
-(`${env:PROEF_BASE_URL:-…}`), so the same suite points at any environment.
+The feature is pure prose — no URLs, no environment data. The target host and
+any variables live in `proef.toml` (§3.5) and reach the packs as
+`${url:…}` / `${vars:…}`.
 
 ## 3. Bind the prose
 
@@ -56,7 +55,7 @@ macros:
     match: the service is healthy
     steps:
       - hurl: |
-          GET ${baseURL}/health
+          GET ${url:base}/health
           HTTP 200
 
   search:
@@ -65,7 +64,7 @@ macros:
     steps:
       - name: search records for ${term}
         hurl: |
-          GET ${baseURL}/api/v1/admin/search/records
+          GET ${url:base}/api/v1/admin/search/records
           Authorization: Bearer ${secret:apiToken}
           [Query]
           q: ${term}
@@ -87,11 +86,12 @@ an assert-only `expect:` macro whose lines merge into the *previous* request's
 asserts. The `hurl:` blocks are raw [Hurl](https://hurl.dev) — validated with
 the real parser the moment the pack loads.
 
-## 3.5 Keep URLs and variables out of the tests (`proef.toml`)
+## 3.5 Where URLs and variables live (`proef.toml`)
 
-The `# baseURL:` directive above lives *inside* the feature. To keep test files
-pure — no URLs, no environment data — declare those in `proef.toml` at the
-project root and reference them as `${url:…}` / `${vars:…}`:
+Variables are declared in `proef.toml` — never in the `.feature` files — and
+referenced as `${url:…}` / `${vars:…}`. The pack's `${url:base}` above resolves
+from here; proef finds the nearest `proef.toml`, searching up from the working
+directory (like cargo/git):
 
 ```toml
 # proef.toml
@@ -99,7 +99,7 @@ project root and reference them as `${url:…}` / `${vars:…}`:
 suite = "suite"                    # `proef test` now needs no path argument
 
 [url]
-base = "http://127.0.0.1:8787"     # → ${url:base}
+base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"   # → ${url:base} (env override wins)
 
 [vars]
 apiVersion = "v1"                  # → ${vars:apiVersion}
@@ -124,8 +124,7 @@ $ proef test --env prod            # [env.prod.*] deep-merged over the base (or 
 The rule is uniform: under `[env.<name>]`, `url.*` / `vars.*` override variables and
 `http.*` / `run.*` override runner settings — anything unlisted **inherits the base**,
 so an environment names only what changes (the Cloudflare-Wrangler / Cargo-profile model).
-Secrets never live here — they stay in the encrypted store (`${secret:…}`, §5). The
-in-feature `# baseURL:` directive still works for one-off per-file overrides.
+Secrets never live here — they stay in the encrypted store (`${secret:…}`, §5).
 
 ## 4. Validate without a network
 

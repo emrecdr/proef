@@ -99,8 +99,9 @@ per scenario and `cargo nextest run` executes and reports them.
 ## 6. Functional requirements (condensed; TECH-SPEC is normative)
 
 **Authoring:** full gherkin-crate grammar (Feature/Rule/Background/Scenario/Outline/
-Examples/tables/docstrings/tags/i18n); `# key: value` directives before `Feature:`
-(`baseURL`, …); tags filter runs. **Packs:** YAML skeleton with `match:` patterns
+Examples/tables/docstrings/tags/i18n); tags filter runs; variables come from
+`proef.toml` (`${url:}`/`${vars:}`, ADR-0012), never the feature files. **Packs:** YAML
+skeleton with `match:` patterns
 (`{name}` captures), `params`/`defaults`/`tags`/`description`; step bodies as raw
 `hurl:` blocks (primary) or structured form (reserved for future engines); assert-only
 `expect:` macros merge into the previous request (Then-steps); `use:`/`with:` nesting
