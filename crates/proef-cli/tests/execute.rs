@@ -20,6 +20,13 @@ use std::time::Instant;
 use assert_cmd::Command;
 use proef_fixture::{API_TOKEN, Fixture};
 
+/// The minimal `proef.toml` the inline-macro fixture tests need: just `base`,
+/// sourced from `PROEF_BASE_URL` (resolved recursively). Written into each such
+/// test's CWD so their `${url:base}` resolves — one spelling, not copy-pasted per
+/// test. (The reference-corpus test copies the real project proef.toml instead,
+/// since it exercises the full `[url]` endpoint catalog.)
+const BASE_URL_CONFIG: &str = "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n";
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -33,7 +40,7 @@ fn proef_in(dir: &Path, fixture: &Fixture) -> Command {
     // base URL (env-overridable) via config, written once per temp CWD.
     let config = dir.join("proef.toml");
     if !config.exists() {
-        std::fs::write(&config, "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n").unwrap();
+        std::fs::write(&config, BASE_URL_CONFIG).unwrap();
     }
     let mut cmd = Command::cargo_bin("proef").unwrap();
     cmd.current_dir(dir)
@@ -41,6 +48,21 @@ fn proef_in(dir: &Path, fixture: &Fixture) -> Command {
         .env("PROEF_BASE_URL", &fixture.base_url)
         .env("PROEF_SECRET_APITOKEN", API_TOKEN);
     cmd
+}
+
+/// A fresh temp CWD carrying the project's real proef.toml — for tests that run
+/// the shipped `tests/features` corpus, which needs its full `[url]` endpoint
+/// catalog (not the minimal `BASE_URL_CONFIG`). `base = ${env:PROEF_BASE_URL:-…}`
+/// bends to the fixture via `proef_in`'s env, so no rewrite is needed; pre-writing
+/// it also makes `proef_in` keep it (it only writes when the file is absent).
+fn corpus_cwd() -> tempfile::TempDir {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        workspace_root().join("proef.toml"),
+        cwd.path().join("proef.toml"),
+    )
+    .unwrap();
+    cwd
 }
 
 /// Normalized view of an events.jsonl: scenario → (status, step-finished count).
@@ -80,7 +102,7 @@ fn latest_run_dir(cwd: &Path) -> PathBuf {
 #[test]
 fn reference_corpus_runs_green_with_same_bytes_artifacts() {
     let fixture = Fixture::start().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = corpus_cwd();
     let corpus = workspace_root().join("tests/features");
 
     let assert = proef_in(cwd.path(), &fixture)
@@ -347,7 +369,7 @@ fn runaway_scenarios_are_bounded() {
     let cwd = tempfile::tempdir().unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[http]\ntimeout-ms = 500\n",
+        format!("{BASE_URL_CONFIG}[http]\ntimeout-ms = 500\n"),
     )
     .unwrap();
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
@@ -424,11 +446,7 @@ fn encrypted_secret_store_drives_a_run() {
         "macros:\n  secured:\n    match: the secured search runs\n    steps:\n      - hurl: |\n          GET ${url:base}/api/v1/admin/search/records\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
 
     // `secret set` + `list` (US-10), key auto-created under PROEF_CONFIG_DIR.
     let mut set = Command::cargo_bin("proef").unwrap();
@@ -639,7 +657,7 @@ fn parallel_runs_are_deterministic_under_normalization() {
     let corpus = workspace_root().join("tests/features");
     let mut normalized = Vec::new();
     for _ in 0..2 {
-        let cwd = tempfile::tempdir().unwrap();
+        let cwd = corpus_cwd();
         proef_in(cwd.path(), &fixture)
             .args(["test", &corpus.display().to_string(), "--jobs", "4"])
             .assert()
@@ -670,11 +688,7 @@ fn secret_valued_captures_never_promote_to_global_state() {
         "macros:\n  fetch:\n    match: the record is fetched\n    steps:\n      - saveAs: { leaked: global }\n        hurl: |\n          GET ${url:base}/api/v1/records/${secret:recordRef}\n          Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          [Captures]\n          leaked: jsonpath \"$.id\"\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
 
     let mut run = Command::cargo_bin("proef").unwrap();
     let assert = run

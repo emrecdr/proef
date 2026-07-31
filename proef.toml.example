@@ -27,6 +27,11 @@
 # ── suite variables (referenced in packs as ${url:key} / ${vars:key}) ──
 [url]
 # base = "http://127.0.0.1:8787"
+# Name each endpoint and reference it as ${url:<name>} — packs hold no raw paths.
+# Values compose from base (config resolves ${…} recursively); hurl run-time
+# {{…}} path params pass through untouched:
+# health = "${url:base}/health"
+# record = "${url:base}/api/v1/records/{{recordId}}"
 
 [vars]
 # apiVersion = "v1"

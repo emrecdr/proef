@@ -7,3 +7,32 @@
 
 [url]
 base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"
+
+# Named endpoints — packs reference `${url:<name>}`, never a raw path. Each
+# composes from `base` (config values resolve `${…}` recursively). Runtime path
+# params stay as hurl `{{…}}` placeholders (substituted at run time), and the
+# admin-search index stays as the lower-time `${index}` the search macro supplies.
+health = "${url:base}/health"
+provision = "${url:base}/api/v1/env/provision"
+deliveriesQueue = "${url:base}/api/v1/deliveries/queue"
+adminSearch = "${url:base}/api/v1/admin/search/${index}"
+form = "${url:base}/form"
+upload = "${url:base}/upload"
+
+# Channel endpoints (keyed by the captured {{channelId}}).
+channelActivate = "${url:base}/api/v1/channel/activate"
+channelState = "${url:base}/api/v1/channel/{{channelId}}/state"
+channelNotes = "${url:base}/api/v1/channel/{{channelId}}/notes"
+channelEvents = "${url:base}/api/v1/channel/{{channelId}}/events"
+channelAttachments = "${url:base}/api/v1/channel/{{channelId}}/attachments"
+channelSession = "${url:base}/api/v1/channel/{{channelId}}/session"
+channelSessionCancel = "${url:base}/api/v1/channel/{{channelId}}/session/{{sessionId}}/cancel"
+
+# Record endpoints (keyed by the captured {{recordId}}; the breadth demo posts
+# to a fixed r-1).
+record = "${url:base}/api/v1/records/{{recordId}}"
+recordNotes = "${url:base}/api/v1/records/{{recordId}}/notes"
+recordEvents = "${url:base}/api/v1/records/{{recordId}}/events"
+recordAttachments = "${url:base}/api/v1/records/{{recordId}}/attachments"
+recordSessions = "${url:base}/api/v1/records/{{recordId}}/sessions"
+recordNotesFixed = "${url:base}/api/v1/records/r-1/notes"

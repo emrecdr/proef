@@ -10,7 +10,7 @@ macros:
       - name: post the custom body
         delay: 25
         hurl: |
-          POST ${url:base}/api/v1/records/r-1/notes
+          POST ${url:recordNotesFixed}
           Authorization: Bearer ${secret:apiToken}
           ${docstring}
   submitProfileForm:
@@ -20,7 +20,7 @@ macros:
     tags: [Forms]
     steps:
       - hurl: |
-          POST ${url:base}/form
+          POST ${url:form}
           [Form]
           name: ${name}
           city: ${fake:city}
@@ -31,7 +31,7 @@ macros:
     tags: [Attachments]
     steps:
       - hurl: |
-          POST ${url:base}/upload
+          POST ${url:upload}
           [Multipart]
           attachment: file,fixture.jpg;
   expectHealthy:

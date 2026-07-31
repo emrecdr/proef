@@ -320,7 +320,7 @@ fn lookup(
                     }
                 })
             }
-            "url" | "vars" => resolve_config_var(namespace, arg, ctx),
+            "url" | "vars" => resolve_config_var(name, namespace, arg, ctx),
             other => Err(ResolveError::UnknownNamespace {
                 namespace: other.to_owned(),
             }),
@@ -347,12 +347,15 @@ fn lookup(
 /// `${url:key}` / `${vars:key}` — the injected `proef.toml` scope (base + active
 /// `[env.<name>]`, already deep-merged by the CLI). Lower-time values, so a
 /// missing one errors like `${env:…}` (Probe tolerates it for the pack lint).
+/// `name` is the full `"<namespace>:<key>"` reference (the `config_vars` key), so
+/// the lookup needs no re-`format!`.
 fn resolve_config_var(
+    name: &str,
     namespace: &str,
     arg: &str,
     ctx: &ResolveCtx<'_>,
 ) -> Result<String, ResolveError> {
-    match ctx.config_vars.get(&format!("{namespace}:{arg}")) {
+    match ctx.config_vars.get(name) {
         Some(value) => Ok(value.clone()),
         None => probe_or(
             ResolveError::MissingConfigVar {

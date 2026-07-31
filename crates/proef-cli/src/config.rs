@@ -189,19 +189,16 @@ impl ProjectConfig {
     ) -> Result<BTreeMap<String, String>, String> {
         let profile = self.env_profile(active_env)?;
         let mut out = BTreeMap::new();
-        for (key, value) in &self.url {
-            out.insert(format!("url:{key}"), value.clone());
-        }
-        for (key, value) in &self.vars {
-            out.insert(format!("vars:{key}"), value.clone());
-        }
+        let mut merge = |namespace: &str, table: &BTreeMap<String, String>| {
+            for (key, value) in table {
+                out.insert(format!("{namespace}:{key}"), value.clone());
+            }
+        };
+        merge("url", &self.url);
+        merge("vars", &self.vars);
         if let Some(profile) = profile {
-            for (key, value) in &profile.url {
-                out.insert(format!("url:{key}"), value.clone());
-            }
-            for (key, value) in &profile.vars {
-                out.insert(format!("vars:{key}"), value.clone());
-            }
+            merge("url", &profile.url);
+            merge("vars", &profile.vars);
         }
         Ok(out)
     }

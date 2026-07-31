@@ -11,11 +11,11 @@ macros:
       - name: fixture warm-up probe
         optional: true
         hurl: |
-          GET ${url:base}/health
+          GET ${url:health}
           HTTP 200
       - name: provision the environment
         hurl: |
-          POST ${url:base}/api/v1/env/provision
+          POST ${url:provision}
           Authorization: Bearer ${secret:apiToken}
           {"run": "${run:id}"}
           HTTP 201
@@ -28,7 +28,7 @@ macros:
     steps:
       - name: request activation
         hurl: |
-          POST ${url:base}/api/v1/channel/activate
+          POST ${url:channelActivate}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"env": "{{envId}}"}
@@ -38,7 +38,7 @@ macros:
       - name: channel reports ready
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/state
+          GET ${url:channelState}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
@@ -51,7 +51,7 @@ macros:
     steps:
       - name: search ${index} for ${q}
         hurl: |
-          GET ${url:base}/api/v1/admin/search/${index}
+          GET ${url:adminSearch}
           Authorization: Bearer ${secret:apiToken}
           [Query]
           q: ${q}
@@ -69,7 +69,7 @@ macros:
       - name: confirm the record exists
         saveAs: { recordId: global }
         hurl: |
-          GET ${url:base}/api/v1/records/{{recordId}}
+          GET ${url:record}
           Authorization: Bearer ${secret:apiToken}
           HTTP 200
           [Asserts]
@@ -85,7 +85,7 @@ macros:
     steps:
       - name: search ${index} for ${term}
         hurl: |
-          GET ${url:base}/api/v1/admin/search/${index}
+          GET ${url:adminSearch}
           Authorization: Bearer ${secret:apiToken}
           [Query]
           q: ${term}
@@ -96,7 +96,7 @@ macros:
     steps:
       - name: post the note
         hurl: |
-          POST ${url:base}/api/v1/records/{{recordId}}/notes
+          POST ${url:recordNotes}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"body": "Note from proef ${run:id}"}
@@ -111,7 +111,7 @@ macros:
       - name: delivery visible in queue
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/deliveries/queue
+          GET ${url:deliveriesQueue}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           HTTP 200
@@ -125,7 +125,7 @@ macros:
       - name: note visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/notes
+          GET ${url:channelNotes}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
@@ -137,7 +137,7 @@ macros:
     steps:
       - name: create the event
         hurl: |
-          POST ${url:base}/api/v1/records/{{recordId}}/events
+          POST ${url:recordEvents}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"title": "Review", "run": "${run:id}"}
@@ -152,7 +152,7 @@ macros:
       - name: item visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/events
+          GET ${url:channelEvents}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
@@ -164,7 +164,7 @@ macros:
     steps:
       - name: upload the attachment
         hurl: |
-          POST ${url:base}/api/v1/records/{{recordId}}/attachments
+          POST ${url:recordAttachments}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"source": "${env:RUNTIME_ATTACHMENT:-fixture.jpg}", "run": "${run:id}"}
@@ -179,7 +179,7 @@ macros:
       - name: attachment visible on the board
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/attachments
+          GET ${url:channelAttachments}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
@@ -191,7 +191,7 @@ macros:
     steps:
       - name: start the session
         hurl: |
-          POST ${url:base}/api/v1/records/{{recordId}}/sessions
+          POST ${url:recordSessions}
           X-Proef-Env: {{envId}}
           Authorization: Bearer ${secret:apiToken}
           {"kind": "live", "run": "${run:id}"}
@@ -206,7 +206,7 @@ macros:
       - name: pending session visible
         retry: { count: 10, interval_ms: 300 }
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/session
+          GET ${url:channelSession}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
@@ -219,12 +219,12 @@ macros:
     steps:
       - name: cancel the session
         hurl: |
-          POST ${url:base}/api/v1/channel/{{channelId}}/session/{{sessionId}}/cancel
+          POST ${url:channelSessionCancel}
           X-Proef-Env: {{envId}}
           HTTP 200
       - name: session state back to idle
         hurl: |
-          GET ${url:base}/api/v1/channel/{{channelId}}/session
+          GET ${url:channelSession}
           X-Proef-Env: {{envId}}
           HTTP 200
           [Asserts]
