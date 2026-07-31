@@ -41,6 +41,7 @@ pub fn execute(
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     active_env: Option<&str>,
+    run_id: Option<String>,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -61,7 +62,7 @@ pub fn execute(
 
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let front = match front::run(path, ResolveMode::DryRun, None, Arc::clone(&config_vars)) {
+    let front = match front::run(path, ResolveMode::DryRun, run_id, Arc::clone(&config_vars)) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
     };

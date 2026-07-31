@@ -41,6 +41,9 @@ macros:
   declared params; adjacent captures (`{a} {b}` with nothing between) are
   rejected.
 - A macro without `match:` is composition-only (reachable via `use:`).
+- `proef macros` reports each macro's call count across the corpus and flags
+  pattern macros no scenario binds (dead prose bindings); `use:`-only helpers
+  and unused builtins are listed but not flagged.
 
 ## Steps
 

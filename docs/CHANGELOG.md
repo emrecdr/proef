@@ -32,6 +32,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   identity alongside `scenario` (additive, ADR-0008; absent in older records).
 - Diagnostics `pack::pattern_duplicate_capture` (a `{capture}` written twice)
   and `lower::kind_unrouted` (internal registry-drift safety net).
+- `proef macros` lists every loaded macro with its call count and flags
+  user-pack pattern macros that no scenario binds (dead prose bindings);
+  `use:`-only helpers and unused builtins are listed but never flagged.
+  `--output json` for CI dead-code gates.
+- `proef test --run-id <id>` pins the injected run id (like `artifacts --run-id`),
+  so a run's `${fake:…}` data — which keys on the run id — is reproducible; the
+  JSON summary echoes the id.
+- `proef test --dry-run --sarif <path>` serializes validation diagnostics
+  (unbound steps, pack lint, non-finite retries) to a SARIF 2.1.0 log — a
+  shift-left gate that renders findings as inline PR annotations. The export is
+  additive: the dry-run's exit code is unchanged.
 
 ### Changed
 

@@ -257,6 +257,33 @@ fn failure_maps_to_feature_line_and_artifact_span() {
     assert_eq!(failures, 1, "{junit}");
 }
 
+/// `--run-id` pins the injected run id on the run path — the JSON summary echoes
+/// it. Because `${fake:…}` keys on the run id, re-running with the same id
+/// reproduces the same fake data (the determinism itself is proven by the
+/// byte-identical artifact-corpus test; here we assert the flag is honored).
+#[test]
+fn pinned_run_id_is_honored() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = corpus_cwd();
+    let corpus = workspace_root().join("tests/features");
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            &corpus.display().to_string(),
+            "--tags",
+            "breadth",
+            "--run-id",
+            "pinned-seed-001",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let json: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(json["run_id"], "pinned-seed-001", "{stdout}");
+}
+
 /// US-5: `optional:` failures warn and the scenario continues to green.
 #[test]
 fn optional_failure_warns_and_continues() {

@@ -111,9 +111,10 @@ engine-hurl via embedded `run_entries` with buffered I/O; per-entry `[Options]` 
 batch defaults (verified); World seeding/merge-back; cooperative cancellation + budgets.
 **Artifacts:** canonical emit, sidecars, vars files, `# optional` markers. **Reporting:**
 event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotation.
-**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json --watch
+**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json --watch --run-id --sarif
 --scenario[-file]`; path optional — `[run] suite` then the `tests/` convention), `flows`,
-`artifacts`, `schema [--add-to]`, `secret set|list`, `explain`, `doctor`. **Config
+`macros` (call counts + dead-macro report), `artifacts`, `schema [--add-to]`,
+`secret set|list`, `explain`, `doctor`. **Config
 (`proef.toml`, ADR-0012):** runner settings (`[run]`/`[http]`) + suite variables
 (`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
 (`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via

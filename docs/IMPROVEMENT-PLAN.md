@@ -255,7 +255,39 @@ reusable input hash (ADR-0010 is a byte-identity `assert_eq!` on outputs,
 because runtime globals include `run_id` (`execute.rs:304`). Gated on P3; a hash miss must
 never skip a scenario that would fail (needs `--force`/first-run fallback).
 
-## 10. Sources (competitive research, 2026-07-31)
+## 10. Karate feature ledger — considered / adopted / rejected
+
+Karate (github.com/karatelabs/karate) was the closest competitor and the deepest
+research stream. This ledger makes the "considered → decision" trail explicit, so
+each Karate idea is an intentional call rather than an omission.
+
+**Adopted — drove a plan item or the positioning:**
+
+| Karate feature | proef outcome |
+|---|---|
+| Inline fuzzy markers (`match response == { id: '#uuid', age: '#number' }`) | **#2 assertion cookbook** — the same readability via hurl 8.0's *native* predicates (`isUuid`, `isIsoDate`, …) surfaced in docs, **not** a new marker DSL. |
+| Weak/immature IDE support (Karate's own gap) | **#11 LSP** — reframed as a differentiator proef can win, since Karate never closed it. |
+| HTML report with a timeline view | **#6 self-contained HTML report** (with Cucumber's and hurl's). |
+| Three-language cognitive load (Gherkin + DSL + embedded JS) | proef's **headline positioning** (§2): one-canonical-way, raw-hurl-only, sans-IO — the inverse of Karate's most-cited flaw. |
+| `call` / `callonce` cross-feature reuse | Already covered by proef's `use:` / `with:` macro composition (ADR-0004) — no new work. |
+
+**Rejected — with the reason (so it stays rejected):**
+
+| Karate feature | Why not |
+|---|---|
+| A marker DSL (`#uuid`, `##optional`, `#? _ > 0`) | A **second** assertion mechanism competing with raw hurl predicates — violates one-canonical-way (§3). Readability comes from #2 instead. |
+| Embedded JavaScript escape hatch | Conflicts with the sans-IO deterministic core and one-canonical-way — it *is* the thing proef exists to avoid. |
+| Soft assertions (`configure continueOnStepFailure`) | Conflicts with proef's deliberate stop-at-first-failed-step model (the `∅` cascade); a failed step's downstream is intentionally not run. |
+| Service mocking · `karate-gatling` perf · UI automation | Permanent non-goals (PRD §3 and §3 above). |
+
+**Deferred — genuine candidates, not yet planned:**
+
+| Karate feature | Note |
+|---|---|
+| Dynamic data-driven `Examples` (rows from a `read('data.json')` array) | Table-driven coverage from an external data file. Plausible, but in scope-tension with product-neutrality and the sans-IO/determinism line (an external read at lower time). Revisit if a real need appears. |
+| `match each` / schema-as-a-value reuse | Achievable today via the #2 cookbook's hurl predicates and reusable `expect:` macros — no new engine feature needed. |
+
+## 11. Sources (competitive research, 2026-07-31)
 
 - Karate — match keyword / fuzzy markers / reuse: <https://docs.karatelabs.io/assertions/match-keyword/>, <https://docs.karatelabs.io/reusability/calling-features/>
 - Cucumber-JS formatters (usage / rerun / snippets / html): <https://github.com/cucumber/cucumber-js/blob/main/docs/formatters.md>

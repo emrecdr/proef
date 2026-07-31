@@ -16,6 +16,7 @@ mod front;
 mod fsutil;
 mod registry;
 mod render;
+mod sarif;
 mod secretstore;
 mod watch;
 
@@ -76,6 +77,12 @@ enum Command {
         /// Rerun on feature/pack changes (Ctrl-C to stop)
         #[arg(long)]
         watch: bool,
+        /// Pin the injected run id: reproducible fake data and a stable run record
+        #[arg(long)]
+        run_id: Option<String>,
+        /// Write validation diagnostics as a SARIF 2.1.0 log (requires --dry-run)
+        #[arg(long, requires = "dry_run")]
+        sarif: Option<PathBuf>,
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
         #[arg(long)]
         env: Option<String>,
@@ -85,6 +92,17 @@ enum Command {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
         path: Option<PathBuf>,
         /// Machine output: `json` prints one object per scenario
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
+    },
+    /// List every macro with its call count, flagging pattern macros nothing binds
+    Macros {
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
+        /// Machine output: `json` prints one object per macro
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
@@ -220,6 +238,8 @@ fn main() -> std::process::ExitCode {
             scenario,
             scenario_file,
             watch: watch_mode,
+            run_id,
+            sarif,
             env,
         } => match prepare(path, env) {
             Err(code) => code,
@@ -232,6 +252,8 @@ fn main() -> std::process::ExitCode {
                             scenario.as_deref(),
                             scenario_file.as_deref(),
                             active_env.as_deref(),
+                            run_id.clone(),
+                            sarif.as_deref(),
                             &config,
                         )
                     } else {
@@ -244,6 +266,7 @@ fn main() -> std::process::ExitCode {
                             scenario.as_deref(),
                             scenario_file.as_deref(),
                             active_env.as_deref(),
+                            run_id.clone(),
                             &config,
                             cancel, // None = execute installs its own Ctrl-C handler
                         )
@@ -260,6 +283,15 @@ fn main() -> std::process::ExitCode {
         Command::Flows { path, output, env } => match prepare(path, env) {
             Err(code) => code,
             Ok((config, path, active_env)) => commands::flows(
+                &path,
+                output == Some(OutputFormat::Json),
+                active_env.as_deref(),
+                &config,
+            ),
+        },
+        Command::Macros { path, output, env } => match prepare(path, env) {
+            Err(code) => code,
+            Ok((config, path, active_env)) => commands::macros(
                 &path,
                 output == Some(OutputFormat::Json),
                 active_env.as_deref(),

@@ -79,6 +79,81 @@ fn schema_prints_merged_json() {
     );
 }
 
+/// `proef macros`: a pattern macro nothing binds is UNUSED; a `use:`-only macro
+/// is a labelled helper, never counted unused (it composes at lower time).
+#[test]
+fn macros_flags_unused_pattern_macros_and_labels_helpers() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the thing is done\n",
+    )
+    .unwrap();
+    // usedMacro is bound and composes `helper` (use:-only); unusedMacro has a
+    // `match:` no scenario says.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  usedMacro:\n    match: the thing is done\n    steps:\n      - use: helper\n  \
+         unusedMacro:\n    match: nobody says this\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/x\n          HTTP 200\n  helper:\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/y\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("unusedMacro") && stdout.contains("UNUSED"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("helper") && stdout.contains("use:-only helper"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 unused"), "{stdout}");
+}
+
+/// `test --dry-run --sarif`: validation diagnostics serialize to a SARIF 2.1.0
+/// log (code → ruleId, severity → level, byte span → region). The export is
+/// additive — the dry-run still exits 2 on a broken case.
+#[test]
+fn dry_run_sarif_export_serializes_diagnostics() {
+    let cwd = tempfile::tempdir().unwrap();
+    let sarif = cwd.path().join("out.sarif");
+    proef()
+        .args([
+            "test",
+            "tests/errors/bind__unbound_step",
+            "--dry-run",
+            "--sarif",
+            &sarif.display().to_string(),
+        ])
+        .assert()
+        .code(2);
+    let text = std::fs::read_to_string(&sarif).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["version"], "2.1.0", "{text}");
+    let result = &json["runs"][0]["results"][0];
+    assert_eq!(result["ruleId"], "proef::bind::unbound_step", "{text}");
+    assert_eq!(result["level"], "error", "{text}");
+    assert!(
+        result["locations"][0]["physicalLocation"]["region"]["byteOffset"].is_number(),
+        "{text}"
+    );
+}
+
 /// Real execution against the corpus with no secret available is a user fault
 /// (exit 2), caught before any request. `${url:base}` resolves to the
 /// `proef.toml` default, so the unbound `${secret:apiToken}` is the binding gap.

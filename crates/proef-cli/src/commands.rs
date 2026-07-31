@@ -27,6 +27,26 @@ fn config_vars_for(
         })
 }
 
+/// Load and validate a suite through the front-end (dry-run mode), mapping a
+/// front-end error to its exit code. The shared load path for `flows`,
+/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
+/// raw `FrontError` to SARIF.
+fn load_front(
+    path: &Path,
+    active_env: Option<&str>,
+    run_id: Option<String>,
+    config: &ProjectConfig,
+) -> Result<front::FrontEnd, ExitCode> {
+    let config_vars = config_vars_for(active_env, config)?;
+    front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        run_id,
+        config_vars,
+    )
+    .map_err(|err| report_front_error(&err))
+}
+
 /// `proef doctor` — run every engine-contributed environment check and report.
 ///
 /// Exit code: `0` when nothing failed (warnings allowed), `3` when any check
@@ -83,24 +103,43 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
+#[allow(clippy::too_many_arguments)]
 pub fn dry_run(
     path: &Path,
     tags: &[String],
     scenario: Option<&str>,
     scenario_file: Option<&str>,
     active_env: Option<&str>,
+    run_id: Option<String>,
+    sarif: Option<&Path>,
     config: &ProjectConfig,
 ) -> ExitCode {
     let config_vars = match config_vars_for(active_env, config) {
         Ok(vars) => vars,
         Err(code) => return code,
     };
-    let front = match front::run(
+    let result = front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
-        None,
+        run_id,
         config_vars,
-    ) {
+    );
+
+    // SARIF export (shift-left gate): serialize the validation findings —
+    // warnings on success, the diagnostic list on failure — before rendering.
+    if let Some(sarif_path) = sarif {
+        let diags: Vec<&proef_core::diag::Diag> = match &result {
+            Ok(front) => front.warnings.iter().collect(),
+            Err(proef_core::diag::FrontError::Diagnostics(list)) => list.iter().collect(),
+            Err(proef_core::diag::FrontError::Core(_)) => Vec::new(),
+        };
+        match crate::sarif::write(&diags, sarif_path) {
+            Ok(()) => eprintln!("sarif report: {}", sarif_path.display()),
+            Err(message) => eprintln!("error: {message}"),
+        }
+    }
+
+    let front = match result {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };
@@ -173,18 +212,9 @@ pub fn flows(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let config_vars = match config_vars_for(active_env, config) {
-        Ok(vars) => vars,
-        Err(code) => return code,
-    };
-    let front = match front::run(
-        path,
-        proef_core::resolve::ResolveMode::DryRun,
-        None,
-        config_vars,
-    ) {
+    let front = match load_front(path, active_env, None, config) {
         Ok(front) => front,
-        Err(err) => return report_front_error(&err),
+        Err(code) => return code,
     };
     if output_json {
         for feature in &front.features {
@@ -226,6 +256,84 @@ pub fn flows(
     ExitCode::Success
 }
 
+/// A macro is "dead" only if it's a user-pack pattern macro nothing bound:
+/// `use:`-only helpers compose at lower time, and an unused builtin is shared
+/// library surface, not the author's dead code.
+fn is_dead_macro(pack: &str, calls: usize, has_pattern: bool) -> bool {
+    has_pattern && calls == 0 && !pack.starts_with("builtin:")
+}
+
+/// `proef macros` — every loaded macro with its call count across the corpus,
+/// flagging pattern macros that no scenario binds (dead prose bindings).
+/// `use:`-only helpers compose during lowering (never a bound step), so they are
+/// listed but never flagged unused. Counts the whole corpus, ignoring `--tags`.
+pub fn macros(
+    path: &Path,
+    output_json: bool,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let front = match load_front(path, active_env, None, config) {
+        Ok(front) => front,
+        Err(code) => return code,
+    };
+
+    // Which pattern macro each bound scenario step invoked.
+    let mut calls: BTreeMap<&str, usize> = BTreeMap::new();
+    for feature in &front.features {
+        for scenario in &feature.scenarios {
+            for step in &scenario.bound.steps {
+                *calls.entry(step.macro_name.as_str()).or_default() += 1;
+            }
+        }
+    }
+
+    // Grouped by pack then name (the map is keyed by name, so the sort is what
+    // groups by pack); `n` is a macro's step-bind count.
+    let mut rows: Vec<_> = front.packs.macros.values().collect();
+    rows.sort_unstable_by(|a, b| {
+        (a.pack.as_str(), a.name.as_str()).cmp(&(b.pack.as_str(), b.name.as_str()))
+    });
+
+    if output_json {
+        for m in &rows {
+            let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+            let json = serde_json::json!({
+                "name": m.name,
+                "pack": m.pack,
+                "pattern": m.pattern.is_some(),
+                "calls": n,
+                "unused": is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()),
+            });
+            crate::render::outln!("{json}");
+        }
+        return ExitCode::Success;
+    }
+
+    let mut unused = 0usize;
+    let mut current_pack = "";
+    for m in &rows {
+        if m.pack.as_str() != current_pack {
+            crate::render::outln!("{}", m.pack);
+            current_pack = m.pack.as_str();
+        }
+        let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+        let marker = if m.pattern.is_none() {
+            "  (use:-only helper)"
+        } else if is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()) {
+            unused += 1;
+            "  UNUSED — no scenario binds it"
+        } else if n == 0 {
+            "  (builtin, unused here)"
+        } else {
+            ""
+        };
+        crate::render::outln!("  {:<28} {n}×{marker}", m.name);
+    }
+    crate::render::outln!("\n{} macro(s) · {unused} unused", rows.len());
+    ExitCode::Success
+}
+
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`
 /// plus sidecars (`.map.json`, `.vars`) for a stable CI hand-off (ADR-0010).
 /// The written bytes are exactly the parse-validated emission.
@@ -236,18 +344,9 @@ pub fn artifacts(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let config_vars = match config_vars_for(active_env, config) {
-        Ok(vars) => vars,
-        Err(code) => return code,
-    };
-    let front = match front::run(
-        path,
-        proef_core::resolve::ResolveMode::DryRun,
-        run_id,
-        config_vars,
-    ) {
+    let front = match load_front(path, active_env, run_id, config) {
         Ok(front) => front,
-        Err(err) => return report_front_error(&err),
+        Err(code) => return code,
     };
 
     if let Err(err) = std::fs::create_dir_all(out_dir) {
