@@ -8,6 +8,7 @@
 //! bind-time errors anchored to the step's line.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::diag::{Diag, Severity};
@@ -243,9 +244,7 @@ fn macro_stub(step_text: &str) -> String {
                 }
             }
             arg += 1;
-            pattern.push_str("{arg");
-            pattern.push_str(&arg.to_string());
-            pattern.push('}');
+            let _ = write!(pattern, "{{arg{arg}}}");
         } else {
             pattern.push(c);
         }

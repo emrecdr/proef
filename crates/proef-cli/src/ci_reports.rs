@@ -40,6 +40,16 @@ pub fn write_junit(
         .map_err(|err| format!("cannot serialize JUnit report: {err}"))
 }
 
+/// The attempt count a scenario finally passed on, if it went green only after
+/// retries — the single home for the "flaky pass?" query (`JUnit` + job summary).
+fn flaky_pass_attempts(outcome: &ScenarioOutcome) -> Option<u32> {
+    if !matches!(outcome.status, Status::Passed | Status::Warned) {
+        return None;
+    }
+    let attempts = outcome.steps.iter().map(|s| s.attempts).max().unwrap_or(1);
+    (attempts > 1).then_some(attempts)
+}
+
 fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
     let status = match (outcome.status, &outcome.fault) {
         (Status::Passed | Status::Warned, _) => TestCaseStatus::success(),
@@ -72,8 +82,7 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
     case.set_time(outcome.steps.iter().map(|s| s.duration).sum());
     // Honest flaky reporting: a scenario that passed only after retries records
     // the attempt count instead of looking identical to a clean pass.
-    let attempts = outcome.steps.iter().map(|s| s.attempts).max().unwrap_or(1);
-    if attempts > 1 && matches!(outcome.status, Status::Passed | Status::Warned) {
+    if let Some(attempts) = flaky_pass_attempts(outcome) {
         case.set_system_out(format!("passed on attempt {attempts}"));
     }
     case
@@ -126,11 +135,7 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
     // green-on-attempt-N run is visible rather than silently masked.
     let mut flaky = String::new();
     for outcome in &summary.outcomes {
-        if !matches!(outcome.status, Status::Passed | Status::Warned) {
-            continue;
-        }
-        let attempts = outcome.steps.iter().map(|s| s.attempts).max().unwrap_or(1);
-        if attempts > 1 {
+        if let Some(attempts) = flaky_pass_attempts(outcome) {
             let _ = writeln!(
                 flaky,
                 "- `{}:{}` {} — passed on attempt {attempts}",

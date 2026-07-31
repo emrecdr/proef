@@ -182,10 +182,12 @@ fn fixture(args: &[String]) -> ExitCode {
         },
     };
 
-    let server = match proef_fixture::Fixture::start_on(requested) {
-        Ok(server) => server,
+    // Only binding the default port lets the shipped `proef.toml` default `base`
+    // reach the fixture without a PROEF_BASE_URL override (the fallback never is).
+    let (server, on_default) = match proef_fixture::Fixture::start_on(requested) {
+        Ok(server) => (server, requested == DEFAULT_PORT),
         Err(_) => match proef_fixture::Fixture::start() {
-            Ok(server) => server,
+            Ok(server) => (server, false),
             Err(err) => {
                 eprintln!("xtask: {err}");
                 return ExitCode::FAILURE;
@@ -193,18 +195,15 @@ fn fixture(args: &[String]) -> ExitCode {
         },
     };
 
-    // Only when we actually bound 8787 does the shipped `proef.toml` default
-    // `base` reach the fixture without an override.
-    let matches_default = server.base_url == format!("http://127.0.0.1:{DEFAULT_PORT}");
     eprintln!("fixture API listening on {}", server.base_url);
-    if !matches_default {
+    if !on_default {
         eprintln!("  export PROEF_BASE_URL={}", server.base_url);
     }
     eprintln!(
         "  export PROEF_SECRET_APITOKEN={}",
         proef_fixture::API_TOKEN
     );
-    if matches_default {
+    if on_default {
         eprintln!("  (matches proef.toml default — PROEF_BASE_URL not needed)");
     }
     eprintln!("Ctrl-C to stop");

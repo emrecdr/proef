@@ -427,9 +427,9 @@ impl EngineSession for HurlSession {
                 let mut reached = false;
                 let mut assert_failure = false;
                 let mut user_fault = false;
-                // The `curl` of this step's last-run entry (final attempt), kept
-                // as a per-step reproduce hint on failure. Redacted at build time.
-                let mut last_curl: Option<String> = None;
+                // This step's last-run entry (final attempt): its `curl` becomes
+                // the reproduce hint, stringified once and only on failure.
+                let mut last_entry = None;
                 // One classify-and-collect for both attribution branches.
                 let mut record_error = |error: &runner::RunnerError| {
                     match classify_error(error) {
@@ -464,7 +464,7 @@ impl EngineSession for HurlSession {
                         per_entry_results
                             .insert(0, u32::try_from(host_results.len()).unwrap_or(u32::MAX));
                         if let Some(final_result) = host_results.last() {
-                            last_curl = Some(final_result.curl_cmd.to_string());
+                            last_entry = Some(*final_result);
                             for error in &final_result.errors {
                                 let line = error.source_info.start.line;
                                 if line < span_start || line > span_end {
@@ -487,7 +487,7 @@ impl EngineSession for HurlSession {
                             continue;
                         };
                         reached = true;
-                        last_curl = Some(entry_result.curl_cmd.to_string());
+                        last_entry = Some(entry_result);
                         *per_entry_results.entry(entry_index).or_default() += 1;
                         duration += entry_result.transfer_duration;
                         captures.extend(entry_result.captures.iter().map(|c| c.name.clone()));
@@ -582,7 +582,7 @@ impl EngineSession for HurlSession {
                 // failing request; passing steps carry none (exec prints it
                 // under a failed step).
                 let reproduce_hint = if matches!(status, Status::Failed | Status::Warned) {
-                    last_curl.map(|c| self.redactions.apply(&c))
+                    last_entry.map(|e| self.redactions.apply(&e.curl_cmd.to_string()))
                 } else {
                     None
                 };
