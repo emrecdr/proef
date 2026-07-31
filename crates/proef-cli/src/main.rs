@@ -9,6 +9,7 @@ mod assets;
 mod ci_reports;
 mod commands;
 mod config;
+mod diff;
 mod exec;
 mod explain;
 mod fmt;
@@ -144,6 +145,16 @@ enum Command {
     Explain {
         /// Run id (default: the latest run)
         run_id: Option<String>,
+    },
+    /// Compare two run records: regressions, fixes, flakiness, perf deltas
+    Diff {
+        /// Base run id (default: the previous run)
+        base: Option<String>,
+        /// New run id (default: the latest run)
+        new: Option<String>,
+        /// Exit 1 when a scenario regressed (passed → failed), for CI gating
+        #[arg(long)]
+        fail_on_regression: bool,
     },
     /// Normalize the raw hurl blocks inside macro packs
     Fmt {
@@ -349,6 +360,22 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Command::Diff {
+            base,
+            new,
+            fail_on_regression,
+        } => match config::ProjectConfig::load() {
+            Ok(config) => diff::diff(
+                config.runs_dir(),
+                base.as_deref(),
+                new.as_deref(),
+                fail_on_regression,
+            ),
+            Err(message) => {
+                eprintln!("error: {message}");
+                proef_core::error::ExitCode::UserError
+            }
+        },
         Command::Fmt { path, check } => fmt::fmt(&path, check),
     };
     std::process::ExitCode::from(code.code())

@@ -51,6 +51,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   *test-failure* no longer gates the exit code (a `System`/`User` fault still
   does — quarantine is for flaky tests, not broken input or infra). A note
   prints when a quarantined scenario fails, so it is never silently swallowed.
+- `proef diff [base] [new]` compares two run records (defaulting to the previous
+  and latest runs) and reports scenario status transitions — regressed, fixed,
+  still-failing, new, removed — keyed on the run-wide `(file, scenario)`
+  identity, plus per-step flakiness (rising retry counts) and perf deltas
+  (steps diffed on `text`, never the volatile authored line). It is a derived
+  view over `events.jsonl`, never a second record (ADR-0008); `--fail-on-regression`
+  exits 1 when a scenario regressed, for CI gating.
 
 ### Changed
 

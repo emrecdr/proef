@@ -87,7 +87,8 @@ verdicts (spike-proven); no secret values appear in any artifact.
 US-8 (P4) CI consumes results. *AC:* exit codes 0/1/2/3 stable and integration-tested;
 `--junit auto` under GITHUB_ACTIONS; JSONL event log written per run; `--tags` filters.
 US-9 (P1/P4) Runs are observable. *AC:* console BDD tree with per-step timing/attempts;
-`proef explain [run]` summarizes the latest failures from run records.
+`proef explain [run]` summarizes the latest failures from run records; `proef diff
+[base] [new]` compares two runs for regressions, fixes, flakiness, and perf deltas.
 US-10 (P2) Secrets stay secret. *AC:* `proef secret set` stores encrypted values;
 secret values never appear in artifacts, logs, reports, or events (property-tested).
 US-11 (P4) hurl upgrades are safe. *AC:* the canary job builds against the next hurl
@@ -114,7 +115,7 @@ event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotatio
 **CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json --watch --run-id --sarif --rerun
 --scenario[-file]`; path optional — `[run] suite` then the `tests/` convention), `flows`,
 `macros` (call counts + dead-macro report), `artifacts`, `schema [--add-to]`,
-`secret set|list`, `explain`, `doctor`. **Config
+`secret set|list`, `explain`, `diff [base] [new] --fail-on-regression`, `doctor`. **Config
 (`proef.toml`, ADR-0012):** runner settings (`[run]`/`[http]`) + suite variables
 (`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
 (`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via

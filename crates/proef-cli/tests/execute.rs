@@ -360,6 +360,59 @@ fn quarantine_tag_does_not_gate_the_exit_code() {
         .code(1);
 }
 
+/// `proef diff` compares two run records by `(file, scenario)` identity: a
+/// scenario that passed then failed is a `regressed` transition that
+/// `--fail-on-regression` turns into exit 1; the reverse is a `fixed`
+/// transition, and without the flag diff is informational (exit 0).
+#[test]
+fn diff_reports_regressions_and_fixes_between_runs() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: health\n    When health is checked\n",
+    )
+    .unwrap();
+    let pack = |code: u16| {
+        format!(
+            "macros:\n  ok:\n    match: health is checked\n    steps:\n      - hurl: |\n          \
+             GET ${{url:base}}/health\n          HTTP {code}\n"
+        )
+    };
+    let pack_path = cwd.path().join("suite/packs/p.yaml");
+
+    // Run "base": expects 200 (the fixture returns 200) → passes.
+    std::fs::write(&pack_path, pack(200)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--run-id", "run-base"])
+        .assert()
+        .code(0);
+    // Run "new": expects 500 → fails.
+    std::fs::write(&pack_path, pack(500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--run-id", "run-new"])
+        .assert()
+        .code(1);
+
+    // base → new is a regression; --fail-on-regression gates it to exit 1.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["diff", "run-base", "run-new", "--fail-on-regression"])
+        .assert()
+        .code(1);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("1 regressed"), "{stdout}");
+    assert!(stdout.contains("case.feature :: health"), "{stdout}");
+
+    // The reverse is a fix, and without the flag diff stays informational (0).
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["diff", "run-new", "run-base"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("1 fixed"), "{stdout}");
+}
+
 /// US-5: `optional:` failures warn and the scenario continues to green.
 #[test]
 fn optional_failure_warns_and_continues() {
