@@ -413,6 +413,61 @@ fn diff_reports_regressions_and_fixes_between_runs() {
     assert!(stdout.contains("1 fixed"), "{stdout}");
 }
 
+/// `proef report` writes a self-contained HTML file into the run dir whose
+/// `artifacts/` deep-links resolve to real files — proving the report's slug
+/// derivation matches the emitter's on-disk artifact name (#6).
+#[test]
+fn report_writes_self_contained_html_linking_real_artifacts() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: health\n    When health is checked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  ok:\n    match: health is checked\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--run-id", "run-rep"])
+        .assert()
+        .code(0);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["report", "run-rep"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("report.html"), "{stdout}");
+
+    let run_dir = cwd.path().join(".proef-runs/run-rep");
+    let html = std::fs::read_to_string(run_dir.join("report.html")).unwrap();
+    assert!(html.starts_with("<!DOCTYPE html>"), "a standalone document");
+    assert!(
+        !html.contains("http://"),
+        "self-contained, no external refs: {html}"
+    );
+    // Extract the (only) href — the artifact deep-link — and stat the target.
+    let href = html
+        .split("href=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("an artifact link");
+    assert!(
+        href.starts_with("artifacts/") && href.ends_with(".hurl"),
+        "artifact link shape: {href}"
+    );
+    assert!(
+        run_dir.join(href).exists(),
+        "the report deep-links a real artifact: {href}"
+    );
+}
+
 /// US-5: `optional:` failures warn and the scenario continues to green.
 #[test]
 fn optional_failure_warns_and_continues() {

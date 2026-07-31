@@ -93,7 +93,8 @@ libcurl. Prebuilt binaries (brew/binstall/GitHub Releases) need none of this.
 
 Every run leaves `.proef-runs/<run-id>/`: `events.jsonl` (the machine record —
 [EVENTS.md](EVENTS.md)), `run.log` (console mirror), and `artifacts/` with the
-exact executed `.hurl` files. `proef explain` summarizes the latest run and
+exact executed `.hurl` files. `proef explain` summarizes the latest run,
 `proef diff [base] [new]` compares two of them (regressions, fixes, flakiness,
-perf); the `reproduce: hurl --test …` line under a failure replays the artifact
-with stock hurl, taking proef out of the loop entirely.
+perf), and `proef report [run]` writes a self-contained HTML page of a run; the
+`reproduce: hurl --test …` line under a failure replays the artifact with stock
+hurl, taking proef out of the loop entirely.

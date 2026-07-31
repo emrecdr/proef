@@ -175,9 +175,10 @@ exact command to reproduce it without proef:
 Every run leaves a record under `.proef-runs/<run-id>/`: `events.jsonl` (the
 machine-readable event stream), `run.log` (the console mirror), and
 `artifacts/` — the exact `.hurl` files that were executed, byte for byte.
-`proef explain` summarizes the latest run from the record, and `proef diff`
+`proef explain` summarizes the latest run from the record, `proef diff`
 compares two runs — surfacing what regressed, what got fixed, and which steps
-turned flaky or slower.
+turned flaky or slower — and `proef report` writes a self-contained HTML page
+of a run (scenario tree, timings, and deep-links to the executed artifacts).
 
 ## Where next
 

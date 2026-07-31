@@ -1,0 +1,30 @@
+---
+source: crates/proef-cli/tests/report.rs
+expression: "render_html(&events, \"artifacts\")"
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>proef report — report-0001</title>
+<style>:root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#e2e2e2;--pass:#1a7f37;--fail:#cf222e;--skip:#8a8a8a;--warn:#9a6700;--card:#f6f8fa}@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--pass:#3fb950;--fail:#f85149;--skip:#8a8a8a;--warn:#d29922;--card:#161b22}}*{box-sizing:border-box}body{margin:0;padding:2rem;max-width:60rem;margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0 0 1.5rem}.count{font-weight:600;padding:.15rem .6rem;border-radius:999px;background:var(--card)}.count.pass{color:var(--pass)}.count.fail{color:var(--fail)}.count.skip{color:var(--skip)}.count.warn{color:var(--warn)}.summary .steps{color:var(--muted);margin-left:auto}.scenario{border:1px solid var(--line);border-radius:8px;margin:.5rem 0;background:var(--card)}.scenario summary{cursor:pointer;padding:.6rem .8rem;list-style:none;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}.scenario summary::-webkit-details-marker{display:none}.pill{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.1rem .5rem;border-radius:4px;color:#fff}.pill.pass{background:var(--pass)}.pill.fail{background:var(--fail)}.pill.skip{background:var(--skip)}.pill.warn{background:var(--warn)}.loc{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}.artifact{margin-left:auto;font-size:.85rem;color:var(--muted)}.steps{margin:0;padding:.2rem .8rem .8rem 2rem;border-top:1px solid var(--line)}.steps li{margin:.3rem 0}.steps .glyph{font-weight:700}li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph{color:var(--skip)}li.warn .glyph{color:var(--warn)}.meta{color:var(--muted);font-size:.8rem;margin-left:.4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}</style>
+</head>
+<body>
+<h1>proef run <code>report-0001</code></h1>
+<p class="summary"><span class="count pass">1 passed</span> <span class="count fail">1 failed</span> <span class="count skip">0 skipped</span> <span class="steps">2 steps · 3 attempts</span></p>
+<details class="scenario pass">
+<summary><span class="pill pass">passed</span> <span class="loc">tests/features/501_search.feature</span> Search &lt;admin&gt; &amp; guest <a class="artifact" href="artifacts/501-search--search-admin-guest.hurl">artifact</a></summary>
+<ol class="steps">
+<li class="pass"><span class="glyph">✓</span> the admin searches for &quot;Jansen&quot;<span class="meta">:6 · 1× · 40ms</span></li>
+</ol>
+</details>
+<details class="scenario fail" open>
+<summary><span class="pill fail">failed</span> <span class="loc">tests/features/502_login.feature</span> Login rejects a bad password <a class="artifact" href="artifacts/502-login--login-rejects-a-bad-password.hurl">artifact</a></summary>
+<ol class="steps">
+<li class="fail"><span class="glyph">✗</span> the guest logs in<span class="meta">:4 · 2× · 120ms</span><pre class="detail">assert failure: expected HTTP 401 but was 200
+  at 502-login--login-rejects-a-bad-password.hurl:9</pre></li>
+</ol>
+</details>
+</body>
+</html>

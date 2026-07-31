@@ -605,6 +605,8 @@ impl core::marker::UnsafeUnpin for proef_core::feature::StepDefn
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::StepDefn
 impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepDefn
 pub fn proef_core::feature::parse(&str, &str) -> core::result::Result<proef_core::feature::FeatureFile, alloc::vec::Vec<proef_core::diag::Diag>>
+pub mod proef_core::html
+pub fn proef_core::html::render_html(&[proef_core::event::Event], &str) -> alloc::string::String
 pub mod proef_core::lower
 pub struct proef_core::lower::LowerCtx<'a>
 pub proef_core::lower::LowerCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>

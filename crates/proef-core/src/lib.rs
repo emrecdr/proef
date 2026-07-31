@@ -23,6 +23,7 @@ pub mod error;
 pub mod event;
 pub mod fake;
 pub mod feature;
+pub mod html;
 pub mod lower;
 pub mod matcher;
 pub mod pack;

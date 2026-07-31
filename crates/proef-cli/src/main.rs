@@ -18,6 +18,7 @@ mod fsutil;
 mod record;
 mod registry;
 mod render;
+mod report;
 mod sarif;
 mod secretstore;
 mod watch;
@@ -155,6 +156,14 @@ enum Command {
         /// Exit 1 when a scenario regressed (passed → failed), for CI gating
         #[arg(long)]
         fail_on_regression: bool,
+    },
+    /// Write a self-contained HTML report for a run from its event record
+    Report {
+        /// Run id (default: the latest run)
+        run_id: Option<String>,
+        /// Output file (default: `report.html` inside the run dir)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Normalize the raw hurl blocks inside macro packs
     Fmt {
@@ -371,6 +380,13 @@ fn main() -> std::process::ExitCode {
                 new.as_deref(),
                 fail_on_regression,
             ),
+            Err(message) => {
+                eprintln!("error: {message}");
+                proef_core::error::ExitCode::UserError
+            }
+        },
+        Command::Report { run_id, output } => match config::ProjectConfig::load() {
+            Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
             Err(message) => {
                 eprintln!("error: {message}");
                 proef_core::error::ExitCode::UserError

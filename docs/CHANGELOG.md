@@ -58,6 +58,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   (steps diffed on `text`, never the volatile authored line). It is a derived
   view over `events.jsonl`, never a second record (ADR-0008); `--fail-on-regression`
   exits 1 when a scenario regressed, for CI gating.
+- `proef report [run-id]` writes a self-contained HTML report for a run —
+  scenario tree with pass/fail pills, per-step attempts and timing, failure
+  detail, and deep-links to the executed `.hurl` artifacts (bodies are not
+  inlined). A pure `proef_core::html::render_html` derives it from the event
+  stream (ADR-0008, snapshot-locked); the events are already redacted at the
+  sink, so the page is too. Defaults to `report.html` inside the run dir; `-o`
+  redirects it.
 
 ### Changed
 
