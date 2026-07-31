@@ -79,14 +79,29 @@ fn schema_prints_merged_json() {
     );
 }
 
-/// Real execution against the corpus with no target configured: strict
-/// resolution finds `${env:PROEF_BASE_URL}` (and the secret) unbound — a
-/// user-input fault, exit 2, before any request is attempted.
+/// Real execution against the corpus with no secret available is a user fault
+/// (exit 2), caught before any request. `${url:base}` resolves to the
+/// `proef.toml` default, so the unbound `${secret:apiToken}` is the binding gap.
+/// Runs from a temp CWD with the target passed absolutely: the secret store is
+/// `.proef-secrets.json` in the *working directory* (CWD-relative, no env
+/// override), so a developer's own stored `apiToken` must not be able to mask
+/// this — the clean CWD guarantees it.
 #[test]
-fn execution_without_target_env_is_a_user_error() {
-    proef()
+fn execution_without_secret_is_a_user_error() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        workspace_root().join("proef.toml"),
+        cwd.path().join("proef.toml"),
+    )
+    .unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
         .env_remove("PROEF_BASE_URL")
-        .args(["test", "tests/features"])
+        .env_remove("PROEF_SECRET_APITOKEN")
+        .arg("test")
+        .arg(workspace_root().join("tests/features"))
         .assert()
         .code(2);
 }

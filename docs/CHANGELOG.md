@@ -47,6 +47,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **Pack root key renamed `templates:` → `macros:`** (ADR-0004 amendment): one
   canonical spelling for the prose→engine binding layer (the entry is a *macro*,
   the file a *pack*). No `templates:` alias — packs using the old key fail to load.
+- The dev-loop fixture (`cargo run -p xtask -- fixture`) binds the advertised
+  default port **8787** — falling back to an ephemeral port (and printing a
+  `PROEF_BASE_URL` line) only if 8787 is busy; `... -- fixture <port>` overrides.
+  So `proef.toml`'s default `base` reaches it with no `PROEF_BASE_URL` export
+  (ADR-0011 amendment). Its `GET /health` now returns a versioned identity —
+  `name`, a numeric `version` (`1.0`), and the RFC 3339 `time` it answered.
 
 ### Removed
 

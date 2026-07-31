@@ -31,7 +31,7 @@ follow-location = false     # follow redirects
 
 # ── suite variables (data your tests reference) ─────────────────
 [url]
-base = "http://127.0.0.1:8787"   # → ${url:base}
+base = "http://127.0.0.1:8787"   # → ${url:base}; the dev fixture's default port
 
 [vars]
 apiVersion = "v1"                 # → ${vars:apiVersion}

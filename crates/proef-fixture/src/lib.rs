@@ -30,6 +30,11 @@ use std::time::Duration;
 /// `PROEF_SECRET_APITOKEN=fixture-token`).
 pub const API_TOKEN: &str = "fixture-token";
 
+/// The fixture's advertised API identity, reported by `GET /health` next to the
+/// time it answered — a versioning demo for a dev backend.
+const API_NAME: &str = "proef fixture API";
+const API_VERSION: f64 = 1.0;
+
 /// How many polls until a delayed resource becomes visible.
 const VISIBLE_AFTER: u32 = 2;
 
@@ -60,10 +65,23 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// Start on an ephemeral port.
+    /// Start on an ephemeral port (the OS picks a free one). The integration
+    /// suite uses this so its many concurrent instances never contend for a
+    /// port; the dev-loop CLI uses [`Fixture::start_on`] for a stable one.
     pub fn start() -> Result<Self, String> {
-        let server = tiny_http::Server::http("127.0.0.1:0")
-            .map_err(|err| format!("cannot start fixture: {err}"))?;
+        Self::bind("127.0.0.1:0")
+    }
+
+    /// Start on a specific port. `xtask fixture` uses this to serve the port the
+    /// shipped `proef.toml` advertises (8787), so the default `base` resolves
+    /// with no `PROEF_BASE_URL` override. Errors if the port is already in use.
+    pub fn start_on(port: u16) -> Result<Self, String> {
+        Self::bind(&format!("127.0.0.1:{port}"))
+    }
+
+    fn bind(addr: &str) -> Result<Self, String> {
+        let server =
+            tiny_http::Server::http(addr).map_err(|err| format!("cannot start fixture: {err}"))?;
         // `to_ip()` instead of matching: the `Unix` variant only exists on
         // unix targets, so a match arm would not compile on Windows.
         let port = server
@@ -165,7 +183,20 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
     let st = envs.envs.entry(env_key).or_default();
 
     match (method.as_str(), path) {
-        ("GET", "/health") | ("POST", "/form") => {
+        ("GET", "/health") => {
+            // Versioned identity: who this backend is and when it answered.
+            // Reading the wall clock is fine here — the fixture is dev-only; the
+            // sans-IO core never does. The non-deterministic `time` is safe: no
+            // test asserts the /health body, only its 200 (api.yaml warm-up probe).
+            // `{:.1}` keeps the trailing `.0` — plain f64 Display prints `1.0`
+            // as `1`. Emitted unquoted, so `version` is a JSON number, not a string.
+            let body = format!(
+                "{{\"status\":\"ok\",\"name\":\"{API_NAME}\",\"version\":{API_VERSION:.1},\"time\":\"{time}\"}}",
+                time = jiff::Timestamp::now(),
+            );
+            respond_json(request, 200, &body);
+        }
+        ("POST", "/form") => {
             respond_json(request, 200, r#"{"status":"ok"}"#);
         }
         ("POST", "/api/v1/channel/activate") => {

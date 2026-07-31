@@ -200,7 +200,7 @@ cargo test --doc           # doctests (nextest doesn't run them)
 just gates                 # every CI gate locally (fmt, clippy -D, tests, doc, deny, machete, docs-check)
 just audit                 # security advisories (nightly in CI, on demand locally)
 cargo insta test --review  # snapshot changes are reviewed, never blind-accepted
-cargo run -p xtask -- fixture   # local fixture API server
+cargo run -p xtask -- fixture   # local fixture API server on :8787
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 

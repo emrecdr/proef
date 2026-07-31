@@ -48,7 +48,9 @@ is no `[run] suite` in `proef.toml` nor a `tests/` directory. Pass a path, set
 **Exit 3 with connection errors** — the target is unreachable. Check the URL your
 `${url:base}` resolves to for the active `--env` (a
 `--dry-run` prints nothing wrong because no request is sent), then the network. The
-dev fixture (`cargo run -p xtask -- fixture`) gives you a local target.
+dev fixture (`cargo run -p xtask -- fixture`) binds the default `${url:base}` port
+(8787), so with no `PROEF_BASE_URL` set it becomes your local target automatically
+(it falls back to an ephemeral port, printing `PROEF_BASE_URL`, only if 8787 is busy).
 
 **"batch budget exceeded — scenario thread abandoned"** — the watchdog killed
 a batch that outran its computed budget (timeouts × attempts + delays +

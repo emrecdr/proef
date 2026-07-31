@@ -56,7 +56,7 @@ cargo run -p proef -- artifacts tests/features -o out/ --run-id ci  # emit .hurl
 cargo run -p proef -- flows tests/features           # list scenarios with anchors + tags
 # tests/errors/ is the seeded broken corpus (one dir per diagnostic code) — dry-running it fails by design
 cargo run -p proef -- doctor                   # native libs / env checks
-cargo run -p xtask -- fixture                      # local fixture API server (dev)
+cargo run -p xtask -- fixture                      # local fixture API server on :8787 (dev; falls back if busy)
 cargo run -p xtask -- canary                       # build+test against next hurl release
 ```
 
@@ -165,7 +165,7 @@ counts and normalized event order, never wall-clock or raw interleaving.
 - [x] M3 — engine-hurl execution: adapter, World bridge, parallelism, budgets, console+JSONL
 - [x] M4 — upstream tracking: real canary, thin-fork rehearsal, upstream PR #1, JUnit/GH summary
 - [x] M5 — breadth: bodies (multipart/form/docstring), watch, explain, secrets CLI, fakes, libtest-mimic harness, `proef fmt`
-- [x] post-M5 — external config & environments (`proef.toml` `[url]`/`[vars]`/`[env.<name>]`, `${url:}`/`${vars:}`, `--env`/`PROEF_ENV`, ADR-0012); default suite path (`[run] suite`); pack root key `templates:` → `macros:` (ADR-0004 amendment)
+- [x] post-M5 — external config & environments (`proef.toml` `[url]`/`[vars]`/`[env.<name>]`, `${url:}`/`${vars:}`, `--env`/`PROEF_ENV`, ADR-0012); default suite path (`[run] suite`); pack root key `templates:` → `macros:` (ADR-0004 amendment); dev fixture binds default port 8787 + versioned `/health` (ADR-0011 amendment)
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

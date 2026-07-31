@@ -141,8 +141,10 @@ gives packs autocomplete via the JSON Schema.
 ## 5. Provide the secret and a target, then run
 
 Point `PROEF_BASE_URL` at any HTTP API you can reach — or start proef's own
-dev fixture in a second terminal (`cargo run -p xtask -- fixture` from a
-checkout prints the URL to export). Then:
+dev fixture in a second terminal: from a checkout, `cargo run -p xtask --
+fixture` binds the default `base` port (8787), so no `PROEF_BASE_URL` is needed
+(it prints a `PROEF_BASE_URL` line to export only if 8787 is busy or you pass
+`... -- fixture <port>`). Then:
 
 ```console
 $ proef secret set apiToken        # encrypted store; or: export PROEF_SECRET_APITOKEN=…
