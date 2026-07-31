@@ -14,6 +14,7 @@ mod explain;
 mod fmt;
 mod front;
 mod fsutil;
+mod record;
 mod registry;
 mod render;
 mod sarif;
@@ -83,6 +84,9 @@ enum Command {
         /// Write validation diagnostics as a SARIF 2.1.0 log (requires --dry-run)
         #[arg(long, requires = "dry_run")]
         sarif: Option<PathBuf>,
+        /// Re-run only the scenarios that failed in the last run
+        #[arg(long)]
+        rerun: bool,
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
         #[arg(long)]
         env: Option<String>,
@@ -240,6 +244,7 @@ fn main() -> std::process::ExitCode {
             watch: watch_mode,
             run_id,
             sarif,
+            rerun,
             env,
         } => match prepare(path, env) {
             Err(code) => code,
@@ -267,6 +272,7 @@ fn main() -> std::process::ExitCode {
                             scenario_file.as_deref(),
                             active_env.as_deref(),
                             run_id.clone(),
+                            rerun,
                             &config,
                             cancel, // None = execute installs its own Ctrl-C handler
                         )

@@ -43,6 +43,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   (unbound steps, pack lint, non-finite retries) to a SARIF 2.1.0 log — a
   shift-left gate that renders findings as inline PR annotations. The export is
   additive: the dry-run's exit code is unchanged.
+- `proef test --rerun` re-runs only the scenarios that failed in the last run
+  (read from its JSONL record, keyed on the run-wide `(file, name)` identity);
+  it composes with `--tags`/`--scenario`, and reports "nothing to rerun"
+  (exit 0) when the prior run was clean.
+- `@quarantine` tag: a scenario so tagged runs and reports normally, but its
+  *test-failure* no longer gates the exit code (a `System`/`User` fault still
+  does — quarantine is for flaky tests, not broken input or infra). A note
+  prints when a quarantined scenario fails, so it is never silently swallowed.
 
 ### Changed
 

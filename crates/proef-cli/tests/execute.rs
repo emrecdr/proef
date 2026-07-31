@@ -284,6 +284,82 @@ fn pinned_run_id_is_honored() {
     assert_eq!(json["run_id"], "pinned-seed-001", "{stdout}");
 }
 
+/// `--rerun` re-runs only the scenarios that failed in the prior run: a mixed
+/// pass/fail suite runs both once, then `--rerun` runs just the failure.
+#[test]
+fn rerun_reruns_only_the_prior_failures() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: passing\n    When health is checked\n  \
+         Scenario: failing\n    When health is wrongly expected to 500\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  ok:\n    match: health is checked\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 200\n  bad:\n    match: health is wrongly \
+         expected to 500\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          \
+         HTTP 500\n",
+    )
+    .unwrap();
+
+    // Run 1: one scenario passes, one fails → exit 1.
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    // --rerun: only the prior failure runs (the passing scenario is not re-run).
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun", "--output", "json"])
+        .assert()
+        .code(1);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let json: serde_json::Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(json["failed"], 1, "only the failure reruns: {stdout}");
+    assert_eq!(
+        json["passed"], 0,
+        "the passing scenario is not rerun: {stdout}"
+    );
+    assert_eq!(json["skipped"], 0, "{stdout}");
+}
+
+/// `@quarantine`: a tagged scenario's test-failure does not gate the run (exit
+/// 0) — the same failure without the tag gates normally (exit 1).
+#[test]
+fn quarantine_tag_does_not_gate_the_exit_code() {
+    let fixture = Fixture::start().unwrap();
+    let pack = "macros:\n  bad:\n    match: health is wrongly expected to 500\n    steps:\n      \
+                - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n";
+    let make = |tag: &str| {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("suite/packs")).unwrap();
+        std::fs::write(
+            dir.path().join("suite/case.feature"),
+            format!(
+                "Feature: F\n  {tag}\n  Scenario: flaky\n    When health is wrongly expected to 500\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("suite/packs/p.yaml"), pack).unwrap();
+        dir
+    };
+    // Fails (asserts 500, fixture returns 200) but is quarantined → exit 0.
+    let quarantined = make("@quarantine");
+    proef_in(quarantined.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+    // The same failure without the tag gates normally → exit 1.
+    let normal = make("@normal");
+    proef_in(normal.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+}
+
 /// US-5: `optional:` failures warn and the scenario continues to green.
 #[test]
 fn optional_failure_warns_and_continues() {

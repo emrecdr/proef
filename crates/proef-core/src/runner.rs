@@ -87,16 +87,27 @@ impl RunSummary {
     /// test failures (ADR-0009). A cancelled run is never `Success` — the
     /// suite did not pass; it was interrupted (folds in as a test failure).
     pub fn exit_code(&self) -> ExitCode {
+        self.exit_code_excluding(&[])
+    }
+
+    /// [`Self::exit_code`], treating the given `(file, name)` scenarios as
+    /// non-gating (`@quarantine`): their *test-failures* no longer count toward
+    /// the exit code, but a `System`/`User` fault still does — quarantine is for
+    /// flaky tests, not broken input or infra.
+    pub fn exit_code_excluding(&self, non_gating: &[(String, String)]) -> ExitCode {
         let mut worst = if self.cancelled {
             ExitCode::TestFailure
         } else {
             ExitCode::Success
         };
         for outcome in &self.outcomes {
+            let quarantined = non_gating.iter().any(|(file, name)| {
+                file.as_str() == outcome.file.as_ref() && name.as_str() == outcome.name.as_ref()
+            });
             let code = match (&outcome.fault, outcome.status) {
                 (Some(Fault::System(_)), _) => ExitCode::SystemError,
                 (Some(Fault::User(_)), _) => ExitCode::UserError,
-                (None, Status::Failed) => ExitCode::TestFailure,
+                (None, Status::Failed) if !quarantined => ExitCode::TestFailure,
                 _ => ExitCode::Success,
             };
             worst = pick_worse(worst, code);

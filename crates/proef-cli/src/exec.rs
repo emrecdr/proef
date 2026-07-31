@@ -27,6 +27,10 @@ use crate::{registry, render};
 /// How many run records to keep (TECH-SPEC §11).
 const RUN_RETENTION: usize = 200;
 
+/// A scenario tagged `@quarantine` runs and reports, but its test-failure does
+/// not gate the exit code (`RunSummary::exit_code_excluding`).
+const QUARANTINE_TAG: &str = "quarantine";
+
 /// Run the suite. Exit codes: 0 ok · 1 test failure · 2 user error · 3 system
 /// error (ADR-0009, worst-wins across scenarios).
 // One cohesive listing of the run lifecycle; splitting hides the order. The
@@ -42,6 +46,7 @@ pub fn execute(
     scenario_file_filter: Option<&str>,
     active_env: Option<&str>,
     run_id: Option<String>,
+    rerun: bool,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -85,6 +90,30 @@ pub fn execute(
     // Run directory. Rotation happens before the new dir exists so the
     // in-flight run can never be a rotation candidate.
     let runs_root = PathBuf::from(config.runs_dir());
+
+    // `--rerun`: read the prior run's failures BEFORE this run's dir exists, so
+    // `latest_run` sees the previous run, not this one. No prior record is a
+    // user error; a clean prior run has nothing to rerun (exit 0).
+    let rerun_set = if rerun {
+        let Some(dir) = crate::record::resolve_dir(&runs_root, None) else {
+            eprintln!("error: --rerun found no prior run record to rerun from");
+            return ExitCode::UserError;
+        };
+        match crate::record::failed_scenarios(&dir) {
+            Ok(failed) if failed.is_empty() => {
+                crate::render::outln!("no failed scenarios in the last run — nothing to rerun");
+                return ExitCode::Success;
+            }
+            Ok(failed) => Some(failed),
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::UserError;
+            }
+        }
+    } else {
+        None
+    };
+
     rotate_runs(&runs_root, front.run_id.as_ref());
     let run_dir = runs_root.join(front.run_id.as_ref());
     let artifacts_dir = run_dir.join("artifacts");
@@ -159,6 +188,7 @@ pub fn execute(
         tags,
         scenario_filter,
         scenario_file_filter,
+        rerun_set.as_deref(),
         &artifacts_dir,
     );
     let selected = specs.len();
@@ -277,13 +307,49 @@ pub fn execute(
         }
     }
 
+    // `@quarantine` scenarios run and report, but their test-failures do not
+    // gate the run (a System/User fault still does — quarantine is for flaky
+    // tests, not broken input or infra).
+    let non_gating: Vec<(String, String)> = front
+        .features
+        .iter()
+        .flat_map(|feature| {
+            feature
+                .scenarios
+                .iter()
+                .filter(|scenario| {
+                    scenario
+                        .lowered
+                        .tags
+                        .iter()
+                        .any(|tag| tag == QUARANTINE_TAG)
+                })
+                .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
+        })
+        .collect();
+    let quarantined_failures = summary
+        .outcomes
+        .iter()
+        .filter(|o| o.status == proef_core::step::Status::Failed && o.fault.is_none())
+        .filter(|o| {
+            non_gating.iter().any(|(file, name)| {
+                file.as_str() == o.file.as_ref() && name.as_str() == o.name.as_ref()
+            })
+        })
+        .count();
+    if quarantined_failures > 0 {
+        eprintln!(
+            "note: {quarantined_failures} quarantined scenario(s) failed but did not gate the run"
+        );
+    }
+
     if output_json {
         let json = serde_json::json!({
             "run_id": front.run_id.as_ref(),
             "passed": summary.passed,
             "failed": summary.failed,
             "skipped": summary.skipped,
-            "exit_code": summary.exit_code().code(),
+            "exit_code": summary.exit_code_excluding(&non_gating).code(),
             "events": run_dir.join("events.jsonl").display().to_string(),
         });
         crate::render::outln!("{json}");
@@ -292,7 +358,7 @@ pub fn execute(
     if junit_failed {
         return ExitCode::SystemError;
     }
-    summary.exit_code()
+    summary.exit_code_excluding(&non_gating)
 }
 
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure
@@ -304,6 +370,7 @@ fn build_specs(
     tags: &[String],
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
+    rerun_set: Option<&[(String, String)]>,
     artifacts_dir: &Path,
 ) -> Vec<ScenarioSpec> {
     let mut specs = Vec::new();
@@ -333,6 +400,16 @@ fn build_specs(
             }
             if let Some(filter) = scenario_filter
                 && scenario.lowered.name != filter
+            {
+                continue;
+            }
+            // `--rerun`: keep only scenarios that failed in the prior run, keyed
+            // on the run-wide (file, name) identity.
+            if let Some(rerun) = rerun_set
+                && !rerun.iter().any(|(file, name)| {
+                    file.as_str() == feature.file.path.as_str()
+                        && name.as_str() == scenario.lowered.name.as_str()
+                })
             {
                 continue;
             }
