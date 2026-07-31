@@ -565,6 +565,7 @@ fn run_scenario(
                 attempts: 0,
                 duration: std::time::Duration::ZERO,
                 detail: Some(unreached_reason.to_owned()),
+                reproduce_hint: None,
             });
         }
     }

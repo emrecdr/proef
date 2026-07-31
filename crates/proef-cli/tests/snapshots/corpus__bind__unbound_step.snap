@@ -10,6 +10,14 @@ proef::bind::unbound_step
  3 │     When I serch for Jansen
    ·     ───────────────────────
    ╰────
-  help: add a `match:` pattern to a pack macro, or fix the step text
+  help: add a macro to a pack (or fix the step text), e.g.:
+        
+        macros:
+          newMacro:
+            match: I serch for Jansen
+            steps:
+              - hurl: |
+                  GET ${url:base}/PATH
+                  HTTP 200
 
 1 error(s)

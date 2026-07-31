@@ -58,7 +58,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 | Code | Meaning | Corpus |
 |---|---|---|
-| `bind::unbound_step` | No macro pattern matches the sentence (suggests the closest) | ✓ |
+| `bind::unbound_step` | No macro pattern matches the sentence (suggests the closest, plus a paste-ready macro stub) | ✓ |
 | `bind::ambiguous_step` | More than one macro matches (all candidates listed) | ✓ |
 | `bind::missing_param` | A required param has no capture, table value, or default | ✓ |
 | `bind::bad_table` | A data table has an unusable shape | |

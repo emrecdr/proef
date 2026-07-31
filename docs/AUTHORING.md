@@ -67,6 +67,58 @@ run as their own batch so a failure cannot poison neighbours.
 assert lines merge into the *previous* request entry (a `Then` before any
 `When` is an error).
 
+## Asserting responses — the hurl vocabulary
+
+Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the
+whole **hurl 8.0** assert grammar is available *untouched*: proef resolves `${…}`
+before the run and hands the rest to the embedded engine verbatim (ADR-0005). The
+block is parsed at pack-load time, so a grammar slip fails fast with a diagnostic
+— only JSONPath *semantics* (a query that lexes but never matches at run time) can
+slip through. An assert reads `<query> [filters…] <predicate>`; `HTTP <status>` is
+the implicit status assert. The authoritative list is hurl's own
+[asserting-response](https://hurl.dev/docs/asserting-response.html) and
+[filters](https://hurl.dev/docs/filters.html) docs; the common shape:
+
+```hurl
+GET ${url:record}
+Authorization: Bearer ${secret:apiToken}
+HTTP 200
+[Asserts]
+jsonpath "$.id"        isUuid                 # type/shape checks — schema-lite
+jsonpath "$.status"    == "active"
+jsonpath "$.createdAt" isIsoDate
+jsonpath "$.tags"      count == 3
+header "Content-Type"  contains "application/json"
+duration               < 1000                 # response-time budget (ms)
+```
+
+- **Queries** (what to read): `status`, `header "<n>"`, `cookie "<n>"`, `body`,
+  `bytes`, `jsonpath "<expr>"`, `xpath "<expr>"`, `regex "<pat>"`, `sha256`,
+  `md5`, `url`, `redirects`, `variable "<n>"`, `duration`, `certificate "<f>"`.
+- **Predicates** (the check): `== != > >= < <=`, `startsWith`, `endsWith`,
+  `contains`, `includes`, `matches "<regex>"`, `exists` / `not exists`,
+  `isEmpty`, and the type family `isBoolean` `isInteger` `isFloat` `isNumber`
+  `isString` `isCollection` `isList` `isObject` `isDate` `isIsoDate` `isUuid`
+  `isIpv4` `isIpv6`.
+- **Filters** transform the value before the predicate, chained left→right:
+  `count`, `nth <n>`, `first`, `last`, `split "<sep>"`, `replace`/`replaceRegex`,
+  `toInt`/`toFloat`/`toString`, `toDate "<fmt>"`, `format "<fmt>"`,
+  `base64Decode`/`base64Encode`, `urlDecode`/`urlEncode`, `daysAfterNow`/
+  `daysBeforeNow`, `jsonpath "<expr>"`, `regex "<pat>"`, `utf8Decode`.
+
+```hurl
+[Asserts]
+jsonpath "$.items"     count > 0
+header "Set-Cookie"    split ";" nth 0 startsWith "session="
+```
+
+**RFC 9535 JSONPath** (hurl 8.0): filter expressions and functions are in scope —
+`jsonpath "$.books[?(@.price < 10)]"`, `length()`, `count()`, `match()`,
+`search()`. Use the bracket form for names with hyphens (`$['x-custom-id']`), and
+assert a missing path with `not exists` (a non-matching path yields *no value*,
+not `count == 0`). The same query+filter grammar drives `[Captures]`, threading a
+value into later steps as `{{name}}`.
+
 ## Variables — the two tiers
 
 | Syntax | Resolves | When | Examples |

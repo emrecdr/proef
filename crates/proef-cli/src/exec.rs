@@ -222,6 +222,9 @@ pub fn execute(
                     step.step.line,
                     redactions.apply(detail)
                 );
+                if let Some(hint) = &step.reproduce_hint {
+                    eprintln!("    curl: {}", redactions.apply(hint));
+                }
             }
         }
         // The artifact is re-executable — hand the exact command over. The
@@ -263,6 +266,15 @@ pub fn execute(
         }
     }
     crate::ci_reports::write_github_summary(&summary, &front.run_id, &redactions);
+    // GitHub annotations render each failure in the PR diff gutter. They are
+    // stdout workflow commands, so emit only under Actions and only when the
+    // human report (not `--output json`) owns stdout.
+    if !output_json && std::env::var_os("GITHUB_ACTIONS").is_some() {
+        let annotations = crate::ci_reports::github_annotations(&summary, &redactions);
+        if !annotations.is_empty() {
+            crate::render::outln!("{}", annotations.trim_end());
+        }
+    }
 
     if output_json {
         let json = serde_json::json!({

@@ -151,6 +151,10 @@ pub struct StepOutcome {
     pub duration: Duration,
     /// Engine-specific detail (assert message, timing breakdown, …).
     pub detail: Option<String>,
+    /// Engine-provided command to reproduce this step alone (engine-hurl fills
+    /// it with the redacted `curl` of the failing request). Set only on failure;
+    /// `None` otherwise and for engines that offer no hint.
+    pub reproduce_hint: Option<String>,
 }
 
 /// Result of dispatching one [`StepBatch`] to an engine.

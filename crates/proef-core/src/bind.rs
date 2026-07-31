@@ -91,7 +91,7 @@ fn bind_scenario(
                         "proef::bind::unbound_step",
                         format!("no macro matches `{}`{suggestion}", step.text),
                     ))
-                    .with_help("add a `match:` pattern to a pack macro, or fix the step text"),
+                    .with_help(macro_stub(&step.text)),
                 );
                 continue;
             }
@@ -226,6 +226,37 @@ fn closest_pattern<'a>(step_text: &str, defs: &[(&'a str, &str)]) -> Option<&'a 
         .map(|(_, pattern)| pattern)
 }
 
+/// A paste-ready pack-macro stub for an unbound step. Quoted tokens become
+/// `{argN}` captures (the matcher sheds those quotes when binding), so an author
+/// can drop the stub into a pack and fill in the request instead of hand-writing
+/// the `match:`/`hurl:` scaffold.
+fn macro_stub(step_text: &str) -> String {
+    let mut pattern = String::new();
+    let mut arg = 0u32;
+    let mut chars = step_text.chars();
+    while let Some(c) = chars.next() {
+        if c == '"' || c == '\'' {
+            // Consume through the matching quote — the quoted run is one capture.
+            for q in chars.by_ref() {
+                if q == c {
+                    break;
+                }
+            }
+            arg += 1;
+            pattern.push_str("{arg");
+            pattern.push_str(&arg.to_string());
+            pattern.push('}');
+        } else {
+            pattern.push(c);
+        }
+    }
+    format!(
+        "add a macro to a pack (or fix the step text), e.g.:\n\nmacros:\n  \
+         newMacro:\n    match: {pattern}\n    steps:\n      - hurl: |\n          \
+         GET ${{url:base}}/PATH\n          HTTP 200"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -252,6 +283,21 @@ mod tests {
 
     fn make_feature(body: &str) -> FeatureFile {
         crate::feature::parse("t.feature", &format!("Feature: F\n  Scenario: S\n{body}")).unwrap()
+    }
+
+    #[test]
+    fn macro_stub_parametrizes_quoted_tokens() {
+        // Quoted runs become sequential {argN} captures (double and single quotes).
+        let stub = macro_stub("the operator searches for \"Acme\" in 'people'");
+        assert!(
+            stub.contains("match: the operator searches for {arg1} in {arg2}"),
+            "{stub}"
+        );
+        // A quote-free step keeps its literal text as the pattern.
+        assert!(
+            macro_stub("all done").contains("match: all done"),
+            "no-quote stub"
+        );
     }
 
     #[test]

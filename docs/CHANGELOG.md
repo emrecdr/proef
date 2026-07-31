@@ -53,6 +53,24 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   So `proef.toml`'s default `base` reaches it with no `PROEF_BASE_URL` export
   (ADR-0011 amendment). Its `GET /health` now returns a versioned identity —
   `name`, a numeric `version` (`1.0`), and the RFC 3339 `time` it answered.
+- The unbound-step diagnostic (`bind::unbound_step`) now prints a paste-ready
+  pack-macro stub — quoted tokens in the sentence become `{argN}` captures —
+  alongside the existing did-you-mean suggestion, so an author can add the
+  missing macro without hand-writing the `match:`/`hurl:` scaffold.
+- CI reporting surfaces failures and flakiness more honestly. Under GitHub
+  Actions the run emits a `::error file=,line=,title=` annotation per failure
+  (rendered in the PR "Files changed" gutter; gated off when `--output json`
+  owns stdout). The job summary gains a **flaky passes** section and per-failure
+  attempt counts, and the JUnit report records "passed on attempt N" for a
+  scenario that only went green after retries — a silent green-on-attempt-2 is
+  no longer invisible.
+- `docs/AUTHORING.md` gains an "Asserting responses" cookbook surfacing the hurl
+  8.0 predicate/filter/RFC-9535-JSONPath vocabulary that raw `hurl:` blocks
+  already accept — documenting existing capability, not new engine work.
+- A failed step now prints a `curl:` reproduce line — the redacted `curl` for the
+  failing request, surfaced from the embedded engine via a new engine-agnostic
+  `StepOutcome.reproduce_hint` — so a failure can be replayed request-by-request
+  without leaving the terminal. Secrets are masked.
 
 ### Removed
 

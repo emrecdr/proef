@@ -227,6 +227,11 @@ fn failure_maps_to_feature_line_and_artifact_span() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(stderr.contains("case.feature:4"), "feature line: {stderr}");
     assert!(stderr.contains(".hurl:"), "artifact span: {stderr}");
+    // The failed step carries a reproduce hint: the curl of the failing request.
+    assert!(
+        stderr.contains("curl: curl "),
+        "curl reproduce hint: {stderr}"
+    );
     // JUnit well-formedness (US-8): round-parse the XML instead of substring
     // checks — a consumer-shaped guarantee (well-formed, one testcase, one
     // failure element).
