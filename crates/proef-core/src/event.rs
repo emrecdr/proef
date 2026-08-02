@@ -78,6 +78,12 @@ pub enum Event {
         /// absent on passing steps, so pre-existing streams are unchanged).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Messages from earlier, failed attempts of a step that ultimately
+        /// passed — the flaky-failure detail (`JUnit` `<flakyFailure>`).
+        /// Additive schema field: empty (and unserialized) for the common
+        /// single-attempt step, so pre-existing streams are unchanged.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attempt_details: Vec<String>,
     },
     /// A scenario finished.
     ScenarioFinished {
@@ -172,10 +178,11 @@ mod tests {
                 text: Arc::from("the admin searches for \"Jansen\""),
             },
             status: Status::Passed,
-            attempts: 1,
+            attempts: 2,
             duration_ms: 42,
             captures: vec!["recordId".to_owned()],
             detail: None,
+            attempt_details: vec!["attempt 1: HTTP 404 (retried)".to_owned()],
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         let back: Event = serde_json::from_str(&json).unwrap_or(Event::RunFinished {

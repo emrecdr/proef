@@ -415,7 +415,7 @@ fn diff_reports_regressions_and_fixes_between_runs() {
 
 /// `proef report` writes a self-contained HTML file into the run dir whose
 /// `artifacts/` deep-links resolve to real files — proving the report's slug
-/// derivation matches the emitter's on-disk artifact name (#6).
+/// derivation matches the emitter's on-disk artifact name.
 #[test]
 fn report_writes_self_contained_html_linking_real_artifacts() {
     let fixture = Fixture::start().unwrap();
@@ -466,6 +466,40 @@ fn report_writes_self_contained_html_linking_real_artifacts() {
         run_dir.join(href).exists(),
         "the report deep-links a real artifact: {href}"
     );
+}
+
+/// A step that passes only after a retry records its earlier failed attempt(s)
+/// as `attempt_details` on the event stream, and JUnit surfaces them
+/// as `<flakyFailure>` — the flaky pass is honest, not masked as a clean pass.
+#[test]
+fn flaky_pass_records_attempt_details_and_junit_flaky_failure() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = corpus_cwd();
+    let corpus = workspace_root().join("tests/features");
+    let junit = cwd.path().join("out.junit.xml");
+    // The corpus's eventually-visible search step retries once (attempts:2).
+    proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            &corpus.display().to_string(),
+            "--jobs",
+            "4",
+            "--junit",
+            &junit.display().to_string(),
+        ])
+        .assert()
+        .code(0);
+
+    // The event stream carries the earlier-attempt failure detail.
+    let run_dir = latest_run_dir(cwd.path());
+    let events = std::fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
+    assert!(
+        events.contains("attempt_details"),
+        "the flaky step records its earlier-attempt detail: {events}"
+    );
+    // JUnit renders it as a <flakyFailure> under the passing test case.
+    let xml = std::fs::read_to_string(&junit).unwrap();
+    assert!(xml.contains("<flakyFailure"), "{xml}");
 }
 
 /// US-5: `optional:` failures warn and the scenario continues to green.

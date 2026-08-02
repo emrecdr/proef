@@ -1,4 +1,4 @@
-//! `proef report` (#6): the HTML report is a *derived* view over the event
+//! `proef report`: the HTML report is a *derived* view over the event
 //! stream (ADR-0008), pure and deterministic in the events, so its canonical
 //! form is snapshot-locked here (change it only via `cargo insta review`).
 //! HTML-escaping of authored text is pinned by including `<`/`&`/`"` in the
@@ -37,6 +37,7 @@ fn step(
         duration_ms,
         captures: Vec::new(),
         detail: detail.map(str::to_owned),
+        attempt_details: Vec::new(),
     }
 }
 

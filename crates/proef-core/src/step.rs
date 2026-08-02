@@ -151,6 +151,10 @@ pub struct StepOutcome {
     pub duration: Duration,
     /// Engine-specific detail (assert message, timing breakdown, …).
     pub detail: Option<String>,
+    /// Messages from earlier, failed attempts of a step that ultimately passed
+    /// — the flaky-failure detail. Empty for a clean single-attempt step;
+    /// engine-agnostic, so any engine with retries can fill it.
+    pub attempt_details: Vec<String>,
     /// Engine-provided command to reproduce this step alone (engine-hurl fills
     /// it with the redacted `curl` of the failing request). Set only on failure;
     /// `None` otherwise and for engines that offer no hint.

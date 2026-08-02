@@ -58,6 +58,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   (steps diffed on `text`, never the volatile authored line). It is a derived
   view over `events.jsonl`, never a second record (ADR-0008); `--fail-on-regression`
   exits 1 when a scenario regressed, for CI gating.
+- Flaky-failure detail: a step that passes only after a retry now records the
+  messages from its earlier, failed attempts as `attempt_details` on the
+  `step_finished` event (additive, ADR-0008); JUnit surfaces them as
+  `<flakyFailure>` under the passing test case, so a green-on-retry run is honest
+  instead of indistinguishable from a clean pass. The engine already collected
+  the earlier-attempt errors — they were being discarded on success.
 - `proef report [run-id]` writes a self-contained HTML report for a run —
   scenario tree with pass/fail pills, per-step attempts and timing, failure
   detail, and deep-links to the executed `.hurl` artifacts (bodies are not

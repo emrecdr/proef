@@ -506,6 +506,7 @@ pub proef_core::event::Event::ScenarioStarted
 pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::StepFinished
+pub proef_core::event::Event::StepFinished::attempt_details: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::StepFinished::attempts: u32
 pub proef_core::event::Event::StepFinished::captures: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::StepFinished::detail: core::option::Option<alloc::string::String>
@@ -1274,9 +1275,11 @@ impl core::marker::UnsafeUnpin for proef_core::step::StepKindId
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepKindId
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepKindId
 pub struct proef_core::step::StepOutcome
+pub proef_core::step::StepOutcome::attempt_details: alloc::vec::Vec<alloc::string::String>
 pub proef_core::step::StepOutcome::attempts: u32
 pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::duration: core::time::Duration
+pub proef_core::step::StepOutcome::reproduce_hint: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::status: proef_core::step::Status
 pub proef_core::step::StepOutcome::step: proef_core::step::StepRef
 impl core::clone::Clone for proef_core::step::StepOutcome

@@ -85,7 +85,7 @@ pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,
                          pub duration: Duration, pub detail: Option<String>,
-                         pub reproduce_hint: Option<String> }
+                         pub attempt_details: Vec<String>, pub reproduce_hint: Option<String> }
 
 // events.rs — the spine (ADR-0008); serde, versioned
 #[serde(tag = "event", rename_all = "snake_case")]

@@ -569,6 +569,7 @@ fn run_scenario(
                 duration_ms: 0,
                 captures: Vec::new(),
                 detail: Some(unreached_reason.to_owned()),
+                attempt_details: Vec::new(),
             });
             steps.push(StepOutcome {
                 step: step.step.clone(),
@@ -576,6 +577,7 @@ fn run_scenario(
                 attempts: 0,
                 duration: std::time::Duration::ZERO,
                 detail: Some(unreached_reason.to_owned()),
+                attempt_details: Vec::new(),
                 reproduce_hint: None,
             });
         }

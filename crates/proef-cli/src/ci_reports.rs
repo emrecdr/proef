@@ -8,7 +8,7 @@ use std::path::Path;
 use proef_core::report::Redactions;
 use proef_core::runner::{Fault, RunSummary, ScenarioOutcome};
 use proef_core::step::Status;
-use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
+use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, TestSuite};
 
 /// Write `report.junit.xml` for the run: one suite per feature file, one test
 /// case per scenario, engine-measured times, failure details inline.
@@ -52,7 +52,19 @@ fn flaky_pass_attempts(outcome: &ScenarioOutcome) -> Option<u32> {
 
 fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
     let status = match (outcome.status, &outcome.fault) {
-        (Status::Passed | Status::Warned, _) => TestCaseStatus::success(),
+        (Status::Passed | Status::Warned, _) => {
+            let mut status = TestCaseStatus::success();
+            // Flaky pass: each earlier failed attempt of a step that
+            // ultimately passed becomes a `<flakyFailure>` (quick-junit
+            // serializes reruns on a success as flakyFailure). Messages arrive
+            // engine-redacted; re-apply for defense in depth.
+            for message in outcome.steps.iter().flat_map(|step| &step.attempt_details) {
+                let mut rerun = TestRerun::new(NonSuccessKind::Failure);
+                rerun.set_message(redactions.apply(message));
+                status.add_rerun(rerun);
+            }
+            status
+        }
         (Status::Skipped, _) => TestCaseStatus::skipped(),
         (Status::Failed, fault) => {
             let (kind, message) = match fault {

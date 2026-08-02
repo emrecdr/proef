@@ -29,7 +29,9 @@ ordinal within the scenario's artifact) · `retry` (0 = first attempt).
 the authored feature anchor) · `status` (`passed | failed | skipped |
 warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
 *names* only — never values) · `detail` (string, **only present** on
-failures/warnings/skips-with-reason).
+failures/warnings/skips-with-reason) · `attempt_details` (array of strings —
+the messages from earlier, failed attempts of a step that ultimately passed;
+**only present** for a flaky pass, feeds JUnit `<flakyFailure>`).
 
 **`scenario_finished`** — `scenario` · `file` (feature path — with `scenario`,
 the run-wide identity: names are unique only within one file; absent in
