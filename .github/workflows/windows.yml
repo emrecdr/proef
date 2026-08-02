@@ -13,6 +13,12 @@ on:
     - cron: "41 3 * * 1"
   workflow_dispatch:
 
+# Supersede in-flight runs on a new push to the same ref, so an outdated commit
+# never leaves a stale red on the PR (each ref keeps its own group).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
