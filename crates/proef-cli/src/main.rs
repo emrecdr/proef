@@ -57,9 +57,11 @@ enum Command {
         /// Validate everything (bind + lower + emit + parse), execute nothing
         #[arg(long)]
         dry_run: bool,
-        /// Only scenarios with any of these tags (csv, OR semantics)
-        #[arg(long, value_delimiter = ',')]
-        tags: Vec<String>,
+        /// Select scenarios by a boolean tag expression, e.g.
+        /// `"@api and not @slow"` (operators `and`/`or`/`not`, parentheses; the
+        /// `@` is optional). Omitted, every scenario runs.
+        #[arg(long)]
+        tags: Option<String>,
         /// Parallel scenario workers (default: proef.toml or CPU count)
         #[arg(long)]
         jobs: Option<usize>,
@@ -268,41 +270,51 @@ fn main() -> std::process::ExitCode {
             env,
         } => match prepare(path, env) {
             Err(code) => code,
+            // Parse the tag expression once (it is constant across watch reruns);
+            // a malformed one is a user error, before any scenario runs.
             Ok((config, path, active_env)) => {
-                let run_once = |cancel| {
-                    if dry_run {
-                        commands::dry_run(
-                            &path,
-                            &tags,
-                            scenario.as_deref(),
-                            scenario_file.as_deref(),
-                            active_env.as_deref(),
-                            run_id.clone(),
-                            sarif.as_deref(),
-                            &config,
-                        )
-                    } else {
-                        exec::execute(
-                            &path,
-                            &tags,
-                            jobs,
-                            output == Some(OutputFormat::Json),
-                            junit.as_deref(),
-                            scenario.as_deref(),
-                            scenario_file.as_deref(),
-                            active_env.as_deref(),
-                            run_id.clone(),
-                            rerun,
-                            &config,
-                            cancel, // None = execute installs its own Ctrl-C handler
-                        )
+                match tags.as_deref().map(proef_core::tags::parse).transpose() {
+                    Err(message) => {
+                        eprintln!("error: {message}");
+                        proef_core::error::ExitCode::UserError
                     }
-                };
-                if watch_mode {
-                    // The loop owns Ctrl-C and hands each run its token.
-                    watch::watch_loop(&path, |token| run_once(Some(token)))
-                } else {
-                    run_once(None)
+                    Ok(tag_filter) => {
+                        let run_once = |cancel| {
+                            if dry_run {
+                                commands::dry_run(
+                                    &path,
+                                    tag_filter.as_ref(),
+                                    scenario.as_deref(),
+                                    scenario_file.as_deref(),
+                                    active_env.as_deref(),
+                                    run_id.clone(),
+                                    sarif.as_deref(),
+                                    &config,
+                                )
+                            } else {
+                                exec::execute(
+                                    &path,
+                                    tag_filter.as_ref(),
+                                    jobs,
+                                    output == Some(OutputFormat::Json),
+                                    junit.as_deref(),
+                                    scenario.as_deref(),
+                                    scenario_file.as_deref(),
+                                    active_env.as_deref(),
+                                    run_id.clone(),
+                                    rerun,
+                                    &config,
+                                    cancel, // None = execute installs its own Ctrl-C handler
+                                )
+                            }
+                        };
+                        if watch_mode {
+                            // The loop owns Ctrl-C and hands each run its token.
+                            watch::watch_loop(&path, |token| run_once(Some(token)))
+                        } else {
+                            run_once(None)
+                        }
+                    }
                 }
             }
         },

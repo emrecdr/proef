@@ -68,6 +68,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **`--tags` is now a boolean expression, not a comma-separated list.** It takes
+  a single expression over `and`/`or`/`not` and parentheses (the `@` stays
+  optional), e.g. `--tags "@api and not @slow"`; a bare tag still works. The
+  grammar and evaluator live in the sans-IO core (`proef_core::tags`,
+  deterministic and fuzzed); a malformed expression is a user error (exit 2), as
+  is a selection that matches nothing. This replaces the old CSV OR-list — there
+  is one selection mechanism, not two.
 - `--output` is a typed value: an unknown format (e.g. a `jsonl` typo) is a
   user error (exit 2) instead of silently degrading to the human report.
 - `--watch` reruns only on `.feature`/`.yaml`/`.yml` changes — the watched

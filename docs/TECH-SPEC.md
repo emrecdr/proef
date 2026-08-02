@@ -216,7 +216,8 @@ mechanism).
 One scenario = one flow/run-record/artifact set. `Background:` prepends. `Rule:` groups
 pass through (tags accumulate). Outline/Examples per §4.4. Data tables per §4.3.
 Docstrings: reserved for raw request bodies in generic steps (M5). Tags: `@tag` →
-flow tags, `--tags` filters (csv, OR semantics). Step keywords: And/But resolve to
+flow tags, `--tags` filters by a boolean expression (`and`/`or`/`not`/parens,
+`proef_core::tags`). Step keywords: And/But resolve to
 the previous primary keyword (gherkin crate `StepType`); keyword itself is not matched
 against patterns.
 
@@ -244,7 +245,7 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ## 10. CLI reference (v1)
 
 ```
-proef test [file|dir] [--env NAME] [--dry-run] [--tags csv] [--jobs N] [--junit path|auto]
+proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json] [--watch] [--scenario NAME] [--scenario-file FILE]
 proef flows [file|dir] [--env NAME] [--output json]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]

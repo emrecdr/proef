@@ -44,13 +44,34 @@ fn green_corpus_dry_runs_clean() {
 }
 
 #[test]
-fn tags_filter_selects_scenarios() {
-    let assert = proef()
-        .args(["test", "tests/features", "--dry-run", "--tags", "sync-note"])
+fn tags_filter_selects_by_boolean_expression() {
+    // The `--tags` argument is a boolean expression (#4), not a CSV list. A bare
+    // atom is still a valid expression, and `@` is optional.
+    let selected = |expr: &str| -> String {
+        let assert = proef()
+            .args(["test", "tests/features", "--dry-run", "--tags", expr])
+            .assert()
+            .code(0);
+        String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+    };
+    assert!(
+        selected("sync-note").contains("(1 selected by the filters)"),
+        "bare atom"
+    );
+    assert!(
+        selected("@breadth").contains("(4 selected by the filters)"),
+        "leading @ is optional"
+    );
+    let and_not = selected("api and not breadth");
+    assert!(and_not.contains("(8 selected by the filters)"), "{and_not}");
+    let parens = selected("(api or search) and not breadth");
+    assert!(parens.contains("(8 selected by the filters)"), "{parens}");
+
+    // A malformed expression is a user error (exit 2), before any scenario runs.
+    proef()
+        .args(["test", "tests/features", "--dry-run", "--tags", "api and"])
         .assert()
-        .code(0);
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    assert!(stdout.contains("(1 selected by the filters)"), "{stdout}");
+        .code(2);
 }
 
 #[test]

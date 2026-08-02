@@ -106,7 +106,7 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 #[allow(clippy::too_many_arguments)]
 pub fn dry_run(
     path: &Path,
-    tags: &[String],
+    tags: Option<&proef_core::tags::TagExpr>,
     scenario: Option<&str>,
     scenario_file: Option<&str>,
     active_env: Option<&str>,
@@ -185,10 +185,10 @@ pub fn dry_run(
     }
 
     render::print_all(&front.warnings);
-    if (!tags.is_empty() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
+    if (tags.is_some() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
         return front::no_scenarios_matched();
     }
-    let selected_note = if tags.is_empty() && scenario.is_none() && scenario_file.is_none() {
+    let selected_note = if tags.is_none() && scenario.is_none() && scenario_file.is_none() {
         String::new()
     } else {
         format!(" ({} selected by the filters)", totals.1)

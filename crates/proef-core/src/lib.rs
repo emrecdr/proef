@@ -31,4 +31,5 @@ pub mod report;
 pub mod resolve;
 pub mod runner;
 pub mod step;
+pub mod tags;
 pub mod world;

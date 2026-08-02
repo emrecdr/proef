@@ -384,10 +384,8 @@ pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
     proef_core::error::ExitCode::UserError
 }
 
-/// Does a scenario pass the `--tags` filter (csv, OR semantics, `@` optional)?
-pub fn tag_selected(tags: &[String], filter: &[String]) -> bool {
-    filter.is_empty()
-        || tags
-            .iter()
-            .any(|t| filter.iter().any(|f| f.trim_start_matches('@') == t))
+/// Does a scenario pass the `--tags` filter? No expression (the flag was
+/// omitted) selects everything; otherwise the boolean expression decides.
+pub fn tag_selected(tags: &[String], filter: Option<&proef_core::tags::TagExpr>) -> bool {
+    filter.is_none_or(|expr| expr.eval(tags))
 }

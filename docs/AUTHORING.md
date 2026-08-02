@@ -16,9 +16,11 @@ binding — only the sentence text does.
 feature file, and referenced from packs as `${url:key}` / `${vars:key}` — see
 [CONFIG.md](CONFIG.md). Feature files stay free of URLs and environment data.
 
-**Tags** (`@smoke`) accumulate feature→scenario; `proef test --tags a,b`
-selects scenarios carrying any of them (a selection matching nothing is an
-error, not a silent green run).
+**Tags** (`@smoke`) accumulate feature→scenario; `proef test --tags <expr>`
+selects scenarios by a boolean expression over them — `and`, `or`, `not`, and
+parentheses, with the `@` optional (e.g. `--tags "@api and not @slow"` or
+`--tags "(smoke or nightly) and not wip"`). A bare tag is a valid expression; a
+selection matching nothing is an error, not a silent green run.
 
 ## Macros (`macros:` in a pack)
 

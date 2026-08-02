@@ -1313,6 +1313,30 @@ impl core::marker::Unpin for proef_core::step::StepRef
 impl core::marker::UnsafeUnpin for proef_core::step::StepRef
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepRef
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepRef
+pub mod proef_core::tags
+pub enum proef_core::tags::TagExpr
+pub proef_core::tags::TagExpr::And(alloc::boxed::Box<proef_core::tags::TagExpr>, alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Not(alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Or(alloc::boxed::Box<proef_core::tags::TagExpr>, alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Tag(alloc::string::String)
+impl proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::eval(&self, &[alloc::string::String]) -> bool
+impl core::clone::Clone for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::clone(&self) -> proef_core::tags::TagExpr
+impl core::cmp::Eq for proef_core::tags::TagExpr
+impl core::cmp::PartialEq for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::eq(&self, &proef_core::tags::TagExpr) -> bool
+impl core::fmt::Debug for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::tags::TagExpr
+impl core::marker::Freeze for proef_core::tags::TagExpr
+impl core::marker::Send for proef_core::tags::TagExpr
+impl core::marker::Sync for proef_core::tags::TagExpr
+impl core::marker::Unpin for proef_core::tags::TagExpr
+impl core::marker::UnsafeUnpin for proef_core::tags::TagExpr
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::tags::TagExpr
+impl core::panic::unwind_safe::UnwindSafe for proef_core::tags::TagExpr
+pub fn proef_core::tags::parse(&str) -> core::result::Result<proef_core::tags::TagExpr, alloc::string::String>
 pub mod proef_core::world
 pub enum proef_core::world::Value
 pub proef_core::world::Value::Bool(bool)

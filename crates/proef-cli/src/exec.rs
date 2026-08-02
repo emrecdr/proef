@@ -38,7 +38,7 @@ const QUARANTINE_TAG: &str = "quarantine";
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub fn execute(
     path: &Path,
-    tags: &[String],
+    tags: Option<&proef_core::tags::TagExpr>,
     jobs: Option<usize>,
     output_json: bool,
     junit: Option<&str>,
@@ -367,7 +367,7 @@ pub fn execute(
 /// engine (ADR-0010).
 fn build_specs(
     front: &FrontEnd,
-    tags: &[String],
+    tags: Option<&proef_core::tags::TagExpr>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     rerun_set: Option<&[(String, String)]>,
