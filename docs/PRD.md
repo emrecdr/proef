@@ -113,7 +113,7 @@ engine-hurl via embedded `run_entries` with buffered I/O; per-entry `[Options]` 
 batch defaults (verified); World seeding/merge-back; cooperative cancellation + budgets.
 **Artifacts:** canonical emit, sidecars, vars files, `# optional` markers. **Reporting:**
 event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotation.
-**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json --watch --run-id --sarif --rerun
+**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json|tap --watch --run-id --sarif --rerun
 --scenario[-file]`; path optional — `[run] suite` then the `tests/` convention), `flows`,
 `macros` (call counts + dead-macro report), `artifacts`, `schema [--add-to]`,
 `secret set|list`, `explain`, `diff [base] [new] --fail-on-regression`,

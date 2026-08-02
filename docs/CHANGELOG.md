@@ -8,6 +8,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef test --output tap`** — a TAP version 13 stream to stdout, one test
+  point per scenario, derived from the run's own outcomes (not from hurl), for
+  `prove`/`tappy` and TAP-native CI. The human report moves to stderr (as with
+  `--output json`). `@quarantine` scenarios map to the `# TODO` directive
+  (their failure does not gate); skipped scenarios to `# SKIP`; failure detail
+  rides in a redacted YAML block. `--output tap` is rejected on `flows`/`macros`
+  (a user error, not a silent human fall-back).
 - `proef macros` now flags **near-duplicate** pattern macros — two that differ
   only in their `{capture}` names (identical literal skeleton), which are
   confusable to authors. Advisory only (never gates the exit code); `--output

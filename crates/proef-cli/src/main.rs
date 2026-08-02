@@ -22,6 +22,7 @@ mod report;
 mod sarif;
 mod secretstore;
 mod sla;
+mod tap;
 mod watch;
 
 use std::path::PathBuf;
@@ -35,6 +36,23 @@ use clap::{Parser, Subcommand, ValueEnum};
 enum OutputFormat {
     /// One JSON summary object (`test`) / one object per scenario (`flows`)
     Json,
+    /// TAP version 13 to stdout, one test point per scenario (`test` only) —
+    /// pipe into `prove`/`tappy`. The human report moves to stderr.
+    Tap,
+}
+
+/// Coerce `--output` for a command that only understands `json` (everything
+/// except `test`): `tap` is `test`-only, so it is a user error here rather than
+/// a silent fall-back to the human report.
+fn json_only(output: Option<OutputFormat>) -> Result<bool, proef_core::error::ExitCode> {
+    match output {
+        None => Ok(false),
+        Some(OutputFormat::Json) => Ok(true),
+        Some(OutputFormat::Tap) => {
+            eprintln!("error: --output tap is only supported by `proef test`");
+            Err(proef_core::error::ExitCode::UserError)
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -66,7 +84,8 @@ enum Command {
         /// Parallel scenario workers (default: proef.toml or CPU count)
         #[arg(long)]
         jobs: Option<usize>,
-        /// Machine output: `json` prints a summary object to stdout
+        /// Machine output to stdout: `json` (a summary object) or `tap` (a TAP
+        /// v13 stream, one point per scenario); the human report moves to stderr
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
         /// `JUnit` XML: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`)
@@ -297,7 +316,7 @@ fn main() -> std::process::ExitCode {
                                     &path,
                                     tag_filter.as_ref(),
                                     jobs,
-                                    output == Some(OutputFormat::Json),
+                                    output,
                                     junit.as_deref(),
                                     scenario.as_deref(),
                                     scenario_file.as_deref(),
@@ -319,23 +338,23 @@ fn main() -> std::process::ExitCode {
                 }
             }
         },
-        Command::Flows { path, output, env } => match prepare(path, env) {
+        Command::Flows { path, output, env } => match json_only(output) {
             Err(code) => code,
-            Ok((config, path, active_env)) => commands::flows(
-                &path,
-                output == Some(OutputFormat::Json),
-                active_env.as_deref(),
-                &config,
-            ),
+            Ok(output_json) => match prepare(path, env) {
+                Err(code) => code,
+                Ok((config, path, active_env)) => {
+                    commands::flows(&path, output_json, active_env.as_deref(), &config)
+                }
+            },
         },
-        Command::Macros { path, output, env } => match prepare(path, env) {
+        Command::Macros { path, output, env } => match json_only(output) {
             Err(code) => code,
-            Ok((config, path, active_env)) => commands::macros(
-                &path,
-                output == Some(OutputFormat::Json),
-                active_env.as_deref(),
-                &config,
-            ),
+            Ok(output_json) => match prepare(path, env) {
+                Err(code) => code,
+                Ok((config, path, active_env)) => {
+                    commands::macros(&path, output_json, active_env.as_deref(), &config)
+                }
+            },
         },
         Command::Artifacts {
             path,

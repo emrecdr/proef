@@ -196,6 +196,40 @@ fn reference_corpus_runs_green_with_same_bytes_artifacts() {
     assert_eq!(compared, 12, "all executed artifacts compared");
 }
 
+/// `--output tap` emits a TAP v13 stream to stdout — one test point per
+/// scenario, derived from the run's outcomes — while the human report moves to
+/// stderr. The green corpus is a `1..12` plan of twelve passing points.
+#[test]
+fn output_tap_emits_a_tap_stream_for_the_run() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = corpus_cwd();
+    let corpus = workspace_root().join("tests/features");
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            &corpus.display().to_string(),
+            "--jobs",
+            "4",
+            "--output",
+            "tap",
+        ])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    // stdout is TAP only (the human report went to stderr).
+    assert!(stdout.starts_with("TAP version 13\n1..12\n"), "{stdout}");
+    let points = stdout
+        .lines()
+        .filter(|line| line.starts_with("ok "))
+        .count();
+    assert_eq!(points, 12, "twelve passing points: {stdout}");
+    assert!(
+        !stdout.contains("not ok"),
+        "no failures in the green corpus: {stdout}"
+    );
+}
+
 /// Failure UX (US-1/G6): a failing assert names the feature line and the
 /// artifact span.
 #[test]

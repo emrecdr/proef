@@ -22,7 +22,7 @@ use proef_core::{emit, lower};
 
 use crate::config::ProjectConfig;
 use crate::front::{self, FrontEnd};
-use crate::{registry, render};
+use crate::{OutputFormat, registry, render};
 
 /// How many run records to keep (TECH-SPEC §11).
 const RUN_RETENTION: usize = 200;
@@ -40,7 +40,7 @@ pub fn execute(
     path: &Path,
     tags: Option<&proef_core::tags::TagExpr>,
     jobs: Option<usize>,
-    output_json: bool,
+    output: Option<OutputFormat>,
     junit: Option<&str>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
@@ -143,9 +143,11 @@ pub fn execute(
         }
     };
     let redactions = Redactions::new(secrets.values().cloned());
-    // Machine output owns stdout exclusively (`--output json` must be
-    // pipeable into jq); the human report moves to stderr in that mode.
-    let console_out: Box<dyn Write + Send> = if output_json {
+    // A machine format (`--output json`/`tap`) owns stdout exclusively — json
+    // must be pipeable into jq, tap into `prove` — so the human report moves to
+    // stderr in that mode.
+    let machine_stdout = output.is_some();
+    let console_out: Box<dyn Write + Send> = if machine_stdout {
         Box::new(std::io::stderr())
     } else {
         Box::new(std::io::stdout())
@@ -205,7 +207,7 @@ pub fn execute(
         "running {selected} scenario(s) with {effective_jobs} job(s) — run {}",
         front.run_id
     );
-    if output_json {
+    if machine_stdout {
         eprintln!("{status_line}");
     } else {
         crate::render::outln!("{status_line}");
@@ -304,7 +306,7 @@ pub fn execute(
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--output json`) owns stdout.
-    if !output_json && std::env::var_os("GITHUB_ACTIONS").is_some() {
+    if !machine_stdout && std::env::var_os("GITHUB_ACTIONS").is_some() {
         let annotations = crate::ci_reports::github_annotations(&summary, &redactions);
         if !annotations.is_empty() {
             crate::render::outln!("{}", annotations.trim_end());
@@ -364,16 +366,25 @@ pub fn execute(
         None => base_exit,
     };
 
-    if output_json {
-        let json = serde_json::json!({
-            "run_id": front.run_id.as_ref(),
-            "passed": summary.passed,
-            "failed": summary.failed,
-            "skipped": summary.skipped,
-            "exit_code": exit.code(),
-            "events": run_dir.join("events.jsonl").display().to_string(),
-        });
-        crate::render::outln!("{json}");
+    match output {
+        Some(OutputFormat::Json) => {
+            let json = serde_json::json!({
+                "run_id": front.run_id.as_ref(),
+                "passed": summary.passed,
+                "failed": summary.failed,
+                "skipped": summary.skipped,
+                "exit_code": exit.code(),
+                "events": run_dir.join("events.jsonl").display().to_string(),
+            });
+            crate::render::outln!("{json}");
+        }
+        // TAP v13 from the run's own scenario outcomes (one test point each),
+        // quarantined scenarios mapped to `# TODO`; redacted like every sink.
+        Some(OutputFormat::Tap) => {
+            let tap = crate::tap::render(&summary.outcomes, &non_gating, &redactions);
+            crate::render::outln!("{}", tap.trim_end());
+        }
+        None => {}
     }
 
     if junit_failed {
