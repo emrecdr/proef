@@ -50,6 +50,9 @@ repo-root `CLAUDE.md` carry the live status.
 | [0010](adr/ADR-0010-artifacts-as-contract.md) | Emitted `.hurl` artifacts are the executed input (same bytes) + sidecars | Accepted |
 | [0011](adr/ADR-0011-fixture-server-tiny-http.md) | Fixture server is synchronous `tiny_http`, not axum (tokio-runtime ban) | Accepted |
 | [0012](adr/ADR-0012-project-config-and-environments.md) | Project config & environments in `proef.toml` (`[url]`/`[vars]`/`[env.*]`, `--env`, deep-merge) | Accepted |
+| [0013](adr/ADR-0013-typed-macro-parameters.md) | Typed macro parameters (`params` name→type map; best-effort literal-args lint) | Proposed (defer) |
+| [0014](adr/ADR-0014-suite-setup-teardown.md) | Suite-level setup/teardown (`[run] setup`/`teardown` features, CLI-edge orchestration) | Accepted |
+| [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
 
 ## Naming & identifiers
 
