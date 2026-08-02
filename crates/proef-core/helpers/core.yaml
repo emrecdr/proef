@@ -1,5 +1,12 @@
 # proef built-in macro pack (embedded at build time — TECH-SPEC §4.1).
 # Generic assert vocabulary usable by every suite.
+#
+# The `expect*` shape macros are a curated, product-neutral convenience layer
+# over hurl's own type predicates: each merges one assert into the previous
+# request. `{path}` is a JSONPath into that response (quote it in prose when it
+# contains spaces — the quotes are optional and shed). They narrow the
+# ergonomics of common shape checks; the full raw-hurl assert vocabulary
+# (docs/AUTHORING.md) is always available for anything they do not cover.
 macros:
   expectStatus:
     params: [status]
@@ -8,3 +15,67 @@ macros:
     tags: [Core]
     expect:
       - status: "${status}"
+
+  expectString:
+    params: [path]
+    match: "the value at {path} is a string"
+    description: Assert the JSONPath value in the previous response is a string.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isString
+
+  expectNumber:
+    params: [path]
+    match: "the value at {path} is a number"
+    description: Assert the JSONPath value in the previous response is a number.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isNumber
+
+  expectBoolean:
+    params: [path]
+    match: "the value at {path} is a boolean"
+    description: Assert the JSONPath value in the previous response is a boolean.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isBoolean
+
+  expectUuid:
+    params: [path]
+    match: "the value at {path} is a uuid"
+    description: Assert the JSONPath value in the previous response is a UUID string.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isUuid
+
+  expectIsoDate:
+    params: [path]
+    match: "the value at {path} is an ISO date"
+    description: Assert the JSONPath value in the previous response is an ISO 8601 date.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isIsoDate
+
+  expectPresent:
+    params: [path]
+    match: "the value at {path} is present"
+    description: Assert the JSONPath exists in the previous response (any value).
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" exists
+
+  expectNonEmptyList:
+    params: [path]
+    match: "the value at {path} is a non-empty list"
+    description: Assert the JSONPath value in the previous response is a list with at least one element.
+    tags: [Core]
+    expect:
+      - hurl: |
+          jsonpath "${path}" isList
+          jsonpath "${path}" count > 0

@@ -124,6 +124,27 @@ assert a missing path with `not exists` (a non-matching path yields *no value*,
 not `count == 0`). The same query+filter grammar drives `[Captures]`, threading a
 value into later steps as `{{name}}`.
 
+### Built-in shape macros
+
+For the most common single-value shape checks, the built-in `Core` pack ships a
+small, product-neutral set of `expect:` macros so you rarely hand-write the
+predicate. Each reads a JSONPath (`{path}`) into the previous response and merges
+one assert:
+
+```gherkin
+When the record is fetched
+Then the value at "$.id" is a uuid
+And  the value at "$.name" is a string
+And  the value at "$.tags" is a non-empty list
+```
+
+Available: `the value at {path} is a string` / `… a number` / `… a boolean` /
+`… a uuid` / `… an ISO date` / `… present` / `… a non-empty list`. Quote the path
+in prose when it contains spaces (the quotes are optional and shed). These are a
+convenience layer over the predicates above — they deliberately do not cover
+whole-body structural matching; reach for a raw `expect:` `hurl:` block for
+anything they omit.
+
 ## Variables — the two tiers
 
 | Syntax | Resolves | When | Examples |

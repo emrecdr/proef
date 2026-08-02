@@ -146,6 +146,75 @@ fn macros_flags_unused_pattern_macros_and_labels_helpers() {
     assert!(stdout.contains("1 unused"), "{stdout}");
 }
 
+/// The built-in `expect*` shape macros bind generic response-shape prose and
+/// lower to the matching hurl type predicates, merged into the preceding
+/// request. Emitting artifacts exercises the whole chain — bind → lower →
+/// resolve `${path}` → merge asserts → emit → parse.
+#[test]
+fn builtin_shape_macros_lower_to_hurl_type_predicates() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  fetchRecord:\n    match: the record is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/record\n          HTTP 200\n",
+    )
+    .unwrap();
+    // A request step, then three built-in shape assertions that merge into it.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: Shape\n  Scenario: Response shape holds\n    \
+         When the record is fetched\n    \
+         Then the value at \"$.id\" is a uuid\n    \
+         And the value at \"$.name\" is a string\n    \
+         And the value at \"$.tags\" is a non-empty list\n",
+    )
+    .unwrap();
+
+    // Dry-run validates the whole pipeline without touching the network.
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["test", "suite", "--dry-run"])
+        .assert()
+        .code(0);
+
+    // Artifacts prove `${path}` resolved and the asserts merged into the entry.
+    let out = cwd.path().join("out");
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args([
+            "artifacts",
+            "suite",
+            "-o",
+            &out.display().to_string(),
+            "--run-id",
+            "shape",
+        ])
+        .assert()
+        .code(0);
+
+    let hurl = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "hurl"))
+        .expect("an emitted .hurl artifact");
+    let text = std::fs::read_to_string(hurl).unwrap();
+    assert!(text.contains("jsonpath \"$.id\" isUuid"), "{text}");
+    assert!(text.contains("jsonpath \"$.name\" isString"), "{text}");
+    assert!(text.contains("jsonpath \"$.tags\" isList"), "{text}");
+    assert!(text.contains("jsonpath \"$.tags\" count > 0"), "{text}");
+}
+
 /// `test --dry-run --sarif`: validation diagnostics serialize to a SARIF 2.1.0
 /// log (code → ruleId, severity → level, byte span → region). The export is
 /// additive — the dry-run still exits 2 on a broken case.

@@ -8,6 +8,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Built-in `expect:` shape-macro library.** The embedded `Core` pack gains a
+  curated, product-neutral set of response-shape assertions — `the value at
+  {path} is a string` / `… a number` / `… a boolean` / `… a uuid` / `… an ISO
+  date` / `… present` / `… a non-empty list` — each merging one hurl type
+  predicate (`isString`/`isUuid`/`isList` + `count`, …) into the previous
+  request. It is a convenience layer over the existing `expect:` mechanism (no
+  new engine capability, no marker DSL); the raw-hurl assert vocabulary still
+  covers anything the macros don't.
 - **Run-level SLA gate (`proef.toml [sla]`).** An opt-in latency budget: after a
   run, per-step wall-clock durations fold into `p95-ms` (95th-percentile ceiling)
   and `max-ms` (slowest-step ceiling); a breach prints the offending metrics + the
