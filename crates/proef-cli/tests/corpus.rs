@@ -146,6 +146,51 @@ fn macros_flags_unused_pattern_macros_and_labels_helpers() {
     assert!(stdout.contains("1 unused"), "{stdout}");
 }
 
+/// `proef macros`: two pattern macros that differ only in their capture name
+/// share a literal skeleton and are flagged as near-duplicates — an advisory
+/// that never changes the exit code (a legitimately similar family, with
+/// distinct literals, is left alone).
+#[test]
+fn macros_flags_near_duplicate_pattern_macros() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    // The feature binds a third, unambiguous macro; the near-duplicate pair is
+    // unused (binding either would be ambiguous — that is the confusion the
+    // lint warns about) but still flagged.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the system is pinged\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  ping:\n    match: the system is pinged\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/ping\n          HTTP 200\n  \
+         fetchById:\n    params: [id]\n    match: the record {id} is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/x\n          HTTP 200\n  \
+         fetchByName:\n    params: [name]\n    match: the record {name} is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/y\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite"])
+        .assert()
+        .code(0); // advisory — never gates
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("near-duplicate of fetchByName"), "{stdout}");
+    assert!(stdout.contains("near-duplicate of fetchById"), "{stdout}");
+    assert!(stdout.contains("2 near-duplicate"), "{stdout}");
+}
+
 /// The built-in `expect*` shape macros bind generic response-shape prose and
 /// lower to the matching hurl type predicates, merged into the preceding
 /// request. Emitting artifacts exercises the whole chain — bind → lower →

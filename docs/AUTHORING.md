@@ -45,7 +45,11 @@ macros:
 - A macro without `match:` is composition-only (reachable via `use:`).
 - `proef macros` reports each macro's call count across the corpus and flags
   pattern macros no scenario binds (dead prose bindings); `use:`-only helpers
-  and unused builtins are listed but not flagged.
+  and unused builtins are listed but not flagged. It also flags **near-duplicate**
+  pattern macros — two that differ only in their `{capture}` names (the same
+  literal skeleton), which are confusable to authors. Both are advisory only:
+  they never change the exit code, and `--output json` carries `unused` and
+  `nearDuplicateOf` fields for a CI hygiene gate.
 
 ## Steps
 

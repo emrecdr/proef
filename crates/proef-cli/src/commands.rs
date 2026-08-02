@@ -295,6 +295,14 @@ pub fn macros(
         (a.pack.as_str(), a.name.as_str()).cmp(&(b.pack.as_str(), b.name.as_str()))
     });
 
+    // Advisory authoring-hygiene lint: pattern macros differing only in their
+    // captures (same literal skeleton) are confusable. Reported, never gated.
+    let near_dups = proef_core::matcher::near_duplicate_macros(rows.iter().filter_map(|m| {
+        m.pattern
+            .as_deref()
+            .map(|pattern| (m.name.as_str(), pattern))
+    }));
+
     if output_json {
         for m in &rows {
             let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
@@ -304,6 +312,7 @@ pub fn macros(
                 "pattern": m.pattern.is_some(),
                 "calls": n,
                 "unused": is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()),
+                "nearDuplicateOf": near_dups.get(m.name.as_str()).cloned().unwrap_or_default(),
             });
             crate::render::outln!("{json}");
         }
@@ -311,6 +320,7 @@ pub fn macros(
     }
 
     let mut unused = 0usize;
+    let mut near_dup_count = 0usize;
     let mut current_pack = "";
     for m in &rows {
         if m.pack.as_str() != current_pack {
@@ -328,9 +338,21 @@ pub fn macros(
         } else {
             ""
         };
-        crate::render::outln!("  {:<28} {n}×{marker}", m.name);
+        let near = match near_dups.get(m.name.as_str()) {
+            Some(siblings) => {
+                near_dup_count += 1;
+                format!("  ~ near-duplicate of {}", siblings.join(", "))
+            }
+            None => String::new(),
+        };
+        crate::render::outln!("  {:<28} {n}×{marker}{near}", m.name);
     }
-    crate::render::outln!("\n{} macro(s) · {unused} unused", rows.len());
+    let near_note = if near_dup_count > 0 {
+        format!(" · {near_dup_count} near-duplicate")
+    } else {
+        String::new()
+    };
+    crate::render::outln!("\n{} macro(s) · {unused} unused{near_note}", rows.len());
     ExitCode::Success
 }
 

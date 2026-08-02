@@ -243,6 +243,44 @@ pub fn literal_skeleton(pattern: &str) -> String {
         .collect()
 }
 
+/// Group pattern macros that differ **only** in their captures — i.e. share a
+/// [`literal_skeleton`]. Returns, for each such macro, the sorted names of its
+/// near-duplicate siblings. Pure and deterministic (sorted throughout); the
+/// caller (`proef macros`) surfaces it as an authoring advisory, never a gate.
+///
+/// Skeleton-equality is the deliberately tight signal: two patterns whose fixed
+/// text is identical and that differ only where a `{capture}` sits are genuinely
+/// confusable, whereas patterns with distinct literals (`shows the note` vs
+/// `shows the attachment`) keep distinct skeletons and are left alone — so a
+/// legitimately similar family is not flagged.
+pub fn near_duplicate_macros<'a>(
+    macros: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut by_skeleton: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for (name, pattern) in macros {
+        by_skeleton
+            .entry(literal_skeleton(pattern))
+            .or_default()
+            .push(name);
+    }
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for names in by_skeleton.values_mut() {
+        if names.len() < 2 {
+            continue;
+        }
+        names.sort_unstable();
+        for &name in names.iter() {
+            let siblings = names
+                .iter()
+                .filter(|&&other| other != name)
+                .map(|&other| other.to_owned())
+                .collect();
+            out.insert(name.to_owned(), siblings);
+        }
+    }
+    out
+}
+
 /// The candidate closest to `input` by edit distance, within the shared
 /// "did you mean" threshold. `None` when nothing is close.
 pub fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Option<&'a str> {
@@ -382,6 +420,25 @@ mod tests {
             Some("search")
         );
         assert_eq!(closest("zzzzzz", ["search", "create"].into_iter()), None);
+    }
+
+    #[test]
+    fn near_duplicate_macros_flags_capture_only_differences() {
+        let dups = near_duplicate_macros([
+            ("loginRole", "the user {role} logs in"),
+            ("loginName", "the user {name} logs in"),
+            ("showNote", "the board shows the note"),
+            ("showItem", "the board shows the scheduled item"),
+        ]);
+        // Same skeleton "the user  logs in" → mutual near-duplicates.
+        assert_eq!(dups.get("loginRole"), Some(&vec!["loginName".to_owned()]));
+        assert_eq!(dups.get("loginName"), Some(&vec!["loginRole".to_owned()]));
+        // Distinct literals (`note` vs `scheduled item`) → not flagged.
+        assert!(
+            !dups.contains_key("showNote"),
+            "distinct literals stay unflagged"
+        );
+        assert!(!dups.contains_key("showItem"));
     }
 
     #[test]

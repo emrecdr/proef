@@ -8,6 +8,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- `proef macros` now flags **near-duplicate** pattern macros — two that differ
+  only in their `{capture}` names (identical literal skeleton), which are
+  confusable to authors. Advisory only (never gates the exit code); `--output
+  json` gains a `nearDuplicateOf` field beside `unused` for a CI hygiene check.
+  The heuristic is deliberately tight (skeleton equality), so a legitimately
+  similar family with distinct literals is left alone.
 - Localized Gherkin (`# language:`) is now verified and test-covered — a
   localized feature parses, its dialect keywords are stripped, and a localized
   scenario outline with `Examples` expands like any other. Outline detection now
