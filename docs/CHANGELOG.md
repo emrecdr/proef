@@ -75,9 +75,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   instead of indistinguishable from a clean pass. The engine already collected
   the earlier-attempt errors — they were being discarded on success.
 - `proef report [run-id]` writes a self-contained HTML report for a run —
-  scenario tree with pass/fail pills, per-step attempts and timing, failure
-  detail, and deep-links to the executed `.hurl` artifacts (bodies are not
-  inlined). A pure `proef_core::html::render_html` derives it from the event
+  scenario tree with pass/fail pills, per-step attempts and timing, a
+  per-scenario timing waterfall (each step's bar offset by the steps before it
+  and as wide as its own duration — the sequential cascade within a scenario,
+  derived purely from step durations), failure detail, and deep-links to the
+  executed `.hurl` artifacts (bodies are not inlined). A pure `proef_core::html::render_html` derives it from the event
   stream (ADR-0008, snapshot-locked); the events are already redacted at the
   sink, so the page is too. Defaults to `report.html` inside the run dir; `-o`
   redirects it.

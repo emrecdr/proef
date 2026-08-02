@@ -173,6 +173,13 @@ fn render_block(html: &mut String, block: &ScenarioBlock, artifacts_href: &str) 
         );
     }
     html.push_str("</summary>\n<ol class=\"steps\">\n");
+    // Per-scenario timing waterfall: each step's bar is offset by the steps
+    // before it and as wide as its own duration, both as a fraction of the
+    // scenario total. Purely derived from `duration_ms` (no timestamps), so it
+    // shows the *sequential* cascade within one scenario — not cross-worker
+    // occupancy, which would need an injected clock the sans-IO core never reads.
+    let total_ms: u64 = block.steps.iter().map(|step| step.duration_ms).sum();
+    let mut elapsed_ms: u64 = 0;
     for step in &block.steps {
         let _ = write!(
             html,
@@ -185,12 +192,30 @@ fn render_block(html: &mut String, block: &ScenarioBlock, artifacts_href: &str) 
             attempts = step.attempts,
             ms = step.duration_ms,
         );
+        if total_ms > 0 {
+            let _ = write!(
+                html,
+                "<span class=\"track\"><span class=\"bar {cls}\" \
+                 style=\"margin-left:{offset}%;width:{width}%\"></span></span>",
+                cls = status_class(step.status),
+                offset = pct(elapsed_ms, total_ms),
+                width = pct(step.duration_ms, total_ms),
+            );
+        }
+        elapsed_ms += step.duration_ms;
         if let Some(detail) = &step.detail {
             let _ = write!(html, "<pre class=\"detail\">{}</pre>", esc(detail));
         }
         html.push_str("</li>\n");
     }
     html.push_str("</ol>\n</details>\n");
+}
+
+/// `n / total` as a percentage string with one decimal place, using integer
+/// math only (no lossy float cast). `total` must be non-zero (callers guard).
+fn pct(n: u64, total: u64) -> String {
+    let permille = u128::from(n) * 1000 / u128::from(total); // 0..=1000
+    format!("{}.{}", permille / 10, permille % 10)
 }
 
 /// Write one `<span>` count into the summary bar, omitting nothing (callers gate
@@ -264,5 +289,8 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .steps li{margin:.3rem 0}.steps .glyph{font-weight:700}\
 li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph{color:var(--skip)}li.warn .glyph{color:var(--warn)}\
 .meta{color:var(--muted);font-size:.8rem;margin-left:.4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
+.track{display:block;height:4px;margin:.25rem 0 0;background:var(--line);border-radius:2px;overflow:hidden}\
+.bar{display:block;height:100%;min-width:1px;border-radius:2px}\
+.bar.pass{background:var(--pass)}.bar.fail{background:var(--fail)}.bar.skip{background:var(--skip)}.bar.warn{background:var(--warn)}\
 .detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}\
 ";
