@@ -500,6 +500,7 @@ pub proef_core::event::Event::RunStarted
 pub proef_core::event::Event::RunStarted::run_id: alloc::sync::Arc<str>
 pub proef_core::event::Event::RunStarted::schema: u32
 pub proef_core::event::Event::ScenarioFinished
+pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
 pub proef_core::event::Event::ScenarioStarted
@@ -610,6 +611,7 @@ pub mod proef_core::html
 pub fn proef_core::html::render_html(&[proef_core::event::Event], &str) -> alloc::string::String
 pub mod proef_core::lower
 pub struct proef_core::lower::LowerCtx<'a>
+pub proef_core::lower::LowerCtx::config_vars: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::feature: &'a proef_core::feature::FeatureFile
 pub proef_core::lower::LowerCtx::kind_to_engine: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -652,6 +654,8 @@ pub enum proef_core::matcher::PatternProblem
 pub proef_core::matcher::PatternProblem::AdjacentCaptures
 pub proef_core::matcher::PatternProblem::AdjacentCaptures::first: alloc::string::String
 pub proef_core::matcher::PatternProblem::AdjacentCaptures::second: alloc::string::String
+pub proef_core::matcher::PatternProblem::DuplicateCapture
+pub proef_core::matcher::PatternProblem::DuplicateCapture::name: alloc::string::String
 pub proef_core::matcher::PatternProblem::EmptyCapture
 pub proef_core::matcher::PatternProblem::NoAnchor
 pub proef_core::matcher::PatternProblem::UnknownCapture
@@ -922,6 +926,9 @@ pub proef_core::resolve::ResolveError::EmptyReference
 pub proef_core::resolve::ResolveError::FakeUnknown
 pub proef_core::resolve::ResolveError::FakeUnknown::kind: alloc::string::String
 pub proef_core::resolve::ResolveError::FakeUnknown::suggestion: core::option::Option<alloc::string::String>
+pub proef_core::resolve::ResolveError::MissingConfigVar
+pub proef_core::resolve::ResolveError::MissingConfigVar::key: alloc::string::String
+pub proef_core::resolve::ResolveError::MissingConfigVar::namespace: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingEnv
 pub proef_core::resolve::ResolveError::MissingEnv::name: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingGlobal
@@ -998,6 +1005,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::Resolution
 impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::Resolution
 pub struct proef_core::resolve::ResolveCtx<'a>
 pub proef_core::resolve::ResolveCtx::args: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::config_vars: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::defaults: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::mode: proef_core::resolve::ResolveMode
@@ -1063,6 +1071,7 @@ pub proef_core::runner::RunSummary::passed: usize
 pub proef_core::runner::RunSummary::skipped: usize
 impl proef_core::runner::RunSummary
 pub fn proef_core::runner::RunSummary::exit_code(&self) -> proef_core::error::ExitCode
+pub fn proef_core::runner::RunSummary::exit_code_excluding(&self, &[(alloc::string::String, alloc::string::String)]) -> proef_core::error::ExitCode
 impl core::fmt::Debug for proef_core::runner::RunSummary
 pub fn proef_core::runner::RunSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for proef_core::runner::RunSummary
