@@ -18,8 +18,8 @@ fuzz_target!(|data: &[u8]| {
         let ctx = ResolveCtx {
             args: &args,
             defaults: &empty,
-            directives: &empty,
             env: &empty,
+            config_vars: &empty,
             run_id: "fuzz-run",
             world: &world,
             mode: ResolveMode::DryRun,
