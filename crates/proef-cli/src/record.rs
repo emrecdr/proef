@@ -1,6 +1,6 @@
 //! Reading run records (`.proef-runs/<id>/events.jsonl`) — the JSONL event
 //! stream IS the record (ADR-0008), so there is no second format to parse.
-//! Shared by `explain`, `--rerun` (#8), and `proef diff` (#12).
+//! Shared by `explain`, `--rerun`, and `proef diff`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,7 +45,7 @@ pub fn resolve_dir(runs_root: &Path, run_id: Option<&str>) -> Option<PathBuf> {
 
 /// One scenario's outcome in a run record: aggregate status plus its steps.
 /// Keyed for diffing by step `text` — the authored `line` shifts when a file is
-/// edited above it, so text is the stable identity (`proef diff`, #12).
+/// edited above it, so text is the stable identity (`proef diff`).
 #[derive(Debug, Clone)]
 pub struct ScenarioRun {
     /// Aggregate scenario status.

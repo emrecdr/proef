@@ -45,7 +45,7 @@ fn green_corpus_dry_runs_clean() {
 
 #[test]
 fn tags_filter_selects_by_boolean_expression() {
-    // The `--tags` argument is a boolean expression (#4), not a CSV list. A bare
+    // The `--tags` argument is a boolean expression, not a CSV list. A bare
     // atom is still a valid expression, and `@` is optional.
     let selected = |expr: &str| -> String {
         let assert = proef()

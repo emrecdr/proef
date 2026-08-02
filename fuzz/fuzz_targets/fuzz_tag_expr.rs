@@ -1,6 +1,6 @@
 //! Tag-expression totality: arbitrary `--tags` text must never panic and always
 //! terminate under the nesting cap; a parsed expression evaluates without panic
-//! (TESTING-STRATEGY, #4).
+//! (TESTING-STRATEGY).
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;

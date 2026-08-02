@@ -1,4 +1,4 @@
-//! Tag expressions (ADR-0004 tags, #4) — the `--tags` filter grammar.
+//! Tag expressions (ADR-0004 tags) — the `--tags` filter grammar.
 //!
 //! A boolean expression over scenario tags: `and`, `or`, `not`, and parentheses,
 //! with atoms written `@smoke` or `smoke` (the `@` is optional — scenario tags
