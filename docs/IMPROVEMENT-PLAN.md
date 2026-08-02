@@ -387,7 +387,9 @@ sans-IO core is sanctioned (ADR-0012); IO that re-shapes the corpus or acts as a
   `--check` flag from OpenAPI-drift (`§3` non-goal), introduces a new *inward* generation
   direction, and pressures one-canonical-way on regeneration (a second maintenance path). Only
   an ADR that **bans the oracle/drift mode** and accepts the OpenAPI dependency can green-light
-  even the narrow scaffolder.
+  even the narrow scaffolder. **→ Now settled in [ADR-0016](adr/ADR-0016-openapi-suite-generator.md)
+  (Proposed): the oracle/drift mode is permanently rejected; the narrow one-shot scaffolder is
+  deferred (output-quality + dependency cost) but buildable later under the bright line.**
 - **B — JSON-Schema conformance assert.** *Verdict: shape/type conformance is
   already-achievable today* via `expect:` + hurl type predicates (the #2 cookbook — zero new
   features); the **ergonomic uplift is N9** (curated shape macros). **Full external

@@ -53,6 +53,7 @@ repo-root `CLAUDE.md` carry the live status.
 | [0013](adr/ADR-0013-typed-macro-parameters.md) | Typed macro parameters (`params` name→type map; best-effort literal-args lint) | Proposed (defer) |
 | [0014](adr/ADR-0014-suite-setup-teardown.md) | Suite-level setup/teardown (`[run] setup`/`teardown` features, CLI-edge orchestration) | Accepted |
 | [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
+| [0016](adr/ADR-0016-openapi-suite-generator.md) | OpenAPI → suite generator: one-shot seed allowed under a bright line; oracle/drift mode permanently rejected | Proposed (defer) |
 
 ## Naming & identifiers
 
