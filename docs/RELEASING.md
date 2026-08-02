@@ -57,8 +57,12 @@ From a clean, green `main` (all gates local + CI):
 
 ```bash
 # 1. Cut the changelog: move [Unreleased] → [X.Y.Z] - date, update bottom links.
-# 2. Bump the single source:
-#      [workspace.package] version = "X.Y.Z"      (root Cargo.toml)
+# 2. Bump the version in the root Cargo.toml — BOTH places:
+#      [workspace.package] version = "X.Y.Z"       (the crates' own version)
+#      [workspace.dependencies] proef-core / proef-engine-hurl version = "X.Y.Z"
+#        (the inter-crate pins — belt-and-suspenders for independent crates.io
+#         publish; a stale pin no longer satisfies the bumped version and fails
+#         resolution, so these move in lockstep with the line above).
 cargo build --workspace                            # refreshes Cargo.lock versions
 # 3. Full gates:
 cargo nextest run && cargo test --doc

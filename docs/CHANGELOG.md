@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03 (external config & environments; competitive-review breadth)
+
 ### Added
 
 - **Suite setup & teardown (`proef.toml [run] setup`/`teardown`, ADR-0014).**
