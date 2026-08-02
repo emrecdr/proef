@@ -34,7 +34,7 @@ ban (ADR-0006/0007 + `deny.toml`), and a sync fixture keeps that invariant
 binary-wide (errata 2026-07-28, M3). Endpoints, extended: bearer-auth endpoints, search, create (201/422 paths), delayed
 push-visibility (exercises `retry` for real), cookie-setting endpoints (exercises
 SessionState round-trip), slow endpoint (exercises budgets/watchdog), malformed-JSON
-endpoint. Suite covers: green path (the four ported 50x features), capture chaining,
+endpoint. Suite covers: green path (the four 500-series features), capture chaining,
 World/global across scenarios, `optional:` warn-and-continue, cancellation (token
 cancel mid-run completes within budget, reports written), parallel `--jobs` determinism
 (event Normalize), artifact↔execution same-bytes assertion (hash the emitted file and

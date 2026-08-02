@@ -136,8 +136,8 @@ mod tests {
 
     #[test]
     fn blocks_are_canonicalized_and_yaml_untouched() {
-        let input = "# comment stays\ntemplates:\n  m:\n    steps:\n      - hurl: |\n          GET http://x   \n\n\n          HTTP 200\n\n    match: keep\n";
-        let expected = "# comment stays\ntemplates:\n  m:\n    steps:\n      - hurl: |\n          GET http://x\n\n          HTTP 200\n    match: keep\n";
+        let input = "# comment stays\nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x   \n\n\n          HTTP 200\n\n    match: keep\n";
+        let expected = "# comment stays\nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x\n\n          HTTP 200\n    match: keep\n";
         assert_eq!(normalize_pack(input), expected);
         // Idempotent.
         assert_eq!(normalize_pack(expected), expected);
@@ -147,7 +147,7 @@ mod tests {
     fn fenced_bodies_stay_byte_verbatim() {
         // Blank runs and trailing whitespace inside the ``` fence are the
         // bytes the test sends — fmt must not touch them.
-        let input = "templates:\n  m:\n    steps:\n      - hurl: |\n          POST http://x\n          ```\n          line1  \n\n\n          line4\n          ```\n          HTTP 200\n";
+        let input = "macros:\n  m:\n    steps:\n      - hurl: |\n          POST http://x\n          ```\n          line1  \n\n\n          line4\n          ```\n          HTTP 200\n";
         assert_eq!(normalize_pack(input), input);
     }
 }

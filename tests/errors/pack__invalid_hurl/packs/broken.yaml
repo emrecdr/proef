@@ -1,4 +1,4 @@
-templates:
+macros:
   broken:
     match: I break the section
     steps:

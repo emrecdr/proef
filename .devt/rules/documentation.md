@@ -1,185 +1,62 @@
-# Documentation — Rust
+# Documentation — proef
 
-> Template baseline — the project's own `CLAUDE.md` and documented conventions WIN on any conflict with this file. Tailor it to the project (`/devt:setup`); untailored copies are flagged by `/devt:setup --health`.
+> Grounded in `CLAUDE.md`, `docs/CONTRIBUTING.md`, and `docs/README.md` (the corpus index).
+> Those sources WIN on any conflict. Read by the `docs-writer` agent.
 
-## Crate-Level Documentation
+proef has two documentation surfaces: **rustdoc** on the code, and the **`docs/` corpus**
+(the authoritative spec). `CLAUDE.md` is the working summary; `docs/TECH-SPEC.md` and the
+ADRs win on any conflict.
 
-Every library crate begins with crate-level docs via inner-attribute `//!` comments at the top of `lib.rs`:
+## The `docs/` corpus — keep it in sync
 
-```rust
-//! # my_crate
-//!
-//! `my_crate` provides X for Y. The primary entry point is [`Client::new`].
-//!
-//! ## Quick Start
-//!
-//! ```
-//! use my_crate::Client;
-//!
-//! let client = Client::new("api-key");
-//! ```
+- `docs/README.md` — corpus index + ADR decision log. Entry point.
+- `docs/adr/` — the ADR series (ADR-0001 onward), decisions with alternatives +
+  consequences. **A new architectural decision (or a divergence from an existing ADR)
+  requires a new `docs/adr/ADR-00NN-*.md` — number it one past the highest existing file in
+  `docs/adr/`, same format, in the same PR.** Diverging without a superseding ADR is a bug.
+- `docs/TECH-SPEC.md` — normative types, pipeline, pack schema, and the verified hurl seam
+  facts with file:line citations (§5). Do not re-derive these from priors; cite them.
+- `docs/IMPLEMENTATION-PLAN.md` — milestones + the global definition of done.
+- `docs/PRD.md` — user stories US-1..US-12 that acceptance criteria cite.
+- `docs/DIAGNOSTICS.md` — every diagnostic code. **A new diagnostic code needs a row here**
+  plus (where reachable) a seeded case under `tests/errors/<area>__<name>/`.
+- `docs/EVENTS.md`, `docs/AUTHORING.md`, `docs/GETTING-STARTED.md`, `docs/RELEASING.md`,
+  `docs/TROUBLESHOOTING.md`, `docs/CONFIG.md`, `docs/runbooks/` — keep accurate to behavior.
+- **Keep the `CLAUDE.md` Status list current** as milestones land.
 
-#![warn(missing_docs)]
-```
+`cargo run -p xtask -- docs-check` verifies indexes match reality — run it after doc edits.
 
-`#![warn(missing_docs)]` at crate root surfaces undocumented public items as compiler warnings; turn into errors via `cargo doc` with `RUSTDOCFLAGS="-D warnings"`.
+## Rustdoc conventions
 
-## Public Items
+- Public items get a doc comment (definition of done: "public items documented").
+  `#![warn(missing_docs)]` on library crates.
+- Start with a one-sentence summary, blank line, then detail. Describe behavior and
+  contracts, not implementation.
+- `# Errors` on `Result`-returning public fns; `# Panics` on fns that can panic on input;
+  `# Safety` on any `unsafe fn` (proef is overwhelmingly safe code — `unsafe` is rare and
+  reviewed).
+- Every public item gets at least one example; examples run under `cargo test --doc`
+  (nextest does not run doctests — run it separately).
+- Intra-doc links (`[`OtherType`]`) over hand-written URLs — they survive renames and are
+  validated by the `RUSTDOCFLAGS="-D warnings" cargo doc` gate.
 
-Every public function, struct, enum, trait, and constant gets a doc comment:
-
-```rust
-/// Validates an email address.
-///
-/// Returns `true` when the input is well-formed per the simplified RFC-5321 subset
-/// this crate supports — non-empty, single `@`, no whitespace.
-pub fn validate_email(email: &str) -> bool { ... }
-```
-
-Style:
-
-- Start with a one-sentence summary
-- Blank line, then the longer-form explanation
-- Use full sentences with terminating punctuation
-- Describe behavior + contracts, not implementation
-
-## Required Sections
-
-Three rustdoc sections are mandatory in the situations they describe:
-
-### `# Examples`
-
-Every public item gets at least one example. Examples are executed by `cargo test --doc`:
-
-```rust
-/// Parses an ISO-8601 date.
-///
-/// # Examples
-///
-/// ```
-/// use my_crate::parse_date;
-///
-/// let d = parse_date("2026-06-06").unwrap();
-/// assert_eq!(d.year(), 2026);
-/// ```
-pub fn parse_date(s: &str) -> Result<Date, ParseError> { ... }
-```
-
-### `# Errors`
-
-Required for any function returning `Result<T, E>` when the public API exposes the error type:
-
-```rust
-/// # Errors
-///
-/// Returns [`ParseError::Empty`] when `s` is empty.
-/// Returns [`ParseError::InvalidFormat`] when `s` does not match `YYYY-MM-DD`.
-```
-
-### `# Panics`
-
-Required for any function that can panic on input variation:
-
-```rust
-/// # Panics
-///
-/// Panics when `buf.len() < 4`. Caller must validate length first.
-```
-
-### `# Safety`
-
-Required for every `unsafe fn`. Documents the caller-side invariants:
-
-```rust
-/// # Safety
-///
-/// `ptr` must be a valid, non-null, aligned pointer to at least `len` initialized bytes.
-/// Caller must not mutate the underlying memory for the lifetime of the returned slice.
-pub unsafe fn from_raw_parts<'a>(ptr: *const u8, len: usize) -> &'a [u8] { ... }
-```
-
-## Intra-Doc Links
-
-Use markdown-style links to reference other items:
-
-```rust
-/// See [`Client::send`] for the async variant.
-/// Errors are documented in [`SendError`].
-```
-
-`cargo doc` resolves these and warns on broken links (with `RUSTDOCFLAGS="-D warnings"`, broken links are errors). Prefer intra-doc links over hand-written URLs — they survive renames.
-
-## Doc Tests
-
-Code blocks in `///` comments compile + run as tests:
-
-```rust
-/// ```
-/// use my_crate::add;
-/// assert_eq!(add(2, 3), 5);
-/// ```
-pub fn add(a: i32, b: i32) -> i32 { a + b }
-```
-
-Annotations:
-
-- ` ```ignore` — skipped (use only when the example references an external resource)
-- ` ```no_run` — compiles but is not executed (use for I/O-bound examples)
-- ` ```compile_fail` — example is expected to fail compilation
-- ` ```should_panic` — example is expected to panic
-- ` ```text` — opaque text, not Rust (no compile attempt)
-
-## Module-Level Docs
-
-Document each module via inner `//!` at the top of `<module>.rs`:
-
-```rust
-//! User-domain types: identifiers, value objects, validation rules.
-//!
-//! See [`UserId`] for the canonical identifier newtype.
-
-pub struct UserId(uuid::Uuid);
-```
-
-## README
-
-- `README.md` at the workspace root — install, build, run instructions
-- Each significant crate in a workspace MAY have its own `README.md` linked from `Cargo.toml`:
-  ```toml
-  [package]
-  readme = "README.md"
-  ```
-- crates.io publishes the README — keep it accurate, focused on HOW to use, not internals
-
-## Cargo doc Workflow
-
-Build local docs:
+## Documentation gates
 
 ```bash
-cargo doc --no-deps --open
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace  # broken links + missing docs are errors
+cargo test --doc                                                           # doc examples are real tests
+cargo run -p xtask -- docs-check                                           # corpus indexes ↔ reality
+cargo run -p xtask -- public-api                                           # proef-core surface (nightly rustdoc)
 ```
 
-Strict CI build (warnings → errors):
+## proef-core public API is snapshot-locked
 
-```bash
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-```
+`crates/proef-core/public-api.txt` pins the surface. An intended change regenerates it:
+`PROEF_PUBLIC_API_UPDATE=1 cargo run -p xtask -- public-api`. An unintended diff here means
+you widened the API by accident — review before regenerating.
 
-The strict form catches broken intra-doc links + missing-docs warnings (when `#![warn(missing_docs)]` is set).
+## What NOT to document in code comments
 
-## API Documentation (HTTP / gRPC)
-
-When the crate exposes a network API:
-
-- HTTP/REST: use `utoipa` (axum) or framework-native OpenAPI generators
-- gRPC: protobuf service definitions live in `proto/` and are the source of truth — generated Rust types document themselves
-- Document all endpoints, request/response schemas, error codes
-- Include example requests + responses in module-level docs
-
-## Common Failures
-
-- **Doc test references a private item** — fails to compile; either make the item `pub` or use `pub(crate)` + remove from doc test
-- **Example uses an old function name** — `cargo test --doc` catches this; rename in docs alongside the code rename
-- **Missing `# Errors` section on `Result`-returning fn** — flagged by `clippy::missing_errors_doc` (pedantic)
-- **Missing `# Panics` section on fn that calls `.unwrap()`** — flagged by `clippy::missing_panics_doc` (pedantic)
-- **Hand-written URL where intra-doc link works** — breaks on rename, doesn't validate
+Comments state a constraint the code cannot show (a verified seam fact, an invariant to
+preserve). Do not narrate what the next line does, restate the signature, or add
+attribution/history — that belongs in git, not the source.

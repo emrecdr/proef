@@ -500,12 +500,18 @@ pub proef_core::event::Event::RunStarted
 pub proef_core::event::Event::RunStarted::run_id: alloc::sync::Arc<str>
 pub proef_core::event::Event::RunStarted::schema: u32
 pub proef_core::event::Event::ScenarioFinished
+pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
+pub proef_core::event::Event::ScenarioFinished::timestamp_ms: core::option::Option<u64>
+pub proef_core::event::Event::ScenarioFinished::worker: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioStarted
 pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioStarted::timestamp_ms: core::option::Option<u64>
+pub proef_core::event::Event::ScenarioStarted::worker: core::option::Option<u64>
 pub proef_core::event::Event::StepFinished
+pub proef_core::event::Event::StepFinished::attempt_details: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::StepFinished::attempts: u32
 pub proef_core::event::Event::StepFinished::captures: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::StepFinished::detail: core::option::Option<alloc::string::String>
@@ -555,7 +561,6 @@ pub fn proef_core::fake::generate(&str, usize, &str) -> core::option::Option<all
 pub fn proef_core::fake::is_known_generator(&str) -> bool
 pub mod proef_core::feature
 pub struct proef_core::feature::FeatureFile
-pub proef_core::feature::FeatureFile::directives: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::feature::FeatureFile::name: alloc::string::String
 pub proef_core::feature::FeatureFile::path: alloc::string::String
 pub proef_core::feature::FeatureFile::scenarios: alloc::vec::Vec<proef_core::feature::ScenarioDef>
@@ -606,8 +611,11 @@ impl core::marker::UnsafeUnpin for proef_core::feature::StepDefn
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::feature::StepDefn
 impl core::panic::unwind_safe::UnwindSafe for proef_core::feature::StepDefn
 pub fn proef_core::feature::parse(&str, &str) -> core::result::Result<proef_core::feature::FeatureFile, alloc::vec::Vec<proef_core::diag::Diag>>
+pub mod proef_core::html
+pub fn proef_core::html::render_html(&[proef_core::event::Event], &str) -> alloc::string::String
 pub mod proef_core::lower
 pub struct proef_core::lower::LowerCtx<'a>
+pub proef_core::lower::LowerCtx::config_vars: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LowerCtx::feature: &'a proef_core::feature::FeatureFile
 pub proef_core::lower::LowerCtx::kind_to_engine: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -650,6 +658,8 @@ pub enum proef_core::matcher::PatternProblem
 pub proef_core::matcher::PatternProblem::AdjacentCaptures
 pub proef_core::matcher::PatternProblem::AdjacentCaptures::first: alloc::string::String
 pub proef_core::matcher::PatternProblem::AdjacentCaptures::second: alloc::string::String
+pub proef_core::matcher::PatternProblem::DuplicateCapture
+pub proef_core::matcher::PatternProblem::DuplicateCapture::name: alloc::string::String
 pub proef_core::matcher::PatternProblem::EmptyCapture
 pub proef_core::matcher::PatternProblem::NoAnchor
 pub proef_core::matcher::PatternProblem::UnknownCapture
@@ -698,6 +708,7 @@ pub fn proef_core::matcher::closest<'a>(&str, impl core::iter::traits::iterator:
 pub fn proef_core::matcher::levenshtein(&str, &str) -> usize
 pub fn proef_core::matcher::literal_skeleton(&str) -> alloc::string::String
 pub fn proef_core::matcher::match_pattern(&str, &str) -> core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+pub fn proef_core::matcher::near_duplicate_macros<'a>(impl core::iter::traits::collect::IntoIterator<Item = (&'a str, &'a str)>) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub fn proef_core::matcher::pattern_problems(&str, &[alloc::string::String]) -> alloc::vec::Vec<proef_core::matcher::PatternProblem>
 pub fn proef_core::matcher::tokenize(&str) -> alloc::vec::Vec<proef_core::matcher::Token>
 pub mod proef_core::pack
@@ -920,6 +931,9 @@ pub proef_core::resolve::ResolveError::EmptyReference
 pub proef_core::resolve::ResolveError::FakeUnknown
 pub proef_core::resolve::ResolveError::FakeUnknown::kind: alloc::string::String
 pub proef_core::resolve::ResolveError::FakeUnknown::suggestion: core::option::Option<alloc::string::String>
+pub proef_core::resolve::ResolveError::MissingConfigVar
+pub proef_core::resolve::ResolveError::MissingConfigVar::key: alloc::string::String
+pub proef_core::resolve::ResolveError::MissingConfigVar::namespace: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingEnv
 pub proef_core::resolve::ResolveError::MissingEnv::name: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingGlobal
@@ -996,8 +1010,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::Resolution
 impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::Resolution
 pub struct proef_core::resolve::ResolveCtx<'a>
 pub proef_core::resolve::ResolveCtx::args: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::resolve::ResolveCtx::config_vars: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::defaults: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
-pub proef_core::resolve::ResolveCtx::directives: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::resolve::ResolveCtx::mode: proef_core::resolve::ResolveMode
 pub proef_core::resolve::ResolveCtx::run_id: &'a str
@@ -1062,6 +1076,7 @@ pub proef_core::runner::RunSummary::passed: usize
 pub proef_core::runner::RunSummary::skipped: usize
 impl proef_core::runner::RunSummary
 pub fn proef_core::runner::RunSummary::exit_code(&self) -> proef_core::error::ExitCode
+pub fn proef_core::runner::RunSummary::exit_code_excluding(&self, &[(alloc::string::String, alloc::string::String)]) -> proef_core::error::ExitCode
 impl core::fmt::Debug for proef_core::runner::RunSummary
 pub fn proef_core::runner::RunSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for proef_core::runner::RunSummary
@@ -1274,9 +1289,11 @@ impl core::marker::UnsafeUnpin for proef_core::step::StepKindId
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepKindId
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepKindId
 pub struct proef_core::step::StepOutcome
+pub proef_core::step::StepOutcome::attempt_details: alloc::vec::Vec<alloc::string::String>
 pub proef_core::step::StepOutcome::attempts: u32
 pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::duration: core::time::Duration
+pub proef_core::step::StepOutcome::reproduce_hint: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::status: proef_core::step::Status
 pub proef_core::step::StepOutcome::step: proef_core::step::StepRef
 impl core::clone::Clone for proef_core::step::StepOutcome
@@ -1313,6 +1330,30 @@ impl core::marker::Unpin for proef_core::step::StepRef
 impl core::marker::UnsafeUnpin for proef_core::step::StepRef
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::StepRef
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::StepRef
+pub mod proef_core::tags
+pub enum proef_core::tags::TagExpr
+pub proef_core::tags::TagExpr::And(alloc::boxed::Box<proef_core::tags::TagExpr>, alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Not(alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Or(alloc::boxed::Box<proef_core::tags::TagExpr>, alloc::boxed::Box<proef_core::tags::TagExpr>)
+pub proef_core::tags::TagExpr::Tag(alloc::string::String)
+impl proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::eval(&self, &[alloc::string::String]) -> bool
+impl core::clone::Clone for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::clone(&self) -> proef_core::tags::TagExpr
+impl core::cmp::Eq for proef_core::tags::TagExpr
+impl core::cmp::PartialEq for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::eq(&self, &proef_core::tags::TagExpr) -> bool
+impl core::fmt::Debug for proef_core::tags::TagExpr
+pub fn proef_core::tags::TagExpr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::tags::TagExpr
+impl core::marker::Freeze for proef_core::tags::TagExpr
+impl core::marker::Send for proef_core::tags::TagExpr
+impl core::marker::Sync for proef_core::tags::TagExpr
+impl core::marker::Unpin for proef_core::tags::TagExpr
+impl core::marker::UnsafeUnpin for proef_core::tags::TagExpr
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::tags::TagExpr
+impl core::panic::unwind_safe::UnwindSafe for proef_core::tags::TagExpr
+pub fn proef_core::tags::parse(&str) -> core::result::Result<proef_core::tags::TagExpr, alloc::string::String>
 pub mod proef_core::world
 pub enum proef_core::world::Value
 pub proef_core::world::Value::Bool(bool)

@@ -20,16 +20,16 @@ for API testing.
 ## What it looks like
 
 A scenario is authored for humans — this one is trimmed from
-[`tests/features/500_api_message.feature`](tests/features/500_api_message.feature),
+[`tests/features/500_api_note.feature`](tests/features/500_api_note.feature),
 the repo's own example suite:
 
 ```gherkin
-Feature: API — message sync
-  Scenario: A message sent via the API appears in the client feed
-    Given the client environment is provisioned
-    And the client feed is activated and ready
-    When the relative sends a message to the client
-    Then the client feed shows the message from the relative
+Feature: API — note sync
+  Scenario: A note posted via the API appears on the board
+    Given the workspace is provisioned
+    And the activity channel is activated and ready
+    When a member posts a note to the board
+    Then the board shows the note
 ```
 
 A macro pack ([`tests/features/packs/api.yaml`](tests/features/packs/api.yaml))
@@ -38,13 +38,13 @@ runner matches every sentence against the `match:` patterns of the loaded
 packs, and a step's `hurl:` key names the engine that executes it:
 
 ```yaml
-templates:
+macros:
   provisionEnvironment:
-    match: the client environment is provisioned
+    match: the workspace is provisioned
     steps:
       - name: provision the environment
         hurl: |
-          POST ${baseURL}/api/v1/env/provision
+          POST ${url:base}/api/v1/env/provision
           Authorization: Bearer ${secret:apiToken}
           {"run": "${run:id}"}
           HTTP 201
@@ -59,9 +59,9 @@ leaves a complete record:
 $ proef test tests/features --jobs 4
 running 12 scenario(s) with 4 job(s) — run 019f…
 
-  Scenario: A message sent via the API appears in the client feed (tests/features/500_api_message.feature)
-    ✓ tests/features/500_api_message.feature:11 — the client environment is provisioned (9ms)
-    ✓ tests/features/500_api_message.feature:16 — the client feed shows the message … (312ms, 2 attempts)
+  Scenario: A note posted via the API appears on the board (tests/features/500_api_note.feature)
+    ✓ tests/features/500_api_note.feature:11 — the workspace is provisioned (9ms)
+    ✓ tests/features/500_api_note.feature:16 — the board shows the note … (312ms, 2 attempts)
 
 summary: 12 passed · 0 failed · 0 skipped
 ```
@@ -151,9 +151,9 @@ full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 | Command | Purpose |
 |---|---|
-| `proef test <path>` | validate + execute (`--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`) |
-| `proef flows <path>` | list scenarios with anchors and tags (`--output json` feeds the nextest harness) |
-| `proef artifacts <path> -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off |
+| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
+| `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
+| `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef schema` | print/install the pack JSON Schema (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
@@ -165,8 +165,18 @@ full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 ## Configuration
 
-`proef.toml` in the project root (see `proef.toml.example`): `[run] jobs`, `runs-dir`,
-`[http] timeout-ms`, `follow-location`. Precedence: defaults < `proef.toml` < flags.
+`proef.toml` in the project root (see [`docs/CONFIG.md`](docs/CONFIG.md) /
+`proef.toml.example`) holds runner settings **and** suite variables, so test files stay
+pure prose:
+
+- **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path) and
+  `[http]` (`timeout-ms`, `follow-location`).
+- **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /
+  `${vars:apiVersion}`. Secrets stay in the encrypted store (`${secret:…}`), never here.
+- **Environments** — `[env.<name>.<section>]` deep-merges per-environment overrides over
+  the base tables; `proef test --env prod` (or `PROEF_ENV`) selects one.
+
+Precedence: defaults < `proef.toml` base < active `[env.<name>]` < flags (ADR-0012).
 Secrets resolve `PROEF_SECRET_<NAME>` env overrides before the encrypted store.
 Run records land under `.proef-runs/<run-id>/` (events.jsonl, run.log, artifacts;
 200-run rotation); the persistent World lives in `.proef-state.json`.
@@ -190,7 +200,7 @@ cargo test --doc           # doctests (nextest doesn't run them)
 just gates                 # every CI gate locally (fmt, clippy -D, tests, doc, deny, machete, docs-check)
 just audit                 # security advisories (nightly in CI, on demand locally)
 cargo insta test --review  # snapshot changes are reviewed, never blind-accepted
-cargo run -p xtask -- fixture   # local fixture API server
+cargo run -p xtask -- fixture   # local fixture API server on :8787
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 
@@ -207,7 +217,7 @@ changes require a new ADR in the same PR.
 ## Releases
 
 Releases follow [SemVer](https://semver.org) and are tagged; every release has a
-[`CHANGELOG.md`](CHANGELOG.md) entry. The policy and runbook live in
+[`CHANGELOG.md`](docs/CHANGELOG.md) entry. The policy and runbook live in
 [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ## License

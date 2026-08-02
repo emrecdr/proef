@@ -1,4 +1,4 @@
-templates:
+macros:
   unusedRequest:
     match: I make a request
     steps:

@@ -1,7 +1,7 @@
 //! `proef explain [run-id]` — summarize a run from its record. The JSONL event
 //! stream **is** the record (ADR-0008): explain replays it, no second format.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use proef_core::error::ExitCode;
 use proef_core::event::Event;
@@ -13,7 +13,7 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     let runs_root = PathBuf::from(runs_dir);
     let record_dir = if let Some(run_id) = run_id {
         runs_root.join(run_id)
-    } else if let Some(dir) = latest_run(&runs_root) {
+    } else if let Some(dir) = crate::record::latest_run(&runs_root) {
         dir
     } else {
         eprintln!("error: no run records under {}", runs_root.display());
@@ -94,25 +94,4 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         );
     }
     ExitCode::Success
-}
-
-/// The newest run dir (uuid-v7 names sort chronologically).
-fn latest_run(runs_root: &Path) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(runs_root)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        // Same run-dir predicate rotation uses (fsutil::is_run_id) — with
-        // `runs-dir = "."` a stray `suite/` or `target/` sorting after the
-        // uuid range must not shadow the real latest run.
-        .filter(|path| {
-            path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(crate::fsutil::is_run_id)
-        })
-        .collect();
-    dirs.sort();
-    dirs.pop()
 }

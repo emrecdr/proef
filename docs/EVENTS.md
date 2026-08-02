@@ -16,7 +16,11 @@ Consumers must ignore unknown variants and unknown fields.
 **`run_started`** — head of every stream.
 `schema` (u32) · `run_id` (string, uuid-v7).
 
-**`scenario_started`** — `scenario` (string) · `file` (string).
+**`scenario_started`** — `scenario` (string) · `file` (string) · `timestamp_ms`
+(u64, run-relative ms — **only present** with injected timing) · `worker` (u64,
+0-based worker index — **only present** with injected timing). The timing pair is
+stamped at the CLI sink on the worker thread (the sans-IO core leaves it absent),
+and powers the HTML report timeline (ADR-0015).
 
 **`batch_started`** — a contiguous same-engine step batch was dispatched.
 `scenario` · `engine` (e.g. `"hurl"`) · `steps` (count).
@@ -29,11 +33,15 @@ ordinal within the scenario's artifact) · `retry` (0 = first attempt).
 the authored feature anchor) · `status` (`passed | failed | skipped |
 warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
 *names* only — never values) · `detail` (string, **only present** on
-failures/warnings/skips-with-reason).
+failures/warnings/skips-with-reason) · `attempt_details` (array of strings —
+the messages from earlier, failed attempts of a step that ultimately passed;
+**only present** for a flaky pass, feeds JUnit `<flakyFailure>`).
 
 **`scenario_finished`** — `scenario` · `file` (feature path — with `scenario`,
 the run-wide identity: names are unique only within one file; absent in
-records that predate the field) · `status`.
+records that predate the field) · `status` · `timestamp_ms` (u64, run-relative
+end ms — **only present** with injected timing; carries no `worker`, since it is
+emitted from the main dispatcher thread, not the scenario's worker — ADR-0015).
 
 **`run_finished`** — tail. `passed` · `failed` · `skipped` (scenario counts)
 · `cancelled` (bool, **only present when true**).

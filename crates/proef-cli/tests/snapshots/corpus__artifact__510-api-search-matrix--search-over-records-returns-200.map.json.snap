@@ -1,0 +1,71 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+{
+  "schema": 1,
+  "entries": [
+    {
+      "hurl_lines": [
+        7,
+        8
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 7,
+        "text": "the workspace is provisioned"
+      },
+      "optional": true,
+      "captures": [],
+      "batch": 0,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        11,
+        16
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 7,
+        "text": "the workspace is provisioned"
+      },
+      "optional": false,
+      "captures": [
+        "envId"
+      ],
+      "batch": 1,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        19,
+        25
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 15,
+        "text": "the operator searches for Acme"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 1
+    },
+    {
+      "hurl_lines": [
+        25,
+        25
+      ],
+      "feature": {
+        "file": "tests/features/510_api_search_matrix.feature",
+        "line": 17,
+        "text": "the response status is 200"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 2
+    }
+  ]
+}

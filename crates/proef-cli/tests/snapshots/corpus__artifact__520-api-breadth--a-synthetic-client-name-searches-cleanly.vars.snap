@@ -1,6 +1,0 @@
----
-source: crates/proef-cli/tests/corpus.rs
-expression: "String::from_utf8(content_a).unwrap()"
----
-# proef variables for 520-api-breadth--a-synthetic-client-name-searches-cleanly.hurl
-# secret `apiToken` — supply at replay: --secret apiToken=<value>

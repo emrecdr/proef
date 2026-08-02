@@ -60,6 +60,7 @@ base64 = "0.22"
 libtest-mimic = "0.8"
 
 # dev / fixture
+jiff = "0.2"                       # datetime for the fixture's /health identity (dev-only; the sans-IO core never reads clocks)
 proef-fixture = { path = "crates/proef-fixture" }
 tiny_http = "0.12"
 assert_cmd = "2"

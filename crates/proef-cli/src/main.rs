@@ -9,14 +9,20 @@ mod assets;
 mod ci_reports;
 mod commands;
 mod config;
+mod diff;
 mod exec;
 mod explain;
 mod fmt;
 mod front;
 mod fsutil;
+mod record;
 mod registry;
 mod render;
+mod report;
+mod sarif;
 mod secretstore;
+mod sla;
+mod tap;
 mod watch;
 
 use std::path::PathBuf;
@@ -30,6 +36,23 @@ use clap::{Parser, Subcommand, ValueEnum};
 enum OutputFormat {
     /// One JSON summary object (`test`) / one object per scenario (`flows`)
     Json,
+    /// TAP version 13 to stdout, one test point per scenario (`test` only) —
+    /// pipe into `prove`/`tappy`. The human report moves to stderr.
+    Tap,
+}
+
+/// Coerce `--output` for a command that only understands `json` (everything
+/// except `test`): `tap` is `test`-only, so it is a user error here rather than
+/// a silent fall-back to the human report.
+fn json_only(output: Option<OutputFormat>) -> Result<bool, proef_core::error::ExitCode> {
+    match output {
+        None => Ok(false),
+        Some(OutputFormat::Json) => Ok(true),
+        Some(OutputFormat::Tap) => {
+            eprintln!("error: --output tap is only supported by `proef test`");
+            Err(proef_core::error::ExitCode::UserError)
+        }
+    }
 }
 
 #[derive(Parser)]
@@ -48,18 +71,21 @@ struct Cli {
 enum Command {
     /// Validate and run feature files against the configured target
     Test {
-        /// A .feature file or a directory tree containing them
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Validate everything (bind + lower + emit + parse), execute nothing
         #[arg(long)]
         dry_run: bool,
-        /// Only scenarios with any of these tags (csv, OR semantics)
-        #[arg(long, value_delimiter = ',')]
-        tags: Vec<String>,
+        /// Select scenarios by a boolean tag expression, e.g.
+        /// `"@api and not @slow"` (operators `and`/`or`/`not`, parentheses; the
+        /// `@` is optional). Omitted, every scenario runs.
+        #[arg(long)]
+        tags: Option<String>,
         /// Parallel scenario workers (default: proef.toml or CPU count)
         #[arg(long)]
         jobs: Option<usize>,
-        /// Machine output: `json` prints a summary object to stdout
+        /// Machine output to stdout: `json` (a summary object) or `tap` (a TAP
+        /// v13 stream, one point per scenario); the human report moves to stderr
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
         /// `JUnit` XML: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`)
@@ -76,26 +102,54 @@ enum Command {
         /// Rerun on feature/pack changes (Ctrl-C to stop)
         #[arg(long)]
         watch: bool,
+        /// Pin the injected run id: reproducible fake data and a stable run record
+        #[arg(long)]
+        run_id: Option<String>,
+        /// Write validation diagnostics as a SARIF 2.1.0 log (requires --dry-run)
+        #[arg(long, requires = "dry_run")]
+        sarif: Option<PathBuf>,
+        /// Re-run only the scenarios that failed in the last run
+        #[arg(long)]
+        rerun: bool,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
-        /// A .feature file or a directory tree containing them
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Machine output: `json` prints one object per scenario
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
+    },
+    /// List every macro with its call count, flagging pattern macros nothing binds
+    Macros {
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
+        /// Machine output: `json` prints one object per macro
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// Emit canonical .hurl artifacts + sidecars for a stable hand-off
     Artifacts {
-        /// A .feature file or a directory tree containing them
-        path: PathBuf,
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
         /// Output directory for .hurl / .map.json / .vars files
         #[arg(short, long)]
         output: PathBuf,
         /// Override the injected run id (deterministic artifacts for CI)
         #[arg(long)]
         run_id: Option<String>,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// Print the pack JSON Schema (or install it next to pack files)
     Schema {
@@ -114,6 +168,24 @@ enum Command {
     Explain {
         /// Run id (default: the latest run)
         run_id: Option<String>,
+    },
+    /// Compare two run records: regressions, fixes, flakiness, perf deltas
+    Diff {
+        /// Base run id (default: the previous run)
+        base: Option<String>,
+        /// New run id (default: the latest run)
+        new: Option<String>,
+        /// Exit 1 when a scenario regressed (passed → failed), for CI gating
+        #[arg(long)]
+        fail_on_regression: bool,
+    },
+    /// Write a self-contained HTML report for a run from its event record
+    Report {
+        /// Run id (default: the latest run)
+        run_id: Option<String>,
+        /// Output file (default: `report.html` inside the run dir)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Normalize the raw hurl blocks inside macro packs
     Fmt {
@@ -144,6 +216,58 @@ enum SecretAction {
     },
 }
 
+/// Resolve the suite path when a command is given none: `[run] suite` from
+/// proef.toml, else the `tests/` convention. An explicit path always wins; a
+/// missing default with no `tests/` present is a user error (exit 2) — never a
+/// silent no-op.
+fn resolve_suite_path(
+    path: Option<PathBuf>,
+    config: &config::ProjectConfig,
+) -> Result<PathBuf, proef_core::error::ExitCode> {
+    if let Some(path) = path {
+        return Ok(path);
+    }
+    if let Some(suite) = config.suite() {
+        return Ok(PathBuf::from(suite));
+    }
+    let convention = PathBuf::from("tests");
+    if convention.is_dir() {
+        return Ok(convention);
+    }
+    eprintln!(
+        "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"
+    );
+    Err(proef_core::error::ExitCode::UserError)
+}
+
+/// Load `proef.toml` once per invocation (absent file = defaults; a malformed
+/// file is a user error). Threaded into suite resolution and the command so the
+/// config is read a single time, not once per consumer.
+fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
+    config::ProjectConfig::load().map_err(|message| {
+        eprintln!("error: {message}");
+        proef_core::error::ExitCode::UserError
+    })
+}
+
+/// The active environment: the `--env` flag wins, else `PROEF_ENV`, else none.
+fn active_env(flag: Option<String>) -> Option<String> {
+    flag.or_else(|| std::env::var("PROEF_ENV").ok())
+}
+
+/// The shared preamble of every suite command (`test`/`flows`/`artifacts`):
+/// load config once, resolve the suite path, and pick the active environment.
+fn prepare(
+    path: Option<PathBuf>,
+    env: Option<String>,
+) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
+    let config = load_config()?;
+    let path = resolve_suite_path(path, &config)?;
+    Ok((config, path, active_env(env)))
+}
+
+// One dispatch table over the CLI surface; splitting arms hides the routing.
+#[allow(clippy::too_many_lines)]
 fn main() -> std::process::ExitCode {
     render::install();
     // clap renders usage errors itself and exits 2 — which is exactly the
@@ -160,38 +284,89 @@ fn main() -> std::process::ExitCode {
             scenario,
             scenario_file,
             watch: watch_mode,
-        } => {
-            let run_once = |cancel| {
-                if dry_run {
-                    commands::dry_run(&path, &tags, scenario.as_deref(), scenario_file.as_deref())
-                } else {
-                    exec::execute(
-                        &path,
-                        &tags,
-                        jobs,
-                        output == Some(OutputFormat::Json),
-                        junit.as_deref(),
-                        scenario.as_deref(),
-                        scenario_file.as_deref(),
-                        cancel, // None = execute installs its own Ctrl-C handler
-                    )
+            run_id,
+            sarif,
+            rerun,
+            env,
+        } => match prepare(path, env) {
+            Err(code) => code,
+            // Parse the tag expression once (it is constant across watch reruns);
+            // a malformed one is a user error, before any scenario runs.
+            Ok((config, path, active_env)) => {
+                match tags.as_deref().map(proef_core::tags::parse).transpose() {
+                    Err(message) => {
+                        eprintln!("error: {message}");
+                        proef_core::error::ExitCode::UserError
+                    }
+                    Ok(tag_filter) => {
+                        let run_once = |cancel| {
+                            if dry_run {
+                                commands::dry_run(
+                                    &path,
+                                    tag_filter.as_ref(),
+                                    scenario.as_deref(),
+                                    scenario_file.as_deref(),
+                                    active_env.as_deref(),
+                                    run_id.clone(),
+                                    sarif.as_deref(),
+                                    &config,
+                                )
+                            } else {
+                                exec::execute(
+                                    &path,
+                                    tag_filter.as_ref(),
+                                    jobs,
+                                    output,
+                                    junit.as_deref(),
+                                    scenario.as_deref(),
+                                    scenario_file.as_deref(),
+                                    active_env.as_deref(),
+                                    run_id.clone(),
+                                    rerun,
+                                    &config,
+                                    cancel, // None = execute installs its own Ctrl-C handler
+                                )
+                            }
+                        };
+                        if watch_mode {
+                            // The loop owns Ctrl-C and hands each run its token.
+                            watch::watch_loop(&path, |token| run_once(Some(token)))
+                        } else {
+                            run_once(None)
+                        }
+                    }
                 }
-            };
-            if watch_mode {
-                // The loop owns Ctrl-C and hands each run its token.
-                watch::watch_loop(&path, |token| run_once(Some(token)))
-            } else {
-                run_once(None)
             }
-        }
-        Command::Flows { path, output } => {
-            commands::flows(&path, output == Some(OutputFormat::Json))
-        }
+        },
+        Command::Flows { path, output, env } => match json_only(output) {
+            Err(code) => code,
+            Ok(output_json) => match prepare(path, env) {
+                Err(code) => code,
+                Ok((config, path, active_env)) => {
+                    commands::flows(&path, output_json, active_env.as_deref(), &config)
+                }
+            },
+        },
+        Command::Macros { path, output, env } => match json_only(output) {
+            Err(code) => code,
+            Ok(output_json) => match prepare(path, env) {
+                Err(code) => code,
+                Ok((config, path, active_env)) => {
+                    commands::macros(&path, output_json, active_env.as_deref(), &config)
+                }
+            },
+        },
         Command::Artifacts {
             path,
             output,
             run_id,
-        } => commands::artifacts(&path, &output, run_id),
+            env,
+        } => match prepare(path, env) {
+            Err(code) => code,
+            Ok((config, path, active_env)) => {
+                commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
+            }
+        },
         Command::Schema { add_to } => commands::schema(&add_to),
         Command::Doctor => commands::doctor(&registry::engines()),
         Command::Secret { action } => {
@@ -226,6 +401,29 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        Command::Diff {
+            base,
+            new,
+            fail_on_regression,
+        } => match config::ProjectConfig::load() {
+            Ok(config) => diff::diff(
+                config.runs_dir(),
+                base.as_deref(),
+                new.as_deref(),
+                fail_on_regression,
+            ),
+            Err(message) => {
+                eprintln!("error: {message}");
+                proef_core::error::ExitCode::UserError
+            }
+        },
+        Command::Report { run_id, output } => match config::ProjectConfig::load() {
+            Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
+            Err(message) => {
+                eprintln!("error: {message}");
+                proef_core::error::ExitCode::UserError
+            }
+        },
         Command::Fmt { path, check } => fmt::fmt(&path, check),
     };
     std::process::ExitCode::from(code.code())

@@ -35,6 +35,14 @@ pub enum Event {
         scenario: Arc<str>,
         /// Feature file the scenario comes from.
         file: Arc<str>,
+        /// Milliseconds since the run began — injected at the CLI sink (the
+        /// sans-IO core leaves it `None`, like `run_id`). Absent on records
+        /// without timing; additive (ADR-0008, ADR-0015).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
+        /// 0-based worker index this scenario ran on — injected at the sink.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker: Option<u64>,
     },
     /// A batch of contiguous same-engine steps was dispatched.
     BatchStarted {
@@ -78,6 +86,12 @@ pub enum Event {
         /// absent on passing steps, so pre-existing streams are unchanged).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Messages from earlier, failed attempts of a step that ultimately
+        /// passed — the flaky-failure detail (`JUnit` `<flakyFailure>`).
+        /// Additive schema field: empty (and unserialized) for the common
+        /// single-attempt step, so pre-existing streams are unchanged.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attempt_details: Vec<String>,
     },
     /// A scenario finished.
     ScenarioFinished {
@@ -91,6 +105,14 @@ pub enum Event {
         file: Arc<str>,
         /// Aggregate scenario status.
         status: Status,
+        /// Milliseconds since the run began — injected at the CLI sink (the
+        /// sans-IO core leaves it `None`, like `run_id`). Absent on records
+        /// without timing; additive (ADR-0008, ADR-0015).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
+        /// 0-based worker index this scenario ran on — injected at the sink.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker: Option<u64>,
     },
     /// The run finished. Tail of every stream.
     RunFinished {
@@ -164,7 +186,7 @@ mod tests {
     #[test]
     fn events_round_trip_through_jsonl() {
         let event = Event::StepFinished {
-            scenario: Arc::from("Search finds a client"),
+            scenario: Arc::from("Search finds a record"),
             engine: Arc::from("http"),
             step: StepRef {
                 file: Arc::from("tests/features/501_search.feature"),
@@ -172,10 +194,11 @@ mod tests {
                 text: Arc::from("the admin searches for \"Jansen\""),
             },
             status: Status::Passed,
-            attempts: 1,
+            attempts: 2,
             duration_ms: 42,
-            captures: vec!["clientId".to_owned()],
+            captures: vec!["recordId".to_owned()],
             detail: None,
+            attempt_details: vec!["attempt 1: HTTP 404 (retried)".to_owned()],
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         let back: Event = serde_json::from_str(&json).unwrap_or(Event::RunFinished {

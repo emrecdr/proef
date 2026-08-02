@@ -1,4 +1,4 @@
-templates:
+macros:
   login:
     params: [role]
     match: "I log in as {rol}"

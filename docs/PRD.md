@@ -87,7 +87,9 @@ verdicts (spike-proven); no secret values appear in any artifact.
 US-8 (P4) CI consumes results. *AC:* exit codes 0/1/2/3 stable and integration-tested;
 `--junit auto` under GITHUB_ACTIONS; JSONL event log written per run; `--tags` filters.
 US-9 (P1/P4) Runs are observable. *AC:* console BDD tree with per-step timing/attempts;
-`proef explain [run]` summarizes the latest failures from run records.
+`proef explain [run]` summarizes the latest failures from run records; `proef diff
+[base] [new]` compares two runs for regressions, fixes, flakiness, and perf deltas;
+`proef report [run]` writes a self-contained HTML report of a run.
 US-10 (P2) Secrets stay secret. *AC:* `proef secret set` stores encrypted values;
 secret values never appear in artifacts, logs, reports, or events (property-tested).
 US-11 (P4) hurl upgrades are safe. *AC:* the canary job builds against the next hurl
@@ -99,8 +101,9 @@ per scenario and `cargo nextest run` executes and reports them.
 ## 6. Functional requirements (condensed; TECH-SPEC is normative)
 
 **Authoring:** full gherkin-crate grammar (Feature/Rule/Background/Scenario/Outline/
-Examples/tables/docstrings/tags/i18n); `# key: value` directives before `Feature:`
-(`baseURL`, …); tags filter runs. **Packs:** YAML skeleton with `match:` patterns
+Examples/tables/docstrings/tags/i18n); tags filter runs; variables come from
+`proef.toml` (`${url:}`/`${vars:}`, ADR-0012), never the feature files. **Packs:** YAML
+skeleton with `match:` patterns
 (`{name}` captures), `params`/`defaults`/`tags`/`description`; step bodies as raw
 `hurl:` blocks (primary) or structured form (reserved for future engines); assert-only
 `expect:` macros merge into the previous request (Then-steps); `use:`/`with:` nesting
@@ -110,10 +113,17 @@ engine-hurl via embedded `run_entries` with buffered I/O; per-entry `[Options]` 
 batch defaults (verified); World seeding/merge-back; cooperative cancellation + budgets.
 **Artifacts:** canonical emit, sidecars, vars files, `# optional` markers. **Reporting:**
 event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotation.
-**CLI:** `test` (`--dry-run --tags --jobs --junit --output json --watch`), `flows`,
-`artifacts`, `schema [--add-to]`, `secret set|list`, `explain`, `doctor`. **Config:**
-defaults < `proef.toml` < flags; secrets via `PROEF_SECRET_<NAME>` env override →
-the encrypted store (`proef secret set [--value]`).
+**CLI:** `test` (`[path] --env --dry-run --tags --jobs --junit --output json|tap --watch --run-id --sarif --rerun
+--scenario[-file]`; path optional — `[run] suite` then the `tests/` convention), `flows`,
+`macros` (call counts + dead-macro report), `artifacts`, `schema [--add-to]`,
+`secret set|list`, `explain`, `diff [base] [new] --fail-on-regression`,
+`report [run] -o <file>`, `doctor`. **Config
+(`proef.toml`, ADR-0012):** runner settings (`[run]` incl. `setup`/`teardown` suite
+lifecycle features, ADR-0014; `[http]`/`[sla]`) + suite variables
+(`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
+(`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via
+`--env`/`PROEF_ENV`) < flags. Secrets via `PROEF_SECRET_<NAME>` env override → the
+encrypted store (`proef secret set [--value]`), never in `proef.toml`.
 
 ## 7. Non-functional requirements
 
@@ -140,7 +150,7 @@ port-fidelity bar. M-2: artifact parity — stock hurl CLI verdicts match proef 
 every artifact in the integration suite (already spike-proven; kept as a CI invariant
 until M4, then by construction). M-3: `--dry-run` catches 100% of the seeded
 pack/feature error corpus with line-accurate diagnostics. M-4: one hurl upstream release
-absorbed via the canary runbook with zero suite regressions. M-5: engine-web lands (M6)
+absorbed via the canary runbook with zero suite regressions. M-5: a future non-hurl engine lands (M6)
 with `git diff --stat proef-core` empty.
 
 ## 9. Release phasing

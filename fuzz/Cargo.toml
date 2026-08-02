@@ -35,3 +35,10 @@ path = "fuzz_targets/fuzz_pack_load.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_tag_expr"
+path = "fuzz_targets/fuzz_tag_expr.rs"
+test = false
+doc = false
+bench = false

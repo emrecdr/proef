@@ -1,0 +1,39 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+{
+  "schema": 1,
+  "entries": [
+    {
+      "hurl_lines": [
+        6,
+        12
+      ],
+      "feature": {
+        "file": "tests/features/520_api_breadth.feature",
+        "line": 21,
+        "text": "the operator searches for ${fake:lastName}"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 0,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        12,
+        12
+      ],
+      "feature": {
+        "file": "tests/features/520_api_breadth.feature",
+        "line": 22,
+        "text": "the response status is 200"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 0,
+      "step": 1
+    }
+  ]
+}

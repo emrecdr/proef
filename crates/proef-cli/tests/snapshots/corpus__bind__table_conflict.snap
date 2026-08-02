@@ -7,9 +7,9 @@ proef::bind::table_conflict
   × `term` is set both by a `{capture}` and the data table
    ╭─[tests/errors/bind__table_conflict/case.feature:3:5]
  2 │   Scenario: S
- 3 │     When I search for Jansen
-   ·     ────────────────────────
- 4 │       | term | Bakker |
+ 3 │     When I search for Acme
+   ·     ──────────────────────
+ 4 │       | term | Globex |
    ╰────
 
 1 error(s)

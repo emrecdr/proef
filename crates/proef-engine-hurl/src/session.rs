@@ -213,6 +213,8 @@ impl EngineSession for HurlSession {
                     attempts: 0,
                     duration: Duration::ZERO,
                     detail: Some("skipped by `when:` guard".to_owned()),
+                    attempt_details: Vec::new(),
+                    reproduce_hint: None,
                 });
                 emit_step(
                     events,
@@ -224,6 +226,7 @@ impl EngineSession for HurlSession {
                     0,
                     &[],
                     Some("skipped by `when:` guard"),
+                    &[],
                 );
                 continue;
             }
@@ -264,6 +267,7 @@ impl EngineSession for HurlSession {
                         0,
                         &[],
                         Some(detail),
+                        &[],
                     );
                 }
                 continue;
@@ -290,6 +294,7 @@ impl EngineSession for HurlSession {
                         0,
                         &[],
                         Some(NO_ENTRIES_DETAIL),
+                        &[],
                     );
                 }
                 continue;
@@ -426,6 +431,9 @@ impl EngineSession for HurlSession {
                 let mut reached = false;
                 let mut assert_failure = false;
                 let mut user_fault = false;
+                // This step's last-run entry (final attempt): its `curl` becomes
+                // the reproduce hint, stringified once and only on failure.
+                let mut last_entry = None;
                 // One classify-and-collect for both attribution branches.
                 let mut record_error = |error: &runner::RunnerError| {
                     match classify_error(error) {
@@ -460,6 +468,7 @@ impl EngineSession for HurlSession {
                         per_entry_results
                             .insert(0, u32::try_from(host_results.len()).unwrap_or(u32::MAX));
                         if let Some(final_result) = host_results.last() {
+                            last_entry = Some(*final_result);
                             for error in &final_result.errors {
                                 let line = error.source_info.start.line;
                                 if line < span_start || line > span_end {
@@ -482,6 +491,7 @@ impl EngineSession for HurlSession {
                             continue;
                         };
                         reached = true;
+                        last_entry = Some(entry_result);
                         *per_entry_results.entry(entry_index).or_default() += 1;
                         duration += entry_result.transfer_duration;
                         captures.extend(entry_result.captures.iter().map(|c| c.name.clone()));
@@ -572,12 +582,32 @@ impl EngineSession for HurlSession {
                         EngineError::infra(message)
                     }));
                 }
+                // Reproduce hint only for failures — the redacted curl of the
+                // failing request; passing steps carry none (exec prints it
+                // under a failed step).
+                let reproduce_hint = if matches!(status, Status::Failed | Status::Warned) {
+                    last_entry.map(|e| self.redactions.apply(&e.curl_cmd.to_string()))
+                } else {
+                    None
+                };
+                // Flaky-failure detail: a step that ultimately passed but
+                // retried carries the messages from its earlier, failed
+                // attempts — the final attempt is clean, so `errors` holds
+                // exactly those. Already redacted by `render_error`; JUnit
+                // surfaces them as <flakyFailure>.
+                let attempt_details = if status == Status::Passed && attempts > 1 {
+                    errors
+                } else {
+                    Vec::new()
+                };
                 outcomes.push(StepOutcome {
                     step: step.step.clone(),
                     status,
                     attempts: attempts.max(u32::from(reached)),
                     duration,
                     detail: detail.clone(),
+                    attempt_details: attempt_details.clone(),
+                    reproduce_hint,
                 });
                 emit_step(
                     events,
@@ -589,6 +619,7 @@ impl EngineSession for HurlSession {
                     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX),
                     &captures,
                     detail.as_deref(),
+                    &attempt_details,
                 );
             }
         }
@@ -712,6 +743,8 @@ fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
         attempts: 0,
         duration: Duration::ZERO,
         detail: None,
+        attempt_details: Vec::new(),
+        reproduce_hint: None,
     }
 }
 
@@ -726,6 +759,7 @@ fn emit_step(
     duration_ms: u64,
     captures: &[String],
     detail: Option<&str>,
+    attempt_details: &[String],
 ) {
     events.emit(&Event::StepFinished {
         scenario: Arc::clone(scenario),
@@ -736,6 +770,7 @@ fn emit_step(
         duration_ms,
         captures: captures.to_vec(),
         detail: detail.map(ToOwned::to_owned),
+        attempt_details: attempt_details.to_vec(),
     });
 }
 

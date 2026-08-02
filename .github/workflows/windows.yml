@@ -13,6 +13,12 @@ on:
     - cron: "41 3 * * 1"
   workflow_dispatch:
 
+# Supersede in-flight runs on a new push to the same ref, so an outdated commit
+# never leaves a stale red on the PR (each ref keeps its own group).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -38,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install gate tools
-        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
         with:
           tool: cargo-nextest
 

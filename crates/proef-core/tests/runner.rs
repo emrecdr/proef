@@ -74,6 +74,8 @@ impl EngineSession for MockSession {
                 attempts: 1,
                 duration: Duration::ZERO,
                 detail: None,
+                attempt_details: Vec::new(),
+                reproduce_hint: None,
             })
             .collect();
         BatchResult { steps, error: None }
@@ -124,6 +126,8 @@ impl EngineSession for FailingSession {
                 attempts: 1,
                 duration: Duration::ZERO,
                 detail: Some("mock failure".to_owned()),
+                attempt_details: Vec::new(),
+                reproduce_hint: None,
             })
             .collect();
         BatchResult {

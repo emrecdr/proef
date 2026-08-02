@@ -50,9 +50,16 @@ impl Redactions {
                 schema: *schema,
                 run_id: s(run_id),
             },
-            Event::ScenarioStarted { scenario, file } => Event::ScenarioStarted {
+            Event::ScenarioStarted {
+                scenario,
+                file,
+                timestamp_ms,
+                worker,
+            } => Event::ScenarioStarted {
                 scenario: s(scenario),
                 file: s(file),
+                timestamp_ms: *timestamp_ms,
+                worker: *worker,
             },
             Event::BatchStarted {
                 scenario,
@@ -83,6 +90,7 @@ impl Redactions {
                 duration_ms,
                 captures,
                 detail,
+                attempt_details,
             } => Event::StepFinished {
                 scenario: s(scenario),
                 engine: s(engine),
@@ -96,15 +104,23 @@ impl Redactions {
                 duration_ms: *duration_ms,
                 captures: captures.iter().map(|name| self.apply(name)).collect(),
                 detail: detail.as_deref().map(|text| self.apply(text)),
+                attempt_details: attempt_details
+                    .iter()
+                    .map(|text| self.apply(text))
+                    .collect(),
             },
             Event::ScenarioFinished {
                 scenario,
                 file,
                 status,
+                timestamp_ms,
+                worker,
             } => Event::ScenarioFinished {
                 scenario: s(scenario),
                 file: s(file),
                 status: *status,
+                timestamp_ms: *timestamp_ms,
+                worker: *worker,
             },
             Event::RunFinished { .. } => event.clone(),
         }
@@ -201,7 +217,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
             Event::RunStarted { run_id, .. } => {
                 let _ = writeln!(self.out, "proef run {run_id}");
             }
-            Event::ScenarioStarted { scenario, file } => {
+            Event::ScenarioStarted { scenario, file, .. } => {
                 let header = format!("\n  Scenario: {scenario} ({file})");
                 self.buffer_for(file, scenario).push(header);
             }
@@ -246,6 +262,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 scenario,
                 file,
                 status,
+                ..
             } => {
                 let lines = self
                     .buffers
@@ -355,6 +372,8 @@ mod tests {
             Event::ScenarioStarted {
                 scenario: Arc::from("S"),
                 file: Arc::from("f.feature"),
+                timestamp_ms: None,
+                worker: None,
             },
             Event::StepFinished {
                 scenario: Arc::from("S"),
@@ -369,11 +388,14 @@ mod tests {
                 duration_ms: 12,
                 captures: vec!["token".to_owned()],
                 detail: None,
+                attempt_details: Vec::new(),
             },
             Event::ScenarioFinished {
                 scenario: Arc::from("S"),
                 file: Arc::from("f.feature"),
                 status: Status::Passed,
+                timestamp_ms: None,
+                worker: None,
             },
             Event::RunFinished {
                 passed: 1,
@@ -488,6 +510,8 @@ mod tests {
                 sink.emit(&Event::ScenarioStarted {
                     scenario: Arc::from(format!("uses {secret}")),
                     file: Arc::from(format!("{secret}.feature")),
+                    timestamp_ms: None,
+                    worker: None,
                 });
                 sink.emit(&Event::StepFinished {
                     scenario: Arc::from(format!("uses {secret}")),
@@ -498,10 +522,11 @@ mod tests {
                         text: Arc::from(format!("token is {secret}")),
                     },
                     status: Status::Failed,
-                    attempts: 1,
+                    attempts: 2,
                     duration_ms: 1,
                     captures: vec![format!("cap-{secret}")],
                     detail: Some(format!("boom {secret}")),
+                    attempt_details: vec![format!("earlier boom {secret}")],
                 });
                 sink.emit(&Event::RunFinished {
                     passed: 0,
@@ -526,6 +551,8 @@ mod tests {
                     console.on_event(&Event::ScenarioStarted {
                         scenario: Arc::from("S"),
                         file: Arc::from("f"),
+                        timestamp_ms: None,
+                        worker: None,
                     });
                     console.on_event(&Event::StepFinished {
                         scenario: Arc::from("S"),
@@ -540,11 +567,14 @@ mod tests {
                         duration_ms: 1,
                         captures: Vec::new(),
                         detail: None,
+                        attempt_details: Vec::new(),
                     });
                     console.on_event(&Event::ScenarioFinished {
                         scenario: Arc::from("S"),
                         file: Arc::from("f"),
                         status: Status::Failed,
+                        timestamp_ms: None,
+                        worker: None,
                     });
                 }
                 let text = String::from_utf8(out).unwrap();

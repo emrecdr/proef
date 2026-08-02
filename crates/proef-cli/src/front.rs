@@ -24,7 +24,7 @@ use crate::registry;
 
 /// One fully-processed feature.
 pub struct LoadedFeature {
-    /// The parsed feature (directives, tags, source).
+    /// The parsed feature (tags, source).
     pub file: FeatureFile,
     /// Processed scenarios, in authored order.
     pub scenarios: Vec<ProcessedScenario>,
@@ -49,6 +49,9 @@ pub struct FrontEnd {
     pub packs: Arc<PackSet>,
     /// The injected environment snapshot.
     pub env: Arc<BTreeMap<String, String>>,
+    /// The injected `proef.toml` config scope (`${url:…}` / `${vars:…}`), with
+    /// the active `[env.<name>]` already deep-merged in by the caller.
+    pub config_vars: Arc<BTreeMap<String, String>>,
     /// Step kind prefix → engine id.
     pub kind_to_engine: Arc<BTreeMap<String, String>>,
     /// The run id used for this front-end pass.
@@ -65,7 +68,12 @@ pub struct FrontEnd {
 /// `run_id` overrides the generated uuid-v7 (deterministic artifact hand-off).
 // One cohesive listing of the pipeline; splitting hides the stage order.
 #[allow(clippy::too_many_lines)]
-pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<FrontEnd, FrontError> {
+pub fn run(
+    path: &Path,
+    mode: ResolveMode,
+    run_id: Option<String>,
+    config_vars: Arc<BTreeMap<String, String>>,
+) -> Result<FrontEnd, FrontError> {
     let engines = registry::engines();
     let kinds: Vec<proef_core::engine::StepKindSpec> = engines
         .iter()
@@ -132,6 +140,7 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             packs: &packs,
             kind_to_engine: &kind_to_engine,
             env: &env,
+            config_vars: &config_vars,
             run_id: &run_id,
             world: &world,
             mode,
@@ -173,6 +182,7 @@ pub fn run(path: &Path, mode: ResolveMode, run_id: Option<String>) -> Result<Fro
             features,
             packs,
             env,
+            config_vars,
             kind_to_engine,
             run_id,
             packs_loaded,
@@ -374,10 +384,8 @@ pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
     proef_core::error::ExitCode::UserError
 }
 
-/// Does a scenario pass the `--tags` filter (csv, OR semantics, `@` optional)?
-pub fn tag_selected(tags: &[String], filter: &[String]) -> bool {
-    filter.is_empty()
-        || tags
-            .iter()
-            .any(|t| filter.iter().any(|f| f.trim_start_matches('@') == t))
+/// Does a scenario pass the `--tags` filter? No expression (the flag was
+/// omitted) selects everything; otherwise the boolean expression decides.
+pub fn tag_selected(tags: &[String], filter: Option<&proef_core::tags::TagExpr>) -> bool {
+    filter.is_none_or(|expr| expr.eval(tags))
 }

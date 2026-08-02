@@ -50,7 +50,7 @@ const FIRST_NAMES: &[&str] = &[
     "Alice", "Bob", "Carol", "David", "Emma", "Finn", "Sofie", "Lars", "Noor", "Sem",
 ];
 const LAST_NAMES: &[&str] = &[
-    "Jansen", "Vries", "Bakker", "Visser", "Smit", "Meijer", "Smith", "Brown", "Jones", "Mulder",
+    "Jansen", "Vries", "Dekker", "Visser", "Smit", "Meijer", "Smith", "Brown", "Jones", "Mulder",
 ];
 const CITIES: &[&str] = &[
     "Amsterdam",

@@ -12,22 +12,24 @@ data tables (rows become step arguments), and docstrings (delivered to the
 macro as the `docstring` param). Keywords (`Given/When/Then/And`) don't affect
 binding — only the sentence text does.
 
-**Directives** are `# key: value` comment lines before `Feature:`. They resolve
-`${env:NAME:-default}` / `${run:id}` and become `${key}` in every step of the
-file. Convention: `# baseURL:` for the target host.
+**Variables** are declared in `proef.toml` (`[url]` / `[vars]`), never in the
+feature file, and referenced from packs as `${url:key}` / `${vars:key}` — see
+[CONFIG.md](CONFIG.md). Feature files stay free of URLs and environment data.
 
-**Tags** (`@smoke`) accumulate feature→scenario; `proef test --tags a,b`
-selects scenarios carrying any of them (a selection matching nothing is an
-error, not a silent green run).
+**Tags** (`@smoke`) accumulate feature→scenario; `proef test --tags <expr>`
+selects scenarios by a boolean expression over them — `and`, `or`, `not`, and
+parentheses, with the `@` optional (e.g. `--tags "@api and not @slow"` or
+`--tags "(smoke or nightly) and not wip"`). A bare tag is a valid expression; a
+selection matching nothing is an error, not a silent green run.
 
-## Macros (`templates:` in a pack)
+## Macros (`macros:` in a pack)
 
 ```yaml
-templates:
+macros:
   name:
-    match: the client {name} is resolved   # sentence pattern (optional)
+    match: the record {name} is resolved   # sentence pattern (optional)
     params: [name]                         # declared parameters
-    defaults: { index: clients }           # defaults for optional params
+    defaults: { index: records }           # defaults for optional params
     description: One line for humans.
     tags: [Admin]
     steps: [...]                           # OR expect: [...] — never both
@@ -41,6 +43,13 @@ templates:
   declared params; adjacent captures (`{a} {b}` with nothing between) are
   rejected.
 - A macro without `match:` is composition-only (reachable via `use:`).
+- `proef macros` reports each macro's call count across the corpus and flags
+  pattern macros no scenario binds (dead prose bindings); `use:`-only helpers
+  and unused builtins are listed but not flagged. It also flags **near-duplicate**
+  pattern macros — two that differ only in their `{capture}` names (the same
+  literal skeleton), which are confusable to authors. Both are advisory only:
+  they never change the exit code, and `--output json` carries `unused` and
+  `nearDuplicateOf` fields for a CI hygiene gate.
 
 ## Steps
 
@@ -51,9 +60,9 @@ steps:
     retry: { count: 10, interval_ms: 300 }   # finite; 1..=10000
     delay: 250                        # ms before the request (capped at 1 hour)
     when: "${env:RUN_SLOW:-}"         # skips when empty or false/0 after resolution
-    saveAs: { clientId: global }      # promote a capture to the global store
+    saveAs: { recordId: global }      # promote a capture to the global store
     hurl: |                           # the payload — raw hurl, one or more entries
-      GET ${baseURL}/api/v1/clients/{{clientId}}
+      GET ${url:base}/api/v1/records/{{recordId}}
       HTTP 200
   - use: otherMacro                   # composition (cycle-checked, depth ≤ 32)
     with: { term: "${name}" }
@@ -67,17 +76,95 @@ run as their own batch so a failure cannot poison neighbours.
 assert lines merge into the *previous* request entry (a `Then` before any
 `When` is an error).
 
+## Asserting responses — the hurl vocabulary
+
+Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the
+whole **hurl 8.0** assert grammar is available *untouched*: proef resolves `${…}`
+before the run and hands the rest to the embedded engine verbatim (ADR-0005). The
+block is parsed at pack-load time, so a grammar slip fails fast with a diagnostic
+— only JSONPath *semantics* (a query that lexes but never matches at run time) can
+slip through. An assert reads `<query> [filters…] <predicate>`; `HTTP <status>` is
+the implicit status assert. The authoritative list is hurl's own
+[asserting-response](https://hurl.dev/docs/asserting-response.html) and
+[filters](https://hurl.dev/docs/filters.html) docs; the common shape:
+
+```hurl
+GET ${url:record}
+Authorization: Bearer ${secret:apiToken}
+HTTP 200
+[Asserts]
+jsonpath "$.id"        isUuid                 # type/shape checks — schema-lite
+jsonpath "$.status"    == "active"
+jsonpath "$.createdAt" isIsoDate
+jsonpath "$.tags"      count == 3
+header "Content-Type"  contains "application/json"
+duration               < 1000                 # response-time budget (ms)
+```
+
+- **Queries** (what to read): `status`, `header "<n>"`, `cookie "<n>"`, `body`,
+  `bytes`, `jsonpath "<expr>"`, `xpath "<expr>"`, `regex "<pat>"`, `sha256`,
+  `md5`, `url`, `redirects`, `variable "<n>"`, `duration`, `certificate "<f>"`.
+- **Predicates** (the check): `== != > >= < <=`, `startsWith`, `endsWith`,
+  `contains`, `includes`, `matches "<regex>"`, `exists` / `not exists`,
+  `isEmpty`, and the type family `isBoolean` `isInteger` `isFloat` `isNumber`
+  `isString` `isCollection` `isList` `isObject` `isDate` `isIsoDate` `isUuid`
+  `isIpv4` `isIpv6`.
+- **Filters** transform the value before the predicate, chained left→right:
+  `count`, `nth <n>`, `first`, `last`, `split "<sep>"`, `replace`/`replaceRegex`,
+  `toInt`/`toFloat`/`toString`, `toDate "<fmt>"`, `format "<fmt>"`,
+  `base64Decode`/`base64Encode`, `urlDecode`/`urlEncode`, `daysAfterNow`/
+  `daysBeforeNow`, `jsonpath "<expr>"`, `regex "<pat>"`, `utf8Decode`.
+
+```hurl
+[Asserts]
+jsonpath "$.items"     count > 0
+header "Set-Cookie"    split ";" nth 0 startsWith "session="
+```
+
+**RFC 9535 JSONPath** (hurl 8.0): filter expressions and functions are in scope —
+`jsonpath "$.books[?(@.price < 10)]"`, `length()`, `count()`, `match()`,
+`search()`. Use the bracket form for names with hyphens (`$['x-custom-id']`), and
+assert a missing path with `not exists` (a non-matching path yields *no value*,
+not `count == 0`). The same query+filter grammar drives `[Captures]`, threading a
+value into later steps as `{{name}}`.
+
+### Built-in shape macros
+
+For the most common single-value shape checks, the built-in `Core` pack ships a
+small, product-neutral set of `expect:` macros so you rarely hand-write the
+predicate. Each reads a JSONPath (`{path}`) into the previous response and merges
+one assert:
+
+```gherkin
+When the record is fetched
+Then the value at "$.id" is a uuid
+And  the value at "$.name" is a string
+And  the value at "$.tags" is a non-empty list
+```
+
+Available: `the value at {path} is a string` / `… a number` / `… a boolean` /
+`… a uuid` / `… an ISO date` / `… present` / `… a non-empty list`. Quote the path
+in prose when it contains spaces (the quotes are optional and shed). These are a
+convenience layer over the predicates above — they deliberately do not cover
+whole-body structural matching; reach for a raw `expect:` `hurl:` block for
+anything they omit.
+
 ## Variables — the two tiers
 
 | Syntax | Resolves | When | Examples |
 |---|---|---|---|
-| `${…}` | proef | at lowering (before execution) | `${param}`, `${env:NAME:-default}`, `${run:id}`, `${global:key}`, `${secret:NAME}`, `${fake:name}` |
-| `{{…}}` | hurl | at run time | captures (`{{clientId}}`), secrets (`{{apiToken}}`) |
+| `${…}` | proef | at lowering (before execution) | `${param}`, `${env:NAME:-default}`, `${url:key}`, `${vars:key}`, `${run:id}`, `${global:key}`, `${secret:NAME}`, `${fake:name}` |
+| `{{…}}` | hurl | at run time | captures (`{{recordId}}`), secrets (`{{apiToken}}`) |
 
 `${…}` is recursive (captured arguments may themselves contain `${…}`, depth
 ≤ 8) and `$${` escapes a literal `${`. `${secret:NAME}` never inlines the
 value — it lowers to `{{NAME}}` and the engine injects it through hurl's
 redaction, so artifacts carry placeholders only.
+
+**Config variables** — `${url:key}` and `${vars:key}` come from `proef.toml`'s
+`[url]` / `[vars]` tables, deep-merged with the active `--env` profile. This is how
+you keep URLs and settings out of the feature files entirely; a referenced-but-undefined
+one is a lower-time error. See [`CONFIG.md`](CONFIG.md) (ADR-0012).
 
 **Captures** (`[Captures]` in a hurl block) flow forward within the scenario
 as `{{name}}`. `saveAs: { name: global }` additionally promotes the captured
@@ -166,8 +253,8 @@ persists (`proef doctor` also reports store/key health).
 | `PROEF_HARNESS_SUITE` | nextest harness | Suite directory the harness lists and runs |
 | `PROEF_BIN` | nextest harness | Path to the `proef` binary the harness invokes |
 
-Suite-defined variables (like `PROEF_BASE_URL` in the guides) are a
-convention of `${env:…}` directives, not built-ins — name yours freely.
+Suite-defined env vars (like `PROEF_BASE_URL` in the guides) are a convention
+of `${env:…}` references in `proef.toml`, not built-ins — name yours freely.
 
 ## Style
 

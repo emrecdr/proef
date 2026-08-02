@@ -46,12 +46,12 @@ pub fn builtin_sources() -> Vec<PackSource> {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawPack {
-    pub(crate) templates: BTreeMap<String, RawTemplate>,
+    pub(crate) macros: BTreeMap<String, RawMacro>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct RawTemplate {
+pub(crate) struct RawMacro {
     #[serde(default)]
     pub(crate) params: Vec<String>,
     #[serde(default)]
@@ -276,25 +276,20 @@ pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, F
         }
     }
 
-    // Normalize templates into macros (structural checks happen inline).
+    // Normalize each raw macro (structural checks happen inline).
     for (source_index, pack_name, raw) in &raw_packs {
         let source = &sources[*source_index];
-        for (template_name, template) in &raw.templates {
-            let normalized = validate::normalize_template(
-                template_name,
-                template,
-                pack_name,
-                source,
-                &mut diags,
-            );
+        for (macro_name, raw_macro) in &raw.macros {
+            let normalized =
+                validate::normalize_macro(macro_name, raw_macro, pack_name, source, &mut diags);
             if let Some(macro_) = normalized {
                 // Pass 3: duplicate macro names across packs.
-                if let Some(existing) = set.macros.get(template_name) {
+                if let Some(existing) = set.macros.get(macro_name) {
                     diags.push(
                         Diag::error(
                             "proef::pack::duplicate_macro",
                             format!(
-                                "macro `{template_name}` is defined in both `{}` and `{pack_name}`",
+                                "macro `{macro_name}` is defined in both `{}` and `{pack_name}`",
                                 existing.pack
                             ),
                         )
@@ -303,7 +298,7 @@ pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, F
                         .with_help("macro names are global — rename one of the definitions"),
                     );
                 } else {
-                    set.macros.insert(template_name.clone(), macro_);
+                    set.macros.insert(macro_name.clone(), macro_);
                 }
             }
         }

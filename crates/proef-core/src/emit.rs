@@ -407,7 +407,7 @@ mod tests {
 
     fn scenario() -> LoweredScenario {
         LoweredScenario {
-            name: "Search finds a client".to_owned(),
+            name: "Search finds a record".to_owned(),
             tags: vec!["api".to_owned()],
             line: 4,
             batches: vec![
@@ -428,7 +428,7 @@ mod tests {
                     steps: vec![step(
                         6,
                         "I search for \"Jansen\"",
-                        "GET http://x/search?q=Jansen\nHTTP 200\n[Captures]\nclientId: jsonpath \"$[0].id\"",
+                        "GET http://x/search?q=Jansen\nHTTP 200\n[Captures]\nrecordId: jsonpath \"$[0].id\"",
                         false,
                         Some("run the search"),
                     )],
@@ -471,10 +471,10 @@ mod tests {
         let world = World::new(store);
 
         let artifact = emit(&scenario(), "500_demo", &world).unwrap();
-        assert_eq!(artifact.slug, "500-demo--search-finds-a-client");
+        assert_eq!(artifact.slug, "500-demo--search-finds-a-record");
 
         let lines: Vec<&str> = artifact.hurl_text.lines().collect();
-        assert_eq!(lines[0], "# proef artifact — Search finds a client");
+        assert_eq!(lines[0], "# proef artifact — Search finds a record");
         assert_eq!(lines[1], "# source: tests/features/demo.feature:4");
         assert!(lines[2].contains("--variables-file"), "{}", lines[2]);
         assert_eq!(
@@ -491,7 +491,7 @@ mod tests {
         assert_eq!(map.entries[0].hurl_lines, [7, 8]);
         assert!(map.entries[0].optional);
         assert_eq!(map.entries[0].batch, 0);
-        assert_eq!(map.entries[1].captures, vec!["clientId"]);
+        assert_eq!(map.entries[1].captures, vec!["recordId"]);
         assert_eq!(map.entries[1].batch, 1);
         let [start, end] = map.entries[1].hurl_lines;
         assert_eq!(lines[start - 1], "GET http://x/search?q=Jansen");

@@ -1,12 +1,51 @@
 //! CLI subcommand implementations.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use proef_core::engine::{DoctorStatus, EngineFactory};
 use proef_core::error::ExitCode;
 
+use crate::config::ProjectConfig;
 use crate::front;
 use crate::render;
+
+/// Build the injected `${url:…}` / `${vars:…}` scope for the active environment
+/// (base deep-merged with `[env.<name>]`) from an already-loaded config. An absent
+/// file yields an empty scope; an unknown `--env` is a user error.
+fn config_vars_for(
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> Result<Arc<BTreeMap<String, String>>, ExitCode> {
+    config
+        .config_vars(active_env)
+        .map(Arc::new)
+        .map_err(|message| {
+            eprintln!("error: {message}");
+            ExitCode::UserError
+        })
+}
+
+/// Load and validate a suite through the front-end (dry-run mode), mapping a
+/// front-end error to its exit code. The shared load path for `flows`,
+/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
+/// raw `FrontError` to SARIF.
+fn load_front(
+    path: &Path,
+    active_env: Option<&str>,
+    run_id: Option<String>,
+    config: &ProjectConfig,
+) -> Result<front::FrontEnd, ExitCode> {
+    let config_vars = config_vars_for(active_env, config)?;
+    front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        run_id,
+        config_vars,
+    )
+    .map_err(|err| report_front_error(&err))
+}
 
 /// `proef doctor` — run every engine-contributed environment check and report.
 ///
@@ -64,13 +103,43 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
+#[allow(clippy::too_many_arguments)]
 pub fn dry_run(
     path: &Path,
-    tags: &[String],
+    tags: Option<&proef_core::tags::TagExpr>,
     scenario: Option<&str>,
     scenario_file: Option<&str>,
+    active_env: Option<&str>,
+    run_id: Option<String>,
+    sarif: Option<&Path>,
+    config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
+    let config_vars = match config_vars_for(active_env, config) {
+        Ok(vars) => vars,
+        Err(code) => return code,
+    };
+    let result = front::run(
+        path,
+        proef_core::resolve::ResolveMode::DryRun,
+        run_id,
+        config_vars,
+    );
+
+    // SARIF export (shift-left gate): serialize the validation findings —
+    // warnings on success, the diagnostic list on failure — before rendering.
+    if let Some(sarif_path) = sarif {
+        let diags: Vec<&proef_core::diag::Diag> = match &result {
+            Ok(front) => front.warnings.iter().collect(),
+            Err(proef_core::diag::FrontError::Diagnostics(list)) => list.iter().collect(),
+            Err(proef_core::diag::FrontError::Core(_)) => Vec::new(),
+        };
+        match crate::sarif::write(&diags, sarif_path) {
+            Ok(()) => eprintln!("sarif report: {}", sarif_path.display()),
+            Err(message) => eprintln!("error: {message}"),
+        }
+    }
+
+    let front = match result {
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };
@@ -116,10 +185,10 @@ pub fn dry_run(
     }
 
     render::print_all(&front.warnings);
-    if (!tags.is_empty() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
+    if (tags.is_some() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
         return front::no_scenarios_matched();
     }
-    let selected_note = if tags.is_empty() && scenario.is_none() && scenario_file.is_none() {
+    let selected_note = if tags.is_none() && scenario.is_none() && scenario_file.is_none() {
         String::new()
     } else {
         format!(" ({} selected by the filters)", totals.1)
@@ -137,10 +206,15 @@ pub fn dry_run(
 }
 
 /// `proef flows` — list every scenario with its anchor and tags.
-pub fn flows(path: &Path, output_json: bool) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, None) {
+pub fn flows(
+    path: &Path,
+    output_json: bool,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let front = match load_front(path, active_env, None, config) {
         Ok(front) => front,
-        Err(err) => return report_front_error(&err),
+        Err(code) => return code,
     };
     if output_json {
         for feature in &front.features {
@@ -182,13 +256,119 @@ pub fn flows(path: &Path, output_json: bool) -> ExitCode {
     ExitCode::Success
 }
 
+/// A macro is "dead" only if it's a user-pack pattern macro nothing bound:
+/// `use:`-only helpers compose at lower time, and an unused builtin is shared
+/// library surface, not the author's dead code.
+fn is_dead_macro(pack: &str, calls: usize, has_pattern: bool) -> bool {
+    has_pattern && calls == 0 && !pack.starts_with("builtin:")
+}
+
+/// `proef macros` — every loaded macro with its call count across the corpus,
+/// flagging pattern macros that no scenario binds (dead prose bindings).
+/// `use:`-only helpers compose during lowering (never a bound step), so they are
+/// listed but never flagged unused. Counts the whole corpus, ignoring `--tags`.
+pub fn macros(
+    path: &Path,
+    output_json: bool,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let front = match load_front(path, active_env, None, config) {
+        Ok(front) => front,
+        Err(code) => return code,
+    };
+
+    // Which pattern macro each bound scenario step invoked.
+    let mut calls: BTreeMap<&str, usize> = BTreeMap::new();
+    for feature in &front.features {
+        for scenario in &feature.scenarios {
+            for step in &scenario.bound.steps {
+                *calls.entry(step.macro_name.as_str()).or_default() += 1;
+            }
+        }
+    }
+
+    // Grouped by pack then name (the map is keyed by name, so the sort is what
+    // groups by pack); `n` is a macro's step-bind count.
+    let mut rows: Vec<_> = front.packs.macros.values().collect();
+    rows.sort_unstable_by(|a, b| {
+        (a.pack.as_str(), a.name.as_str()).cmp(&(b.pack.as_str(), b.name.as_str()))
+    });
+
+    // Advisory authoring-hygiene lint: pattern macros differing only in their
+    // captures (same literal skeleton) are confusable. Reported, never gated.
+    let near_dups = proef_core::matcher::near_duplicate_macros(rows.iter().filter_map(|m| {
+        m.pattern
+            .as_deref()
+            .map(|pattern| (m.name.as_str(), pattern))
+    }));
+
+    if output_json {
+        for m in &rows {
+            let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+            let json = serde_json::json!({
+                "name": m.name,
+                "pack": m.pack,
+                "pattern": m.pattern.is_some(),
+                "calls": n,
+                "unused": is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()),
+                "nearDuplicateOf": near_dups.get(m.name.as_str()).cloned().unwrap_or_default(),
+            });
+            crate::render::outln!("{json}");
+        }
+        return ExitCode::Success;
+    }
+
+    let mut unused = 0usize;
+    let mut near_dup_count = 0usize;
+    let mut current_pack = "";
+    for m in &rows {
+        if m.pack.as_str() != current_pack {
+            crate::render::outln!("{}", m.pack);
+            current_pack = m.pack.as_str();
+        }
+        let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+        let marker = if m.pattern.is_none() {
+            "  (use:-only helper)"
+        } else if is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()) {
+            unused += 1;
+            "  UNUSED — no scenario binds it"
+        } else if n == 0 {
+            "  (builtin, unused here)"
+        } else {
+            ""
+        };
+        let near = match near_dups.get(m.name.as_str()) {
+            Some(siblings) => {
+                near_dup_count += 1;
+                format!("  ~ near-duplicate of {}", siblings.join(", "))
+            }
+            None => String::new(),
+        };
+        crate::render::outln!("  {:<28} {n}×{marker}{near}", m.name);
+    }
+    let near_note = if near_dup_count > 0 {
+        format!(" · {near_dup_count} near-duplicate")
+    } else {
+        String::new()
+    };
+    crate::render::outln!("\n{} macro(s) · {unused} unused{near_note}", rows.len());
+    ExitCode::Success
+}
+
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`
 /// plus sidecars (`.map.json`, `.vars`) for a stable CI hand-off (ADR-0010).
 /// The written bytes are exactly the parse-validated emission.
-pub fn artifacts(path: &Path, out_dir: &Path, run_id: Option<String>) -> ExitCode {
-    let front = match front::run(path, proef_core::resolve::ResolveMode::DryRun, run_id) {
+pub fn artifacts(
+    path: &Path,
+    out_dir: &Path,
+    run_id: Option<String>,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let front = match load_front(path, active_env, run_id, config) {
         Ok(front) => front,
-        Err(err) => return report_front_error(&err),
+        Err(code) => return code,
     };
 
     if let Err(err) = std::fs::create_dir_all(out_dir) {

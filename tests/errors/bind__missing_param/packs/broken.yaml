@@ -1,7 +1,7 @@
-templates:
+macros:
   create:
     params: [firstName]
-    match: I create a client
+    match: I create a record
     steps:
       - hurl: |
           POST http://x/${firstName}

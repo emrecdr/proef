@@ -1,4 +1,4 @@
-templates:
+macros:
   alpha:
     match: I loop
     steps:

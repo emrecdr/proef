@@ -80,7 +80,7 @@ jobs:
           build-roots: target\${{ matrix.target }}\release\build
 
       - name: Install cargo-auditable
-        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
         with:
           tool: cargo-auditable
 
@@ -106,7 +106,7 @@ jobs:
           archive_name="proef-${RELEASE_TAG}-${{ matrix.target }}"
           stage_dir="dist/stage"
           mkdir -p "$stage_dir"
-          cp LICENSE-MIT LICENSE-APACHE README.md CHANGELOG.md "$stage_dir/"
+          cp LICENSE-MIT LICENSE-APACHE README.md docs/CHANGELOG.md "$stage_dir/"
           if [[ "${{ matrix.target }}" == *windows* ]]; then
             cp "target/${{ matrix.target }}/release/proef.exe" "$stage_dir/proef.exe"
             # The vcpkg runtime DLLs ride along — the binary is unusable
@@ -164,7 +164,7 @@ jobs:
             $0 ~ "^## \\[" ver "\\]" { grab = 1; next }
             grab && /^## \[/ { exit }
             grab { print }
-          ' CHANGELOG.md > release-notes.md
+          ' docs/CHANGELOG.md > release-notes.md
           if ! [ -s release-notes.md ]; then
             echo "no CHANGELOG section found for $version" >&2
             exit 1

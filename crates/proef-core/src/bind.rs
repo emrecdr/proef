@@ -8,6 +8,7 @@
 //! bind-time errors anchored to the step's line.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::diag::{Diag, Severity};
@@ -91,7 +92,7 @@ fn bind_scenario(
                         "proef::bind::unbound_step",
                         format!("no macro matches `{}`{suggestion}", step.text),
                     ))
-                    .with_help("add a `match:` pattern to a pack macro, or fix the step text"),
+                    .with_help(macro_stub(&step.text)),
                 );
                 continue;
             }
@@ -226,6 +227,35 @@ fn closest_pattern<'a>(step_text: &str, defs: &[(&'a str, &str)]) -> Option<&'a 
         .map(|(_, pattern)| pattern)
 }
 
+/// A paste-ready pack-macro stub for an unbound step. Quoted tokens become
+/// `{argN}` captures (the matcher sheds those quotes when binding), so an author
+/// can drop the stub into a pack and fill in the request instead of hand-writing
+/// the `match:`/`hurl:` scaffold.
+fn macro_stub(step_text: &str) -> String {
+    let mut pattern = String::new();
+    let mut arg = 0u32;
+    let mut chars = step_text.chars();
+    while let Some(c) = chars.next() {
+        if c == '"' || c == '\'' {
+            // Consume through the matching quote — the quoted run is one capture.
+            for q in chars.by_ref() {
+                if q == c {
+                    break;
+                }
+            }
+            arg += 1;
+            let _ = write!(pattern, "{{arg{arg}}}");
+        } else {
+            pattern.push(c);
+        }
+    }
+    format!(
+        "add a macro to a pack (or fix the step text), e.g.:\n\nmacros:\n  \
+         newMacro:\n    match: {pattern}\n    steps:\n      - hurl: |\n          \
+         GET ${{url:base}}/PATH\n          HTTP 200"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -244,7 +274,7 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  search:\n    params: [term, index]\n    defaults: { index: clients }\n    match: \"I search for {term}\"\n    steps:\n      - hurl: |\n          GET http://x/${index}?q=${term}\n          HTTP 200\n",
+                "macros:\n  search:\n    params: [term, index]\n    defaults: { index: records }\n    match: \"I search for {term}\"\n    steps:\n      - hurl: |\n          GET http://x/${index}?q=${term}\n          HTTP 200\n",
             ),
         }];
         pack::load(&sources, KINDS).unwrap()
@@ -255,20 +285,35 @@ mod tests {
     }
 
     #[test]
+    fn macro_stub_parametrizes_quoted_tokens() {
+        // Quoted runs become sequential {argN} captures (double and single quotes).
+        let stub = macro_stub("the operator searches for \"Acme\" in 'people'");
+        assert!(
+            stub.contains("match: the operator searches for {arg1} in {arg2}"),
+            "{stub}"
+        );
+        // A quote-free step keeps its literal text as the pattern.
+        assert!(
+            macro_stub("all done").contains("match: all done"),
+            "no-quote stub"
+        );
+    }
+
+    #[test]
     fn captures_tables_and_defaults_assemble_args() {
         let feature = make_feature("    When I search for \"Jansen\"\n");
         let bound = bind(&feature, &packs()).unwrap();
         let step = &bound[0].steps[0];
         assert_eq!(step.macro_name, "search");
         assert_eq!(step.args["term"], "Jansen");
-        assert_eq!(step.args["index"], "clients", "default filled");
+        assert_eq!(step.args["index"], "records", "default filled");
     }
 
     #[test]
     fn table_overrides_defaults_but_not_captures() {
-        let feature = make_feature("    When I search for Jansen\n      | index | users |\n");
+        let feature = make_feature("    When I search for Jansen\n      | index | people |\n");
         let bound = bind(&feature, &packs()).unwrap();
-        assert_eq!(bound[0].steps[0].args["index"], "users");
+        assert_eq!(bound[0].steps[0].args["index"], "people");
 
         let feature = make_feature("    When I search for Jansen\n      | term | other |\n");
         let errs = bind(&feature, &packs()).unwrap_err();
@@ -289,7 +334,7 @@ mod tests {
 
     #[test]
     fn unknown_table_key_and_bad_table_shape_error() {
-        let feature = make_feature("    When I search for Jansen\n      | indx | users |\n");
+        let feature = make_feature("    When I search for Jansen\n      | indx | people |\n");
         let errs = bind(&feature, &packs()).unwrap_err();
         assert_eq!(errs[0].code, "proef::bind::unknown_table_key");
         assert!(errs[0].message.contains("did you mean `index`?"));
@@ -304,7 +349,7 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  a:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://x\n  b:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://y\n",
+                "macros:\n  a:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://x\n  b:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://y\n",
             ),
         }];
         let packs = pack::load(&sources, KINDS).unwrap();
@@ -319,11 +364,11 @@ mod tests {
         let sources = vec![PackSource {
             name: "test.yaml".into(),
             text: Arc::from(
-                "templates:\n  create:\n    params: [firstName, lastName]\n    match: I create a client\n    steps:\n      - hurl: |\n          POST http://x/${firstName}/${lastName}\n",
+                "macros:\n  create:\n    params: [firstName, lastName]\n    match: I create a record\n    steps:\n      - hurl: |\n          POST http://x/${firstName}/${lastName}\n",
             ),
         }];
         let packs = pack::load(&sources, KINDS).unwrap();
-        let feature = make_feature("    When I create a client\n");
+        let feature = make_feature("    When I create a record\n");
         let errs = bind(&feature, &packs).unwrap_err();
         assert_eq!(errs.len(), 2);
         assert!(errs.iter().all(|d| d.code == "proef::bind::missing_param"));

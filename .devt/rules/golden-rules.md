@@ -1,240 +1,113 @@
-# Golden Rules
-
-> Template baseline — the project's own `CLAUDE.md` and documented conventions WIN on any conflict with this file. Tailor it to the project (`/devt:setup`); untailored copies are flagged by `/devt:setup --health`.
-
-Devt-integration document for Rust projects. Read by every agent. These rules are non-negotiable — they encode invariants that produce buggy / unsound / unreviewable code when violated.
-
-## 1. No `unwrap()` / `expect()` Outside Tests + `main`
-
-```rust
-// WRONG — panic in production path
-let user = repo.find(&id).await.unwrap();
+# Golden Rules — proef
 
-// CORRECT — propagate via `?`
-let user = repo.find(&id).await?;
-```
+> Grounded in this repo's `CLAUDE.md` "Hard constraints" and `docs/` (ADRs + TECH-SPEC).
+> Those sources WIN on any conflict. Read by every agent — these are non-negotiable.
 
-Allowed contexts:
+These encode invariants that break proef (subtly, at a distance) when violated. Get one
+wrong and the seam, the artifacts, or the secret guarantees fail.
 
-- Test functions (`#[test]`, `#[tokio::test]`, `#[cfg(test)] mod tests`)
-- `main` (top-level error becomes process exit)
-- After a check that proves invariance:
-  ```rust
-  if let Some(x) = maybe {
-      // `expect()` here is fine — we just checked `is_some()`
-  }
-  ```
+## 1. hurl pins are exact and sacred
 
-When unavoidable, use `expect("invariant: <reason>")` not `unwrap()`. The message must state WHY the value is guaranteed present.
+`hurl = "=8.0.1"` and `hurl_core = "=8.0.1"`, built `--locked`. NEVER bump them in a
+normal change — the crates break API in minor releases. Upgrades go only through the
+canary + runbook (ADR-0003, IMPLEMENTATION-PLAN §7); fork patches ride
+`[patch."crates-io"]` and get PR'd upstream. A pin bump in a feature/fix diff is a bug.
 
-## 2. Use `?` for Error Propagation — Not Manual `match`
+## 2. proef-core is pure (sans-IO lite)
 
-```rust
-// WRONG — manual match adds noise without adding behavior
-let user = match repo.find(&id).await {
-    Ok(u) => u,
-    Err(e) => return Err(e),
-};
+`proef-core` does no IO, reads no clock/env, and generates no randomness. `run_id`,
+timestamps, and env snapshots are **injected values**. This is what makes snapshots and
+property tests deterministic. Do not reach for `std::fs`, `SystemTime::now()`,
+`std::env::var`, or an RNG in core for convenience — thread the value in instead.
 
-// CORRECT
-let user = repo.find(&id).await?;
-```
+## 3. hurl is the only engine
 
-Reach for `match` only when each variant requires distinct handling (different error wrapping, recovery branch, logging at this site).
+proef tests APIs by embedding hurl — that is the whole product. The `EngineFactory`/
+`EngineSession` seam (ADR-0002) is architectural readiness, not a scheduled feature.
+Never introduce another engine's vocabulary (web/CDP, adb/tablet, browser, …) anywhere:
+not in types, names, docs, or examples. See `[[hurl-engine-only]]`.
 
-## 3. Library Errors Are `thiserror`, Application Errors Are `anyhow`
+## 4. Two-tier variables, and secrets never leak (ADR-0005)
 
-```rust
-// Library crate — concrete enum, callers can match
-#[derive(Debug, thiserror::Error)]
-pub enum RepoError {
-    #[error("not found")]
-    NotFound,
-    #[error("connection failed: {0}")]
-    ConnectionFailed(#[from] sqlx::Error),
-}
+`${…}` resolves at **lower time** (recursive, depth ≤ 8, `$${` escapes). `{{…}}` is
+**hurl run-time** and must pass through core untouched. External config variables
+`${url:key}` / `${vars:key}` are lower-time too — sourced from `proef.toml` `[url]`/`[vars]`
+deep-merged with the active `[env.<name>]` (`--env`/`PROEF_ENV`) and injected into the
+sans-IO core as `LowerCtx::config_vars`; the CLI does the file IO, not core (ADR-0012).
+Secrets go through `VariableSet::insert_secret` and never appear in artifacts, events,
+logs, reports, or the persistent World. `saveAs: global` must refuse a secret-valued
+capture. This is a property-tested invariant — keep it green.
 
-// Application crate — context-rich, opaque
-async fn handle() -> anyhow::Result<()> {
-    let user = repo.find(&id)
-        .await
-        .context("failed to load user during checkout")?;
-    Ok(())
-}
-```
+## 5. Artifacts are the executed input (ADR-0010)
 
-Never use `Box<dyn Error>` in public library API. Never use `thiserror` enums for high-level application orchestration where ad-hoc context messages matter more than typed variants.
+The emitted `.hurl` text and the bytes handed to `parse_hurl_file` must be identical
+(hash-asserted). The canonical format is snapshot-locked. Emitter changes require a
+deliberate `cargo insta review` — never blind-accept a snapshot diff.
 
-## 4. Document `# Safety` and `# Panics` Sections
+## 6. Events are an additive-only versioned schema (ADR-0008)
 
-```rust
-/// Reads from the buffer without bounds checking.
-///
-/// # Safety
-/// Caller must ensure `idx < self.len()`. Violating this is undefined behavior.
-pub unsafe fn read_unchecked(&self, idx: usize) -> u8 {
-    *self.ptr.add(idx)
-}
+The serde `Event` enum carries a `schema` field; changes are additive-only. The JSONL run
+record IS the event stream — do not invent a second record format.
 
-/// Decode and return the value.
-///
-/// # Panics
-/// Panics if the buffer length is less than 4 bytes.
-pub fn decode(buf: &[u8]) -> u32 {
-    assert!(buf.len() >= 4);
-    u32::from_le_bytes(buf[..4].try_into().unwrap())
-}
-```
+## 7. Exit codes are a contract (ADR-0009)
 
-Every `unsafe fn` MUST have a `# Safety` rustdoc section. Every function that can panic on input variation MUST have a `# Panics` section.
+`0` ok · `1` test failure · `2` user error · `3` system error — a typed enum pinned by
+assert_cmd tests. Error variants map through the fault taxonomy. Only `proef-cli` uses
+miette; `proef-core` and engines return typed errors.
 
-## 5. Every `unsafe` Block Has a `SAFETY:` Comment
+## 8. Never add an untagged serde enum carrying numbers
 
-```rust
-// SAFETY: idx is bounds-checked in the public caller; this is a hot path
-// where the redundant check is measurable.
-unsafe { *self.ptr.add(idx) }
-```
+hurl feature-unifies `serde_json/arbitrary_precision` into every build, which breaks
+`#[serde(untagged)]` enums on numeric variants. Write hand-rolled visitors for scalars
+(see `proef_core::world::Value`); internally-tagged enums survive, untagged-with-numbers
+do not. `value_json_forms_round_trip` pins this.
 
-The comment must state the invariant that makes the operation safe. "Looks fine" / "should be OK" / no comment = audit-fail.
+## 9. Banned dependencies
 
-## 6. No `unsafe` Without Justification
+No `reqwest` (superseded by the embedded engine), no `async-trait`/`maybe-async`
+(ADR-0006 — traits are sync + dyn), no tokio **runtime** (only `tokio-util` with
+`default-features = false` for `CancellationToken`). Datetime is `jiff`, never `chrono`
+(in our code). YAML is `serde_norway`, never `serde_yaml`/`serde_yml`. `notify` pinned
+`=8.2.0`.
 
-Prefer `#![forbid(unsafe_code)]` at the crate root for libraries that don't need `unsafe`. When `unsafe` IS needed, the justification is captured in:
+## 10. Diagnostics use byte offsets
 
-1. The `// SAFETY:` comment at the call site
-2. The `# Safety` rustdoc section on any `unsafe fn`
-3. A test exercising the boundary, where feasible
+gherkin `Span` = 0-based **byte** offsets, end-exclusive → miette `SourceSpan`. The
+parser appends a trailing newline when missing (normalize/clamp). `LineCol.column` is
+char-counted — never use it in byte math.
 
-Crates that lift `forbid(unsafe_code)` require code-review approval — soundness is not a single-author decision.
+## 11. No `unwrap`/`expect` in library paths
 
-## 7. Minimize `mut` and `.clone()`
+Library code (`proef-core`, engines) propagates via `?` and typed errors; CLI `main` is
+the only excepted path. Never silently swallow an error — `let _ = result;` is banned:
+warn or classify it (map to a fault). Poisoned `Mutex`: recover via
+`PoisonError::into_inner` when no cross-invariant was broken, else surface a System fault.
 
-Each `mut` or `.clone()` is a signal — usually fine, sometimes the right answer, sometimes a sign of a borrowing redesign. Reviewers ask: "Why this instead of borrowing / rebinding / `Cow<'_, T>` / `Arc<T>`?" An answer like "the borrow checker complained" is insufficient — the question is whether the design avoided the borrow correctly.
+## 12. Always `WriteMode::Buffered` in library paths
 
-## 8. No `pub` Without Justification
+`Immediate` interleaves output under threads. Scenario-per-thread execution relies on
+buffered writes.
 
-Default to private. Promote to `pub(crate)` when crossed by sibling modules. Promote to `pub` only when external consumers genuinely need access. Each `pub` is API surface that must be maintained.
+## 13. A new architectural decision needs a new ADR in the same PR
 
-## 9. Tests Live Beside Source
+Add `docs/adr/ADR-00NN-*.md` (next number, same format) whenever you diverge from or
+extend a decision. Diverging from an ADR without a superseding ADR is a bug. Keep the
+`CLAUDE.md` Status list current as milestones land.
 
-```rust
-// src/user.rs
-pub fn validate(email: &str) -> bool { ... }
+## 14. Never weaken a test, gate, or assertion to make a run pass
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_empty_string() {
-        assert!(!validate(""));
-    }
-}
-```
-
-Unit tests in `#[cfg(test)] mod tests` blocks at the bottom of the source file. Integration tests in `tests/`. Never split unit tests into a separate file — proximity to the code under test is part of the test's documentation value.
-
-## 10. Async Functions Are Cancellation-Safe by Default
-
-When an async function holds resources (locks, file handles, network connections) across `.await` points, it must remain correct under cancellation — the caller dropping the future at any await point should not corrupt state.
-
-When a function is NOT cancellation-safe, document it at the top:
-
-```rust
-/// # Cancellation
-/// This function is NOT cancellation-safe. Dropping the future mid-operation
-/// will leave the database connection in an inconsistent state. Wrap calls
-/// in `tokio::task::spawn` if cancellation handling is required.
-pub async fn risky_update(&self, ...) -> Result<...> { ... }
-```
-
-## 11. No `println!` / `eprintln!` for Logging
-
-```rust
-// WRONG
-println!("loaded {} users", users.len());
-
-// CORRECT
-tracing::info!(count = users.len(), "loaded users");
-```
-
-`println!`/`eprintln!` are for binary stdout/stderr that is part of the program's contract (CLI output). Diagnostic logging goes through `tracing` (preferred) or `log`.
-
-## 12. No `static mut` / Global Mutable State
-
-```rust
-// WRONG — undefined behavior under concurrent access
-static mut COUNTER: u32 = 0;
-
-// CORRECT — use atomics
-use std::sync::atomic::{AtomicU32, Ordering};
-static COUNTER: AtomicU32 = AtomicU32::new(0);
-```
-
-For sharable initialized-once state, use `OnceCell` / `OnceLock` (standard) or `once_cell::sync::Lazy` / `LazyLock`.
-
-## 13. Format with `cargo fmt` — Always
-
-No exceptions. Override only via `rustfmt.toml` configuration at repo root, never via inline `#[rustfmt::skip]` without a comment explaining the reason.
-
-## 14. Clippy Warnings Are Errors
-
-`cargo clippy -- -D warnings` is the gate. Allowing a lint requires a justification comment:
-
-```rust
-#[allow(clippy::too_many_arguments)] // 8-arg constructor is the public API stability contract — refactor would be breaking
-pub fn new(...) -> Self { ... }
-```
-
-## 15. Newtype Wrappers for Domain Identifiers
-
-```rust
-// WRONG — bare primitives lose type safety
-fn find_user(id: u64) { ... }
-fn find_order(id: u64) { ... }  // can pass user_id by accident
-
-// CORRECT — newtype provides compile-time discrimination
-pub struct UserId(u64);
-pub struct OrderId(u64);
-
-fn find_user(id: UserId) { ... }
-fn find_order(id: OrderId) { ... }
-```
-
-## 16. Cargo.lock Is Committed for Binaries
-
-For applications and CLI tools, commit `Cargo.lock`. For libraries published to crates.io, exclude it via `.gitignore`. Mixed workspaces (binary + libraries) commit it.
-
-## 17. No Drift Between `Cargo.toml` and `Cargo.lock`
-
-```bash
-cargo check --locked     # fails if Cargo.lock would need changes
-```
-
-CI must run with `--locked` or `--frozen` to catch dependency drift before merge.
-
-## 18. No `extern crate` in Edition 2018+
-
-Edition 2018+ replaced `extern crate` with automatic dependency resolution from `Cargo.toml`. Only exception: linking against `alloc` / `core` / `proc_macro` in `no_std` contexts.
-
-## 19. Trait Implementations Stay Close to the Type
-
-When you own the type, put `impl Trait for Type` near the type definition. When you own the trait but not the type (foreign type), document why the impl is here and not elsewhere.
-
-## 20. Public API Changes Require Semver Bump
-
-Breaking changes to public types, functions, or trait signatures require a major version bump (or pre-1.0 minor bump). Run `cargo semver-checks` on release-prep cycles to catch unintentional breakages.
-
----
-
-## 21. Never Weaken Tests to Pass
-
-Never remove, skip, or weaken a failing test, gate, or assertion to make a run
-pass — fix the code, not the test. A deleted test cannot fail; pass/fail
-diffing is blind to it, and the gap ships as missing or buggy functionality.
-If a test is genuinely wrong, change it visibly and state why in the output
-artifact — the verifier diffs test counts against the baseline and flags
-silent drops.
-
----
+Fix the code, not the test. Snapshots, property invariants, the error corpus, and the
+exit-code suite are load-bearing. If a test is genuinely wrong, change it visibly and say
+why — silent drops are caught by diffing test counts against the baseline.
+
+## 15. One way to do one thing
+
+Every capability has exactly **one** canonical implementation, command, code path, and
+format — never two mechanisms that reach the same outcome. This is the single-seam
+discipline generalized: one engine seam (ADR-0002), one run record (ADR-0008), one
+artifact format (ADR-0010), one mock backend (`proef-fixture`, ADR-0011), one config
+precedence chain. When a second way appears — a duplicate helper, a parallel command, a
+second server, an alternate on-disk format — **unify onto one and delete the other in the
+same change**; never leave both. New redundancy is a defect even when both paths work:
+it doubles the surface that can drift, and drift between two "equivalent" paths is a bug
+generator. Prefer generalizing the one mechanism over adding a special-case second.

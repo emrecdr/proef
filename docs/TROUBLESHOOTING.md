@@ -32,10 +32,25 @@ value available. Fix: `proef secret set NAME` (or `export
 PROEF_SECRET_<NAME>=…`). In CI, see
 [AUTHORING — Secrets in CI](AUTHORING.md#secrets-in-ci).
 
-**Exit 3 with connection errors** — the target is unreachable. Check the URL
-your `# baseURL:` directive resolves to (a `--dry-run` prints nothing wrong
-because no request is sent), then the network. The dev fixture
-(`cargo run -p xtask -- fixture`) gives you a local target.
+**"unknown environment `<name>`"** — `--env <name>` (or `PROEF_ENV`) names an
+environment `proef.toml` doesn't define; the error lists the known ones. Fix the
+name or add the `[env.<name>]` section. Exit 2.
+
+**"<url|vars> variable `<key>` is not set"** (`resolve::missing_config_var`) — a
+pack references `${url:key}` / `${vars:key}` that neither the base `[url]`/`[vars]`
+nor the active `[env.<name>]` defines. Add it, or select the environment that has
+it with `--env`. See [CONFIG.md](CONFIG.md).
+
+**"no path given and no default suite found"** — `proef test` got no path and there
+is no `[run] suite` in `proef.toml` nor a `tests/` directory. Pass a path, set
+`[run] suite`, or create `tests/`. Exit 2.
+
+**Exit 3 with connection errors** — the target is unreachable. Check the URL your
+`${url:base}` resolves to for the active `--env` (a
+`--dry-run` prints nothing wrong because no request is sent), then the network. The
+dev fixture (`cargo run -p xtask -- fixture`) binds the default `${url:base}` port
+(8787), so with no `PROEF_BASE_URL` set it becomes your local target automatically
+(it falls back to an ephemeral port, printing `PROEF_BASE_URL`, only if 8787 is busy).
 
 **"batch budget exceeded — scenario thread abandoned"** — the watchdog killed
 a batch that outran its computed budget (timeouts × attempts + delays +
@@ -78,6 +93,8 @@ libcurl. Prebuilt binaries (brew/binstall/GitHub Releases) need none of this.
 
 Every run leaves `.proef-runs/<run-id>/`: `events.jsonl` (the machine record —
 [EVENTS.md](EVENTS.md)), `run.log` (console mirror), and `artifacts/` with the
-exact executed `.hurl` files. `proef explain` summarizes the latest run; the
-`reproduce: hurl --test …` line under a failure replays the artifact with
-stock hurl, taking proef out of the loop entirely.
+exact executed `.hurl` files. `proef explain` summarizes the latest run,
+`proef diff [base] [new]` compares two of them (regressions, fixes, flakiness,
+perf), and `proef report [run]` writes a self-contained HTML page of a run; the
+`reproduce: hurl --test …` line under a failure replays the artifact with stock
+hurl, taking proef out of the loop entirely.

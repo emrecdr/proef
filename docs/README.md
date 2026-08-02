@@ -23,13 +23,15 @@ repo-root `CLAUDE.md` carry the live status.
 | 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | test authors |
 | 0 | [EVENTS.md](EVENTS.md) | The `events.jsonl` wire schema for CI consumers | CI engineers |
 | 1 | [PRD.md](PRD.md) | What are we building, for whom, and how do we know it works? | everyone |
-| 2 | [adr/](adr/) — ADR-0001…0011 | Why is it built this way? Each decision, alternatives, consequences | engineers |
+| 2 | [adr/](adr/) — ADR-0001 onward | Why is it built this way? Each decision, alternatives, consequences | engineers |
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
+| — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: architecture-validated candidate improvements (proposed, not committed) | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
-| — | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
-| — | [../SECURITY.md](../SECURITY.md) | Threat model and vulnerability reporting | everyone |
+| — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
+| — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |
+| — | [CHANGELOG.md](CHANGELOG.md) | Per-release change log (SemVer) | everyone |
 | — | [../CLAUDE.md](../CLAUDE.md) | Repo-root guidance for Claude Code: constraints, seam facts, commands, status | coding agents |
 
 ## Decision log (ADR index)
@@ -47,6 +49,11 @@ repo-root `CLAUDE.md` carry the live status.
 | [0009](adr/ADR-0009-error-taxonomy-exit-codes.md) | User/TestFailure/System → exit 2/1/3; miette at the CLI edge | Accepted |
 | [0010](adr/ADR-0010-artifacts-as-contract.md) | Emitted `.hurl` artifacts are the executed input (same bytes) + sidecars | Accepted |
 | [0011](adr/ADR-0011-fixture-server-tiny-http.md) | Fixture server is synchronous `tiny_http`, not axum (tokio-runtime ban) | Accepted |
+| [0012](adr/ADR-0012-project-config-and-environments.md) | Project config & environments in `proef.toml` (`[url]`/`[vars]`/`[env.*]`, `--env`, deep-merge) | Accepted |
+| [0013](adr/ADR-0013-typed-macro-parameters.md) | Typed macro parameters (`params` name→type map; best-effort literal-args lint) | Proposed (defer) |
+| [0014](adr/ADR-0014-suite-setup-teardown.md) | Suite-level setup/teardown (`[run] setup`/`teardown` features, CLI-edge orchestration) | Accepted |
+| [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
+| [0016](adr/ADR-0016-openapi-suite-generator.md) | OpenAPI → suite generator: one-shot seed allowed under a bright line; oracle/drift mode permanently rejected | Proposed (defer) |
 
 ## Naming & identifiers
 

@@ -46,3 +46,15 @@ Windows build.
 - **Out-of-process fixture binary:** slower startup, port coordination, and a
   lifetime-management problem tests would have to solve; in-process `tiny_http` gives
   free isolation per test.
+
+## Amendment — 2026-07-31 (dev-loop CLI binds the advertised default port)
+
+`Fixture::start()` stays ephemeral (`127.0.0.1:0`) — the integration suite spawns a
+dozen concurrent instances and each needs its own port. But the shipped `proef.toml`
+advertises `base = http://127.0.0.1:8787`, so a first-time `cargo run -p xtask --
+fixture` on a random port left the default unreachable and forced a `PROEF_BASE_URL`
+export. The **dev-loop CLI** (`xtask fixture`, one instance at a time) now calls the
+new `Fixture::start_on(port)` to bind **8787 by default** (override: `... -- fixture
+<port>`), falling back to an ephemeral port — with the `PROEF_BASE_URL` line printed —
+only when 8787 is busy. The library API and the per-test isolation described above are
+unchanged; only the human entry point picks a stable, documented port.

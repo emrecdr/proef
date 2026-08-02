@@ -44,19 +44,34 @@ fn green_corpus_dry_runs_clean() {
 }
 
 #[test]
-fn tags_filter_selects_scenarios() {
-    let assert = proef()
-        .args([
-            "test",
-            "tests/features",
-            "--dry-run",
-            "--tags",
-            "sync-message",
-        ])
+fn tags_filter_selects_by_boolean_expression() {
+    // The `--tags` argument is a boolean expression, not a CSV list. A bare
+    // atom is still a valid expression, and `@` is optional.
+    let selected = |expr: &str| -> String {
+        let assert = proef()
+            .args(["test", "tests/features", "--dry-run", "--tags", expr])
+            .assert()
+            .code(0);
+        String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+    };
+    assert!(
+        selected("sync-note").contains("(1 selected by the filters)"),
+        "bare atom"
+    );
+    assert!(
+        selected("@breadth").contains("(4 selected by the filters)"),
+        "leading @ is optional"
+    );
+    let and_not = selected("api and not breadth");
+    assert!(and_not.contains("(8 selected by the filters)"), "{and_not}");
+    let parens = selected("(api or search) and not breadth");
+    assert!(parens.contains("(8 selected by the filters)"), "{parens}");
+
+    // A malformed expression is a user error (exit 2), before any scenario runs.
+    proef()
+        .args(["test", "tests/features", "--dry-run", "--tags", "api and"])
         .assert()
-        .code(0);
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    assert!(stdout.contains("(1 selected by the filters)"), "{stdout}");
+        .code(2);
 }
 
 #[test]
@@ -64,12 +79,12 @@ fn flows_lists_the_corpus() {
     let assert = proef().args(["flows", "tests/features"]).assert().code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        stdout.contains("A message sent via the API appears in the client feed"),
+        stdout.contains("A note posted via the API appears on the board"),
         "{stdout}"
     );
-    assert!(stdout.contains("@sync-message"), "{stdout}");
+    assert!(stdout.contains("@sync-note"), "{stdout}");
     assert!(
-        stdout.contains("Search over clients returns 200"),
+        stdout.contains("Search over records returns 200"),
         "{stdout}"
     );
 }
@@ -85,14 +100,218 @@ fn schema_prints_merged_json() {
     );
 }
 
-/// Real execution against the corpus with no target configured: strict
-/// resolution finds `${env:PROEF_BASE_URL}` (and the secret) unbound — a
-/// user-input fault, exit 2, before any request is attempted.
+/// `proef macros`: a pattern macro nothing binds is UNUSED; a `use:`-only macro
+/// is a labelled helper, never counted unused (it composes at lower time).
 #[test]
-fn execution_without_target_env_is_a_user_error() {
+fn macros_flags_unused_pattern_macros_and_labels_helpers() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the thing is done\n",
+    )
+    .unwrap();
+    // usedMacro is bound and composes `helper` (use:-only); unusedMacro has a
+    // `match:` no scenario says.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  usedMacro:\n    match: the thing is done\n    steps:\n      - use: helper\n  \
+         unusedMacro:\n    match: nobody says this\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/x\n          HTTP 200\n  helper:\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/y\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("unusedMacro") && stdout.contains("UNUSED"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("helper") && stdout.contains("use:-only helper"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("1 unused"), "{stdout}");
+}
+
+/// `proef macros`: two pattern macros that differ only in their capture name
+/// share a literal skeleton and are flagged as near-duplicates — an advisory
+/// that never changes the exit code (a legitimately similar family, with
+/// distinct literals, is left alone).
+#[test]
+fn macros_flags_near_duplicate_pattern_macros() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    // The feature binds a third, unambiguous macro; the near-duplicate pair is
+    // unused (binding either would be ambiguous — that is the confusion the
+    // lint warns about) but still flagged.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the system is pinged\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  ping:\n    match: the system is pinged\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/ping\n          HTTP 200\n  \
+         fetchById:\n    params: [id]\n    match: the record {id} is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/x\n          HTTP 200\n  \
+         fetchByName:\n    params: [name]\n    match: the record {name} is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/y\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite"])
+        .assert()
+        .code(0); // advisory — never gates
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("near-duplicate of fetchByName"), "{stdout}");
+    assert!(stdout.contains("near-duplicate of fetchById"), "{stdout}");
+    assert!(stdout.contains("2 near-duplicate"), "{stdout}");
+}
+
+/// The built-in `expect*` shape macros bind generic response-shape prose and
+/// lower to the matching hurl type predicates, merged into the preceding
+/// request. Emitting artifacts exercises the whole chain — bind → lower →
+/// resolve `${path}` → merge asserts → emit → parse.
+#[test]
+fn builtin_shape_macros_lower_to_hurl_type_predicates() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  fetchRecord:\n    match: the record is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/record\n          HTTP 200\n",
+    )
+    .unwrap();
+    // A request step, then three built-in shape assertions that merge into it.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: Shape\n  Scenario: Response shape holds\n    \
+         When the record is fetched\n    \
+         Then the value at \"$.id\" is a uuid\n    \
+         And the value at \"$.name\" is a string\n    \
+         And the value at \"$.tags\" is a non-empty list\n",
+    )
+    .unwrap();
+
+    // Dry-run validates the whole pipeline without touching the network.
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["test", "suite", "--dry-run"])
+        .assert()
+        .code(0);
+
+    // Artifacts prove `${path}` resolved and the asserts merged into the entry.
+    let out = cwd.path().join("out");
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args([
+            "artifacts",
+            "suite",
+            "-o",
+            &out.display().to_string(),
+            "--run-id",
+            "shape",
+        ])
+        .assert()
+        .code(0);
+
+    let hurl = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "hurl"))
+        .expect("an emitted .hurl artifact");
+    let text = std::fs::read_to_string(hurl).unwrap();
+    assert!(text.contains("jsonpath \"$.id\" isUuid"), "{text}");
+    assert!(text.contains("jsonpath \"$.name\" isString"), "{text}");
+    assert!(text.contains("jsonpath \"$.tags\" isList"), "{text}");
+    assert!(text.contains("jsonpath \"$.tags\" count > 0"), "{text}");
+}
+
+/// `test --dry-run --sarif`: validation diagnostics serialize to a SARIF 2.1.0
+/// log (code → ruleId, severity → level, byte span → region). The export is
+/// additive — the dry-run still exits 2 on a broken case.
+#[test]
+fn dry_run_sarif_export_serializes_diagnostics() {
+    let cwd = tempfile::tempdir().unwrap();
+    let sarif = cwd.path().join("out.sarif");
     proef()
+        .args([
+            "test",
+            "tests/errors/bind__unbound_step",
+            "--dry-run",
+            "--sarif",
+            &sarif.display().to_string(),
+        ])
+        .assert()
+        .code(2);
+    let text = std::fs::read_to_string(&sarif).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["version"], "2.1.0", "{text}");
+    let result = &json["runs"][0]["results"][0];
+    assert_eq!(result["ruleId"], "proef::bind::unbound_step", "{text}");
+    assert_eq!(result["level"], "error", "{text}");
+    assert!(
+        result["locations"][0]["physicalLocation"]["region"]["byteOffset"].is_number(),
+        "{text}"
+    );
+}
+
+/// Real execution against the corpus with no secret available is a user fault
+/// (exit 2), caught before any request. `${url:base}` resolves to the
+/// `proef.toml` default, so the unbound `${secret:apiToken}` is the binding gap.
+/// Runs from a temp CWD with the target passed absolutely: the secret store is
+/// `.proef-secrets.json` in the *working directory* (CWD-relative, no env
+/// override), so a developer's own stored `apiToken` must not be able to mask
+/// this — the clean CWD guarantees it.
+#[test]
+fn execution_without_secret_is_a_user_error() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        workspace_root().join("proef.toml"),
+        cwd.path().join("proef.toml"),
+    )
+    .unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
         .env_remove("PROEF_BASE_URL")
-        .args(["test", "tests/features"])
+        .env_remove("PROEF_SECRET_APITOKEN")
+        .arg("test")
+        .arg(workspace_root().join("tests/features"))
         .assert()
         .code(2);
 }
@@ -110,7 +329,7 @@ fn artifact_corpus_is_deterministic_and_snapshot_locked() {
         proef()
             // The corpus directives read these env vars; scrub for determinism.
             .env_remove("PROEF_BASE_URL")
-            .env_remove("RUNTIME_PHOTO")
+            .env_remove("RUNTIME_ATTACHMENT")
             .args([
                 "artifacts",
                 "tests/features",

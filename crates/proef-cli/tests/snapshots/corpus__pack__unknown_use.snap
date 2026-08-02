@@ -6,7 +6,7 @@ proef::pack::unknown_use
 
   × macro `outer` step 0: `use: doesNotExist` names no loaded macro
    ╭─[tests/errors/pack__unknown_use/packs/broken.yaml:2:3]
- 1 │ templates:
+ 1 │ macros:
  2 │   outer:
    ·   ─────
  3 │     match: I compose

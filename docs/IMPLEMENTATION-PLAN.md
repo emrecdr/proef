@@ -60,14 +60,14 @@ Tasks:
 3. Matcher: `{name}` tokenizer + leftmost matcher + guard rails (cucumber-expression
    semantics;
    property tests: no-panic, quote round-trip, adjacent-capture rejection).
-4. Gherkin: parse, directives, tags, Background, Rule pass-through, outline expansion,
+4. Gherkin: parse, tags, Background, Rule pass-through, outline expansion,
    data-table merge; binding with ambiguity detection + closest-pattern suggestions.
 5. Lowering: macro expansion (cycle/depth), recursive `${…}` resolver (depth 8, `$${`
    escape; property + fuzz targets), Then-merge (`expect:` → previous entry), batch
    segmentation (maximal; splits at `optional:`/engine change).
 6. `proef flows`, `proef test --dry-run` (no emit yet), corpus test over `tests/`.
 
-**Acceptance:** the four ported 50x features (+ seeded error corpus) dry-run with
+**Acceptance:** the four 500-series features (+ seeded error corpus) dry-run with
 line-accurate diagnostics; property/fuzz targets in CI (fuzz smoke = N seconds, full =
 nightly). **Proves:** PRD US-2/3/6 front-end half.
 
@@ -84,7 +84,7 @@ Tasks:
    file — the real parser as the validator).
 4. insta snapshot suite: features+packs → artifacts + sidecars (golden corpus).
 
-**Acceptance:** spike parity — the ported features emit artifacts that stock hurl parses
+**Acceptance:** spike parity — the 500-series features emit artifacts that stock hurl parses
 (checked in CI via the canary toolchain image); snapshots reviewed. **Proves:** ADR-0010
 emit half; US-7 static half.
 
@@ -96,7 +96,7 @@ Tasks:
 1. Adapter: `VariableSet` seeding (World + secrets via `insert_secret`),
    `parse_hurl_file` + `run_entries` with Buffered terms + `EventListener` → events;
    `EntryResult` → `StepOutcome` mapping via sidecar spans.
-2. RunnerOptions mapping (config/directives → builder; per-entry `[Options]` override
+2. RunnerOptions mapping (config → builder; per-entry `[Options]` override
    relied on as verified); `HurlResult.variables` merge-back; `saveAs: global`
    promotion; typed Value bridging.
 3. Segmentation runtime: `optional:` warn-and-continue; `SessionState` cookie
@@ -108,7 +108,7 @@ Tasks:
 6. Fixture server (`tiny_http`, ADR-0011) + integration suite: success/4xx/retry-delay/auth/
    malformed-JSON/optional/World-chaining/cancellation-budget cases.
 
-**Acceptance:** ported 50x features run green against the fixture with prose unchanged
+**Acceptance:** the 500-series features run green against the fixture with prose unchanged
 (US-1); failure demo maps to feature line + artifact span; exit codes correct under
 pass/fail/user-error/system-error; cancellation bounded-time test passes. **Proves:**
 ADR-0001/0005/0007 runtime; US-1/4/5/9.
@@ -145,12 +145,12 @@ ADR-0008 harness leg; PRD v0.3 scope.
 
 ## M6 — More engines (future; sized when scheduled)
 
-engine-web (`web:` vocabulary as structured step payloads) and engine-adb
-(`tablet:` likewise). **Structural acceptance test: `git diff --stat proef-core` is empty.**
+A future non-hurl engine — its step vocabulary carried as structured step payloads rather
+than raw hurl. **Structural acceptance test: `git diff --stat proef-core` is empty.**
 Mixed-engine 500-series suites become runnable.
-(Note 2026-07-29: chromiumoxide would conflict with the tokio-runtime ban — pick a
-sync CDP driver at sizing time. The core's structured-payload paths are already
-exercised by tests; no core work is expected.)
+(Note 2026-07-29: a driver bringing its own async runtime would conflict with the
+tokio-runtime ban — pick a sync driver at sizing time. The core's structured-payload paths
+are already exercised by tests; no core work is expected.)
 
 ---
 

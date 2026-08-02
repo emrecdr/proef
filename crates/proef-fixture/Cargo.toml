@@ -11,6 +11,9 @@ publish.workspace = true
 # tiny_http, not axum: the workspace bans the tokio runtime (ADR-0006 +
 # deny.toml); a synchronous fixture keeps the invariant binary-wide.
 tiny_http = { workspace = true }
+# jiff (never chrono, per CLAUDE.md): the /health identity reports when it
+# answered. Only the dev fixture reads a clock; the sans-IO core never does.
+jiff = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,87 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+# proef artifact — A live session appears as pending and can be cancelled
+# source: tests/features/503_api_session.feature:8
+# replay: hurl --test 503-api-session--a-live-session-appears-as-pending-and-can-be-cancelled.hurl --variables-file 503-api-session--a-live-session-appears-as-pending-and-can-be-cancelled.vars --secret apiToken=<value>
+
+# tests/features/503_api_session.feature:9 — the workspace is provisioned (fixture warm-up probe)
+# optional
+GET http://127.0.0.1:8787/health
+HTTP 200
+
+# tests/features/503_api_session.feature:9 — the workspace is provisioned (provision the environment)
+POST http://127.0.0.1:8787/api/v1/env/provision
+Authorization: Bearer {{apiToken}}
+{"run": "proef-snapshot"}
+HTTP 201
+[Captures]
+envId: jsonpath "$.id"
+
+# tests/features/503_api_session.feature:10 — the activity channel is activated and ready (request activation)
+POST http://127.0.0.1:8787/api/v1/channel/activate
+X-Proef-Env: {{envId}}
+Authorization: Bearer {{apiToken}}
+{"env": "{{envId}}"}
+HTTP 200
+[Captures]
+channelId: jsonpath "$.channelId"
+
+# tests/features/503_api_session.feature:10 — the activity channel is activated and ready (channel reports ready)
+GET http://127.0.0.1:8787/api/v1/channel/{{channelId}}/state
+X-Proef-Env: {{envId}}
+[Options]
+retry: 10
+retry-interval: 300ms
+HTTP 200
+[Asserts]
+jsonpath "$.status" == "ready"
+
+# tests/features/503_api_session.feature:11 — the record W-${run:id} is resolved (search records for W-proef-snapshot)
+GET http://127.0.0.1:8787/api/v1/admin/search/records
+Authorization: Bearer {{apiToken}}
+[Query]
+q: W-proef-snapshot
+HTTP 200
+[Captures]
+recordId: jsonpath "$[0].id"
+
+# tests/features/503_api_session.feature:11 — the record W-${run:id} is resolved (confirm the record exists)
+GET http://127.0.0.1:8787/api/v1/records/{{recordId}}
+Authorization: Bearer {{apiToken}}
+HTTP 200
+[Asserts]
+jsonpath "$.id" == "{{recordId}}"
+
+# tests/features/503_api_session.feature:12 — a member starts a live session (start the session)
+POST http://127.0.0.1:8787/api/v1/records/{{recordId}}/sessions
+X-Proef-Env: {{envId}}
+Authorization: Bearer {{apiToken}}
+{"kind": "live", "run": "proef-snapshot"}
+HTTP 201
+[Captures]
+sessionId: jsonpath "$.id"
+
+# tests/features/503_api_session.feature:13 — the board shows the pending session (pending session visible)
+GET http://127.0.0.1:8787/api/v1/channel/{{channelId}}/session
+X-Proef-Env: {{envId}}
+[Options]
+retry: 10
+retry-interval: 300ms
+HTTP 200
+[Asserts]
+jsonpath "$.state" == "pending"
+jsonpath "$.sessionId" == "{{sessionId}}"
+
+# tests/features/503_api_session.feature:14 — the session can be cancelled via the API (cancel the session)
+POST http://127.0.0.1:8787/api/v1/channel/{{channelId}}/session/{{sessionId}}/cancel
+X-Proef-Env: {{envId}}
+HTTP 200
+
+# tests/features/503_api_session.feature:14 — the session can be cancelled via the API (session state back to idle)
+GET http://127.0.0.1:8787/api/v1/channel/{{channelId}}/session
+X-Proef-Env: {{envId}}
+HTTP 200
+[Asserts]
+jsonpath "$.state" == "idle"

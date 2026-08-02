@@ -1,4 +1,4 @@
-templates:
+macros:
   clicky:
     match: I click around
     steps:

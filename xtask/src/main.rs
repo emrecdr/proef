@@ -7,7 +7,7 @@ fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("canary") => canary(&args.collect::<Vec<_>>()),
-        Some("fixture") => fixture(),
+        Some("fixture") => fixture(&args.collect::<Vec<_>>()),
         Some("docs-check") => docs_check(),
         Some("public-api") => public_api(),
         Some(other) => usage(&format!("unknown task `{other}`")),
@@ -167,27 +167,48 @@ fn run_ok(cmd: &mut Command) -> bool {
     cmd.status().is_ok_and(|status| status.success())
 }
 
-/// Run the fixture API server on an ephemeral local port until interrupted.
-fn fixture() -> ExitCode {
-    // The library binds an ephemeral port; for the dev loop we document the
-    // printed URL rather than forcing 8787 (which may be taken).
-    match proef_fixture::Fixture::start() {
-        Ok(server) => {
-            eprintln!("fixture API listening on {}", server.base_url);
-            eprintln!("  export PROEF_BASE_URL={}", server.base_url);
-            eprintln!(
-                "  export PROEF_SECRET_APITOKEN={}",
-                proef_fixture::API_TOKEN
-            );
-            eprintln!("Ctrl-C to stop");
-            loop {
-                std::thread::sleep(std::time::Duration::from_hours(1));
+/// Run the fixture API server for the dev loop until interrupted. Binds the port
+/// the shipped `proef.toml` advertises (8787) so `proef test` reaches it with no
+/// `PROEF_BASE_URL`; takes an explicit port as `... -- fixture <port>`. If the
+/// port is busy it falls back to an ephemeral one and prints the URL to export —
+/// the dev loop should always come up (the original ephemeral-port rationale).
+fn fixture(args: &[String]) -> ExitCode {
+    const DEFAULT_PORT: u16 = 8787;
+    let requested = match args.first() {
+        None => DEFAULT_PORT,
+        Some(arg) => match arg.parse::<u16>() {
+            Ok(port) => port,
+            Err(_) => return usage(&format!("fixture: invalid port `{arg}`")),
+        },
+    };
+
+    // Only binding the default port lets the shipped `proef.toml` default `base`
+    // reach the fixture without a PROEF_BASE_URL override (the fallback never is).
+    let (server, on_default) = match proef_fixture::Fixture::start_on(requested) {
+        Ok(server) => (server, requested == DEFAULT_PORT),
+        Err(_) => match proef_fixture::Fixture::start() {
+            Ok(server) => (server, false),
+            Err(err) => {
+                eprintln!("xtask: {err}");
+                return ExitCode::FAILURE;
             }
-        }
-        Err(err) => {
-            eprintln!("xtask: {err}");
-            ExitCode::FAILURE
-        }
+        },
+    };
+
+    eprintln!("fixture API listening on {}", server.base_url);
+    if !on_default {
+        eprintln!("  export PROEF_BASE_URL={}", server.base_url);
+    }
+    eprintln!(
+        "  export PROEF_SECRET_APITOKEN={}",
+        proef_fixture::API_TOKEN
+    );
+    if on_default {
+        eprintln!("  (matches proef.toml default — PROEF_BASE_URL not needed)");
+    }
+    eprintln!("Ctrl-C to stop");
+    loop {
+        std::thread::sleep(std::time::Duration::from_hours(1));
     }
 }
 

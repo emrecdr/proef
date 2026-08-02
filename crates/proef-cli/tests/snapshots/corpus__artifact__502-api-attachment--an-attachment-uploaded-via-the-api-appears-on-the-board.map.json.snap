@@ -1,0 +1,152 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: "String::from_utf8(content_a).unwrap()"
+---
+{
+  "schema": 1,
+  "entries": [
+    {
+      "hurl_lines": [
+        7,
+        8
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 9,
+        "text": "the workspace is provisioned"
+      },
+      "optional": true,
+      "captures": [],
+      "batch": 0,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        11,
+        16
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 9,
+        "text": "the workspace is provisioned"
+      },
+      "optional": false,
+      "captures": [
+        "envId"
+      ],
+      "batch": 1,
+      "step": 0
+    },
+    {
+      "hurl_lines": [
+        19,
+        25
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 10,
+        "text": "the activity channel is activated and ready"
+      },
+      "optional": false,
+      "captures": [
+        "channelId"
+      ],
+      "batch": 1,
+      "step": 1
+    },
+    {
+      "hurl_lines": [
+        28,
+        35
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 10,
+        "text": "the activity channel is activated and ready"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 2
+    },
+    {
+      "hurl_lines": [
+        38,
+        44
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 11,
+        "text": "the record W-${run:id} is resolved"
+      },
+      "optional": false,
+      "captures": [
+        "recordId"
+      ],
+      "batch": 1,
+      "step": 3
+    },
+    {
+      "hurl_lines": [
+        47,
+        51
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 11,
+        "text": "the record W-${run:id} is resolved"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 4
+    },
+    {
+      "hurl_lines": [
+        54,
+        60
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 12,
+        "text": "a member uploads an attachment"
+      },
+      "optional": false,
+      "captures": [
+        "attachmentId"
+      ],
+      "batch": 1,
+      "step": 5
+    },
+    {
+      "hurl_lines": [
+        63,
+        71
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 13,
+        "text": "the service records a delivery"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 6
+    },
+    {
+      "hurl_lines": [
+        74,
+        81
+      ],
+      "feature": {
+        "file": "tests/features/502_api_attachment.feature",
+        "line": 14,
+        "text": "the board shows the attachment"
+      },
+      "optional": false,
+      "captures": [],
+      "batch": 1,
+      "step": 7
+    }
+  ]
+}
