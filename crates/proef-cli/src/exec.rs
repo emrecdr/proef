@@ -3,16 +3,18 @@
 //! `.proef-runs/<run-id>/` (events.jsonl **is** the record, ADR-0008),
 //! Ctrl-C graceful/hard (ADR-0007), state persisted atomically (ADR-0005).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread::ThreadId;
+use std::time::{Duration, Instant};
 
 use proef_core::cancel::CancellationToken;
 use proef_core::engine::ArtifactRef;
 use proef_core::error::ExitCode;
+use proef_core::event::{Event, EventSink};
 use proef_core::lower::LowerCtx;
 use proef_core::report::{ConsoleReporter, JsonlReporter, Redactions, Reporter};
 use proef_core::resolve::ResolveMode;
@@ -161,7 +163,10 @@ pub fn execute(
     ];
     // Redaction is applied once at the sink boundary (before fan-out), so the
     // JSONL record and any future reporter are covered, not just the console.
-    let sink = proef_core::report::sink(reporters, redactions.clone());
+    // Stamp scenario events with run-relative timing + worker index at the sink
+    // (ADR-0015): the clock and thread-id reads live here, at the CLI edge, so
+    // the core stays sans-IO. `stamp` runs on the emitting worker thread.
+    let sink = stamp_scenario_timing(proef_core::report::sink(reporters, redactions.clone()));
 
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
@@ -391,6 +396,49 @@ pub fn execute(
         return ExitCode::SystemError;
     }
     exit
+}
+
+/// Wrap `inner` so scenario lifecycle events are stamped with run-relative
+/// timing (`timestamp_ms`) and a stable 0-based `worker` index (ADR-0015). The
+/// clock and thread-id reads happen here, in the CLI, on the emitting worker
+/// thread — the sans-IO core never sees them. Non-scenario events pass through.
+fn stamp_scenario_timing(inner: EventSink) -> EventSink {
+    let start = Instant::now();
+    let workers: Arc<Mutex<HashMap<ThreadId, u64>>> = Arc::new(Mutex::new(HashMap::new()));
+    EventSink::new(move |event| {
+        let now_ms = || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let worker_index = || {
+            let mut map = workers.lock().unwrap_or_else(PoisonError::into_inner);
+            let next = u64::try_from(map.len()).unwrap_or(u64::MAX);
+            *map.entry(std::thread::current().id()).or_insert(next)
+        };
+        match event {
+            Event::ScenarioStarted { scenario, file, .. } => inner.emit(&Event::ScenarioStarted {
+                scenario: scenario.clone(),
+                file: file.clone(),
+                timestamp_ms: Some(now_ms()),
+                worker: Some(worker_index()),
+            }),
+            // `ScenarioFinished` is emitted from the main dispatcher thread, not
+            // the worker that ran the scenario, so it carries only the end
+            // timestamp — the worker identity comes from `ScenarioStarted`, which
+            // *is* emitted on the worker thread. (The end time is the dispatcher's
+            // processing instant, a close approximation — ADR-0015.)
+            Event::ScenarioFinished {
+                scenario,
+                file,
+                status,
+                ..
+            } => inner.emit(&Event::ScenarioFinished {
+                scenario: scenario.clone(),
+                file: file.clone(),
+                status: *status,
+                timestamp_ms: Some(now_ms()),
+                worker: None,
+            }),
+            other => inner.emit(other),
+        }
+    })
 }
 
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure

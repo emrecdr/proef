@@ -46,6 +46,8 @@ fn finished(scenario: &str, file: &str, status: Status) -> Event {
         scenario: Arc::from(scenario),
         file: Arc::from(file),
         status,
+        timestamp_ms: None,
+        worker: None,
     }
 }
 
@@ -97,4 +99,53 @@ fn html_report_is_snapshot_locked() {
     ];
 
     insta::assert_snapshot!("html_report", render_html(&events, "artifacts"));
+}
+
+/// When the record carries injected timing (ADR-0015), the report adds a
+/// cross-worker timeline — a lane per worker with a bar per scenario on a shared
+/// run-relative axis. Absent timing (the snapshot test above), it is omitted.
+#[test]
+fn timeline_renders_from_injected_timing() {
+    let started = |scenario: &str, file: &str, ts: u64, worker: u64| Event::ScenarioStarted {
+        scenario: Arc::from(scenario),
+        file: Arc::from(file),
+        timestamp_ms: Some(ts),
+        worker: Some(worker),
+    };
+    let done = |scenario: &str, file: &str, status: Status, ts: u64, worker: u64| {
+        Event::ScenarioFinished {
+            scenario: Arc::from(scenario),
+            file: Arc::from(file),
+            status,
+            timestamp_ms: Some(ts),
+            worker: Some(worker),
+        }
+    };
+    let events = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("t"),
+        },
+        started("A", "a.feature", 0, 0),
+        started("B", "b.feature", 5, 1),
+        done("A", "a.feature", Status::Passed, 40, 0),
+        done("B", "b.feature", Status::Failed, 60, 1),
+        Event::RunFinished {
+            passed: 1,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        },
+    ];
+    let html = render_html(&events, "artifacts");
+    assert!(html.contains("class=\"timeline\""), "{html}");
+    assert!(
+        html.contains("worker 0") && html.contains("worker 1"),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"tbar pass\"") && html.contains("class=\"tbar fail\""),
+        "{html}"
+    );
+    assert!(html.contains("60ms"), "run length is the max end: {html}");
 }

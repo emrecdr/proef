@@ -32,6 +32,13 @@ struct ScenarioBlock {
     name: String,
     status: Option<Status>,
     steps: Vec<StepRow>,
+    /// Run-relative start/end ms and worker index — injected observability
+    /// (ADR-0015), present only when the record carries timing. When present
+    /// they drive the cross-worker run timeline; absent, the report falls back
+    /// to the per-scenario waterfalls alone.
+    start_ms: Option<u64>,
+    end_ms: Option<u64>,
+    worker: Option<u64>,
 }
 
 /// Render `events` as a standalone HTML document. `artifacts_href` is the link
@@ -69,13 +76,29 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                     detail: detail.clone(),
                 });
             }
+            Event::ScenarioStarted {
+                scenario,
+                file,
+                timestamp_ms,
+                worker,
+            } => {
+                let at = block_index(&mut blocks, &mut index, file, scenario);
+                blocks[at].start_ms = *timestamp_ms;
+                blocks[at].worker = *worker;
+            }
             Event::ScenarioFinished {
                 scenario,
                 file,
                 status,
+                timestamp_ms,
+                worker,
             } => {
                 let at = block_index(&mut blocks, &mut index, file, scenario);
                 blocks[at].status = Some(*status);
+                blocks[at].end_ms = *timestamp_ms;
+                if blocks[at].worker.is_none() {
+                    blocks[at].worker = *worker;
+                }
             }
             _ => {}
         }
@@ -113,6 +136,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
         "<span class=\"steps\">{total_steps} steps · {total_attempts} attempts</span></p>"
     );
 
+    render_timeline(&mut html, &blocks);
     for block in &blocks {
         render_block(&mut html, block, artifacts_href);
     }
@@ -211,6 +235,62 @@ fn render_block(html: &mut String, block: &ScenarioBlock, artifacts_href: &str) 
     html.push_str("</ol>\n</details>\n");
 }
 
+/// The cross-worker run timeline (ADR-0015): a lane per worker, each scenario a
+/// bar from its start to its finish, positioned on a shared run-relative axis so
+/// concurrency is visible at a glance. Rendered only when the record carries
+/// injected timing (`start`/`end` timestamps); absent, the report shows just the
+/// per-scenario waterfalls, so old records degrade cleanly.
+fn render_timeline(html: &mut String, blocks: &[ScenarioBlock]) {
+    let timed: Vec<&ScenarioBlock> = blocks
+        .iter()
+        .filter(|block| block.start_ms.is_some() && block.end_ms.is_some())
+        .collect();
+    let Some(max_end) = timed.iter().filter_map(|block| block.end_ms).max() else {
+        return; // no timed scenarios — old record, waterfalls only
+    };
+    if max_end == 0 {
+        return; // a zero-length run has nothing to place on the axis
+    }
+    let mut workers: Vec<u64> = timed
+        .iter()
+        .map(|block| block.worker.unwrap_or(0))
+        .collect();
+    workers.sort_unstable();
+    workers.dedup();
+
+    let _ = writeln!(
+        html,
+        "<h2 class=\"timeline-h\">Timeline <span class=\"count\">{max_end}ms</span></h2>\n\
+         <div class=\"timeline\">"
+    );
+    for worker in &workers {
+        let _ = write!(
+            html,
+            "<div class=\"lane\"><span class=\"lane-label\">worker {worker}</span>\
+             <div class=\"lane-track\">"
+        );
+        for block in timed
+            .iter()
+            .filter(|block| block.worker.unwrap_or(0) == *worker)
+        {
+            let start = block.start_ms.unwrap_or(0);
+            let end = block.end_ms.unwrap_or(start).max(start);
+            let _ = write!(
+                html,
+                "<span class=\"tbar {cls}\" style=\"left:{left}%;width:{width}%\" \
+                 title=\"{title} ({dur}ms)\"></span>",
+                cls = status_class(block.status.unwrap_or(Status::Skipped)),
+                left = pct(start, max_end),
+                width = pct(end - start, max_end),
+                title = esc(&block.name),
+                dur = end - start,
+            );
+        }
+        html.push_str("</div></div>\n");
+    }
+    html.push_str("</div>\n");
+}
+
 /// `n / total` as a percentage string with one decimal place, using integer
 /// math only (no lossy float cast). `total` must be non-zero (callers guard).
 fn pct(n: u64, total: u64) -> String {
@@ -292,5 +372,12 @@ li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph
 .track{display:block;height:4px;margin:.25rem 0 0;background:var(--line);border-radius:2px;overflow:hidden}\
 .bar{display:block;height:100%;min-width:1px;border-radius:2px}\
 .bar.pass{background:var(--pass)}.bar.fail{background:var(--fail)}.bar.skip{background:var(--skip)}.bar.warn{background:var(--warn)}\
+.timeline-h{font-size:1.05rem;font-weight:600;margin:1.5rem 0 .5rem}\
+.timeline{margin:0 0 1.5rem}\
+.lane{display:flex;align-items:center;gap:.5rem;margin:.25rem 0}\
+.lane-label{color:var(--muted);font-size:.75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:5rem;text-align:right}\
+.lane-track{position:relative;flex:1;height:1rem;background:var(--card);border:1px solid var(--line);border-radius:3px}\
+.tbar{position:absolute;top:1px;height:calc(100% - 2px);min-width:2px;border-radius:2px;opacity:.9}\
+.tbar.pass{background:var(--pass)}.tbar.fail{background:var(--fail)}.tbar.skip{background:var(--skip)}.tbar.warn{background:var(--warn)}\
 .detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}\
 ";

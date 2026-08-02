@@ -707,6 +707,9 @@ fn event_stream_snapshot_reference_run() {
     insta::with_settings!({filters => vec![
         (r#""run_id":"[0-9a-f-]+""#, r#""run_id":"[run-id]""#),
         (r#""duration_ms":\d+"#, r#""duration_ms":0"#),
+        // Injected run-relative timing (ADR-0015) is non-deterministic; the
+        // worker index is deterministic under `--jobs 1` (a single worker → 0).
+        (r#""timestamp_ms":\d+"#, r#""timestamp_ms":0"#),
     ]}, {
         insta::assert_snapshot!("reference_event_stream", events);
     });

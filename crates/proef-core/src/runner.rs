@@ -213,6 +213,8 @@ pub fn run(
                     scenario: Arc::clone(&spec.name),
                     file: Arc::clone(&spec.file),
                     status: Status::Skipped,
+                    timestamp_ms: None,
+                    worker: None,
                 });
                 outcomes.push(ScenarioOutcome {
                     file: spec.file,
@@ -265,6 +267,8 @@ pub fn run(
                         scenario: Arc::clone(&outcome.name),
                         file: Arc::clone(&outcome.file),
                         status: outcome.status,
+                        timestamp_ms: None,
+                        worker: None,
                     });
                     outcomes.push(outcome);
                 }
@@ -345,6 +349,8 @@ fn sweep_expired(
             scenario: Arc::clone(&outcome.name),
             file: Arc::clone(&outcome.file),
             status: Status::Failed,
+            timestamp_ms: None,
+            worker: None,
         });
         outcomes.push(outcome);
     }
@@ -433,6 +439,8 @@ fn run_scenario(
     events.emit(&Event::ScenarioStarted {
         scenario: Arc::clone(&spec.name),
         file: Arc::clone(&spec.file),
+        timestamp_ms: None,
+        worker: None,
     });
 
     // Prepare against a snapshot of the shared globals (lower-time reads).

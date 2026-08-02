@@ -503,9 +503,13 @@ pub proef_core::event::Event::ScenarioFinished
 pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
+pub proef_core::event::Event::ScenarioFinished::timestamp_ms: core::option::Option<u64>
+pub proef_core::event::Event::ScenarioFinished::worker: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioStarted
 pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioStarted::timestamp_ms: core::option::Option<u64>
+pub proef_core::event::Event::ScenarioStarted::worker: core::option::Option<u64>
 pub proef_core::event::Event::StepFinished
 pub proef_core::event::Event::StepFinished::attempt_details: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::StepFinished::attempts: u32

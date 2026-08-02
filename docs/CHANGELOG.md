@@ -106,8 +106,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   scenario tree with pass/fail pills, per-step attempts and timing, a
   per-scenario timing waterfall (each step's bar offset by the steps before it
   and as wide as its own duration — the sequential cascade within a scenario,
-  derived purely from step durations), failure detail, and deep-links to the
-  executed `.hurl` artifacts (bodies are not inlined). A pure `proef_core::html::render_html` derives it from the event
+  derived purely from step durations), a **cross-worker timeline** (a lane per
+  worker, each scenario a bar on a shared run-relative axis, so concurrency is
+  visible at a glance), failure detail, and deep-links to the executed `.hurl`
+  artifacts (bodies are not inlined).
+- **Injected run timing (ADR-0015).** `scenario_started`/`scenario_finished`
+  events gain optional `timestamp_ms` (run-relative) and `worker` (0-based
+  index) fields, stamped at the CLI sink on the worker thread so the sans-IO
+  core stays clock-free. Additive (absent on records without timing); they power
+  the HTML timeline. Records without them degrade to the waterfalls alone. A pure `proef_core::html::render_html` derives it from the event
   stream (ADR-0008, snapshot-locked); the events are already redacted at the
   sink, so the page is too. Defaults to `report.html` inside the run dir; `-o`
   redirects it.

@@ -35,6 +35,14 @@ pub enum Event {
         scenario: Arc<str>,
         /// Feature file the scenario comes from.
         file: Arc<str>,
+        /// Milliseconds since the run began — injected at the CLI sink (the
+        /// sans-IO core leaves it `None`, like `run_id`). Absent on records
+        /// without timing; additive (ADR-0008, ADR-0015).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
+        /// 0-based worker index this scenario ran on — injected at the sink.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker: Option<u64>,
     },
     /// A batch of contiguous same-engine steps was dispatched.
     BatchStarted {
@@ -97,6 +105,14 @@ pub enum Event {
         file: Arc<str>,
         /// Aggregate scenario status.
         status: Status,
+        /// Milliseconds since the run began — injected at the CLI sink (the
+        /// sans-IO core leaves it `None`, like `run_id`). Absent on records
+        /// without timing; additive (ADR-0008, ADR-0015).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp_ms: Option<u64>,
+        /// 0-based worker index this scenario ran on — injected at the sink.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker: Option<u64>,
     },
     /// The run finished. Tail of every stream.
     RunFinished {

@@ -99,6 +99,7 @@ pub fn read_record(record_dir: &Path) -> Result<BTreeMap<(String, String), Scena
                 scenario,
                 file,
                 status,
+                ..
             }) => {
                 let key = (file.to_string(), scenario.to_string());
                 let steps = pending.remove(&key).unwrap_or_default();
