@@ -8,6 +8,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- Localized Gherkin (`# language:`) is now verified and test-covered — a
+  localized feature parses, its dialect keywords are stripped, and a localized
+  scenario outline with `Examples` expands like any other. Outline detection now
+  keys primarily on `Examples` presence (dialect-independent) with the English
+  keyword as a fallback, so this no longer relies on an English-only heuristic.
+  (A localized outline that omits its `Examples` still degrades to an
+  unbound-step error, since gherkin 0.16 does not expose its dialect keywords.)
 - **Built-in `expect:` shape-macro library.** The embedded `Core` pack gains a
   curated, product-neutral set of response-shape assertions — `the value at
   {path} is a string` / `… a number` / `… a boolean` / `… a uuid` / `… an ISO

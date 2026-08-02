@@ -107,9 +107,16 @@ errors reported with block-relative spans mapped to pack file/line; (8) engine k
 every step kind must be claimed by a registered engine's `StepKindSpec`.
 
 **4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); tags from
-Feature/Rule/Scenario accumulate. i18n via `# language:` honored by the crate.
-`#` comment lines are plain gherkin comments (no `# key:` directive mechanism —
-variables live in `proef.toml`, ADR-0012).
+Feature/Rule/Scenario accumulate. Localized (`# language:`) features are
+supported and test-covered: the crate strips the dialect keywords, proef
+consumes the stripped step text, and a localized outline with `Examples`
+expands like any other (outline detection keys on `Examples` presence, which is
+dialect-independent). Caveat: a *localized* outline whose `Examples` block is
+omitted cannot be told apart from a plain scenario (the crate's dialect keywords
+are private), so it surfaces as an unbound-step error rather than the crisp
+`no_examples` — a worse message, never a silent pass. `#` comment lines are plain
+gherkin comments (no `# key:` directive mechanism — variables live in
+`proef.toml`, ADR-0012).
 
 **4.3 Bind.** For each step (keyword stripped): first macro whose `match:` pattern
 matches wins; ambiguity (2+ matches) is an error listing candidates. Captured `{name}`

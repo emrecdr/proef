@@ -164,7 +164,19 @@ fn expand_scenario(
         .chain(scenario.steps.iter())
         .collect();
 
-    let is_outline = scenario.keyword.contains("Outline") || scenario.keyword.contains("Template");
+    // A scenario is an outline when it carries `Examples` — the gherkin crate
+    // attaches those only to outlines, in any language, so it is the reliable,
+    // dialect-independent signal and is what makes a localized outline expand.
+    // The keyword check is a fallback so an English `Scenario Outline`/`Template`
+    // whose `Examples` block is omitted still gets the crisp `no_examples` error
+    // instead of being mistaken for a plain scenario. A *localized* outline
+    // missing its `Examples` cannot be distinguished from a plain scenario here
+    // (gherkin 0.16 keeps its dialect keywords private), so it degrades to an
+    // unbound-step error on the leftover `<placeholder>` steps — a worse message,
+    // never a silent pass.
+    let is_outline = !scenario.examples.is_empty()
+        || scenario.keyword.contains("Outline")
+        || scenario.keyword.contains("Template");
     if !is_outline && scenario.examples.is_empty() {
         out.push(concrete_scenario(
             scenario,
@@ -476,6 +488,30 @@ mod tests {
         assert_eq!(expanded.steps[1].text, "I check /a");
         assert_eq!(expanded.steps[2].text, "the response status is 200");
         assert_eq!(feature.scenarios[2].steps[1].text, "I check /b");
+    }
+
+    // A localized (`# language:`) feature: the gherkin crate strips the dialect
+    // keywords, proef consumes the stripped step text, and a localized outline
+    // with `Examples` expands like any other. Accented keywords also exercise
+    // the non-ASCII byte-offset path (spans stay byte-correct).
+    const FEATURE_FR: &str = "# language: fr\nFonctionnalité: Recherche\n\n  Contexte:\n    \
+        Soit l'api est disponible\n\n  Scénario: Trouver un enregistrement\n    \
+        Quand je cherche \"Jansen\"\n    Alors le statut est 200\n\n  \
+        Plan du scénario: Statuts\n    Quand je vérifie <chemin>\n    \
+        Alors le statut est <statut>\n\n    Exemples:\n      | chemin | statut |\n      \
+        | /a     | 200    |\n      | /b     | 404    |\n";
+
+    #[test]
+    fn localized_gherkin_parses_and_outline_expands() {
+        let feature = parse("recherche.feature", FEATURE_FR).unwrap();
+        // 1 plain scenario + 2 expanded from the localized outline.
+        assert_eq!(feature.scenarios.len(), 3);
+        // The localized `Contexte`/`Soit` background prepends, keyword-stripped.
+        assert_eq!(feature.scenarios[0].steps[0].text, "l'api est disponible");
+        // The localized `Plan du scénario` expanded with `<chemin>` substituted
+        // and the `Quand` keyword stripped.
+        assert_eq!(feature.scenarios[1].steps[1].text, "je vérifie /a");
+        assert_eq!(feature.scenarios[2].steps[1].text, "je vérifie /b");
     }
 
     #[test]
