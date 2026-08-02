@@ -1,6 +1,7 @@
 # proef — Improvement Plan
 
-**Status:** proposed (post-M5 competitive review) · **Date:** 2026-07-31 · **Owner:** Emre
+**Status:** Round 1 (§1–§11) largely shipped; Round 2 (§12) proposed · **Date:** 2026-07-31,
+appended 2026-08-02 · **Owner:** Emre
 **Companion docs:** [PRD](PRD.md) (scope + the binding **non-goals**, §3), [adr/](adr/) (the
 invariants every item must respect), [TECH-SPEC](TECH-SPEC.md) (types/pipeline),
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) (milestones + definition of done).
@@ -297,3 +298,132 @@ each Karate idea is an intentional call rather than an omission.
 - GitHub Actions workflow commands (annotations + job summaries): <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands>
 - Flaky-test quarantine/hardening; GitHub Actions OIDC/masking limits; Allure history: <https://pie.inc/blog/flaky-tests-cicd/>, <https://www.stepsecurity.io/blog/github-actions-security-best-practices>, <https://allurereport.org/docs/how-it-works-history-files/>
 - Cucumber Language Server: <https://github.com/cucumber/language-server>
+
+## 12. Round 2 — post-execution competitive re-review (2026-08-02)
+
+Round 1 (§1–§11) is largely shipped (see CHANGELOG `[Unreleased]`). Round 2 re-ran the
+Karate + Cucumber + adjacent-landscape survey **against the post-execution codebase**, then
+put every surviving candidate through a **four-stream deep code-validation pass**
+(matcher/binding · reporting/events · lifecycle/i18n/snapshot · scope-boundary), mirroring
+Round 1's method. Identifiers **N1–N9 are stable and doc-local** — this registry is their
+only sanctioned home; they never appear in code comments (per the no-task-ids-in-source
+rule). **File:line citations validated 2026-08-02 and will drift.**
+
+### 12.1 What the re-survey confirmed is already shipped (positioning to defend)
+
+The external agents, blind to the just-landed work, flagged many "gaps" that Round 1 already
+closed — recording them so the omission-vs-decision trail stays explicit:
+
+| Re-flagged "gap" | Already shipped as |
+|---|---|
+| Cucumber snippet/stub suggestion on unbound step | #9 stub-gen (unbound-step diagnostic prints a paste-ready macro) |
+| Rerun-only-failures | #8 `--rerun` (keyed on `(file, name)`) |
+| Soft-fail / allow-failure tag | #15 `@quarantine` (non-gating, still reported) |
+| Boolean tag expressions | #4 `proef_core::tags` (fuzzed grammar) |
+| "retry until assert passes" (Karate `retry until`) | macro `retry:` → hurl `[Options] retry` (retries until asserts pass or budget ends) |
+| Data-table → step arguments | `bind.rs` merges `\| key \| value \|` rows into macro args |
+| One trial per Examples row | outline expansion → `ScenarioDef` per row → one harness `Trial` |
+| Explicit skipped/pending status | `Status::Skipped` (post-failure steps) + `Warned` (optional) |
+| Whole-run JSONL event record; git-native plain text; JUnit/SARIF/HTML | ADR-0008 event spine; `.feature`+YAML+`proef.toml`; the reporter family |
+
+Convergent-evolution note (validates the architecture, nothing to adopt): Karate v2's
+`karate-events.jsonl` (2025) is proef's ADR-0008 event stream re-invented; Bruno's plain-text
+git-native rise is proef's text model; both confirm the design is industry-aligned.
+
+### 12.2 The validated Round-2 roadmap (master table)
+
+Verdict legend as §5 (✅ FITS · ⚠️ NEEDS-ADAPTATION · 🚫 rejected/premise-broken). Effort:
+S ≤ ~1 day · M ~days · L ~weeks.
+
+| # | Item | Verdict | Lives in | Effort | Architectural truth (validated 2026-08-02) |
+|---|------|---------|----------|--------|--------------------------------------------|
+| N2 | Run-level SLA thresholds (`p95/max(duration)` gate) | ✅ | `proef.toml [sla]` + cli `exec.rs` | S–M | **Strongest — zero schema change.** `duration_ms` already on `StepFinished` (`event.rs:74`) and in the record; a pure CLI fold. Config as `[sla]` (env-overridable, ADR-0012), **not** a flag. Breach = `TestFailure` (exit 1) folded before `exec.rs:361`; malformed table = exit 2; **no new exit code**. **Must be opt-in by presence of `[sla]`** — absent, behaviour is byte-identical, so pinned exit-0 tests + reference snapshot are untouched. Distinct from hurl per-request `duration <` (aggregate vs per-entry) → keep SLA aggregate-only, one home. |
+| N6a | HTML per-scenario timing waterfall | ✅ | core `html.rs` | S | **Zero schema change.** Step start-offset = cumulative sum of prior `duration_ms` in the scenario, width = own `duration_ms`; new render in `html.rs:176`. Cannot show cross-worker occupancy (no clock/worker id) — intra-scenario only. Ship this first. |
+| N8 | i18n `# language:` — verify, fix, test, keep the claim | ⚠️ | core `feature.rs` + tests | S | Claim asserted **twice** (`PRD.md:104`, `TECH-SPEC.md:110`) but **unverified**. gherkin-0.16 honours the header transparently; proef strips no keywords. **One English-only bug:** `feature.rs:167` detects outlines via `keyword.contains("Outline"/"Template")` — false under any dialect (fr `Plan du scénario`, de `Szenariogrundriss`). Blast radius small (only a no-`Examples` malformed outline degrades). Fix: detect via `!examples.is_empty()`; add a localized fixture + byte-span test. **Keep the docs claim** — fix, don't retract. |
+| N9 | Curated `expect:` shape-macro library (`expectUuid`, `expectIsoDate`, `expectNonEmptyList`…) | ✅ | `helpers/*.yaml` + docs | S | **New — surfaced by validation.** Augments the existing `expect:`/`MergedAsserts` mechanism (`step.rs:60`, emitted `emit.rs:192`); zero engine/core change; product-neutral (generic shapes only). Same lever as the §12.5-B ergonomic uplift. Narrows the deep-equality ergonomic gap — **not** the semantic one (§12.4). |
+| N7 | Near-duplicate macro lint (extend `proef macros`) | ⚠️ | core sim-fn + cli `commands.rs` | S–M | Absent; reuse `literal_skeleton` (`matcher.rs:236`) + `levenshtein` (`matcher.rs:260`). Extend the shipped dead-macro report (`commands.rs:270`), **not** a load pass (those are hard errors). **Tight heuristic — skeleton-equal-modulo-captures** — or it false-positives on the shipped corpus (`boardShows*` family; `activateChannel` "…and ready"). Advisory JSON field beside `unused` (`commands.rs:306`), exit 0, never a gate. **Drop the conjunction + "organize-by-domain" sub-lints** (false-positive on shipped prose; no machine model of "domain"). |
+| N4 | TAP reporter | ⚠️ | cli new `tap.rs` via `--output tap` | M | Valid, but the "surface hurl's native TAP" rationale is **wrong** — proef calls `run_entries` in-process, never shells out; TAP must derive from the **event spine** (scenario = test point), like every reporter. Live `Reporter` (`report.rs:120`) → inherits sink redaction. Plan count from `exec.rs:194`. `@quarantine` → `# TODO` needs the `non_gating` set **injected** (it's computed at `exec.rs:313`, not in the stream). One surface: `--output tap` (reuses the stdout-ownership machinery), never also a `proef tap` replay. |
+| N1 | Typed parameter types in the matcher (`{int}`/`{uuid}`/custom, bind-time) | ⚠️ | matcher/bind in **core** | M | Genuinely absent (captures are untyped strings, `matcher.rs:221`; `params: Vec<String>`). **Must be declaration-site**, not inline `{name:type}`: 3 of 4 arg sources aren't captures (data-table, `defaults`, `with:`, and `use:`-only macros have no pattern), and inline typing is invisible to `proef schema`. One-canonical forces a **single params spelling** (`params: {q: uuid}`, bare = any) via custom `Deserialize` → **breaking pack migration → needs an ADR**. Model on the `fake::GENERATORS` typed registry. Two-tier caveat: **skip validation when the raw arg contains `${`/`{{`** (resolves later) → a best-effort literal-args lint, not a type system. Diagnostic `proef::bind::param_type_mismatch` at `bind.rs:193` (+ `defaults` at `validate.rs:57`, `with:` at `validate.rs:353`). |
+| N3 | Suite-level setup/teardown (once-before / once-after) | ⚠️ | `proef.toml [run]` + cli `exec.rs` | M | Real gap (only per-scenario `Background`; teardown is engine-internal `session.finish()`). **Premise correction: tags never reach the core runner** — `ScenarioSpec`/`ScenarioOutcome` carry no tags/gating (`runner.rs:30,131`); quarantine is a CLI-edge `non_gating` set (`exec.rs:313`). So use a **`proef.toml [run]` `setup`/`teardown` construct**, not a tag (a tag would entangle with `--tags`/`--rerun`/`flows`/dedup + undefined ordering). Orchestrate in `execute()` around `runner::run` (`exec.rs:220`); state crosses **only via `saveAs: global`**, which must **merge before the parallel pool snapshots the store** (`runner.rs:439`). **Explicit failure short-circuit required** — an assert-failed setup is `fault:None`→exit 1 and would *not* abort the pool (cascading failures on un-seeded state); refuse to launch and surface the fault. Excluded from `build_specs` so it never double-runs; `--dry-run` unaffected (never calls `runner::run`). |
+| N5 | Golden response snapshots | 🚫 | — | L | **Rejected.** Response bodies exist but are discarded (`HurlResult…calls[].response.body`; session reads only captures/errors). It is a **second assertion mechanism** competing with hurl body-asserts + `expect:`, and whole-body regression is already `proef diff`'s job. No normalization machinery exists (sink redaction masks only *known injected* values, `report.rs:29`). **Secret-leak risk:** backend-minted tokens/PII would be committed unredacted — against ADR-0005 (`session.rs:346` already refuses to persist a capture equal to a secret). Do not build. If ever needed: diff-time over run records, never committed goldens. |
+
+### 12.3 Verdict-change ledger (validation overturned the first sketch)
+
+The deep pass is on the record because it changed conclusions — the point of validating:
+
+| Item | First sketch | After validation | Why |
+|---|---|---|---|
+| N5 golden snapshots | ⚠️ candidate | **🚫 rejected** | Duplicates hurl asserts + `diff`; no normalization; leaks backend-minted secrets |
+| N4 TAP rationale | "surface hurl's native TAP" | corrected: **derive from the event spine** | proef never shells out; hurl `--report-tap` is unreachable + per-file, not per-scenario |
+| N3 selector | `@setup`/`@teardown` tag | **`proef.toml [run]` construct** | tags never reach the core runner; a tag overloads "filter" with "phase" and races the pool |
+| N6 timeline | one "timeline" item | **split** N6a (zero-schema, now) / N6b (injected `timestamp_ms`, later) | true cross-worker occupancy needs an injected clock/worker id |
+| N1 typed params | "small matcher tweak" | **M + ADR + breaking migration** | declaration-site forced by schema coherence; single spelling forced by one-canonical; literal-args-only forced by two-tier vars |
+
+### 12.4 The named architectural ceiling (accepted, not a defect)
+
+Karate's `match response == { id:'#uuid', items:'#[]' }` — **order-insensitive whole-body
+deep-equality with type-holes, exhaustive-key checking, and one readable structural diff** —
+**cannot be assembled under hurl-only** (asserts are path-at-a-time). Reusable `expect:`
+macros over hurl jsonpath cover per-path type/value/shape, collection membership
+(`contains`), cardinality (`count`), optional keys (`exists`/`not exists`), and RFC-9535
+filtered queries (`AUTHORING.md:100`) — the **ergonomic** gap, narrowed further by **N9**.
+The **semantic** gap (single order-insensitive whole-body diff + exhaustiveness) stays open by
+design. The Round-1 marker-DSL rejection **stands** (`§3`, ledger `§10` — a second assertion
+mechanism). This is a deliberate ceiling of the hurl-only bet, stated honestly, not
+engineered away.
+
+### 12.5 Non-goal-adjacent — explicit scope decisions (keep excluded absent an ADR)
+
+The two biggest capabilities a market reviewer would name are on/over the PRD §3 line. The
+governing boundary the validation extracted: **CLI-edge IO that injects *values* into the
+sans-IO core is sanctioned (ADR-0012); IO that re-shapes the corpus or acts as a recurring
+*oracle* is contract testing (out).**
+
+- **A — OpenAPI → scenario generator (`proef generate`).** *Verdict: needs an ADR; default
+  = deferred/out-of-scope.* Strict generate-then-freeze clears sans-IO/determinism (ADR-0012
+  precedent) and echoes #9 stub-gen at suite granularity — **but** the bright line is *"the
+  spec may be a one-shot **seed**; it may never become a recurring **oracle**."* It sits one
+  `--check` flag from OpenAPI-drift (`§3` non-goal), introduces a new *inward* generation
+  direction, and pressures one-canonical-way on regeneration (a second maintenance path). Only
+  an ADR that **bans the oracle/drift mode** and accepts the OpenAPI dependency can green-light
+  even the narrow scaffolder.
+- **B — JSON-Schema conformance assert.** *Verdict: shape/type conformance is
+  already-achievable today* via `expect:` + hurl type predicates (the #2 cookbook — zero new
+  features); the **ergonomic uplift is N9** (curated shape macros). **Full external
+  `.schema.json` whole-body validation is out** — hurl has no `jsonschema` predicate, and using
+  the API's canonical schema as oracle is drift-detection.
+
+### 12.6 Prerequisites & one-canonical-way watch-list (round 2)
+
+- **P4 — injected per-event `timestamp_ms`/`worker`** (`Option`, `skip_serializing_if`), stamped
+  by a **CLI sink-wrapper on the worker thread** (the `run_id` injection pattern), left `None`
+  by the sans-IO core; kept **off `RunStarted`** (exact-bytes pin `event.rs:157`). Note: old
+  records still parse (additive holds), but the **new-run reference snapshot changes** and needs
+  a new insta filter + deliberate review. **Unlocks N6b.**
+- **ADR needed:** N1 (params-shape migration + literal-args-only semantics); Tier-3-A OpenAPI
+  (bans the oracle mode).
+
+One-canonical watch-list — each must fold into an existing mechanism, never ship beside it:
+
+| Item | Must replace / augment (not duplicate) |
+|---|---|
+| N1 typed params | **One** params spelling (name→type map); no second inline `{name:type}` form |
+| N3 setup/teardown | Exactly **one** `[run]` setup + one teardown; not a tag, not a second `Background` |
+| N4 TAP | **One** surface (`--output tap`); no parallel `proef tap` replay |
+| N9 shape macros | Augment the **existing `expect:`** mechanism; never a schema/marker DSL |
+| N2 SLA | Aggregate run/scenario budget only; per-request latency stays hurl `duration <` |
+
+### 12.7 Recommended sequencing (round 2)
+
+1. **Batch E — free / small / zero-schema, ship now:** N2 SLA (opt-in) → N6a waterfall →
+   N9 `expect:` library → N8 i18n fix.
+2. **Batch F — small–medium:** N7 near-duplicate lint → N4 TAP.
+3. **Batch G — medium, design/ADR call first:** N3 setup/teardown (`[run]` construct) ·
+   N1 typed params (**ADR-gated**) · N6b full timeline (needs **P4**).
+4. **Blocked pending an ADR:** Tier-3-A OpenAPI generator. **Rejected:** N5 golden snapshots.
+
+### 12.8 Sources (round 2)
+
+Competitor sources unchanged from §11 (Karate/Cucumber/Hurl/Bruno/Schemathesis/Pact/k6/
+Playwright). Round-2 findings are **code-internal** — every verdict is anchored to a
+file:line validated 2026-08-02, not to an external claim.
