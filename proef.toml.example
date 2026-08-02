@@ -19,6 +19,12 @@
 # Where per-run records and artifacts are written. Default: .proef-runs/
 # runs-dir = ".proef-runs"
 
+# Suite setup/teardown: a feature run once before/after the pool (ADR-0014).
+# Setup's `saveAs: global` reaches every scenario (seed fixtures / shared state);
+# a setup failure aborts the run, a teardown failure is a distinct exit 3.
+# setup    = "tests/setup.feature"
+# teardown = "tests/teardown.feature"
+
 [http]
 # Batch-level defaults for the hurl engine; per-entry [Options] in packs override.
 # timeout-ms = 30000

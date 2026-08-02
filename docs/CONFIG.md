@@ -24,6 +24,8 @@ active `[env.<name>]` < command-line flags. For a suite variable that means
 suite    = "tests"          # default suite path — `proef test` needs no argument
 jobs     = 8                # parallel scenario workers
 runs-dir = ".proef-runs"    # where run records land
+setup    = "tests/setup.feature"      # run once before the pool (optional)
+teardown = "tests/teardown.feature"   # run once after the pool (optional)
 
 [http]
 timeout-ms      = 30000     # per-request timeout (batch-level default)
@@ -58,6 +60,8 @@ timeout-ms = 60000
 | `[run] suite` | *(unset)* | default path for `proef test`/`flows`/`artifacts`; falls back to the `tests/` convention, then errors. An explicit path always wins |
 | `[run] jobs` | available parallelism | `--jobs` flag wins; live threads never exceed the scenario count |
 | `[run] runs-dir` | `.proef-runs` | run records rotate here (newest 200 kept; only uuid-named run dirs are ever touched) |
+| `[run] setup` | *(unset)* | feature run **once before** the pool (suite setup); its `saveAs: global` reaches every scenario; a failure aborts the run |
+| `[run] teardown` | *(unset)* | feature run **once after** the pool (suite teardown), only if setup succeeded; its failure is a distinct exit 3 |
 | `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it |
 | `[http] follow-location` | `false` | per-entry `[Options]` override it |
 | `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
@@ -112,6 +116,29 @@ This is distinct from hurl's per-request `duration < <ms>` assert (which fails o
 inside a `hurl:` block): the `[sla]` gate is an aggregate budget over the *whole run*, while
 `duration <` is a targeted per-request check. Use the assert for a hard per-endpoint SLA and
 `[sla]` for a suite-wide budget.
+
+## Suite setup & teardown (`[run] setup` / `[run] teardown`)
+
+`[run] setup` and `[run] teardown` each name a **feature file** run once around the whole
+suite (the model Playwright/Jest `globalSetup` use, ADR-0014). `setup` runs before the
+parallel pool and **merges its `saveAs: global` promotions into the shared store before any
+scenario lowers**, so it is the place to seed a fixture or provision shared state that every
+scenario then reads via `${global:…}`. `teardown` runs once after the pool for cleanup.
+
+```toml
+[run]
+setup    = "tests/setup.feature"
+teardown = "tests/teardown.feature"
+```
+
+Failure semantics are deliberate: a **setup** failure **aborts the run before the pool** and
+maps to a **user (2)** or **system (3)** fault — a broken fixture is not a failing test, so it
+never becomes exit 1. **Teardown runs only if setup succeeded** (it still runs after ordinary
+scenario failures, for reliable cleanup), and a **teardown** failure is a **distinct exit 3**
+cleanup fault — the suite's own verdict stands, but the failure is never silently swallowed.
+Both features are excluded from the pool, so a setup/teardown feature inside the suite
+directory never also runs as an ordinary scenario. Auth is already covered by pre-set
+secrets, so setup is for **seeding/provisioning**, not obtaining a runtime token.
 
 ## What does *not* live here
 

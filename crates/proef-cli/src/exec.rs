@@ -3,7 +3,7 @@
 //! `.proef-runs/<run-id>/` (events.jsonl **is** the record, ADR-0008),
 //! Ctrl-C graceful/hard (ADR-0007), state persisted atomically (ADR-0005).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +12,7 @@ use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use proef_core::cancel::CancellationToken;
-use proef_core::engine::ArtifactRef;
+use proef_core::engine::{ArtifactRef, EngineFactory, HttpDefaults};
 use proef_core::error::ExitCode;
 use proef_core::event::{Event, EventSink};
 use proef_core::lower::LowerCtx;
@@ -73,7 +73,7 @@ pub fn execute(
 
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let front = match front::run(path, ResolveMode::DryRun, run_id, Arc::clone(&config_vars)) {
+    let mut front = match front::run(path, ResolveMode::DryRun, run_id, Arc::clone(&config_vars)) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
     };
@@ -194,6 +194,43 @@ pub fn execute(
         }
     };
 
+    let engines = Arc::new(registry::engines());
+
+    // Suite-level setup/teardown (ADR-0014): a feature run once before / after
+    // the pool at the CLI edge, sharing the store so its `saveAs: global`
+    // promotions reach every scenario. The core runner stays tag-agnostic.
+    let setup_path = config.setup().map(PathBuf::from);
+    let teardown_path = config.teardown().map(PathBuf::from);
+
+    // Setup runs first and merges its globals *before* the pool snapshots the
+    // store. A setup failure aborts here, never masked — a broken fixture is a
+    // user/system fault, not a test failure that would gate on exit 1.
+    if let Some(setup) = &setup_path {
+        match run_phase(
+            "setup",
+            setup,
+            &front.run_id,
+            &config_vars,
+            &http_defaults,
+            &store,
+            &engines,
+            &sink,
+            &cancel,
+            &artifacts_dir,
+        ) {
+            Err(code) => return code,
+            Ok(summary) => {
+                if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
+                    eprintln!("error: setup failed — aborting before the suite runs");
+                    return code;
+                }
+            }
+        }
+    }
+
+    // A setup/teardown feature must not also run as an ordinary suite scenario.
+    exclude_phase_features(&mut front, setup_path.as_ref(), teardown_path.as_ref());
+
     let specs = build_specs(
         &front,
         tags,
@@ -227,8 +264,36 @@ pub fn execute(
         secrets,
         http: http_defaults,
     };
-    let engines = Arc::new(registry::engines());
     let summary = runner::run(specs, &engines, &store, &run_config, &sink, &cancel);
+
+    // Suite-level teardown: runs after the pool (setup succeeded, or there was
+    // none). Its failure is a distinct non-zero signal (exit 3), never a
+    // silently-green suite — the suite's own verdict still stands.
+    let mut teardown_exit = ExitCode::Success;
+    if let Some(teardown) = &teardown_path {
+        match run_phase(
+            "teardown",
+            teardown,
+            &front.run_id,
+            &config_vars,
+            &http_defaults,
+            &store,
+            &engines,
+            &sink,
+            &cancel,
+            &artifacts_dir,
+        ) {
+            Err(_) => teardown_exit = ExitCode::SystemError,
+            Ok(summary) => {
+                if phase_failed(&summary, ExitCode::SystemError).is_some() {
+                    eprintln!(
+                        "error: teardown failed — cleanup did not complete (the suite verdict stands)"
+                    );
+                    teardown_exit = ExitCode::SystemError;
+                }
+            }
+        }
+    }
 
     // Persist the World (atomic temp+rename, 0600 — ADR-0005).
     if let Ok(guard) = store.lock()
@@ -370,6 +435,12 @@ pub fn execute(
         }
         None => base_exit,
     };
+    // A teardown/cleanup fault (exit 3) outranks any test result.
+    let exit = if teardown_exit.code() > exit.code() {
+        teardown_exit
+    } else {
+        exit
+    };
 
     match output {
         Some(OutputFormat::Json) => {
@@ -439,6 +510,124 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
             other => inner.emit(other),
         }
     })
+}
+
+/// Run a suite-level setup/teardown feature once, sequentially, against the
+/// shared store/engines/sink (ADR-0014). `saveAs: global` promotions merge into
+/// the shared store (so setup's state reaches the pool); the phase resolves its
+/// own secrets. Returns its summary, or an exit code when the feature itself is
+/// invalid (validation / missing secret) — surfaced immediately, never masked.
+#[allow(clippy::too_many_arguments)]
+fn run_phase(
+    label: &str,
+    path: &Path,
+    run_id: &Arc<str>,
+    config_vars: &Arc<BTreeMap<String, String>>,
+    http: &HttpDefaults,
+    store: &Arc<Mutex<GlobalStore>>,
+    engines: &Arc<Vec<Box<dyn EngineFactory>>>,
+    sink: &EventSink,
+    cancel: &CancellationToken,
+    artifacts_dir: &Path,
+) -> Result<runner::RunSummary, ExitCode> {
+    let front = front::run(
+        path,
+        ResolveMode::DryRun,
+        Some(run_id.to_string()),
+        Arc::clone(config_vars),
+    )
+    .map_err(|err| {
+        eprintln!("error: {label} feature failed to validate:");
+        crate::commands::report_front_error(&err)
+    })?;
+    render::print_all(&front.warnings);
+
+    let names: BTreeSet<String> = front
+        .features
+        .iter()
+        .flat_map(|feature| feature.scenarios.iter())
+        .flat_map(|scenario| scenario.lowered.secrets.iter().cloned())
+        .collect();
+    let secrets = match crate::secretstore::resolve_all(&names) {
+        Ok(secrets) => Arc::new(secrets),
+        Err(missing) => {
+            eprintln!(
+                "error: {label} missing secret value(s): {}",
+                missing.join(", ")
+            );
+            return Err(ExitCode::UserError);
+        }
+    };
+
+    let specs = build_specs(&front, None, None, None, None, artifacts_dir);
+    if specs.is_empty() {
+        eprintln!(
+            "error: {label} feature `{}` has no scenarios",
+            path.display()
+        );
+        return Err(ExitCode::UserError);
+    }
+    let run_config = RunConfig {
+        run_id: Arc::clone(run_id),
+        jobs: 1, // setup/teardown run sequentially
+        default_batch_budget: Duration::from_millis(http.timeout_ms.saturating_mul(4).max(60_000)),
+        secrets,
+        http: *http,
+    };
+    Ok(runner::run(
+        specs,
+        engines,
+        store,
+        &run_config,
+        sink,
+        cancel,
+    ))
+}
+
+/// Classify a setup/teardown summary: `None` when every scenario passed, else
+/// the exit code to surface. A `System` fault → exit 3; a `User` fault → exit 2;
+/// a plain test failure → `on_test_failure` (a broken *setup* is a user error,
+/// a broken *teardown* a system/cleanup fault — never a test failure, which
+/// would misread as the API under test being broken; ADR-0014).
+fn phase_failed(summary: &runner::RunSummary, on_test_failure: ExitCode) -> Option<ExitCode> {
+    let mut worst: Option<ExitCode> = None;
+    for outcome in &summary.outcomes {
+        let code = match (&outcome.fault, outcome.status) {
+            (Some(runner::Fault::System(_)), _) => Some(ExitCode::SystemError),
+            (Some(runner::Fault::User(_)), _) => Some(ExitCode::UserError),
+            (None, proef_core::step::Status::Failed) => Some(on_test_failure),
+            _ => None,
+        };
+        if let Some(code) = code
+            && worst.is_none_or(|w| code.code() > w.code())
+        {
+            worst = Some(code);
+        }
+    }
+    worst
+}
+
+/// Drop the setup/teardown feature(s) from the main suite so they never also
+/// run as ordinary scenarios (ADR-0014). Matching is on canonical paths, so it
+/// is robust whether the phase feature lives inside or outside the suite dir.
+fn exclude_phase_features(
+    front: &mut FrontEnd,
+    setup: Option<&PathBuf>,
+    teardown: Option<&PathBuf>,
+) {
+    let phase_files: Vec<PathBuf> = [setup, teardown]
+        .into_iter()
+        .flatten()
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .collect();
+    if phase_files.is_empty() {
+        return;
+    }
+    front.features.retain(|feature| {
+        std::fs::canonicalize(feature.file.path.as_str())
+            .ok()
+            .is_none_or(|canonical| !phase_files.contains(&canonical))
+    });
 }
 
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure

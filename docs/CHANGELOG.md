@@ -8,6 +8,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Suite setup & teardown (`proef.toml [run] setup`/`teardown`, ADR-0014).**
+  Each names a feature run once around the whole suite (the Playwright/Jest
+  `globalSetup` model). `setup` runs before the parallel pool and merges its
+  `saveAs: global` promotions into the shared store **before any scenario
+  lowers**, so it seeds fixtures/shared state every scenario reads via
+  `${global:…}`; `teardown` runs once after for cleanup. A setup failure aborts
+  the run as a user/system fault (never a test failure, exit 1); teardown runs
+  only if setup succeeded and its failure is a distinct exit 3 (never a silently
+  green suite). Both are excluded from the pool, so a setup/teardown feature
+  inside the suite never also runs as an ordinary scenario.
 - **`proef test --output tap`** — a TAP version 13 stream to stdout, one test
   point per scenario, derived from the run's own outcomes (not from hurl), for
   `prove`/`tappy` and TAP-native CI. The human report moves to stderr (as with

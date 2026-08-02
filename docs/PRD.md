@@ -118,7 +118,8 @@ event spine → console/JUnit/JSONL/GitHub-summary reporters; run-record rotatio
 `macros` (call counts + dead-macro report), `artifacts`, `schema [--add-to]`,
 `secret set|list`, `explain`, `diff [base] [new] --fail-on-regression`,
 `report [run] -o <file>`, `doctor`. **Config
-(`proef.toml`, ADR-0012):** runner settings (`[run]`/`[http]`/`[sla]`) + suite variables
+(`proef.toml`, ADR-0012):** runner settings (`[run]` incl. `setup`/`teardown` suite
+lifecycle features, ADR-0014; `[http]`/`[sla]`) + suite variables
 (`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
 (`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via
 `--env`/`PROEF_ENV`) < flags. Secrets via `PROEF_SECRET_<NAME>` env override → the

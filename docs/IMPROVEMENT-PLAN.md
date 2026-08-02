@@ -1,7 +1,8 @@
 # proef — Improvement Plan
 
-**Status:** Round 1 (§1–§11) largely shipped; Round 2 (§12) — **Batches E & F shipped**
-(N2·N6a·N9·N8·N7·N4) · **Date:** 2026-07-31, appended 2026-08-02 · **Owner:** Emre
+**Status:** Round 1 (§1–§11) largely shipped; Round 2 (§12) — **Batches E, F & most of G
+shipped** (N2·N6a·N9·N8·N7·N4·N6b·N3; N1 deferred per ADR-0013) · **Date:** 2026-07-31,
+appended 2026-08-02 · **Owner:** Emre
 **Companion docs:** [PRD](PRD.md) (scope + the binding **non-goals**, §3), [adr/](adr/) (the
 invariants every item must respect), [TECH-SPEC](TECH-SPEC.md) (types/pipeline),
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) (milestones + definition of done).
@@ -419,8 +420,10 @@ One-canonical watch-list — each must fold into an existing mechanism, never sh
    N6a waterfall · N9 `expect:` library · N8 i18n verify+harden.
 2. **Batch F — small–medium — SHIPPED 2026-08-02:** N7 near-duplicate lint ·
    N4 TAP (`--output tap`).
-3. **Batch G — medium, design/ADR call first:** N3 setup/teardown (`[run]` construct) ·
-   N1 typed params (**ADR-gated**) · N6b full timeline (needs **P4**).
+3. **Batch G — medium, design/ADR call first — mostly SHIPPED 2026-08-02:**
+   N6b full timeline (ADR-0015, **P4** delivered) · N3 setup/teardown (ADR-0014,
+   `[run] setup`/`teardown`). **N1 typed params — deferred** (ADR-0013): the
+   research-grounded call given proef's deferred-heavy, string-ish corpus.
 4. **Blocked pending an ADR:** Tier-3-A OpenAPI generator. **Rejected:** N5 golden snapshots.
 
 ### 12.8 Sources (round 2)

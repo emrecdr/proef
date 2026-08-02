@@ -559,6 +559,160 @@ fn optional_failure_warns_and_continues() {
         .code(0);
 }
 
+/// ADR-0014: a failing suite-level setup aborts the run *before* the pool, as a
+/// user error (exit 2, never a test failure); the suite never runs.
+#[test]
+fn setup_failure_aborts_the_run_as_a_user_error() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2); // user error — a broken fixture is not a failing test (exit 1)
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(stderr.contains("setup failed"), "{stderr}");
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    assert!(events.contains("broken setup"), "setup ran: {events}");
+    assert!(
+        !events.contains("should not run"),
+        "suite must not run: {events}"
+    );
+}
+
+/// ADR-0014: setup runs once before the pool and its `saveAs: global` reaches
+/// the pool (the suite fetching `${global:recordId}` only succeeds if setup's
+/// promotion merged first); teardown runs after; both are excluded from the
+/// pool, so each runs exactly once.
+#[test]
+fn setup_shares_globals_teardown_runs_and_both_are_excluded() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\n\
+         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When the record is remembered\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: use it\n    When the remembered record is fetched\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: cleanup\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  remember:\n    match: the record is remembered\n    steps:\n      \
+         - saveAs: { recordId: global }\n        hurl: |\n          \
+         GET ${url:base}/api/v1/admin/search/records\n          \
+         Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          \
+         [Captures]\n          recordId: jsonpath \"$[0].id\"\n  \
+         fetch:\n    match: the remembered record is fetched\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/api/v1/records/${global:recordId}\n          \
+         Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n  \
+         teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(0); // exit 0 proves setup's global reached the pool
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    // Each phase's scenario ran exactly once — setup/teardown excluded from the pool.
+    assert_eq!(
+        events
+            .matches(r#""event":"scenario_started","scenario":"provision""#)
+            .count(),
+        1,
+        "setup must not also run in the pool: {events}"
+    );
+    assert!(events.contains(r#""scenario":"use it""#), "{events}");
+    assert!(
+        events.contains(r#""scenario":"cleanup""#),
+        "teardown ran: {events}"
+    );
+}
+
+/// ADR-0014: a teardown failure is a distinct non-zero signal (exit 3, a
+/// cleanup fault) — the suite's own green verdict still stands.
+#[test]
+fn teardown_failure_is_a_distinct_cleanup_fault() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: broken cleanup\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3); // cleanup fault, distinct from a test failure (1) or green (0)
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(stderr.contains("teardown failed"), "{stderr}");
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    assert!(
+        events.contains(r#""scenario":"passes""#),
+        "the suite itself ran: {events}"
+    );
+}
+
 /// US-4: `saveAs: global` persists across scenarios and lands in
 /// `.proef-state.json` (atomic World persistence).
 #[test]

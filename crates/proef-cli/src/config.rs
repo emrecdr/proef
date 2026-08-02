@@ -64,6 +64,14 @@ pub struct RunTable {
     /// Default suite path used when `proef test` is given no path
     /// (falls back to the `tests/` convention when unset — see `suite`).
     pub suite: Option<String>,
+    /// Feature file run **once before** the suite pool (suite-level setup,
+    /// ADR-0014). Its `saveAs: global` promotions are visible to every
+    /// scenario; a setup failure aborts the run before the pool launches.
+    pub setup: Option<String>,
+    /// Feature file run **once after** the pool (suite-level teardown,
+    /// ADR-0014) — only when setup succeeded. A teardown failure is a distinct
+    /// non-zero signal, never a silently-green suite.
+    pub teardown: Option<String>,
 }
 
 /// `[env.<name>.run]` overrides. Deliberately narrower than [`RunTable`]: only
@@ -213,6 +221,16 @@ impl ProjectConfig {
         self.run.suite.as_deref()
     }
 
+    /// The suite-level setup feature (`[run] setup`), if any (ADR-0014).
+    pub fn setup(&self) -> Option<&str> {
+        self.run.setup.as_deref()
+    }
+
+    /// The suite-level teardown feature (`[run] teardown`), if any (ADR-0014).
+    pub fn teardown(&self) -> Option<&str> {
+        self.run.teardown.as_deref()
+    }
+
     /// The injected `${url:…}` / `${vars:…}` scope for the active environment,
     /// keyed `"<namespace>:<key>"` (deep-merged: base then env override). Passed
     /// into `LowerCtx::config_vars` so the sans-IO core resolves these without
@@ -342,6 +360,17 @@ mod tests {
             Some(1000),
             "unlisted max inherited from base"
         );
+    }
+
+    #[test]
+    fn setup_and_teardown_paths_are_read() {
+        let config = parse(
+            "[run]\nsetup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+        );
+        assert_eq!(config.setup(), Some("suite/setup.feature"));
+        assert_eq!(config.teardown(), Some("suite/teardown.feature"));
+        assert_eq!(ProjectConfig::default().setup(), None);
+        assert_eq!(ProjectConfig::default().teardown(), None);
     }
 
     #[test]
