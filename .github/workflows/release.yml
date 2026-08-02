@@ -80,7 +80,7 @@ jobs:
           build-roots: target\${{ matrix.target }}\release\build
 
       - name: Install cargo-auditable
-        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
         with:
           tool: cargo-auditable
 
