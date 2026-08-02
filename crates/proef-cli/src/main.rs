@@ -21,6 +21,7 @@ mod render;
 mod report;
 mod sarif;
 mod secretstore;
+mod sla;
 mod watch;
 
 use std::path::PathBuf;

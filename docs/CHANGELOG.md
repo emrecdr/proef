@@ -8,6 +8,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Run-level SLA gate (`proef.toml [sla]`).** An opt-in latency budget: after a
+  run, per-step wall-clock durations fold into `p95-ms` (95th-percentile ceiling)
+  and `max-ms` (slowest-step ceiling); a breach prints the offending metrics + the
+  slowest steps and maps to **exit 1** (a test failure). It is off by default (no
+  `[sla]` table = no gate, run byte-identical to before), env-overridable via
+  `[env.<name>.sla]`, introduces no new exit code, and never downgrades a
+  `User`/`System` fault. Distinct from hurl's per-request `duration <` assert —
+  the gate is an aggregate budget over the whole run. Skipped steps are excluded
+  from the population.
+
 - **External config & environments (`proef.toml`, ADR-0012).** New `[url]` and
   `[vars]` tables hold non-secret suite variables, referenced in packs as
   `${url:<key>}` / `${vars:<key>}`; `[env.<name>.<section>]` profiles deep-merge

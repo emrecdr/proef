@@ -3,7 +3,7 @@
 # Copy to `proef.toml` and adjust. Precedence (low → high):
 #   built-in defaults < proef.toml base tables < active [env.<name>] < CLI flags
 #
-# Two kinds of thing live here: runner config ([run], [http]) and suite
+# Two kinds of thing live here: runner config ([run], [http], [sla]) and suite
 # variables ([url], [vars]) — plus per-environment overrides ([env.<name>]).
 # Secrets NEVER live here (use `proef secret set` / PROEF_SECRET_<NAME>).
 
@@ -23,6 +23,13 @@
 # Batch-level defaults for the hurl engine; per-entry [Options] in packs override.
 # timeout-ms = 30000
 # follow-location = false
+
+[sla]
+# Opt-in run-level latency budget (omit the table for no gate). A breach fails
+# the run with exit 1 — never a new exit code, never masking a user/system fault.
+# Distinct from hurl's per-request `duration < <ms>` assert (this is aggregate).
+# p95-ms = 250    # 95th-percentile per-step duration ceiling
+# max-ms = 1000   # slowest single-step ceiling
 
 # ── suite variables (referenced in packs as ${url:key} / ${vars:key}) ──
 [url]

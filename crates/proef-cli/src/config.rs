@@ -17,6 +17,8 @@ use std::path::PathBuf;
 use proef_core::engine::HttpDefaults;
 use serde::Deserialize;
 
+use crate::sla::SlaThresholds;
+
 /// The nearest `proef.toml` walking up from the working directory (like
 /// cargo/git), or `None` if none exists in any ancestor.
 fn find_config() -> Option<PathBuf> {
@@ -36,6 +38,9 @@ pub struct ProjectConfig {
     /// `[http]` table.
     #[serde(default)]
     pub http: HttpTable,
+    /// `[sla]` table — the opt-in run-level latency budget.
+    #[serde(default)]
+    pub sla: SlaTable,
     /// `[url]` table — URL variables (`${url:base}`, `${url:admin}`, …).
     #[serde(default)]
     pub url: BTreeMap<String, String>,
@@ -85,6 +90,21 @@ pub struct HttpTable {
     pub follow_location: Option<bool>,
 }
 
+/// `[sla]` settings — an opt-in run-level latency budget (ceilings in
+/// milliseconds). Env-overridable via `[env.<name>.sla]`. Every field is
+/// optional and unset means "no gate for that metric", so an absent `[sla]`
+/// table leaves the run byte-identical to an SLA-unaware build.
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SlaTable {
+    /// 95th-percentile per-step duration ceiling.
+    #[serde(rename = "p95-ms")]
+    pub p95_ms: Option<u64>,
+    /// Maximum single-step duration ceiling.
+    #[serde(rename = "max-ms")]
+    pub max_ms: Option<u64>,
+}
+
 /// An `[env.<name>]` profile: per-environment overrides that deep-merge over the
 /// base sections, key by key. Only the deltas need listing; unlisted keys inherit.
 #[derive(Debug, Default, Deserialize)]
@@ -102,6 +122,9 @@ pub struct EnvProfile {
     /// `[env.<name>.run]` — run setting overrides (`jobs` only; see [`RunOverride`]).
     #[serde(default)]
     pub run: RunOverride,
+    /// `[env.<name>.sla]` — SLA ceiling overrides (looser staging, tighter prod).
+    #[serde(default)]
+    pub sla: SlaTable,
 }
 
 impl ProjectConfig {
@@ -149,6 +172,17 @@ impl ProjectConfig {
                 .and_then(|http| http.follow_location)
                 .or(self.http.follow_location)
                 .unwrap_or(base.follow_location),
+        })
+    }
+
+    /// The effective SLA thresholds: `[sla]` < `[env.<name>.sla]`, field by
+    /// field, so an environment overrides only the ceilings it lists. All-`None`
+    /// (the default when no `[sla]` table exists) is the inert, no-gate state.
+    pub fn sla_thresholds(&self, active_env: Option<&str>) -> Result<SlaThresholds, String> {
+        let env_sla = self.env_profile(active_env)?.map(|profile| &profile.sla);
+        Ok(SlaThresholds {
+            p95_ms: env_sla.and_then(|sla| sla.p95_ms).or(self.sla.p95_ms),
+            max_ms: env_sla.and_then(|sla| sla.max_ms).or(self.sla.max_ms),
         })
     }
 
@@ -281,6 +315,33 @@ mod tests {
         let config = parse("[run]\nsuite = \"e2e\"\n");
         assert_eq!(config.suite(), Some("e2e"));
         assert_eq!(ProjectConfig::default().suite(), None);
+    }
+
+    #[test]
+    fn sla_thresholds_default_to_no_gate_and_env_overrides_field_wise() {
+        // No `[sla]` table → inert (both ceilings unset).
+        assert!(
+            !ProjectConfig::default()
+                .sla_thresholds(None)
+                .unwrap()
+                .is_set()
+        );
+
+        let config = parse(
+            "[sla]\np95-ms = 250\nmax-ms = 1000\n\
+             [env.staging.sla]\np95-ms = 800\n",
+        );
+        let base = config.sla_thresholds(None).unwrap();
+        assert_eq!(base.p95_ms, Some(250));
+        assert_eq!(base.max_ms, Some(1000));
+
+        let staging = config.sla_thresholds(Some("staging")).unwrap();
+        assert_eq!(staging.p95_ms, Some(800), "env overrides p95");
+        assert_eq!(
+            staging.max_ms,
+            Some(1000),
+            "unlisted max inherited from base"
+        );
     }
 
     #[test]

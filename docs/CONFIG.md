@@ -7,8 +7,8 @@ are rejected (`deny_unknown_fields`), so typos fail loudly instead of being
 ignored.
 
 The file holds two kinds of thing, kept in distinct sections: **runner config**
-(how proef behaves — `[run]`, `[http]`) and **suite variables** (data your tests
-reference — `[url]`, `[vars]`), plus per-environment overrides (`[env.<name>]`).
+(how proef behaves — `[run]`, `[http]`, `[sla]`) and **suite variables** (data your
+tests reference — `[url]`, `[vars]`), plus per-environment overrides (`[env.<name>]`).
 Secrets never live here (see below).
 
 Precedence (highest wins): built-in defaults < `proef.toml` base tables <
@@ -28,6 +28,10 @@ runs-dir = ".proef-runs"    # where run records land
 [http]
 timeout-ms      = 30000     # per-request timeout (batch-level default)
 follow-location = false     # follow redirects
+
+[sla]                       # opt-in run-level latency budget (omit = no gate)
+p95-ms = 250                # 95th-percentile per-step duration ceiling
+max-ms = 1000               # slowest single-step ceiling
 
 # ── suite variables (data your tests reference) ─────────────────
 [url]
@@ -56,9 +60,11 @@ timeout-ms = 60000
 | `[run] runs-dir` | `.proef-runs` | run records rotate here (newest 200 kept; only uuid-named run dirs are ever touched) |
 | `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it |
 | `[http] follow-location` | `false` | per-entry `[Options]` override it |
+| `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
+| `[sla] max-ms` | *(unset)* | slowest single-step ceiling; unset = no gate |
 | `[url] <key>` | *(none)* | URL variables, referenced as `${url:<key>}` |
 | `[vars] <key>` | *(none)* | non-secret variables, referenced as `${vars:<key>}` |
-| `[env.<name>.<section>]` | inherits base | per-environment override of any base section (`url`/`vars`/`http`/`run`) |
+| `[env.<name>.<section>]` | inherits base | per-environment override of any base section (`url`/`vars`/`http`/`run`/`sla`) |
 
 ## Environments
 
@@ -74,10 +80,38 @@ $ PROEF_ENV=staging proef test   # same, via the environment variable
 ```
 
 The rule is uniform: under `[env.<name>]`, `url.*` / `vars.*` override variables and
-`http.*` / `run.*` override runner settings. A named-but-undefined `--env` is a user
-error (exit 2) listing the known environments. A `${url:key}` / `${vars:key}` referenced
+`http.*` / `run.*` / `sla.*` override runner settings. A named-but-undefined `--env` is a
+user error (exit 2) listing the known environments. A `${url:key}` / `${vars:key}` referenced
 in a pack but defined in neither the base nor the active environment fails at lower time
 (`proef::resolve::missing_config_var`).
+
+## SLA gate (`[sla]`)
+
+The optional `[sla]` table is a **run-level latency budget**: after a run, proef folds
+every step's wall-clock duration into two aggregates and fails the run if either exceeds
+its ceiling. `p95-ms` caps the 95th-percentile step duration (the typical slow request);
+`max-ms` caps the single slowest step. Skipped steps (which never hit the network) are
+excluded from the population.
+
+The gate is **opt-in and off by default** — with no `[sla]` table a run behaves exactly as
+before. A breach prints the offending metrics and the slowest steps on stderr and maps to
+**exit 1** (a test failure), the same code as a failed assertion. It never introduces a new
+exit code and never downgrades a `User`/`System` fault (exit 2/3), so a breach can only turn
+an otherwise-green run red. Tighten or loosen per environment the usual way:
+
+```toml
+[sla]                       # baseline budget
+p95-ms = 250
+max-ms = 1000
+
+[env.staging.sla]           # staging tolerates slower responses
+p95-ms = 800
+```
+
+This is distinct from hurl's per-request `duration < <ms>` assert (which fails one step
+inside a `hurl:` block): the `[sla]` gate is an aggregate budget over the *whole run*, while
+`duration <` is a targeted per-request check. Use the assert for a hard per-endpoint SLA and
+`[sla]` for a suite-wide budget.
 
 ## What does *not* live here
 

@@ -53,13 +53,17 @@ pub fn execute(
     // Resolve the active environment once. All three calls consult `env_profile`,
     // so any of them surfaces an unknown `--env` (user error); the match below
     // reports the first such error.
-    let (config_vars, effective_jobs, http_defaults) = match (
+    let (config_vars, effective_jobs, http_defaults, sla_thresholds) = match (
         config.config_vars(active_env),
         config.jobs(jobs, active_env),
         config.http_defaults(active_env),
+        config.sla_thresholds(active_env),
     ) {
-        (Ok(vars), Ok(jobs), Ok(http)) => (Arc::new(vars), jobs, http),
-        (Err(message), _, _) | (_, Err(message), _) | (_, _, Err(message)) => {
+        (Ok(vars), Ok(jobs), Ok(http), Ok(sla)) => (Arc::new(vars), jobs, http, sla),
+        (Err(message), ..)
+        | (_, Err(message), ..)
+        | (_, _, Err(message), _)
+        | (_, _, _, Err(message)) => {
             eprintln!("error: {message}");
             return ExitCode::UserError;
         }
@@ -343,13 +347,30 @@ pub fn execute(
         );
     }
 
+    // Run-level SLA gate (opt-in via `proef.toml [sla]`). A breach prints on
+    // stderr and folds into the exit code as a test failure — but only when the
+    // run is otherwise clean, so it never downgrades a `User`/`System` fault.
+    // With no `[sla]` table configured this is inert (exit unchanged).
+    let base_exit = summary.exit_code_excluding(&non_gating);
+    let exit = match crate::sla::check(&summary, sla_thresholds) {
+        Some(report) if base_exit == ExitCode::Success => {
+            eprintln!("{report}");
+            ExitCode::TestFailure
+        }
+        Some(report) => {
+            eprintln!("{report}");
+            base_exit
+        }
+        None => base_exit,
+    };
+
     if output_json {
         let json = serde_json::json!({
             "run_id": front.run_id.as_ref(),
             "passed": summary.passed,
             "failed": summary.failed,
             "skipped": summary.skipped,
-            "exit_code": summary.exit_code_excluding(&non_gating).code(),
+            "exit_code": exit.code(),
             "events": run_dir.join("events.jsonl").display().to_string(),
         });
         crate::render::outln!("{json}");
@@ -358,7 +379,7 @@ pub fn execute(
     if junit_failed {
         return ExitCode::SystemError;
     }
-    summary.exit_code_excluding(&non_gating)
+    exit
 }
 
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure
