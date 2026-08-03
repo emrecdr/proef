@@ -148,8 +148,8 @@ fn shutdown(client: &Connection, server: std::thread::JoinHandle<()>) {
 
 #[test]
 fn open_unbound_step_publishes_the_expected_diagnostic() {
-    let feature_name = "/suite/case.feature".to_owned();
-    let pack_name = "/suite/packs/broken.yaml".to_owned();
+    let feature_name = native_abs("suite/case.feature");
+    let pack_name = native_abs("suite/packs/broken.yaml");
     let mut files = BTreeMap::new();
     files.insert(feature_name.clone(), Arc::from(feature_text()));
     files.insert(
@@ -211,8 +211,8 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
 
 #[test]
 fn definition_on_a_step_jumps_to_the_macro() {
-    let feature_name = "/suite/f.feature".to_owned();
-    let pack_name = "/suite/packs/p.yaml".to_owned();
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
     let mut files = BTreeMap::new();
     let feature_text = "Feature: F\n  Scenario: S\n    When I greet Sam\n";
     files.insert(feature_name.clone(), Arc::from(feature_text));
@@ -296,8 +296,8 @@ fn definition_on_a_step_jumps_to_the_macro() {
 fn completion_offers_macro_pattern_snippets() {
     use lsp_types::{CompletionParams, CompletionResponse, InsertTextFormat};
 
-    let feature_name = "/suite/f.feature".to_owned();
-    let pack_name = "/suite/packs/p.yaml".to_owned();
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
     let feature_text = "Feature: F\n  Scenario: S\n    When I gr\n";
     let mut files = BTreeMap::new();
     files.insert(feature_name.clone(), Arc::from(feature_text));
@@ -397,9 +397,9 @@ fn completion_offers_macro_pattern_snippets() {
 fn references_lists_every_step_bound_to_the_macro() {
     use lsp_types::{ReferenceContext, ReferenceParams};
 
-    let f1 = "/suite/a.feature".to_owned();
-    let f2 = "/suite/b.feature".to_owned();
-    let pack = "/suite/packs/p.yaml".to_owned();
+    let f1 = native_abs("suite/a.feature");
+    let f2 = native_abs("suite/b.feature");
+    let pack = native_abs("suite/packs/p.yaml");
     let t1 = "Feature: A\n  Scenario: S\n    When I greet Sam\n";
     let t2 = "Feature: B\n  Scenario: T\n    When I greet Mia\n";
     let mut files = BTreeMap::new();
@@ -475,4 +475,18 @@ fn references_lists_every_step_bound_to_the_macro() {
 
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
+}
+
+/// An absolute path valid on the current OS, built from a `/`-relative tail.
+/// Windows needs a drive prefix for `Path::is_absolute` (and thus the
+/// `name_to_url` bridge) to accept a path; Unix keeps the plain `/`-rooted form.
+fn native_abs(rel: &str) -> String {
+    #[cfg(windows)]
+    {
+        format!("C:\\{}", rel.replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        format!("/{rel}")
+    }
 }

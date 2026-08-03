@@ -7,12 +7,14 @@
 //! own RFC-3986 `Uri` (a `fluent_uri::Uri<String>` newtype, spec-correct about
 //! case and percent-encoding where `url::Url` normalized too eagerly). There is
 //! no `Uri::from_file_path`/`to_file_path` helper, so [`url_to_name`] and
-//! [`name_to_url`] hand-roll that bridge for the plain absolute paths a
-//! filesystem-backed workspace produces.
+//! [`name_to_url`] hand-roll that bridge for the native filesystem paths a
+//! workspace produces — plain `/`-rooted paths on Unix, drive-prefixed
+//! `C:\…` paths on Windows — so the names round-trip and match what the disk
+//! provider renders from a real `PathBuf`.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::path::{Component, Path};
+use std::path::{Component, Path, Prefix};
 use std::sync::Arc;
 
 use lsp_types::Uri;
@@ -24,15 +26,61 @@ pub fn url_to_name(url: &Uri) -> String {
     if !url.scheme().is_some_and(|s| s.eq_lowercase("file")) {
         return url.as_str().to_owned();
     }
+    let segments: Vec<String> = url
+        .path()
+        .segments()
+        .map(|segment| segment.decode().into_string_lossy().into_owned())
+        .collect();
+    join_native(&segments)
+}
+
+/// Joins decoded `file://` path segments into a Unix-native source name: each
+/// segment prefixed with `/`, an empty path collapsing to the root `/`. This is
+/// the byte-for-byte behavior the bridge has always had on Unix.
+#[cfg(not(windows))]
+fn join_native(segments: &[String]) -> String {
     let mut name = String::new();
-    for segment in url.path().segments() {
+    for segment in segments {
         name.push('/');
-        name.push_str(&segment.decode().into_string_lossy());
+        name.push_str(segment);
     }
     if name.is_empty() {
         name.push('/');
     }
     name
+}
+
+/// Joins decoded `file://` path segments into a Windows-native source name. A
+/// leading drive segment (`C:`) rebuilds the native `C:\seg\seg` form with no
+/// separator before the drive; anything else (UNC, drive-less) falls back to a
+/// best-effort `\`-joined path so the string is at least stable and comparable.
+#[cfg(windows)]
+fn join_native(segments: &[String]) -> String {
+    match segments.split_first() {
+        Some((drive, rest)) if is_drive(drive) => {
+            let mut name = drive.clone();
+            for segment in rest {
+                name.push('\\');
+                name.push_str(segment);
+            }
+            name
+        }
+        _ => {
+            let mut name = String::new();
+            for segment in segments {
+                name.push('\\');
+                name.push_str(segment);
+            }
+            name
+        }
+    }
+}
+
+/// True for a bare drive segment like `C:` — an ascii letter followed by a colon.
+#[cfg(windows)]
+fn is_drive(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
 /// Inverse of [`url_to_name`] for a filesystem path; `None` if it is not an
@@ -49,10 +97,22 @@ pub fn name_to_url(name: &str) -> Option<Uri> {
                 raw.push('/');
                 percent_encode_segment(&seg.to_string_lossy(), &mut raw);
             }
-            Component::Prefix(prefix) => {
-                raw.push('/');
-                percent_encode_segment(&prefix.as_os_str().to_string_lossy(), &mut raw);
-            }
+            Component::Prefix(prefix) => match prefix.kind() {
+                // A real drive renders with a bare colon (`file:///C:/…`) — the
+                // form LSP clients emit and the only one that round-trips back
+                // through `Path::is_absolute` on Windows. Other prefix kinds
+                // (UNC, device namespaces) have no such convention, so keep the
+                // safe percent-encoded form.
+                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+                    raw.push('/');
+                    raw.push(letter as char);
+                    raw.push(':');
+                }
+                _ => {
+                    raw.push('/');
+                    percent_encode_segment(&prefix.as_os_str().to_string_lossy(), &mut raw);
+                }
+            },
             Component::RootDir | Component::CurDir | Component::ParentDir => {}
         }
     }
@@ -144,10 +204,22 @@ mod tests {
 
     use super::*;
 
+    /// An absolute path valid on the current OS, built from a `/`-relative tail.
+    fn native_abs(rel: &str) -> String {
+        #[cfg(windows)]
+        {
+            format!("C:\\{}", rel.replace('/', "\\"))
+        }
+        #[cfg(not(windows))]
+        {
+            format!("/{rel}")
+        }
+    }
+
     #[test]
     fn overlay_prefers_open_text_and_forgets_on_close() {
         let mut docs = Documents::default();
-        let u = name_to_url("/suite/a.feature").unwrap();
+        let u = name_to_url(&native_abs("suite/a.feature")).unwrap();
         docs.open(u.clone(), "first".to_owned());
         assert_eq!(docs.get(&u), Some("first"));
         docs.change(u.clone(), "second".to_owned());
@@ -158,9 +230,21 @@ mod tests {
 
     #[test]
     fn name_url_round_trips() {
-        let u = name_to_url("/suite/packs/api.yaml").unwrap();
+        let u = name_to_url(&native_abs("suite/packs/api.yaml")).unwrap();
         let name = url_to_name(&u);
         assert_eq!(name_to_url(&name), Some(u));
+    }
+
+    /// Windows-only: the bridge accepts a drive-absolute native path, renders it
+    /// back in native form, and round-trips through the `file:///C:/…` URI. This
+    /// pins the cross-platform fix; it exercises only on Windows CI.
+    #[cfg(windows)]
+    #[test]
+    fn windows_drive_path_round_trips() {
+        let name = "C:\\suite\\a.feature";
+        let u = name_to_url(name).expect("a drive-absolute path forms a file URI");
+        assert_eq!(url_to_name(&u), name);
+        assert_eq!(name_to_url(&url_to_name(&u)), Some(u));
     }
 
     #[test]
@@ -171,13 +255,13 @@ mod tests {
         struct DiskStub;
         impl SourceProvider for DiskStub {
             fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
-                Ok(vec!["/s/a.feature".to_owned()])
+                Ok(vec![native_abs("s/a.feature")])
             }
             fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
                 Ok(vec![])
             }
             fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
-                if name == "/s/a.feature" {
+                if name == native_abs("s/a.feature") {
                     Ok(Arc::from("on disk"))
                 } else {
                     Err(ProviderError("missing".to_owned()))
@@ -186,7 +270,7 @@ mod tests {
         }
 
         let mut docs = Documents::default();
-        let u = name_to_url("/s/a.feature").unwrap();
+        let u = name_to_url(&native_abs("s/a.feature")).unwrap();
         docs.open(u, "in editor".to_owned());
         let disk = DiskStub;
         let overlay = OverlaySourceProvider::new(&docs, &disk);
@@ -194,9 +278,12 @@ mod tests {
         // discovery is disk's job
         assert_eq!(
             overlay.discover_features().unwrap(),
-            vec!["/s/a.feature".to_owned()]
+            vec![native_abs("s/a.feature")]
         );
         // reading prefers the open buffer
-        assert_eq!(&*overlay.read("/s/a.feature").unwrap(), "in editor");
+        assert_eq!(
+            &*overlay.read(&native_abs("s/a.feature")).unwrap(),
+            "in editor"
+        );
     }
 }
