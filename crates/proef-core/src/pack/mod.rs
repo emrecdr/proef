@@ -174,6 +174,8 @@ pub struct Macro {
     pub source: Arc<str>,
     /// Span of the macro's name in the pack file, when locatable.
     pub span: Option<Span>,
+    /// Span of the macro's `match:` line in the pack file, when locatable.
+    pub match_span: Option<Span>,
 }
 
 /// A macro is either a sequence of request steps or an assert-only `expect:`

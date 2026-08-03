@@ -94,20 +94,12 @@ pub(crate) fn payload_line_span(
 /// Content span of the `ordinal`-th (0-based) `use:` line within `macro_name`'s
 /// block — the whole reference line (indent and any `- ` sequence dash stripped),
 /// so a cursor anywhere on the reference resolves. `None` when not locatable.
-///
-/// Not yet called outside tests: the go-to-definition wiring that resolves a
-/// `use:` reference to its target lands separately.
-#[allow(dead_code)]
 pub(crate) fn use_span(text: &str, macro_name: &str, ordinal: usize) -> Option<Span> {
     key_line_span(text, macro_name, "use", ordinal)
 }
 
 /// Content span of a macro's `match:` line (there is at most one), when
 /// locatable — the go-to-definition landing anchor. `None` otherwise.
-///
-/// Not yet called outside tests: the go-to-definition wiring that lands on
-/// this span lands separately.
-#[allow(dead_code)]
 pub(crate) fn match_span(text: &str, macro_name: &str) -> Option<Span> {
     key_line_span(text, macro_name, "match", 0)
 }
