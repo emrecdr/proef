@@ -256,7 +256,6 @@ pub fn literal_skeleton(pattern: &str) -> String {
 ///
 /// This is a distinct problem from [`closest`], which finds the single most
 /// likely mistyped *complete* step; the two coexist.
-#[must_use]
 pub fn prefix_rank(typed: &str, pattern: &str) -> (u8, usize) {
     let skeleton = literal_skeleton(pattern).to_lowercase();
     let typed = typed.to_lowercase();
@@ -520,6 +519,7 @@ mod tests {
         let far = prefix_rank("I greex", "the note is saved");
         assert_eq!(near.0, 2);
         assert_eq!(far.0, 2);
+        assert_eq!(near.1, 1);
         assert!(
             near.1 < far.1,
             "prefix-aligned distance ranks the near pattern first"
@@ -529,6 +529,7 @@ mod tests {
     #[test]
     fn prefix_rank_is_case_insensitive() {
         assert_eq!(prefix_rank("i gr", "I greet {who}").0, 0);
+        assert_eq!(prefix_rank("I GR", "i greet {who}").0, 0);
     }
 
     #[test]
