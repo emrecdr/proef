@@ -1,13 +1,9 @@
-//! Go-to-definition: a feature step's macro → the macro's definition anchor.
+//! Go-to-definition: two paths onto a macro's definition anchor.
 //!
-//! Deviation from spec §7, deliberate: the spec says definition targets the
-//! macro's `match:` line. No `match:`-line span exists in `proef-core`
-//! (`serde_norway` yields no spans for valid YAML), and a text-scanning
-//! fallback for it is out of scope. `MacroRef::def_span` is the macro's
-//! *name-key* span — the idiomatic "jump to the symbol's definition" target,
-//! and the only anchor the data model actually carries. Landing precisely on
-//! `match:`, and go-to-def *from* a `use:` reference (no `use:` span exists
-//! either), are noted future refinements, not v1.
+//! Path 1 — cursor on a feature step → the macro it binds. Path 2 — cursor on
+//! a `use:` line inside a pack → the macro that reference resolves to. Both
+//! paths funnel through [`macro_location`], the single rule for a macro's
+//! landing anchor: its `match:` line when locatable, else its name key.
 
 use lsp_types::{Location, Position, Uri};
 
@@ -15,32 +11,52 @@ use crate::analysis::Analysis;
 use crate::convert::LineIndex;
 use crate::documents::{name_to_url, url_to_name};
 
-/// Resolves `position` in the document at `url` to the definition location of
-/// the macro the enclosing step is bound to, or `None` if the cursor is not
-/// inside a bound step or the macro has no locatable definition.
+/// Resolves `position` in the document at `url` to a macro's definition
+/// location — either the macro a bound feature step resolves to, or the
+/// target of a `use:` reference the cursor sits on — or `None` if neither
+/// path matches or the macro has no locatable definition.
 pub fn goto(analysis: &Analysis, url: &Uri, position: Position) -> Option<Location> {
     let name = url_to_name(url);
     let raw = analysis.raw.get(&name)?;
     let offset = LineIndex::new(raw).position_to_offset(position);
 
-    // Which bound step's span contains the cursor?
-    let macro_name = analysis
+    // Path 1 — cursor on a feature step → the macro it binds.
+    if let Some(macro_name) = analysis
         .suite
         .bindings
         .iter()
         .find(|b| b.feature == name && b.step_span.start <= offset && offset < b.step_span.end)
-        .map(|b| b.macro_name.as_str())?;
+        .map(|b| b.macro_name.as_str())
+    {
+        return macro_location(analysis, macro_name);
+    }
 
-    // The macro's definition anchor (its name key in the pack).
+    // Path 2 — cursor on a `use:` line in a pack → the referenced macro.
+    if let Some(target) = analysis
+        .suite
+        .use_refs
+        .iter()
+        .find(|u| u.pack == name && u.span.start <= offset && offset < u.span.end)
+        .map(|u| u.target_macro.as_str())
+    {
+        return macro_location(analysis, target);
+    }
+
+    None
+}
+
+/// A `Location` at `macro_name`'s definition anchor — its `match:` line when
+/// locatable, else its name key — in the pack that defines it.
+fn macro_location(analysis: &Analysis, macro_name: &str) -> Option<Location> {
     let m = analysis
         .suite
         .macros
         .iter()
         .find(|m| m.name == macro_name)?;
-    let def_span = m.def_span?;
+    let anchor = m.match_span.or(m.def_span)?;
     let pack_url = name_to_url(&m.pack)?;
     let pack_raw = analysis.raw.get(&m.pack)?;
-    let range = LineIndex::new(pack_raw).span_to_range(def_span);
+    let range = LineIndex::new(pack_raw).span_to_range(anchor);
     Some(Location {
         uri: pack_url,
         range,
