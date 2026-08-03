@@ -40,17 +40,23 @@ pub struct BoundScenario {
     pub steps: Vec<BoundStep>,
 }
 
-/// Bind every scenario of a feature. Diagnostics accumulate across steps and
-/// scenarios so authors see all problems in one run.
-pub fn bind(feature: &FeatureFile, packs: &PackSet) -> Result<Vec<BoundScenario>, Vec<Diag>> {
+/// Bind every scenario, always returning both the bound scenarios (bound steps
+/// only) and every diagnostic. This is the collect-all substrate the LSP reads;
+/// `bind` is its fail-fast wrapper. One binder, two error policies.
+pub fn bind_collect(feature: &FeatureFile, packs: &PackSet) -> (Vec<BoundScenario>, Vec<Diag>) {
     let mut diags: Vec<Diag> = Vec::new();
     let mut scenarios = Vec::new();
     let defs = packs.step_defs();
-
     for scenario in &feature.scenarios {
         scenarios.push(bind_scenario(scenario, feature, packs, &defs, &mut diags));
     }
+    (scenarios, diags)
+}
 
+/// Bind every scenario of a feature. Diagnostics accumulate across steps and
+/// scenarios so authors see all problems in one run.
+pub fn bind(feature: &FeatureFile, packs: &PackSet) -> Result<Vec<BoundScenario>, Vec<Diag>> {
+    let (scenarios, diags) = bind_collect(feature, packs);
     if diags.iter().any(|d| d.severity == Severity::Error) {
         Err(diags)
     } else {
@@ -372,5 +378,34 @@ mod tests {
         let errs = bind(&feature, &packs).unwrap_err();
         assert_eq!(errs.len(), 2);
         assert!(errs.iter().all(|d| d.code == "proef::bind::missing_param"));
+    }
+
+    #[test]
+    fn bind_collect_returns_bindings_and_diags_without_early_return() {
+        // A feature with one bindable step and one unbound step: collect-all must
+        // return the bound step's binding AND the unbound diagnostic together.
+        let packs = crate::pack::load(
+            &[crate::pack::PackSource {
+                name: "packs/p.yaml".to_owned(),
+                text: std::sync::Arc::from(
+                    "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+                ),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let file = crate::feature::parse(
+            "f.feature",
+            "Feature: F\n  Scenario: S\n    When I greet Sam\n    And I xyzzy\n",
+        )
+        .unwrap();
+
+        let (scenarios, diags) = bind_collect(&file, &packs);
+        // One scenario, with the bound step surviving.
+        let bound_step_count: usize = scenarios.iter().map(|s| s.steps.len()).sum();
+        assert_eq!(bound_step_count, 1, "the bindable step must survive");
+        assert_eq!(scenarios[0].steps[0].macro_name, "greet");
+        // The unbound step surfaces its diagnostic rather than aborting the feature.
+        assert!(diags.iter().any(|d| d.code == "proef::bind::unbound_step"));
     }
 }

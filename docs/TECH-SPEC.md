@@ -48,6 +48,7 @@ proef/
     proef-cli/             # bin `proef`: clap, registry assembly, miette rendering
     proef-fixture/         # dev-only: in-process synchronous fixture API server (ADR-0011)
     proef-harness/         # libtest-mimic bridge: one Trial per scenario (US-12)
+    proef-lsp/             # language server: SourceProvider + collect-all analyze_suite over core
   tests/                   # .feature corpus + fixtures
   docs/                    # this corpus
 ```

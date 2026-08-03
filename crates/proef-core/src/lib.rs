@@ -14,6 +14,7 @@
 //! never from pipeline code. This is what makes snapshot and property tests
 //! bit-deterministic; do not break it for convenience.
 
+pub mod analyze;
 pub mod bind;
 pub mod cancel;
 pub mod diag;

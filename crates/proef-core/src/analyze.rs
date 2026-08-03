@@ -1,0 +1,419 @@
+//! Collect-all suite analysis: the LSP's whole-suite recompute in one function.
+//!
+//! Where `front::run` fails fast and emits artifacts, `analyze_suite`
+//! accumulates every diagnostic and emits the relations editors need
+//! (`bindings` for go-to-def/references, `macros` for completion/def targets).
+//! A parse-failed unit reports its own diagnostic and is skipped downstream —
+//! no cascade of bogus follow-on errors.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use crate::bind;
+use crate::diag::{Diag, Span};
+use crate::emit;
+use crate::engine::StepKindSpec;
+use crate::feature;
+use crate::lower::{self, LowerCtx};
+use crate::pack::{self, PackSet, PackSource};
+use crate::provider::SourceProvider;
+use crate::world::{GlobalStore, World};
+
+/// One prose step bound to a macro — powers go-to-definition and references.
+#[derive(Debug, Clone)]
+pub struct Binding {
+    /// Source name of the feature file the step lives in.
+    pub feature: String,
+    /// Byte span of the step text in the *normalized* feature source.
+    pub step_span: Span,
+    /// The macro this step resolved to.
+    pub macro_name: String,
+}
+
+/// A macro definition — powers completion and is the go-to-definition target.
+#[derive(Debug, Clone)]
+pub struct MacroRef {
+    /// Macro name (globally unique across the loaded packs).
+    pub name: String,
+    /// The `match:` pattern (`None` for `use:`-only macros).
+    pub pattern: Option<String>,
+    /// Declared params, in declaration order.
+    pub params: Vec<String>,
+    /// Source name of the pack the macro is defined in.
+    pub pack: String,
+    /// Byte span of the macro's name key in the *normalized* pack source, when
+    /// locatable. This is the definition anchor go-to-definition jumps to.
+    pub def_span: Option<Span>,
+}
+
+/// The product of one wholesale recompute: every feature's read from here.
+#[derive(Debug, Default)]
+pub struct SuiteAnalysis {
+    /// source name → its diagnostics (features and packs alike).
+    pub diagnostics: BTreeMap<String, Vec<Diag>>,
+    /// Every prose-step-to-macro binding across the suite.
+    pub bindings: Vec<Binding>,
+    /// Every macro definition across the loaded packs.
+    pub macros: Vec<MacroRef>,
+}
+
+/// Everything `analyze_suite` needs, injected at the IO edge (sans-IO core).
+pub struct AnalyzeCtx<'a> {
+    /// The source of feature and pack bytes (the IO edge lives behind it).
+    pub provider: &'a dyn SourceProvider,
+    /// Registered engine step kinds (drives pack validation and artifact probes).
+    pub kinds: &'a [StepKindSpec],
+    /// Step-kind prefix → engine id, the lowering routing table.
+    pub kind_to_engine: &'a BTreeMap<String, String>,
+    /// Injected environment snapshot (`${env:…}`).
+    pub env: &'a BTreeMap<String, String>,
+    /// Injected `proef.toml` config scope (`${url:…}` / `${vars:…}`), with the
+    /// active `[env.<name>]` already deep-merged in.
+    pub config_vars: &'a BTreeMap<String, String>,
+    /// Injected run identifier (`${run:id}`).
+    pub run_id: &'a str,
+}
+
+impl SuiteAnalysis {
+    fn push_diags(&mut self, name: &str, diags: impl IntoIterator<Item = Diag>) {
+        // Ensure the primary source has a bucket even with no diagnostics, so a
+        // now-clean file still surfaces an empty set that clears stale marks.
+        self.diagnostics.entry(name.to_owned()).or_default();
+        for d in diags {
+            // Prefer the diagnostic's own source name when it carries one, so a
+            // pack error raised while analyzing a feature lands on the pack.
+            let target = d.source_name.clone().unwrap_or_else(|| name.to_owned());
+            self.diagnostics.entry(target).or_default().push(d);
+        }
+    }
+}
+
+/// Recompute the whole suite in one pass: read every pack and feature through
+/// the provider, accumulate every diagnostic per source name, and record the
+/// binding and macro relations editors need. Broken packs short-circuit feature
+/// binding (no cascade); a parse-failed feature is skipped, not fatal.
+pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
+    let mut out = SuiteAnalysis::default();
+
+    // Packs first: a broken pack blocks binding, so on pack failure we publish
+    // pack diagnostics and skip feature binding (no cascade).
+    let mut sources = pack::builtin_sources();
+    let pack_names = ctx.provider.discover_packs().unwrap_or_default();
+    for name in &pack_names {
+        match ctx.provider.read(name) {
+            Ok(text) => sources.push(PackSource {
+                name: name.clone(),
+                text,
+            }),
+            Err(e) => out.push_diags(name, [read_error_diag(name, &e.0)]),
+        }
+    }
+
+    let packs: Arc<PackSet> = match pack::load(&sources, ctx.kinds) {
+        Ok(set) => Arc::new(set),
+        Err(err) => {
+            for d in front_error_diags(err) {
+                let name = d.source_name.clone().unwrap_or_default();
+                out.push_diags(&name, [d]);
+            }
+            return out; // packs broken → do not cascade into feature binding
+        }
+    };
+
+    // Macro vocabulary for completion / go-to-def targets.
+    for m in packs.macros.values() {
+        out.macros.push(MacroRef {
+            name: m.name.clone(),
+            pattern: m.pattern.clone(),
+            params: m.params.clone(),
+            pack: m.pack.clone(),
+            def_span: m.span,
+        });
+    }
+
+    let world = World::new(GlobalStore::default());
+
+    let feature_names = ctx.provider.discover_features().unwrap_or_default();
+    for name in &feature_names {
+        let text = match ctx.provider.read(name) {
+            Ok(t) => t,
+            Err(e) => {
+                out.push_diags(name, [read_error_diag(name, &e.0)]);
+                continue;
+            }
+        };
+        let file = match feature::parse(name, &text) {
+            Ok(f) => f,
+            Err(errs) => {
+                out.push_diags(name, errs);
+                continue; // parse failed → skip downstream, no cascade
+            }
+        };
+
+        let (bound, bind_diags) = bind::bind_collect(&file, &packs);
+        out.push_diags(name, bind_diags);
+
+        for scenario in &bound {
+            for step in &scenario.steps {
+                out.bindings.push(Binding {
+                    feature: name.clone(),
+                    step_span: step.defn.span,
+                    macro_name: step.macro_name.clone(),
+                });
+            }
+        }
+
+        let ctx_lower = LowerCtx {
+            feature: &file,
+            packs: &packs,
+            kind_to_engine: ctx.kind_to_engine,
+            env: ctx.env,
+            config_vars: ctx.config_vars,
+            run_id: ctx.run_id,
+            world: &world,
+            mode: crate::resolve::ResolveMode::DryRun,
+        };
+        for scenario in &bound {
+            match lower::lower(scenario, &ctx_lower) {
+                Ok(lowered) => {
+                    out.push_diags(name, lowered.warnings.iter().cloned());
+                    // Emit + artifact validation is executed for its diagnostics
+                    // only; the artifact text is discarded.
+                    let stem = feature_stem(name);
+                    if let Some(artifact) = emit::emit(&lowered, &stem, &world) {
+                        let mut diags = Vec::new();
+                        validate_artifact(&artifact, &lowered, ctx.kinds, &mut diags);
+                        out.push_diags(name, diags);
+                    }
+                }
+                Err(errs) => out.push_diags(name, errs),
+            }
+        }
+    }
+
+    out
+}
+
+fn feature_stem(name: &str) -> String {
+    std::path::Path::new(name).file_stem().map_or_else(
+        || "feature".to_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    )
+}
+
+fn read_error_diag(name: &str, msg: &str) -> Diag {
+    Diag::error(
+        "proef::source::unreadable",
+        format!("cannot read {name}: {msg}"),
+    )
+    .with_source(name.to_owned(), Arc::from(""))
+}
+
+fn front_error_diags(err: crate::diag::FrontError) -> Vec<Diag> {
+    match err {
+        crate::diag::FrontError::Diagnostics(list) => list,
+        crate::diag::FrontError::Core(core) => {
+            vec![Diag::error("proef::pack::load", core.to_string())]
+        }
+    }
+}
+
+/// Parse-validate the exact emitted artifact text with the claiming engine's
+/// real parser (`--dry-run` = §4.1–4.5 including artifact parse-validation).
+/// The diagnostic's source is the emitted text itself, span at the broken line.
+///
+/// This is the single implementation of artifact parse-validation, shared by the
+/// CLI's fail-fast `front::run` and the LSP's collect-all `analyze_suite`. It
+/// reaches the hurl parser only through the injected [`StepKindSpec::validate`]
+/// function pointer, so it stays engine-agnostic and lives in the sans-IO core.
+pub fn validate_artifact(
+    artifact: &emit::Artifact,
+    lowered: &lower::LoweredScenario,
+    kinds: &[StepKindSpec],
+    diags: &mut Vec<Diag>,
+) {
+    let Some(kind) = lowered
+        .batches
+        .iter()
+        .flat_map(|b| b.steps.iter())
+        .find(|s| matches!(s.payload, crate::step::StepPayload::HurlEntries(_)))
+        .map(|s| s.kind.as_str().to_owned())
+    else {
+        return;
+    };
+    let Some(validate) = kinds
+        .iter()
+        .find(|k| k.prefix == kind)
+        .and_then(|k| k.validate)
+    else {
+        return;
+    };
+    if let Err(err) = validate(&artifact.hurl_text) {
+        let offset: usize = artifact
+            .hurl_text
+            .split_inclusive('\n')
+            .take(err.line.saturating_sub(1))
+            .map(str::len)
+            .sum();
+        let line_len = artifact.hurl_text[offset..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .len();
+        diags.push(
+            Diag::error(
+                "proef::emit::invalid_artifact",
+                format!(
+                    "emitted artifact `{}.hurl` does not parse: {} (line {}, column {})",
+                    artifact.slug, err.message, err.line, err.column
+                ),
+            )
+            .with_source(
+                format!("{}.hurl (emitted)", artifact.slug),
+                std::sync::Arc::from(artifact.hurl_text.as_str()),
+            )
+            .with_span(Span::clamped(
+                offset,
+                offset + line_len.max(1),
+                artifact.hurl_text.len(),
+            )),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use crate::provider::{ProviderError, SourceProvider};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    /// A provider backed by an in-memory map — keeps the test sans-IO.
+    struct MemProvider {
+        features: Vec<String>,
+        packs: Vec<String>,
+        files: BTreeMap<String, Arc<str>>,
+    }
+    impl SourceProvider for MemProvider {
+        fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(self.features.clone())
+        }
+        fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(self.packs.clone())
+        }
+        fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
+            self.files
+                .get(name)
+                .cloned()
+                .ok_or_else(|| ProviderError(format!("no source {name}")))
+        }
+    }
+
+    // Pack validation (step-kind claim, pass 8) and lowering's routing invariant
+    // both require `hurl` to be a registered kind: with an empty registry a
+    // `hurl:` step is `unknown_step_kind` and an unrouted lowered step. The
+    // analyzer needs no *live* engine, though — a spec with no `validate` probe
+    // (artifact parse-validation is skipped) plus a `hurl → hurl` route is enough
+    // to bind, lower, and extract spans.
+    const KINDS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+
+    fn hurl_kind_map() -> &'static BTreeMap<String, String> {
+        use std::sync::OnceLock;
+        static M: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+        M.get_or_init(|| BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]))
+    }
+
+    fn ctx_over<'a>(
+        provider: &'a dyn SourceProvider,
+        empty: &'a BTreeMap<String, String>,
+    ) -> AnalyzeCtx<'a> {
+        AnalyzeCtx {
+            provider,
+            kinds: KINDS,
+            kind_to_engine: hurl_kind_map(),
+            env: empty,
+            config_vars: empty,
+            run_id: "lsp",
+        }
+    }
+
+    #[test]
+    fn analyze_surfaces_bindings_and_no_errors_on_a_clean_suite() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+            ),
+        );
+        files.insert(
+            "f.feature".to_owned(),
+            Arc::from("Feature: F\n  Scenario: S\n    When I greet Sam\n"),
+        );
+        let provider = MemProvider {
+            features: vec!["f.feature".to_owned()],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        let errors: usize = analysis
+            .diagnostics
+            .values()
+            .flatten()
+            .filter(|d| d.severity == crate::diag::Severity::Error)
+            .count();
+        assert_eq!(
+            errors, 0,
+            "clean suite must have zero errors: {:?}",
+            analysis.diagnostics
+        );
+
+        assert!(
+            analysis
+                .bindings
+                .iter()
+                .any(|b| b.macro_name == "greet" && b.feature == "f.feature"),
+            "the greet step must be recorded as a binding"
+        );
+        assert!(
+            analysis
+                .macros
+                .iter()
+                .any(|m| m.name == "greet" && m.pattern.is_some())
+        );
+    }
+
+    #[test]
+    fn analyze_collects_unbound_without_cascade() {
+        let mut files = BTreeMap::new();
+        files.insert("packs/p.yaml".to_owned(), Arc::from("macros: {}\n"));
+        files.insert(
+            "f.feature".to_owned(),
+            Arc::from("Feature: F\n  Scenario: S\n    When nothing matches this\n"),
+        );
+        let provider = MemProvider {
+            features: vec!["f.feature".to_owned()],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+        let feature_diags = analysis
+            .diagnostics
+            .get("f.feature")
+            .expect("feature bucket");
+        assert!(
+            feature_diags
+                .iter()
+                .any(|d| d.code == "proef::bind::unbound_step")
+        );
+    }
+}

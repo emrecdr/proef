@@ -75,6 +75,7 @@ crates/
   proef-cli/          bin `proef`: clap, engine registry assembly, miette rendering
   proef-fixture/      dev-only: in-process sync fixture API server (tiny_http, ADR-0011)
   proef-harness/      libtest-mimic bridge: one Trial per scenario (US-12)
+  proef-lsp/          language server: SourceProvider + collect-all analyze_suite over core
 xtask/                automation as Rust (fixture, canary, docs-check, public-api); `just` = thin aliases
 ```
 
