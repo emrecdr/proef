@@ -243,6 +243,37 @@ pub fn literal_skeleton(pattern: &str) -> String {
         .collect()
 }
 
+/// Rank `pattern` against the partially-typed prose `typed`, for completion
+/// ordering. Lower sorts first: the returned tuple is `(tier, tiebreak)`.
+///
+/// Comparison is against the pattern's [`literal_skeleton`] (captures dropped —
+/// the prose the author actually types), case-insensitively, in tiers:
+/// tier 0 the skeleton starts with `typed`; tier 1 `typed` occurs inside the
+/// skeleton (tiebreak = the match position); tier 2 the edit distance between
+/// `typed` and the skeleton's leading `typed`-length slice (the prefix-aligned
+/// distance, not the whole-pattern distance). An empty `typed` is a prefix of
+/// every skeleton, so all patterns share `(0, 0)` and keep their prior order.
+///
+/// This is a distinct problem from [`closest`], which finds the single most
+/// likely mistyped *complete* step; the two coexist.
+#[must_use]
+pub fn prefix_rank(typed: &str, pattern: &str) -> (u8, usize) {
+    let skeleton = literal_skeleton(pattern).to_lowercase();
+    let typed = typed.to_lowercase();
+    if skeleton.starts_with(&typed) {
+        (0, 0)
+    } else if let Some(idx) = skeleton.find(&typed) {
+        (1, idx)
+    } else {
+        // Prefix-aligned distance: compare `typed` against only the leading
+        // `typed`-length slice of the skeleton, so divergence past the typed
+        // portion does not inflate the score the way whole-pattern distance does.
+        let n = typed.chars().count();
+        let prefix: String = skeleton.chars().take(n).collect();
+        (2, levenshtein(&typed, &prefix))
+    }
+}
+
 /// Group pattern macros that differ **only** in their captures — i.e. share a
 /// [`literal_skeleton`]. Returns, for each such macro, the sorted names of its
 /// near-duplicate siblings. Pure and deterministic (sorted throughout); the
@@ -450,6 +481,61 @@ mod tests {
             .filter(|p| matches!(p, PatternProblem::DuplicateCapture { name } if name == "x"))
             .collect();
         assert_eq!(dups.len(), 1, "{problems:?}");
+    }
+
+    #[test]
+    fn prefix_rank_tiers_prefix_over_substring_over_miss() {
+        // "I gr" is a prefix of "I greet {who}" (skeleton "I greet ") -> tier 0.
+        let greet = prefix_rank("I gr", "I greet {who}");
+        // "gr" appears inside "I grab {thing}" as a substring but not a prefix -> tier 1.
+        let grab = prefix_rank("gr", "I grab {thing}");
+        // "I gr" is neither prefix nor substring of "the note is saved" -> tier 2.
+        let note = prefix_rank("I gr", "the note is saved");
+        assert_eq!(greet.0, 0);
+        assert_eq!(grab.0, 1);
+        assert_eq!(note.0, 2);
+        // Ordering: prefix < substring < miss.
+        assert!(greet < grab);
+        assert!(grab < note);
+    }
+
+    #[test]
+    fn prefix_rank_prefix_match_beats_large_full_pattern_distance() {
+        // The bug fix: "I gr" is a full-pattern edit-distance of ~9 from
+        // "I greet {who}" (so `closest` would reject it), but prefix_rank ranks it
+        // top (tier 0) and well above an unrelated pattern.
+        let greet = prefix_rank("I gr", "I greet {who}");
+        let unrelated = prefix_rank("I gr", "the note is saved");
+        assert!(greet < unrelated);
+        // Sanity: closest, the old substrate, finds nothing at this distance.
+        assert!(closest("I gr", ["I greet {who}"].into_iter()).is_none());
+    }
+
+    #[test]
+    fn prefix_rank_tier2_uses_prefix_aligned_distance_not_full_pattern() {
+        // "I greex" is neither a prefix nor a substring of "I greet {who}" -> tier 2.
+        // Its distance is measured against the LEADING 7 chars of the skeleton
+        // ("i greet"), giving 1 — far smaller than against an unrelated pattern.
+        let near = prefix_rank("I greex", "I greet {who}");
+        let far = prefix_rank("I greex", "the note is saved");
+        assert_eq!(near.0, 2);
+        assert_eq!(far.0, 2);
+        assert!(
+            near.1 < far.1,
+            "prefix-aligned distance ranks the near pattern first"
+        );
+    }
+
+    #[test]
+    fn prefix_rank_is_case_insensitive() {
+        assert_eq!(prefix_rank("i gr", "I greet {who}").0, 0);
+    }
+
+    #[test]
+    fn prefix_rank_empty_typed_is_uniform_tier0() {
+        // Empty prefix is a prefix of everything -> all (0, 0) -> stable order.
+        assert_eq!(prefix_rank("", "I greet {who}"), (0, 0));
+        assert_eq!(prefix_rank("", "the note is saved"), (0, 0));
     }
 
     mod properties {
