@@ -215,38 +215,36 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
 }
 
 /// Index every `use:` reference → its resolved target, for go-to-def from a
-/// `use:` line. The per-macro ordinal matches `pack::locate::use_span`'s counting —
-/// guarded per macro: if the parsed `Use` step count and the textual `use:`-line
-/// count diverge (e.g. a flow-style `- {use: base}` step, which parses fine but
-/// isn't seen by the line scanner), the ordinal pairing is unreliable, so that
-/// macro's `use:` lines are skipped entirely rather than risk a wrong `Some`.
+/// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
+/// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
+/// counts come from the macro's own steps and source, a mismatch means the line
+/// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
+/// pairing is unreliable and that macro is skipped entirely rather than risk a
+/// wrong `Some`.
 fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
     let mut use_refs = Vec::new();
     for m in packs.macros.values() {
         let MacroBody::Steps(steps) = &m.body else {
             continue;
         };
-        let parsed_use_count = steps
+        let targets: Vec<&str> = steps
             .iter()
-            .filter(|step| matches!(step.kind, MacroStepKind::Use { .. }))
-            .count();
-        let text_use_count = crate::pack::locate::count_use_lines(&m.source, &m.name);
-        if parsed_use_count != text_use_count {
-            continue; // counts diverge → per-ordinal pairing unreliable, skip
+            .filter_map(|step| match &step.kind {
+                MacroStepKind::Use { target, .. } => Some(target.as_str()),
+                MacroStepKind::Payload { .. } => None,
+            })
+            .collect();
+        let spans = crate::pack::locate::use_line_spans(&m.source, &m.name);
+        if spans.len() != targets.len() {
+            continue; // line scan and parsed steps disagree → pairing unreliable, skip
         }
-        let mut ordinal = 0usize;
-        for step in steps {
-            if let MacroStepKind::Use { target, .. } = &step.kind {
-                if let Some(span) = crate::pack::locate::use_span(&m.source, &m.name, ordinal)
-                    && let Some(target_macro) = packs.find_use_target(target)
-                {
-                    use_refs.push(UseRef {
-                        pack: m.pack.clone(),
-                        span,
-                        target_macro: target_macro.name.clone(),
-                    });
-                }
-                ordinal += 1;
+        for (span, target) in spans.into_iter().zip(targets) {
+            if let Some(target_macro) = packs.find_use_target(target) {
+                use_refs.push(UseRef {
+                    pack: m.pack.clone(),
+                    span,
+                    target_macro: target_macro.name.clone(),
+                });
             }
         }
     }

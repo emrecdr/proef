@@ -91,68 +91,50 @@ pub(crate) fn payload_line_span(
     None
 }
 
-/// Content span of the `ordinal`-th (0-based) `use:` line within `macro_name`'s
-/// block — the whole reference line (indent and any `- ` sequence dash stripped),
-/// so a cursor anywhere on the reference resolves. `None` when not locatable.
-pub(crate) fn use_span(text: &str, macro_name: &str, ordinal: usize) -> Option<Span> {
-    key_line_span(text, macro_name, "use", ordinal)
-}
-
-/// Content span of a macro's `match:` line (there is at most one), when
-/// locatable — the go-to-definition landing anchor. `None` otherwise.
-pub(crate) fn match_span(text: &str, macro_name: &str) -> Option<Span> {
-    key_line_span(text, macro_name, "match", 0)
-}
-
-/// Count of lines in `macro_name`'s block whose content (after stripping a leading
-/// `- ` sequence dash) begins `use:` — the same textual scan [`use_span`] does, but
-/// counting instead of picking one ordinal. A single O(n) pass, never a loop over
-/// [`use_span`].
-///
-/// Used by `analyze::index_use_refs` to guard the ordinal pairing between parsed
-/// `MacroStepKind::Use` steps and textual `use:` lines: a flow-style step like
-/// `- {use: base}` is valid YAML and parses to a `Use` step, but its line does not
-/// start with `use:` after the dash is stripped, so it is not counted here. When the
-/// two counts diverge, per-ordinal pairing is unreliable and the caller must not
-/// trust it.
-pub(crate) fn count_use_lines(text: &str, macro_name: &str) -> usize {
+/// Every content span, in textual order, of the lines in `macro_name`'s block
+/// whose content (after stripping a leading `- ` sequence dash) begins `<key>:` —
+/// each the line's trimmed content, so a cursor anywhere on it resolves. One scan
+/// of the block; empty when the macro or key isn't found. The shared primitive
+/// behind [`match_span`] and [`use_line_spans`]; best-effort, never panics.
+fn key_line_spans(text: &str, macro_name: &str, key: &str) -> Vec<Span> {
     let Some((begin, end)) = macro_region(text, macro_name) else {
-        return 0;
+        return Vec::new();
     };
     let region = &text[begin..end];
-    let mut count = 0usize;
-    for (_, line) in lines_with_offsets(region) {
-        let trimmed = line.trim_start();
-        let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-        if after_dash.starts_with("use:") {
-            count += 1;
-        }
-    }
-    count
-}
-
-/// The `ordinal`-th line in `macro_name`'s block whose content (after stripping a
-/// leading `- ` sequence dash) begins `<key>:`, returned as that line's trimmed
-/// content span. Shared by [`use_span`] and [`match_span`]; best-effort, never panics.
-fn key_line_span(text: &str, macro_name: &str, key: &str, ordinal: usize) -> Option<Span> {
-    let (begin, end) = macro_region(text, macro_name)?;
-    let region = &text[begin..end];
-    let mut seen = 0usize;
+    let prefix = format!("{key}:");
+    let mut spans = Vec::new();
     for (offset, line) in lines_with_offsets(region) {
         let trimmed = line.trim_start();
         let lead = line.len() - trimmed.len();
         let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         let dash = trimmed.len() - after_dash.len();
-        if after_dash.starts_with(&format!("{key}:")) {
-            if seen == ordinal {
-                let start = begin + offset + lead + dash;
-                let stop = begin + offset + line.trim_end().len();
-                return Some(Span::clamped(start, stop.max(start), text.len()));
-            }
-            seen += 1;
+        if after_dash.starts_with(&prefix) {
+            let start = begin + offset + lead + dash;
+            let stop = begin + offset + line.trim_end().len();
+            spans.push(Span::clamped(start, stop.max(start), text.len()));
         }
     }
-    None
+    spans
+}
+
+/// Content span of a macro's `match:` line (there is at most one), when
+/// locatable — the go-to-definition landing anchor. `None` otherwise.
+pub(crate) fn match_span(text: &str, macro_name: &str) -> Option<Span> {
+    key_line_spans(text, macro_name, "match").into_iter().next()
+}
+
+/// Content spans of every `use:` line in `macro_name`'s block, in textual order
+/// (indent and any `- ` sequence dash stripped, so a cursor anywhere on a
+/// reference resolves). One scan; empty when the macro has no `use:` steps.
+///
+/// `analyze::index_use_refs` pairs these positionally with the macro's parsed
+/// `MacroStepKind::Use` steps. Because this is the same scan that yields every
+/// locatable `use:` span, comparing its length with the parsed step count is a
+/// self-consistent guard: a flow-style `- {use: base}` step parses to a `Use` but
+/// its line does not begin `use:` after the dash strip, so the counts diverge and
+/// the caller skips that macro rather than risk a wrong pairing.
+pub(crate) fn use_line_spans(text: &str, macro_name: &str) -> Vec<Span> {
+    key_line_spans(text, macro_name, "use")
 }
 
 /// `(byte_offset, line_without_newline)` for every line.
@@ -201,28 +183,27 @@ mod tests {
     }
 
     #[test]
-    fn use_lines_are_located_by_ordinal() {
-        let first = use_span(USE_PACK, "wrapper", 0).expect("span");
-        assert_eq!(&USE_PACK[first.start..first.end], "use: base");
-        let second = use_span(USE_PACK, "wrapper", 1).expect("span");
-        assert_eq!(&USE_PACK[second.start..second.end], "use: base#other");
-        // Ordinal past the last `use:` → None (never panics).
-        assert!(use_span(USE_PACK, "wrapper", 2).is_none());
-        // A macro with no `use:` → None.
-        assert!(use_span(USE_PACK, "base", 0).is_none());
+    fn use_lines_are_collected_in_order() {
+        let spans = use_line_spans(USE_PACK, "wrapper");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(&USE_PACK[spans[0].start..spans[0].end], "use: base");
+        assert_eq!(&USE_PACK[spans[1].start..spans[1].end], "use: base#other");
+        // A macro with no `use:` → empty (never panics).
+        assert!(use_line_spans(USE_PACK, "base").is_empty());
+        assert!(use_line_spans(USE_PACK, "absent").is_empty());
     }
 
     const MIXED_USE_PACK: &str = "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n";
 
     #[test]
-    fn count_use_lines_counts_textual_prefixed_lines_only() {
-        assert_eq!(count_use_lines(USE_PACK, "wrapper"), 2);
-        assert_eq!(count_use_lines(USE_PACK, "base"), 0);
-        assert_eq!(count_use_lines(USE_PACK, "absent"), 0);
+    fn use_line_spans_see_only_block_style_lines() {
+        assert_eq!(use_line_spans(USE_PACK, "wrapper").len(), 2);
+        assert!(use_line_spans(USE_PACK, "base").is_empty());
+        assert!(use_line_spans(USE_PACK, "absent").is_empty());
         // Flow-style `- {use: base}` is valid YAML and parses to a `Use` step, but
         // its line does not start with `use:` after the dash strip — it is not
-        // counted, so this undercounts relative to the parsed step count. That
+        // seen here, so this undercounts relative to the parsed step count. That
         // divergence is exactly what `analyze::index_use_refs` guards on.
-        assert_eq!(count_use_lines(MIXED_USE_PACK, "wrapper"), 1);
+        assert_eq!(use_line_spans(MIXED_USE_PACK, "wrapper").len(), 1);
     }
 }

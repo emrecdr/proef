@@ -20,29 +20,24 @@ pub fn goto(analysis: &Analysis, url: &Uri, position: Position) -> Option<Locati
     let raw = analysis.raw.get(&name)?;
     let offset = LineIndex::new(raw).position_to_offset(position);
 
-    // Path 1 — cursor on a feature step → the macro it binds.
-    if let Some(macro_name) = analysis
+    // Path 1 — cursor on a feature step → the macro it binds. Path 2 (fallback) —
+    // cursor on a `use:` line in a pack → the referenced macro. A document name is
+    // discovered as either a feature or a pack, so the two keys never both match.
+    let macro_name = analysis
         .suite
         .bindings
         .iter()
         .find(|b| b.feature == name && b.step_span.start <= offset && offset < b.step_span.end)
         .map(|b| b.macro_name.as_str())
-    {
-        return macro_location(analysis, macro_name);
-    }
-
-    // Path 2 — cursor on a `use:` line in a pack → the referenced macro.
-    if let Some(target) = analysis
-        .suite
-        .use_refs
-        .iter()
-        .find(|u| u.pack == name && u.span.start <= offset && offset < u.span.end)
-        .map(|u| u.target_macro.as_str())
-    {
-        return macro_location(analysis, target);
-    }
-
-    None
+        .or_else(|| {
+            analysis
+                .suite
+                .use_refs
+                .iter()
+                .find(|u| u.pack == name && u.span.start <= offset && offset < u.span.end)
+                .map(|u| u.target_macro.as_str())
+        })?;
+    macro_location(analysis, macro_name)
 }
 
 /// A `Location` at `macro_name`'s definition anchor — its `match:` line when
