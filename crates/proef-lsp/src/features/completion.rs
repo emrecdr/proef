@@ -1,5 +1,7 @@
 //! Completion: in a feature step, offer macro `match:` patterns as snippets,
-//! ranked by the same "did you mean" substrate that powers unbound-step help.
+//! ranked by relevance to the partially-typed step prose via
+//! `matcher::prefix_rank`; nothing is filtered server-side (the client
+//! narrows via filterText).
 
 use std::fmt::Write as _;
 
@@ -62,7 +64,7 @@ pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<Compl
     patterns.sort_by_key(|(_, p)| matcher::prefix_rank(&prefix, p));
 
     // Zero-pad the rank index so the client's lexical sortText comparison
-    // matches our numeric order (e.g. "00", "01", … for up to 99 items).
+    // matches our numeric order (e.g. "00", "01", … for double-digit item counts).
     let width = patterns.len().to_string().len();
     patterns
         .into_iter()
