@@ -6,24 +6,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-04 (LSP language server)
+
 ### Added
 
 - **`proef lsp` language server (ADR-0017).** A server-only, generic-LSP stdio
   binary — a second front-end over the sans-IO core — giving feature/pack authors
   live editor support: **diagnostics** (the whole `--dry-run` validation set,
   republished across the suite as you type), **go-to-definition** (Gherkin step →
-  the macro that binds it), **completion** (macro-pattern step completions), and
-  **find-references** (every step a macro binds). Wired into Neovim/Helix/Emacs via
-  generic LSP config — see `docs/EDITORS.md`. No VS Code extension in v1.
-  Completion ranking is best-effort (an edit-distance heuristic; full
-  context-aware ranking is a follow-up); `proef.toml` config is a startup snapshot
-  (restart the server after editing it). Pinned `lsp-server 0.7.9` /
-  `lsp-types 0.97.0`.
+  the macro that binds it), **completion** (macro-pattern step completions,
+  prefix-ranked by relevance to the typed prose), and **find-references** (every
+  step a macro binds). Wired into Neovim/Helix/Emacs via generic LSP config — see
+  `docs/EDITORS.md`. No VS Code extension in v1. `proef.toml` config is a startup
+  snapshot (restart the server after editing it). Works on Linux, macOS, and
+  Windows. Pinned `lsp-server 0.7.9` / `lsp-types 0.97.0`.
 - **New `proef-core` public surface** enabling the language server: the injectable
-  `SourceProvider` seam (`proef_core::provider`) and the collect-all
-  `analyze_suite` analysis (`proef_core::analyze`) — the same headless analysis the
-  CLI runs, driven over an overlay-then-disk provider so the LSP re-validates the
-  whole suite on every edit. Both keep the core sans-IO (the IO is injected).
+  `SourceProvider` seam (`proef_core::provider`), the collect-all `analyze_suite`
+  analysis (`proef_core::analyze`) — the same headless analysis the CLI runs,
+  driven over an overlay-then-disk provider so the LSP re-validates the whole suite
+  on every edit — and `matcher::prefix_rank` for prose-prefix completion ranking.
+  All keep the core sans-IO (the IO is injected).
 
 ## [0.4.0] - 2026-08-03 (external config & environments; competitive-review breadth)
 
