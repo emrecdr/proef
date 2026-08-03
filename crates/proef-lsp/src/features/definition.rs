@@ -2,7 +2,7 @@
 //!
 //! Path 1 — cursor on a feature step → the macro it binds. Path 2 — cursor on
 //! a `use:` line inside a pack → the macro that reference resolves to. Both
-//! paths funnel through [`macro_location`], the single rule for a macro's
+//! paths funnel through `macro_location`, the single rule for a macro's
 //! landing anchor: its `match:` line when locatable, else its name key.
 
 use lsp_types::{Location, Position, Uri};
