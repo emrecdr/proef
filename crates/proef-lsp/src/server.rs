@@ -1,11 +1,24 @@
-//! The stdio LSP event loop: handshake, dispatch, and the (later) debounced
+//! The stdio LSP event loop: handshake, dispatch, and the debounced whole-suite
 //! recompute driver. Single-threaded — the analysis is milliseconds, so v1
-//! needs no worker pool.
+//! needs no worker pool. Edits mark the suite dirty; a short debounce coalesces
+//! a burst of keystrokes into one recompute that republishes diagnostics.
 
+use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::RecvTimeoutError;
 use lsp_server::{Connection, IoThreads, Message};
 use lsp_types::ServerCapabilities;
+use lsp_types::notification::{
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
+};
+use proef_core::engine::StepKindSpec;
+use proef_core::provider::SourceProvider;
 
+use crate::analysis::{RecomputeInputs, recompute};
 use crate::documents::Documents;
+use crate::features::diagnostics;
 
 /// How the server talks to its client.
 pub enum Transport {
@@ -15,10 +28,26 @@ pub enum Transport {
     InMemory(Connection),
 }
 
-/// Startup configuration for [`run`].
+/// Startup configuration for [`run`]. Everything the sans-IO analysis needs is
+/// injected here at the process edge: the disk provider, the engine registry,
+/// and the resolved variable scopes.
 pub struct ServerConfig {
     /// How the server talks to its client.
     pub transport: Transport,
+    /// The suite root the disk provider walks.
+    pub root: PathBuf,
+    /// The disk-backed source provider (open buffers override its bytes).
+    pub disk: Box<dyn SourceProvider + Send>,
+    /// Registered engine step kinds (drives pack validation).
+    pub kinds: Vec<StepKindSpec>,
+    /// Step-kind prefix → engine id, the lowering routing table.
+    pub kind_to_engine: BTreeMap<String, String>,
+    /// Injected environment snapshot (`${env:…}`).
+    pub env: BTreeMap<String, String>,
+    /// Injected `proef.toml` config scope (`${url:…}` / `${vars:…}`).
+    pub config_vars: BTreeMap<String, String>,
+    /// Debounce window coalescing a burst of edits; tests set 0 for determinism.
+    pub debounce: Duration,
 }
 
 /// Failure modes of the LSP event loop.
@@ -54,28 +83,30 @@ fn capabilities() -> ServerCapabilities {
 
 /// Runs the LSP server to completion: blocks on the `initialize` handshake,
 /// dispatches messages until `shutdown`/`exit`, then joins the transport.
-pub fn run(cfg: ServerConfig) -> Result<(), ServerError> {
-    let (connection, io_threads): (Connection, Option<IoThreads>) = match cfg.transport {
-        Transport::Stdio => {
-            let (c, t) = Connection::stdio();
-            (c, Some(t))
-        }
-        Transport::InMemory(c) => (c, None),
-    };
+pub fn run(mut cfg: ServerConfig) -> Result<(), ServerError> {
+    // Take the transport out so the loop can borrow the rest of `cfg`; the
+    // transport is only needed to build the connection, never read again.
+    let (connection, io_threads): (Connection, Option<IoThreads>) =
+        match std::mem::replace(&mut cfg.transport, Transport::Stdio) {
+            Transport::Stdio => {
+                let (c, t) = Connection::stdio();
+                (c, Some(t))
+            }
+            Transport::InMemory(c) => (c, None),
+        };
 
     // `ServerCapabilities` is plain data (enums, options, strings) so this
     // cannot fail in practice, but library code never unwraps/expects — an
     // encoding failure here becomes a protocol error like any other.
     let caps = serde_json::to_value(capabilities())
         .map_err(|e| ServerError::Protocol(format!("capabilities serialize: {e}")))?;
-    // Blocks until the client's `initialize`; returns its params (unused in v1
-    // beyond the handshake — the workspace root is discovered from open docs).
+    // Blocks until the client's `initialize`; the workspace root and providers
+    // are injected via `cfg`, so the returned params are unused in v1.
     let _init_params = connection
         .initialize(caps)
         .map_err(|e| ServerError::Protocol(e.to_string()))?;
 
-    let mut docs = Documents::default();
-    main_loop(&connection, &mut docs)?;
+    main_loop(&connection, &cfg)?;
 
     if let Some(threads) = io_threads {
         threads.join().map_err(ServerError::Io)?;
@@ -83,8 +114,49 @@ pub fn run(cfg: ServerConfig) -> Result<(), ServerError> {
     Ok(())
 }
 
-fn main_loop(connection: &Connection, _docs: &mut Documents) -> Result<(), ServerError> {
-    for msg in &connection.receiver {
+/// Mutable server state that outlives a single message: the open-buffer overlay
+/// and the set of source names that currently carry published diagnostics.
+struct State {
+    docs: Documents,
+    published: HashSet<String>,
+}
+
+fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerError> {
+    let mut state = State {
+        docs: Documents::default(),
+        published: HashSet::new(),
+    };
+    let mut dirty_since: Option<Instant> = None;
+
+    loop {
+        // Block until the pending recompute is due, or indefinitely if the suite
+        // is clean. A due recompute (elapsed >= debounce) runs immediately.
+        let timeout = dirty_since.map(|t| {
+            let elapsed = t.elapsed();
+            cfg.debounce.checked_sub(elapsed).unwrap_or(Duration::ZERO)
+        });
+
+        let msg = match timeout {
+            Some(d) if d.is_zero() => {
+                run_recompute(connection, cfg, &mut state);
+                dirty_since = None;
+                continue;
+            }
+            Some(d) => match connection.receiver.recv_timeout(d) {
+                Ok(m) => m,
+                Err(RecvTimeoutError::Timeout) => {
+                    run_recompute(connection, cfg, &mut state);
+                    dirty_since = None;
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            },
+            None => match connection.receiver.recv() {
+                Ok(m) => m,
+                Err(_) => return Ok(()),
+            },
+        };
+
         match msg {
             Message::Request(req) => {
                 if connection
@@ -93,26 +165,100 @@ fn main_loop(connection: &Connection, _docs: &mut Documents) -> Result<(), Serve
                 {
                     return Ok(());
                 }
-                // Feature requests (definition/completion/references) are wired
-                // in their own tasks; unknown methods get a method-not-found
-                // response so the client never hangs.
-                let resp = lsp_server::Response::new_err(
-                    req.id.clone(),
-                    lsp_server::ErrorCode::MethodNotFound as i32,
-                    format!("unhandled request: {}", req.method),
-                );
-                connection
-                    .sender
-                    .send(Message::Response(resp))
-                    .map_err(|e| ServerError::Protocol(e.to_string()))?;
+                dispatch_request(connection, cfg, &state, &req)?;
             }
-            Message::Notification(_note) => {
-                // didOpen/didChange/didClose handling lands with diagnostics.
+            Message::Notification(note) => {
+                if apply_notification(&mut state, &note) {
+                    dirty_since.get_or_insert_with(Instant::now);
+                }
             }
             Message::Response(_) => {}
         }
     }
-    Ok(())
+}
+
+/// Applies a document notification to the overlay. Returns true if it dirtied the
+/// suite (an open/change/close that a recompute must react to).
+fn apply_notification(state: &mut State, note: &lsp_server::Notification) -> bool {
+    match note.method.as_str() {
+        DidOpenTextDocument::METHOD => {
+            if let Ok(p) =
+                serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(note.params.clone())
+            {
+                state.docs.open(p.text_document.uri, p.text_document.text);
+                return true;
+            }
+        }
+        DidChangeTextDocument::METHOD => {
+            if let Ok(p) = serde_json::from_value::<lsp_types::DidChangeTextDocumentParams>(
+                note.params.clone(),
+            ) {
+                // FULL sync → the last change carries the whole document.
+                if let Some(change) = p.content_changes.into_iter().last() {
+                    state.docs.change(p.text_document.uri, change.text);
+                    return true;
+                }
+            }
+        }
+        DidCloseTextDocument::METHOD => {
+            if let Ok(p) =
+                serde_json::from_value::<lsp_types::DidCloseTextDocumentParams>(note.params.clone())
+            {
+                state.docs.close(&p.text_document.uri);
+                return true;
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State) {
+    // Scope the borrow of `state.docs` so it ends before we take `&mut
+    // state.published` to publish; `Analysis` owns its data and outlives it.
+    let analysis = {
+        let inputs = RecomputeInputs {
+            root: &cfg.root,
+            docs: &state.docs,
+            disk: cfg.disk.as_ref(),
+            kinds: &cfg.kinds,
+            kind_to_engine: &cfg.kind_to_engine,
+            env: &cfg.env,
+            config_vars: &cfg.config_vars,
+        };
+        // A panic inside analysis must never take the server down: catch it,
+        // keep the previously published diagnostics, and let the next edit retry.
+        let Ok(analysis) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| recompute(&inputs)))
+        else {
+            eprintln!("proef-lsp: suite analysis panicked; keeping previous diagnostics");
+            return;
+        };
+        analysis
+    };
+    // definition/completion/references read a fresh recompute per request in
+    // their own tasks; v1 does not cache the analysis between requests.
+    diagnostics::publish(connection, &analysis, &mut state.published);
+}
+
+fn dispatch_request(
+    connection: &Connection,
+    _cfg: &ServerConfig,
+    _state: &State,
+    req: &lsp_server::Request,
+) -> Result<(), ServerError> {
+    // Feature requests (definition/completion/references) are wired in their own
+    // tasks; unknown methods get a method-not-found response so the client never
+    // hangs waiting on a reply.
+    let resp = lsp_server::Response::new_err(
+        req.id.clone(),
+        lsp_server::ErrorCode::MethodNotFound as i32,
+        format!("unhandled request: {}", req.method),
+    );
+    connection
+        .sender
+        .send(Message::Response(resp))
+        .map_err(|e| ServerError::Protocol(e.to_string()))
 }
 
 #[cfg(test)]
@@ -122,6 +268,23 @@ mod tests {
     use super::*;
     use lsp_server::{Connection, Message, Notification, Request, RequestId};
     use lsp_types::{InitializeParams, InitializedParams};
+    use proef_core::provider::ProviderError;
+    use std::sync::Arc;
+
+    /// A disk provider with nothing in it — the handshake test opens no
+    /// documents, so no recompute ever reads from it.
+    struct EmptyDisk;
+    impl SourceProvider for EmptyDisk {
+        fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(Vec::new())
+        }
+        fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
+            Err(ProviderError(format!("no {name}")))
+        }
+    }
 
     #[test]
     fn initialize_then_shutdown_completes_cleanly() {
@@ -132,6 +295,13 @@ mod tests {
         let server = std::thread::spawn(move || {
             run(ServerConfig {
                 transport: Transport::InMemory(server_conn),
+                root: PathBuf::from("/"),
+                disk: Box::new(EmptyDisk),
+                kinds: Vec::new(),
+                kind_to_engine: BTreeMap::new(),
+                env: BTreeMap::new(),
+                config_vars: BTreeMap::new(),
+                debounce: Duration::ZERO,
             })
             .unwrap();
         });

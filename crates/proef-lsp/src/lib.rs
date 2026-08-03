@@ -4,8 +4,10 @@
 //! objects the CLI renders become LSP diagnostics, and the same binding/macro
 //! relations power go-to-definition, completion, and references.
 
+pub mod analysis;
 pub mod convert;
 pub mod documents;
+pub mod features;
 pub mod server;
 
 pub use server::{ServerConfig, ServerError, Transport, run};

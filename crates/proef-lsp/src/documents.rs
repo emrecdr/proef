@@ -16,6 +16,7 @@ use std::path::{Component, Path};
 use std::sync::Arc;
 
 use lsp_types::Uri;
+use proef_core::provider::{ProviderError, SourceProvider};
 
 /// A source name is a file's path rendered as a string — the same identity
 /// `Diag.source_name` and `PackSource.name` already use across the pipeline.
@@ -104,6 +105,39 @@ impl Documents {
     }
 }
 
+/// A [`SourceProvider`] that reads open buffers from the overlay and falls back
+/// to the injected disk provider. Discovery is disk's job (a suite is what is
+/// on disk under the root); an unsaved open buffer only overrides the *bytes* of
+/// a source disk already knows about. This is the LSP's whole source seam.
+pub struct OverlaySourceProvider<'a> {
+    overlay: &'a Documents,
+    disk: &'a dyn SourceProvider,
+}
+
+impl<'a> OverlaySourceProvider<'a> {
+    /// Wraps the open-buffer overlay over a disk fallback for one recompute.
+    pub fn new(overlay: &'a Documents, disk: &'a dyn SourceProvider) -> Self {
+        Self { overlay, disk }
+    }
+}
+
+impl SourceProvider for OverlaySourceProvider<'_> {
+    fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+        self.disk.discover_features()
+    }
+    fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+        self.disk.discover_packs()
+    }
+    fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
+        if let Some(url) = name_to_url(name)
+            && let Some(text) = self.overlay.get(&url)
+        {
+            return Ok(Arc::from(text));
+        }
+        self.disk.read(name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -127,5 +161,42 @@ mod tests {
         let u = name_to_url("/suite/packs/api.yaml").unwrap();
         let name = url_to_name(&u);
         assert_eq!(name_to_url(&name), Some(u));
+    }
+
+    #[test]
+    fn overlay_provider_prefers_open_buffer_over_disk() {
+        use proef_core::provider::{ProviderError, SourceProvider};
+        use std::sync::Arc;
+
+        struct DiskStub;
+        impl SourceProvider for DiskStub {
+            fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec!["/s/a.feature".to_owned()])
+            }
+            fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec![])
+            }
+            fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
+                if name == "/s/a.feature" {
+                    Ok(Arc::from("on disk"))
+                } else {
+                    Err(ProviderError("missing".to_owned()))
+                }
+            }
+        }
+
+        let mut docs = Documents::default();
+        let u = name_to_url("/s/a.feature").unwrap();
+        docs.open(u, "in editor".to_owned());
+        let disk = DiskStub;
+        let overlay = OverlaySourceProvider::new(&docs, &disk);
+
+        // discovery is disk's job
+        assert_eq!(
+            overlay.discover_features().unwrap(),
+            vec!["/s/a.feature".to_owned()]
+        );
+        // reading prefers the open buffer
+        assert_eq!(&*overlay.read("/s/a.feature").unwrap(), "in editor");
     }
 }
