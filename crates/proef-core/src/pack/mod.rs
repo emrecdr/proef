@@ -7,7 +7,7 @@
 //! validation pass 8). Loading is pure: the CLI discovers files and hands
 //! [`PackSource`]s in; built-in packs are embedded at build time.
 
-mod locate;
+pub(crate) mod locate;
 mod schema;
 mod validate;
 

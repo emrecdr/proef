@@ -91,6 +91,51 @@ pub(crate) fn payload_line_span(
     None
 }
 
+/// Content span of the `ordinal`-th (0-based) `use:` line within `macro_name`'s
+/// block — the whole reference line (indent and any `- ` sequence dash stripped),
+/// so a cursor anywhere on the reference resolves. `None` when not locatable.
+///
+/// Not yet called outside tests: the go-to-definition wiring that resolves a
+/// `use:` reference to its target lands separately.
+#[allow(dead_code)]
+pub(crate) fn use_span(text: &str, macro_name: &str, ordinal: usize) -> Option<Span> {
+    key_line_span(text, macro_name, "use", ordinal)
+}
+
+/// Content span of a macro's `match:` line (there is at most one), when
+/// locatable — the go-to-definition landing anchor. `None` otherwise.
+///
+/// Not yet called outside tests: the go-to-definition wiring that lands on
+/// this span lands separately.
+#[allow(dead_code)]
+pub(crate) fn match_span(text: &str, macro_name: &str) -> Option<Span> {
+    key_line_span(text, macro_name, "match", 0)
+}
+
+/// The `ordinal`-th line in `macro_name`'s block whose content (after stripping a
+/// leading `- ` sequence dash) begins `<key>:`, returned as that line's trimmed
+/// content span. Shared by [`use_span`] and [`match_span`]; best-effort, never panics.
+fn key_line_span(text: &str, macro_name: &str, key: &str, ordinal: usize) -> Option<Span> {
+    let (begin, end) = macro_region(text, macro_name)?;
+    let region = &text[begin..end];
+    let mut seen = 0usize;
+    for (offset, line) in lines_with_offsets(region) {
+        let trimmed = line.trim_start();
+        let lead = line.len() - trimmed.len();
+        let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let dash = trimmed.len() - after_dash.len();
+        if after_dash.starts_with(&format!("{key}:")) {
+            if seen == ordinal {
+                let start = begin + offset + lead + dash;
+                let stop = begin + offset + line.trim_end().len();
+                return Some(Span::clamped(start, stop.max(start), text.len()));
+            }
+            seen += 1;
+        }
+    }
+    None
+}
+
 /// `(byte_offset, line_without_newline)` for every line.
 fn lines_with_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut offset = 0;
@@ -123,5 +168,28 @@ mod tests {
         // The second template's block is independent.
         let span = payload_line_span(PACK, "second", "hurl", 0, 1).expect("span");
         assert_eq!(&PACK[span.start..span.end], "GET http://x/two");
+    }
+
+    const USE_PACK: &str = "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - use: base\n      - use: base#other\n";
+
+    #[test]
+    fn match_lines_are_located() {
+        let span = match_span(USE_PACK, "base").expect("span");
+        assert_eq!(&USE_PACK[span.start..span.end], "match: the base");
+        // A macro with no `match:` (use-only) yields None.
+        assert!(match_span(USE_PACK, "wrapper").is_none());
+        assert!(match_span(USE_PACK, "absent").is_none());
+    }
+
+    #[test]
+    fn use_lines_are_located_by_ordinal() {
+        let first = use_span(USE_PACK, "wrapper", 0).expect("span");
+        assert_eq!(&USE_PACK[first.start..first.end], "use: base");
+        let second = use_span(USE_PACK, "wrapper", 1).expect("span");
+        assert_eq!(&USE_PACK[second.start..second.end], "use: base#other");
+        // Ordinal past the last `use:` → None (never panics).
+        assert!(use_span(USE_PACK, "wrapper", 2).is_none());
+        // A macro with no `use:` → None.
+        assert!(use_span(USE_PACK, "base", 0).is_none());
     }
 }
