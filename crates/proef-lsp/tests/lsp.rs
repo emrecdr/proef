@@ -292,6 +292,93 @@ fn definition_on_a_step_jumps_to_the_macro() {
     shutdown(&client, server);
 }
 
+#[test]
+fn completion_offers_macro_pattern_snippets() {
+    use lsp_types::{CompletionParams, CompletionResponse, InsertTextFormat};
+
+    let feature_name = "/suite/f.feature".to_owned();
+    let pack_name = "/suite/packs/p.yaml".to_owned();
+    let feature_text = "Feature: F\n  Scenario: S\n    When I gr\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(
+        pack_name.clone(),
+        Arc::from(
+            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+        ),
+    );
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // "    When I gr" is line 2; character 13 lands at end of line (cursor at EOL).
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(20),
+            method: "textDocument/completion".to_owned(),
+            params: serde_json::to_value(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 13,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+                context: None,
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let resp = wait_for_response::<CompletionResponse>(&client, &RequestId::from(20));
+    let items = match resp {
+        CompletionResponse::Array(v) => v,
+        CompletionResponse::List(l) => l.items,
+    };
+    let greet = items
+        .iter()
+        .find(|i| i.label.contains("greet") || i.label.contains("I greet"))
+        .expect("greet completion offered");
+    assert_eq!(greet.insert_text_format, Some(InsertTextFormat::SNIPPET));
+    assert!(
+        greet.insert_text.as_ref().unwrap().contains("${1:"),
+        "capture becomes a tabstop"
+    );
+
+    shutdown(&client, server);
+}
+
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
 }

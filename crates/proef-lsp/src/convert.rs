@@ -10,6 +10,20 @@ use proef_core::diag::Span;
 
 const BOM: char = '\u{feff}';
 
+/// The `proef_core` feature-normalization rule (strip a leading BOM; append a
+/// trailing newline if missing — mirrors `proef_core::feature::parse`,
+/// `crates/proef-core/src/feature.rs:69-73`). Callers that need normalized-text
+/// byte coordinates without running full feature parsing share this one
+/// implementation rather than inlining the rule again.
+pub fn normalize(raw: &str) -> String {
+    let stripped = raw.strip_prefix(BOM).unwrap_or(raw);
+    let mut s = stripped.to_owned();
+    if !s.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
 /// Byte-offset/LSP-position index over one document's raw editor text.
 ///
 /// Built once per document version; bridges `proef_core` diagnostics (byte
@@ -270,12 +284,7 @@ mod tests {
                     for character in 0u32..6 {
                         let off = idx.position_to_offset(Position { line, character });
                         // Offset must land on a char boundary of the normalized text.
-                        let normalized: String = {
-                            let stripped = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
-                            let mut s = stripped.to_owned();
-                            if !s.ends_with('\n') { s.push('\n'); }
-                            s
-                        };
+                        let normalized = normalize(&raw);
                         prop_assert!(off <= normalized.len());
                         prop_assert!(normalized.is_char_boundary(off));
                         // Mapping that offset back to a range never panics and stays
