@@ -9,29 +9,23 @@ use proef_core::provider::{ProviderError, SourceProvider};
 
 use crate::front;
 
-/// Not yet wired into a command; the LSP handler will construct one over the
-/// workspace root once the collect-all analysis lands.
-#[allow(dead_code)]
+/// The disk-backed `SourceProvider` the `proef lsp` handler constructs over the
+/// workspace root; the overlay-then-disk analysis reads through it.
 pub struct DiskSourceProvider {
     root: PathBuf,
 }
 
 impl DiskSourceProvider {
     /// Builds a provider rooted at `root`, which must be an **absolute** path —
-    /// the CLI passes the suite directory as given on the command line, and the
-    /// LSP passes a canonicalized `current_dir()`. Kept uncanonicalized here:
-    /// canonicalizing would resolve symlinks and desync source names from the
-    /// identity the LSP client already knows via document URIs.
-    #[allow(dead_code)]
+    /// the LSP passes `current_dir()`, which is already absolute. Kept
+    /// uncanonicalized here: canonicalizing would resolve symlinks and desync
+    /// source names from the identity the LSP client already knows via document
+    /// URIs.
     pub fn new(root: PathBuf) -> Self {
         Self { root }
     }
 }
 
-// Dead in a non-test build until something constructs `DiskSourceProvider`;
-// the trait impl below stays live because it satisfies a public trait, but
-// this helper it calls does not.
-#[allow(dead_code)]
 fn names(paths: Vec<PathBuf>) -> Vec<String> {
     paths
         .into_iter()

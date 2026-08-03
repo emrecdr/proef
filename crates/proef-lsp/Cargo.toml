@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+keywords = ["testing", "e2e", "gherkin", "lsp", "language-server"]
+categories = ["development-tools::testing"]
 publish = true
 
 [dependencies]

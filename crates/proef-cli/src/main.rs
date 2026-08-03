@@ -16,6 +16,7 @@ mod explain;
 mod fmt;
 mod front;
 mod fsutil;
+mod lsp;
 mod record;
 mod registry;
 mod render;
@@ -196,6 +197,9 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Run the proef language server over stdio (diagnostics, definitions,
+    /// completion, references for feature files and macro packs).
+    Lsp,
 }
 
 #[derive(Subcommand)]
@@ -426,6 +430,7 @@ fn main() -> std::process::ExitCode {
             }
         },
         Command::Fmt { path, check } => fmt::fmt(&path, check),
+        Command::Lsp => lsp::run(),
     };
     std::process::ExitCode::from(code.code())
 }

@@ -1,6 +1,6 @@
 # ADR-0017 — `proef lsp` language server
 
-**Status:** Proposed (design approved, pre-implementation) · **Date:** 2026-08-03
+**Status:** Accepted · **Date:** 2026-08-03 (implemented 2026-08-03)
 **Design spec:** [docs/superpowers/specs/2026-08-03-proef-lsp-design.md](../superpowers/specs/2026-08-03-proef-lsp-design.md)
 
 ## Context
@@ -36,9 +36,13 @@ go-to-definition, completion, and find-references. Key choices:
 
 ## Consequences
 
-- A new crate + two deps (`lsp-server`, `lsp-types`, MIT/Apache — confirm clean under
-  `cargo-deny` at scaffold); the provider trait moves the `proef-core` `public-api` snapshot
-  (a deliberate, reviewed change).
+- A new crate + two deps, pinned as shipped: **`lsp-server 0.7.9`** and
+  **`lsp-types 0.97.0`** (MIT/Apache — clean under `cargo-deny`); the provider trait moves the
+  `proef-core` `public-api` snapshot (a deliberate, reviewed change).
+- **`lsp-types 0.97` models document URIs as its own `Uri` type (RFC-3986), not `url::Url`.**
+  The 0.97 line dropped the `url` dependency, so the converter and every handler key documents on
+  `Uri` (parsed/compared as an RFC-3986 string), never `url::Url` — a change from the pre-0.97 API
+  that would silently fail to compile against the old assumption.
 - The front-end refactor (injectable provider + collect-all) touches `front.rs` and its
   callers; the CLI path must stay behaviourally identical, guarded by the existing integration
   + snapshot suites.
