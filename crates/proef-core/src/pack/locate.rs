@@ -104,6 +104,33 @@ pub(crate) fn match_span(text: &str, macro_name: &str) -> Option<Span> {
     key_line_span(text, macro_name, "match", 0)
 }
 
+/// Count of lines in `macro_name`'s block whose content (after stripping a leading
+/// `- ` sequence dash) begins `use:` — the same textual scan [`use_span`] does, but
+/// counting instead of picking one ordinal. A single O(n) pass, never a loop over
+/// [`use_span`].
+///
+/// Used by `analyze::index_use_refs` to guard the ordinal pairing between parsed
+/// `MacroStepKind::Use` steps and textual `use:` lines: a flow-style step like
+/// `- {use: base}` is valid YAML and parses to a `Use` step, but its line does not
+/// start with `use:` after the dash is stripped, so it is not counted here. When the
+/// two counts diverge, per-ordinal pairing is unreliable and the caller must not
+/// trust it.
+pub(crate) fn count_use_lines(text: &str, macro_name: &str) -> usize {
+    let Some((begin, end)) = macro_region(text, macro_name) else {
+        return 0;
+    };
+    let region = &text[begin..end];
+    let mut count = 0usize;
+    for (_, line) in lines_with_offsets(region) {
+        let trimmed = line.trim_start();
+        let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        if after_dash.starts_with("use:") {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// The `ordinal`-th line in `macro_name`'s block whose content (after stripping a
 /// leading `- ` sequence dash) begins `<key>:`, returned as that line's trimmed
 /// content span. Shared by [`use_span`] and [`match_span`]; best-effort, never panics.
@@ -183,5 +210,19 @@ mod tests {
         assert!(use_span(USE_PACK, "wrapper", 2).is_none());
         // A macro with no `use:` → None.
         assert!(use_span(USE_PACK, "base", 0).is_none());
+    }
+
+    const MIXED_USE_PACK: &str = "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n";
+
+    #[test]
+    fn count_use_lines_counts_textual_prefixed_lines_only() {
+        assert_eq!(count_use_lines(USE_PACK, "wrapper"), 2);
+        assert_eq!(count_use_lines(USE_PACK, "base"), 0);
+        assert_eq!(count_use_lines(USE_PACK, "absent"), 0);
+        // Flow-style `- {use: base}` is valid YAML and parses to a `Use` step, but
+        // its line does not start with `use:` after the dash strip — it is not
+        // counted, so this undercounts relative to the parsed step count. That
+        // divergence is exactly what `analyze::index_use_refs` guards on.
+        assert_eq!(count_use_lines(MIXED_USE_PACK, "wrapper"), 1);
     }
 }

@@ -215,13 +215,25 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
 }
 
 /// Index every `use:` reference → its resolved target, for go-to-def from a
-/// `use:` line. The per-macro ordinal matches `pack::locate::use_span`'s counting.
+/// `use:` line. The per-macro ordinal matches `pack::locate::use_span`'s counting —
+/// guarded per macro: if the parsed `Use` step count and the textual `use:`-line
+/// count diverge (e.g. a flow-style `- {use: base}` step, which parses fine but
+/// isn't seen by the line scanner), the ordinal pairing is unreliable, so that
+/// macro's `use:` lines are skipped entirely rather than risk a wrong `Some`.
 fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
     let mut use_refs = Vec::new();
     for m in packs.macros.values() {
         let MacroBody::Steps(steps) = &m.body else {
             continue;
         };
+        let parsed_use_count = steps
+            .iter()
+            .filter(|step| matches!(step.kind, MacroStepKind::Use { .. }))
+            .count();
+        let text_use_count = crate::pack::locate::count_use_lines(&m.source, &m.name);
+        if parsed_use_count != text_use_count {
+            continue; // counts diverge → per-ordinal pairing unreliable, skip
+        }
         let mut ordinal = 0usize;
         for step in steps {
             if let MacroStepKind::Use { target, .. } = &step.kind {
@@ -628,6 +640,57 @@ mod tests {
             .find(|m| m.name == "wrapper")
             .expect("macro wrapper");
         assert!(wrapper.match_span.is_none());
+    }
+
+    // Guards the ordinal alignment between parsed `Use` steps and textual `use:`
+    // lines: a flow-style step (`- {use: base}`) is valid YAML and parses to a
+    // `Use` step, but the line scanner's `use:`-prefix match does not see it (the
+    // line reads `- {use: base}`, not a `use:`-prefixed line after the dash
+    // strip). Mixed with a block-style `use:` line in the same macro, the parsed
+    // count (2) and textual count (1) diverge — per-ordinal pairing would silently
+    // attribute the wrong textual span to a step. `index_use_refs` must skip
+    // `UseRef` generation for that macro entirely rather than emit a wrong `Some`.
+    #[test]
+    fn analyze_skips_use_refs_when_flow_and_block_style_counts_diverge() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n",
+            ),
+        );
+        let provider = MemProvider {
+            features: vec![],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        // The pack is valid (flow-style `use:` is legal YAML) — no error
+        // diagnostics, so `analyze_suite` did not short-circuit before indexing.
+        let errors: usize = analysis
+            .diagnostics
+            .values()
+            .flatten()
+            .filter(|d| d.severity == crate::diag::Severity::Error)
+            .count();
+        assert_eq!(
+            errors, 0,
+            "the mixed-style pack must be valid, zero errors: {:?}",
+            analysis.diagnostics
+        );
+
+        // `base` has no `use:` steps of its own, so any `UseRef` in this suite
+        // would have to come from `wrapper` — the count mismatch must suppress
+        // all of them (no wrong-target/wrong-span `UseRef`, per the "never a
+        // wrong `Some`" contract).
+        assert!(
+            analysis.use_refs.is_empty(),
+            "count mismatch must skip UseRef generation for wrapper entirely, \
+             not emit a misaligned pairing: {:?}",
+            analysis.use_refs
+        );
     }
 
     // Small helper to read a source back for span assertions.
