@@ -36,10 +36,12 @@ fn pattern_to_snippet(pattern: &str) -> String {
 }
 
 /// Offers every macro `match:` pattern in the suite as a ranked snippet
-/// completion at `position` in the document at `url`. Ranking puts the
-/// pattern closest to the already-typed prose first (the same substrate
-/// `proef_core::matcher` uses for "did you mean" unbound-step diagnostics);
-/// the rest keep their suite order.
+/// completion at `position` in the document at `url`. Every pattern is
+/// returned — nothing is hidden — but each carries a `sort_text` from its
+/// rank by `proef_core::matcher::prefix_rank` (the closer to the typed prose
+/// prefix, the earlier it sorts; ties keep suite order) and a `filter_text`
+/// set to the pattern's literal skeleton, so the client narrows on prose
+/// rather than on the raw snippet text.
 pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<CompletionItem> {
     let name = url_to_name(url);
     let Some(raw) = analysis.raw.get(&name) else {
@@ -48,26 +50,31 @@ pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<Compl
     // The prose typed so far on this line, after the Gherkin keyword.
     let prefix = current_step_prefix(raw, position);
 
-    // Rank patterns by closeness to the prefix (best first), like unbound-step
-    // suggestions. Patterns with no `match:` (use-only macros) are skipped.
+    // Rank patterns by relevance to the typed prose prefix (best first);
+    // equal ranks keep suite order (stable sort). Patterns with no `match:`
+    // (use-only macros) are skipped.
     let mut patterns: Vec<(&str, &str)> = analysis
         .suite
         .macros
         .iter()
         .filter_map(|m| m.pattern.as_deref().map(|p| (m.name.as_str(), p)))
         .collect();
-    if let Some(best) = matcher::closest(&prefix, patterns.iter().map(|(_, p)| *p)) {
-        patterns.sort_by_key(|(_, p)| i32::from(*p != best));
-    }
+    patterns.sort_by_key(|(_, p)| matcher::prefix_rank(&prefix, p));
 
+    // Zero-pad the rank index so the client's lexical sortText comparison
+    // matches our numeric order (e.g. "00", "01", … for up to 99 items).
+    let width = patterns.len().to_string().len();
     patterns
         .into_iter()
-        .map(|(macro_name, pattern)| CompletionItem {
+        .enumerate()
+        .map(|(i, (macro_name, pattern))| CompletionItem {
             label: pattern.to_owned(),
             kind: Some(CompletionItemKind::SNIPPET),
             detail: Some(format!("macro {macro_name}")),
             insert_text: Some(pattern_to_snippet(pattern)),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
+            sort_text: Some(format!("{i:0width$}")),
+            filter_text: Some(matcher::literal_skeleton(pattern)),
             ..Default::default()
         })
         .collect()

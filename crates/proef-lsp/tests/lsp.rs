@@ -304,7 +304,7 @@ fn completion_offers_macro_pattern_snippets() {
     files.insert(
         pack_name.clone(),
         Arc::from(
-            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n  saved:\n    match: \"the note is saved\"\n    steps:\n      - hurl: |\n          GET http://x\n",
         ),
     );
     let disk = FakeDisk {
@@ -375,6 +375,20 @@ fn completion_offers_macro_pattern_snippets() {
         greet.insert_text.as_ref().unwrap().contains("${1:"),
         "capture becomes a tabstop"
     );
+
+    // The prefix-matching macro sorts ahead of the non-matching one.
+    let saved = items
+        .iter()
+        .find(|i| i.label == "the note is saved")
+        .expect("saved completion offered");
+    assert!(
+        greet.sort_text < saved.sort_text,
+        "prefix match must sort first: greet={:?} saved={:?}",
+        greet.sort_text,
+        saved.sort_text
+    );
+    // filterText is the pattern's prose skeleton, so the editor narrows on prose.
+    assert_eq!(greet.filter_text.as_deref(), Some("I greet "));
 
     shutdown(&client, server);
 }

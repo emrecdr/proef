@@ -775,6 +775,7 @@ pub fn proef_core::matcher::literal_skeleton(&str) -> alloc::string::String
 pub fn proef_core::matcher::match_pattern(&str, &str) -> core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 pub fn proef_core::matcher::near_duplicate_macros<'a>(impl core::iter::traits::collect::IntoIterator<Item = (&'a str, &'a str)>) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub fn proef_core::matcher::pattern_problems(&str, &[alloc::string::String]) -> alloc::vec::Vec<proef_core::matcher::PatternProblem>
+pub fn proef_core::matcher::prefix_rank(&str, &str) -> (u8, usize)
 pub fn proef_core::matcher::tokenize(&str) -> alloc::vec::Vec<proef_core::matcher::Token>
 pub mod proef_core::pack
 pub enum proef_core::pack::MacroBody
