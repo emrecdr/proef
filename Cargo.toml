@@ -7,6 +7,7 @@ members = [
     "crates/proef-cli",
     "crates/proef-fixture",
     "crates/proef-harness",
+    "crates/proef-lsp",
     "xtask",
 ]
 # The fuzz crate is its own workspace: it builds on nightly (cargo-fuzz),
@@ -25,6 +26,12 @@ publish = false
 # intra-workspace (version required for publish; all crates release in lockstep)
 proef-core = { path = "crates/proef-core", version = "0.4.0" }
 proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.4.0" }
+proef-lsp = { path = "crates/proef-lsp", version = "0.4.0" }
+lsp-server = "0.7"
+lsp-types = "0.97"
+# lsp-server's own channel crate; we match its `RecvTimeoutError` for the
+# debounce loop, so we depend on the same version it re-exports.
+crossbeam-channel = "0.5"
 
 # The engine's `vendored-openssl` feature builds OpenSSL from source (release
 # macOS binaries: no Homebrew dependency, and cross-compiles become possible).

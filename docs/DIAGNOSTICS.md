@@ -53,6 +53,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::with_without_use` | `with:` on a step that has no `use:` | |
 | `pack::missing_use_param` | The `use:` target requires a param `with:` does not supply | ✓ |
 | `pack::unknown_with_key` | A `with:` key the target macro does not declare | ✓ |
+| `pack::load` | A non-diagnostic core failure surfaced while loading packs (defensive; the loader normally reports located diagnostics) | |
 
 ## `proef::bind::*` — matching prose to macros
 
@@ -96,8 +97,14 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `emit::invalid_artifact` | The emitted artifact does not parse with the engine's parser | |
 
+## `proef::source::*` — source access (LSP whole-suite analysis)
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `source::unreadable` | A discovered feature or pack source could not be read (surfaced by `analyze_suite`; the CLI treats an unreadable file as a system fault instead) | |
+
 ## Coverage note
 
-23 of the 57 codes carry a seeded corpus case today; the corpus guard asserts
+23 of the 59 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

@@ -26,6 +26,15 @@ fn unknown_subcommand_is_a_user_error() {
 }
 
 #[test]
+fn lsp_help_exits_zero() {
+    proef()
+        .args(["lsp", "--help"])
+        .assert()
+        .code(0)
+        .stdout(contains("language server"));
+}
+
+#[test]
 fn unknown_flag_is_a_user_error() {
     proef().args(["doctor", "--bogus"]).assert().code(2);
 }

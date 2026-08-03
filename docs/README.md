@@ -18,6 +18,7 @@ repo-root `CLAUDE.md` carry the live status.
 |---|---|---|---|
 | 0 | [GETTING-STARTED.md](GETTING-STARTED.md) | Your first suite in ten minutes | test authors |
 | 0 | [AUTHORING.md](AUTHORING.md) | The pack/feature reference from the author's seat | test authors |
+| 0 | [EDITORS.md](EDITORS.md) | Wiring `proef lsp` into Neovim/Helix/Emacs for live diagnostics, jump-to-macro, completion | test authors |
 | 0 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Exit codes, glyphs, frequent failures, digging into runs | test authors |
 | 0 | [CONFIG.md](CONFIG.md) | Every `proef.toml` key with defaults | test authors |
 | 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | test authors |
@@ -54,6 +55,7 @@ repo-root `CLAUDE.md` carry the live status.
 | [0014](adr/ADR-0014-suite-setup-teardown.md) | Suite-level setup/teardown (`[run] setup`/`teardown` features, CLI-edge orchestration) | Accepted |
 | [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
 | [0016](adr/ADR-0016-openapi-suite-generator.md) | OpenAPI → suite generator: one-shot seed allowed under a bright line; oracle/drift mode permanently rejected | Proposed (defer) |
+| [0017](adr/ADR-0017-lsp-language-server.md) | `proef lsp` language server: sync lsp-server, whole-suite wholesale recompute, injectable-provider + collect-all front-end refactor | Accepted |
 
 ## Naming & identifiers
 

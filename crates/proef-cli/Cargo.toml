@@ -29,6 +29,7 @@ vendored-openssl = ["proef-engine-hurl?/vendored-openssl"]
 
 [dependencies]
 proef-core = { workspace = true }
+proef-lsp = { workspace = true }
 proef-engine-hurl = { workspace = true, optional = true }
 clap = { workspace = true }
 miette = { workspace = true }

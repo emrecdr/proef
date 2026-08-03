@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use proef_core::analyze::validate_artifact;
 use proef_core::bind;
-use proef_core::diag::{Diag, FrontError, Span};
+use proef_core::diag::{Diag, FrontError};
 use proef_core::emit::{self, Artifact};
 use proef_core::error::CoreError;
 use proef_core::feature::{self, FeatureFile};
@@ -192,64 +193,6 @@ pub fn run(
         let mut all = errors;
         all.extend(warnings);
         Err(FrontError::Diagnostics(all))
-    }
-}
-
-/// Parse-validate the exact emitted artifact text with the claiming engine's
-/// real parser (`--dry-run` = §4.1–4.5 including artifact parse-validation).
-/// The diagnostic's source is the emitted text itself, span at the broken line.
-fn validate_artifact(
-    artifact: &Artifact,
-    lowered: &LoweredScenario,
-    kinds: &[proef_core::engine::StepKindSpec],
-    diags: &mut Vec<Diag>,
-) {
-    let Some(kind) = lowered
-        .batches
-        .iter()
-        .flat_map(|b| b.steps.iter())
-        .find(|s| matches!(s.payload, proef_core::step::StepPayload::HurlEntries(_)))
-        .map(|s| s.kind.as_str().to_owned())
-    else {
-        return;
-    };
-    let Some(validate) = kinds
-        .iter()
-        .find(|k| k.prefix == kind)
-        .and_then(|k| k.validate)
-    else {
-        return;
-    };
-    if let Err(err) = validate(&artifact.hurl_text) {
-        let offset: usize = artifact
-            .hurl_text
-            .split_inclusive('\n')
-            .take(err.line.saturating_sub(1))
-            .map(str::len)
-            .sum();
-        let line_len = artifact.hurl_text[offset..]
-            .lines()
-            .next()
-            .unwrap_or("")
-            .len();
-        diags.push(
-            Diag::error(
-                "proef::emit::invalid_artifact",
-                format!(
-                    "emitted artifact `{}.hurl` does not parse: {} (line {}, column {})",
-                    artifact.slug, err.message, err.line, err.column
-                ),
-            )
-            .with_source(
-                format!("{}.hurl (emitted)", artifact.slug),
-                std::sync::Arc::from(artifact.hurl_text.as_str()),
-            )
-            .with_span(Span::clamped(
-                offset,
-                offset + line_len.max(1),
-                artifact.hurl_text.len(),
-            )),
-        );
     }
 }
 
