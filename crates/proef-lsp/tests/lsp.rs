@@ -379,6 +379,86 @@ fn completion_offers_macro_pattern_snippets() {
     shutdown(&client, server);
 }
 
+#[test]
+fn references_lists_every_step_bound_to_the_macro() {
+    use lsp_types::{ReferenceContext, ReferenceParams};
+
+    let f1 = "/suite/a.feature".to_owned();
+    let f2 = "/suite/b.feature".to_owned();
+    let pack = "/suite/packs/p.yaml".to_owned();
+    let t1 = "Feature: A\n  Scenario: S\n    When I greet Sam\n";
+    let t2 = "Feature: B\n  Scenario: T\n    When I greet Mia\n";
+    let mut files = BTreeMap::new();
+    files.insert(f1.clone(), Arc::from(t1));
+    files.insert(f2.clone(), Arc::from(t2));
+    files.insert(
+        pack.clone(),
+        Arc::from(
+            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+        ),
+    );
+    let disk = FakeDisk {
+        features: vec![f1.clone(), f2.clone()],
+        packs: vec![pack],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let url1 = name_to_url(&f1).unwrap();
+    open(&client, &url1, t1);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // "    When I greet Sam" is line 2; char 9 lands inside the step's span.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(30),
+            method: "textDocument/references".to_owned(),
+            params: serde_json::to_value(ReferenceParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url1.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 9,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+                context: ReferenceContext {
+                    include_declaration: false,
+                },
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let locs = wait_for_response::<Vec<Location>>(&client, &RequestId::from(30));
+    assert_eq!(locs.len(), 2, "both greet steps referenced: {locs:?}");
+
+    shutdown(&client, server);
+}
+
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
 }

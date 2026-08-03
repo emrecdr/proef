@@ -18,7 +18,7 @@ use proef_core::provider::SourceProvider;
 
 use crate::analysis::{Analysis, RecomputeInputs, recompute};
 use crate::documents::Documents;
-use crate::features::{completion, definition, diagnostics};
+use crate::features::{completion, definition, diagnostics, references};
 
 /// How the server talks to its client.
 pub enum Transport {
@@ -71,9 +71,8 @@ impl std::fmt::Display for ServerError {
 impl std::error::Error for ServerError {}
 
 /// v1 capabilities. Diagnostics are push-model (server-initiated), so they need
-/// no capability flag; go-to-definition and completion are advertised here;
-/// references is filled in as its task lands. Text sync is FULL (we recompute
-/// wholesale anyway).
+/// no capability flag; go-to-definition, completion, and references are all
+/// advertised here. Text sync is FULL (we recompute wholesale anyway).
 fn capabilities() -> ServerCapabilities {
     use lsp_types::{CompletionOptions, OneOf, TextDocumentSyncCapability, TextDocumentSyncKind};
     ServerCapabilities {
@@ -83,6 +82,7 @@ fn capabilities() -> ServerCapabilities {
             trigger_characters: None,
             ..Default::default()
         }),
+        references_provider: Some(OneOf::Left(true)),
         ..Default::default()
     }
 }
@@ -261,7 +261,7 @@ fn dispatch_request(
     state: &State,
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
-    use lsp_types::request::{Completion, GotoDefinition, Request as _};
+    use lsp_types::request::{Completion, GotoDefinition, References, Request as _};
 
     if req.method == GotoDefinition::METHOD {
         let params: lsp_types::GotoDefinitionParams = serde_json::from_value(req.params.clone())
@@ -307,8 +307,29 @@ fn dispatch_request(
             .map_err(|e| ServerError::Protocol(e.to_string()));
     }
 
-    // References is wired in its own task; unknown methods get a
-    // method-not-found response so the client never hangs waiting on a reply.
+    if req.method == References::METHOD {
+        let params: lsp_types::ReferenceParams = serde_json::from_value(req.params.clone())
+            .map_err(|e| ServerError::Protocol(e.to_string()))?;
+        // No analysis (a panicked recompute) yields no references, never a
+        // dropped/errored response — mirrors definition/completion.
+        let locations = current_analysis(cfg, state)
+            .map(|analysis| {
+                references::find(
+                    &analysis,
+                    &params.text_document_position.text_document.uri,
+                    params.text_document_position.position,
+                )
+            })
+            .unwrap_or_default();
+        let resp = lsp_server::Response::new_ok(req.id.clone(), Some(locations));
+        return connection
+            .sender
+            .send(Message::Response(resp))
+            .map_err(|e| ServerError::Protocol(e.to_string()));
+    }
+
+    // Unknown methods get a method-not-found response so the client never
+    // hangs waiting on a reply.
     let resp = lsp_server::Response::new_err(
         req.id.clone(),
         lsp_server::ErrorCode::MethodNotFound as i32,
