@@ -415,5 +415,129 @@ mod tests {
                 .iter()
                 .any(|d| d.code == "proef::bind::unbound_step")
         );
+        let errors: Vec<_> = feature_diags
+            .iter()
+            .filter(|d| d.severity == crate::diag::Severity::Error)
+            .collect();
+        assert_eq!(
+            errors.len(),
+            1,
+            "the unbound step must be the only error-severity diagnostic, no spurious extras: {feature_diags:?}"
+        );
+        assert_eq!(errors[0].code, "proef::bind::unbound_step");
+    }
+
+    // §9's headline robustness property: a parse failure suppresses only its own
+    // file's downstream diagnostics — it must not cascade into a sibling feature's
+    // binding. Two features share one valid pack; only one of them fails to parse.
+    #[test]
+    fn analyze_parse_failed_feature_does_not_cascade_to_sibling() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+            ),
+        );
+        // Whitespace-only text: feature::parse's own empty-file guard
+        // (`normalized.trim().is_empty()`) returns `Err` before the gherkin
+        // parser even runs — a guaranteed, deliberate parse failure.
+        files.insert("bad.feature".to_owned(), Arc::from("   \n"));
+        files.insert(
+            "good.feature".to_owned(),
+            Arc::from("Feature: F\n  Scenario: S\n    When I greet Sam\n"),
+        );
+        let provider = MemProvider {
+            features: vec!["bad.feature".to_owned(), "good.feature".to_owned()],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        // The parse-failed feature carries its own parse-error diagnostic —
+        // proof the `feature::parse` `Err` branch was actually hit.
+        let bad_diags = analysis
+            .diagnostics
+            .get("bad.feature")
+            .expect("bad.feature bucket");
+        assert!(
+            bad_diags
+                .iter()
+                .any(|d| d.code == "proef::feature::empty_file"),
+            "the parse-failed feature must carry its parse-error diagnostic: {bad_diags:?}"
+        );
+
+        // The sibling feature is untouched: no error diagnostics, and its
+        // binding still made it through — proof there was no cascade.
+        let good_diags = analysis
+            .diagnostics
+            .get("good.feature")
+            .expect("good.feature bucket");
+        assert!(
+            good_diags
+                .iter()
+                .all(|d| d.severity != crate::diag::Severity::Error),
+            "the valid sibling feature must have no error diagnostics despite the parse failure next to it: {good_diags:?}"
+        );
+        assert!(
+            analysis
+                .bindings
+                .iter()
+                .any(|b| b.macro_name == "greet" && b.feature == "good.feature"),
+            "the valid sibling feature must still produce its binding — no cascade from the parse-failed feature"
+        );
+    }
+
+    // §9's other half: a broken pack short-circuits before feature binding even
+    // starts, so a perfectly normal feature must not be falsely reported.
+    #[test]
+    fn analyze_broken_pack_short_circuits_before_feature_binding() {
+        let mut files = BTreeMap::new();
+        // `deny_unknown_fields` on the pack schema's root: `bogus` is not a
+        // recognized key, so `serde_norway::from_str::<RawPack>` returns `Err`
+        // and `pack::load` returns `Err(FrontError::Diagnostics(..))` carrying
+        // `proef::pack::yaml` (mirrors `tests/errors/pack__yaml`).
+        files.insert(
+            "packs/broken.yaml".to_owned(),
+            Arc::from("macros: {}\nbogus: true\n"),
+        );
+        files.insert(
+            "f.feature".to_owned(),
+            Arc::from("Feature: F\n  Scenario: S\n    When I greet Sam\n"),
+        );
+        let provider = MemProvider {
+            features: vec!["f.feature".to_owned()],
+            packs: vec!["packs/broken.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        // The broken pack carries its yaml diagnostic — proof `pack::load`'s
+        // `Err` branch was actually hit.
+        let pack_diags = analysis
+            .diagnostics
+            .get("packs/broken.yaml")
+            .expect("pack bucket");
+        assert!(
+            pack_diags.iter().any(|d| d.code == "proef::pack::yaml"),
+            "the broken pack must carry its yaml diagnostic: {pack_diags:?}"
+        );
+
+        // Feature binding never ran: no bindings recorded anywhere, and the
+        // feature was not even visited (no bucket, so certainly no
+        // `proef::bind::*` diagnostics) — proof `analyze_suite` returned early.
+        assert!(
+            analysis.bindings.is_empty(),
+            "no bindings should be produced when the pack fails to load: {:?}",
+            analysis.bindings
+        );
+        let feature_diags = analysis.diagnostics.get("f.feature");
+        assert!(
+            feature_diags
+                .is_none_or(|diags| !diags.iter().any(|d| d.code.starts_with("proef::bind::"))),
+            "the feature must not be falsely reported when the pack short-circuited binding: {feature_diags:?}"
+        );
     }
 }

@@ -110,3 +110,9 @@ This is the first release of the language server. Known boundaries:
 - **No VS Code extension yet.** v1 is a server-only generic-LSP binary. It works
   with any editor that speaks generic LSP (Neovim, Helix, Emacs, Sublime LSP, …);
   a VS Code wrapper is a possible follow-up.
+- **Overlay lookup can miss on symlinked roots or divergent URI encoding.** The
+  server resolves the suite root from an uncanonicalized `current_dir()`, and
+  matches open buffers to disk files by file URI. If the suite root is reached
+  through a symlink, or an editor's percent-encoding of the URI diverges from
+  the server's, the overlay lookup can miss and the LSP analyzes the saved
+  on-disk bytes instead of the unsaved buffer.
