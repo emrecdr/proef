@@ -10,6 +10,7 @@ mod ci_reports;
 mod commands;
 mod config;
 mod diff;
+mod disk_provider;
 mod exec;
 mod explain;
 mod fmt;

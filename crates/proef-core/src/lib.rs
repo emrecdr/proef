@@ -27,6 +27,7 @@ pub mod html;
 pub mod lower;
 pub mod matcher;
 pub mod pack;
+pub mod provider;
 pub mod report;
 pub mod resolve;
 pub mod runner;
