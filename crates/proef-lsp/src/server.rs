@@ -16,9 +16,9 @@ use lsp_types::notification::{
 use proef_core::engine::StepKindSpec;
 use proef_core::provider::SourceProvider;
 
-use crate::analysis::{RecomputeInputs, recompute};
+use crate::analysis::{Analysis, RecomputeInputs, recompute};
 use crate::documents::Documents;
-use crate::features::diagnostics;
+use crate::features::{definition, diagnostics};
 
 /// How the server talks to its client.
 pub enum Transport {
@@ -71,12 +71,14 @@ impl std::fmt::Display for ServerError {
 impl std::error::Error for ServerError {}
 
 /// v1 capabilities. Diagnostics are push-model (server-initiated), so they need
-/// no capability flag; definition/completion/references are filled in as their
-/// tasks land. Text sync is FULL (we recompute wholesale anyway).
+/// no capability flag; go-to-definition is advertised here; completion/references
+/// are filled in as their tasks land. Text sync is FULL (we recompute wholesale
+/// anyway).
 fn capabilities() -> ServerCapabilities {
-    use lsp_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
+    use lsp_types::{OneOf, TextDocumentSyncCapability, TextDocumentSyncKind};
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        definition_provider: Some(OneOf::Left(true)),
         ..Default::default()
     }
 }
@@ -213,43 +215,64 @@ fn apply_notification(state: &mut State, note: &lsp_server::Notification) -> boo
     false
 }
 
-fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State) {
-    // Scope the borrow of `state.docs` so it ends before we take `&mut
-    // state.published` to publish; `Analysis` owns its data and outlives it.
-    let analysis = {
-        let inputs = RecomputeInputs {
-            root: &cfg.root,
-            docs: &state.docs,
-            disk: cfg.disk.as_ref(),
-            kinds: &cfg.kinds,
-            kind_to_engine: &cfg.kind_to_engine,
-            env: &cfg.env,
-            config_vars: &cfg.config_vars,
-        };
-        // A panic inside analysis must never take the server down: catch it,
-        // keep the previously published diagnostics, and let the next edit retry.
-        let Ok(analysis) =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| recompute(&inputs)))
-        else {
-            eprintln!("proef-lsp: suite analysis panicked; keeping previous diagnostics");
-            return;
-        };
-        analysis
+/// Builds the current [`Analysis`] from the live overlay-then-disk provider.
+/// The one recompute path: the debounced diagnostics publisher and an
+/// on-demand feature request (definition/completion/references) both call
+/// this — v1 does not cache the analysis between requests, and the pipeline
+/// is milliseconds, so recomputing per request is cheap.
+fn current_analysis(cfg: &ServerConfig, state: &State) -> Analysis {
+    let inputs = RecomputeInputs {
+        root: &cfg.root,
+        docs: &state.docs,
+        disk: cfg.disk.as_ref(),
+        kinds: &cfg.kinds,
+        kind_to_engine: &cfg.kind_to_engine,
+        env: &cfg.env,
+        config_vars: &cfg.config_vars,
     };
-    // definition/completion/references read a fresh recompute per request in
-    // their own tasks; v1 does not cache the analysis between requests.
+    recompute(&inputs)
+}
+
+fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State) {
+    // A panic inside analysis must never take the server down: catch it, keep
+    // the previously published diagnostics, and let the next edit retry.
+    let Ok(analysis) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        current_analysis(cfg, state)
+    })) else {
+        eprintln!("proef-lsp: suite analysis panicked; keeping previous diagnostics");
+        return;
+    };
     diagnostics::publish(connection, &analysis, &mut state.published);
 }
 
 fn dispatch_request(
     connection: &Connection,
-    _cfg: &ServerConfig,
-    _state: &State,
+    cfg: &ServerConfig,
+    state: &State,
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
-    // Feature requests (definition/completion/references) are wired in their own
-    // tasks; unknown methods get a method-not-found response so the client never
-    // hangs waiting on a reply.
+    use lsp_types::request::{GotoDefinition, Request as _};
+
+    if req.method == GotoDefinition::METHOD {
+        let params: lsp_types::GotoDefinitionParams = serde_json::from_value(req.params.clone())
+            .map_err(|e| ServerError::Protocol(e.to_string()))?;
+        let analysis = current_analysis(cfg, state);
+        let result = definition::goto(
+            &analysis,
+            &params.text_document_position_params.text_document.uri,
+            params.text_document_position_params.position,
+        )
+        .map(lsp_types::GotoDefinitionResponse::Scalar);
+        let resp = lsp_server::Response::new_ok(req.id.clone(), result);
+        return connection
+            .sender
+            .send(Message::Response(resp))
+            .map_err(|e| ServerError::Protocol(e.to_string()));
+    }
+
+    // Feature requests beyond definition (completion/references) are wired in
+    // their own tasks; unknown methods get a method-not-found response so the
+    // client never hangs waiting on a reply.
     let resp = lsp_server::Response::new_err(
         req.id.clone(),
         lsp_server::ErrorCode::MethodNotFound as i32,

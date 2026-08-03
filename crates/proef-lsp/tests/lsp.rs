@@ -1,8 +1,8 @@
-//! Scripted JSON-RPC integration test: drive the server over an in-memory
-//! connection with a fake disk provider seeded from the `bind__unbound_step`
-//! corpus shape, and assert the published diagnostic code plus a non-degenerate
-//! range. No real filesystem and no real engine — a `hurl` step kind with no
-//! `validate` probe is enough to load the pack and bind the feature.
+//! Scripted JSON-RPC integration tests: drive the server over an in-memory
+//! connection with a fake disk provider, and assert the published diagnostics
+//! and go-to-definition responses. No real filesystem and no real engine — a
+//! `hurl` step kind with no `validate` probe is enough to load the pack and
+//! bind the feature.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -13,8 +13,10 @@ use std::time::Duration;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::{
-    DidOpenTextDocumentParams, InitializeParams, InitializedParams, PublishDiagnosticsParams,
-    TextDocumentItem, Uri,
+    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
+    InitializedParams, Location, PartialResultParams, Position, PublishDiagnosticsParams,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Uri,
+    WorkDoneProgressParams,
 };
 use proef_core::engine::StepKindSpec;
 use proef_core::provider::{ProviderError, SourceProvider};
@@ -59,6 +61,89 @@ fn init(client: &Connection) {
             params: serde_json::to_value(InitializedParams {}).unwrap(),
         }))
         .unwrap();
+}
+
+/// Sends a `textDocument/didOpen` notification for `text` at `url`.
+fn open(client: &Connection, url: &Uri, text: &str) {
+    client
+        .sender
+        .send(Message::Notification(Notification {
+            method: "textDocument/didOpen".to_owned(),
+            params: serde_json::to_value(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: url.clone(),
+                    language_id: "gherkin".to_owned(),
+                    version: 1,
+                    text: text.to_owned(),
+                },
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+}
+
+/// Waits for the next `textDocument/publishDiagnostics` notification,
+/// regardless of which file it targets or whether it is empty — used to
+/// know a recompute has happened at all.
+fn wait_for_any_diagnostics(client: &Connection) -> PublishDiagnosticsParams {
+    loop {
+        let msg = client
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("diagnostics timely");
+        if let Message::Notification(n) = msg
+            && n.method == "textDocument/publishDiagnostics"
+        {
+            return serde_json::from_value(n.params).unwrap();
+        }
+    }
+}
+
+/// Waits for the non-empty `publishDiagnostics` for `url` specifically —
+/// built on [`wait_for_any_diagnostics`] so there is one receive loop.
+fn wait_for_diagnostics(client: &Connection, url: &Uri) -> PublishDiagnosticsParams {
+    loop {
+        let p = wait_for_any_diagnostics(client);
+        if &p.uri == url && !p.diagnostics.is_empty() {
+            return p;
+        }
+    }
+}
+
+/// Waits for the `Message::Response` matching `id` and deserializes its result.
+fn wait_for_response<T: serde::de::DeserializeOwned>(client: &Connection, id: &RequestId) -> T {
+    loop {
+        let msg = client
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("response timely");
+        if let Message::Response(resp) = msg
+            && &resp.id == id
+        {
+            return serde_json::from_value(resp.result.unwrap()).unwrap();
+        }
+    }
+}
+
+/// Runs the LSP `shutdown`/`exit` sequence and joins the server thread.
+fn shutdown(client: &Connection, server: std::thread::JoinHandle<()>) {
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(99),
+            method: "shutdown".to_owned(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv();
+    client
+        .sender
+        .send(Message::Notification(Notification {
+            method: "exit".to_owned(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    server.join().unwrap();
 }
 
 #[test]
@@ -107,21 +192,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
 
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
-    client
-        .sender
-        .send(Message::Notification(Notification {
-            method: "textDocument/didOpen".to_owned(),
-            params: serde_json::to_value(DidOpenTextDocumentParams {
-                text_document: TextDocumentItem {
-                    uri: url.clone(),
-                    language_id: "gherkin".to_owned(),
-                    version: 1,
-                    text: feature_text(),
-                },
-            })
-            .unwrap(),
-        }))
-        .unwrap();
+    open(&client, &url, &feature_text());
 
     // Collect notifications until we see publishDiagnostics for our file.
     let params = wait_for_diagnostics(&client, &url);
@@ -133,46 +204,94 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
     );
     // range must be non-degenerate (points at the offending step, not 0:0-0:0)
     let d = &params.diagnostics[0];
-    assert!(d.range.end > d.range.start || d.range.start.line > 0);
+    assert!(d.range.end > d.range.start);
 
-    // shutdown
+    shutdown(&client, server);
+}
+
+#[test]
+fn definition_on_a_step_jumps_to_the_macro() {
+    let feature_name = "/suite/f.feature".to_owned();
+    let pack_name = "/suite/packs/p.yaml".to_owned();
+    let mut files = BTreeMap::new();
+    let feature_text = "Feature: F\n  Scenario: S\n    When I greet Sam\n";
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(
+        pack_name.clone(),
+        Arc::from(
+            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+        ),
+    );
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    // wait for the initial diagnostics so we know a recompute has happened
+    let _ = wait_for_any_diagnostics(&client);
+
+    // "    When I greet Sam" is line 2; char 9 lands inside the step's span
+    // (which starts at the "When" keyword), well before the step ends.
     client
         .sender
         .send(Message::Request(Request {
-            id: RequestId::from(99),
-            method: "shutdown".to_owned(),
-            params: serde_json::Value::Null,
+            id: RequestId::from(10),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 9,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
         }))
         .unwrap();
-    let _ = client.receiver.recv();
-    client
-        .sender
-        .send(Message::Notification(Notification {
-            method: "exit".to_owned(),
-            params: serde_json::Value::Null,
-        }))
-        .unwrap();
-    drop(client);
-    server.join().unwrap();
+
+    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let target: Location = match loc {
+        GotoDefinitionResponse::Scalar(l) => l,
+        GotoDefinitionResponse::Array(mut v) => v.remove(0),
+        GotoDefinitionResponse::Link(links) => {
+            panic!("unexpected definition response: {links:?}")
+        }
+    };
+    assert_eq!(target.uri, name_to_url(&pack_name).unwrap());
+    // The macro name "greet" is on line 1 of the pack.
+    assert_eq!(target.range.start.line, 1);
+
+    shutdown(&client, server);
 }
 
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
-}
-
-fn wait_for_diagnostics(client: &Connection, url: &Uri) -> PublishDiagnosticsParams {
-    loop {
-        let msg = client
-            .receiver
-            .recv_timeout(Duration::from_secs(5))
-            .expect("diagnostics timely");
-        if let Message::Notification(n) = msg
-            && n.method == "textDocument/publishDiagnostics"
-        {
-            let p: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
-            if &p.uri == url && !p.diagnostics.is_empty() {
-                return p;
-            }
-        }
-    }
 }
