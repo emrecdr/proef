@@ -51,12 +51,46 @@ pub fn diff(
         }
     };
 
-    let report = Report::compute(&base_rec, &new_rec);
+    incomplete_banner("base", &base_dir, base_rec.completion);
+    incomplete_banner("new", &new_dir, new_rec.completion);
+
+    let report = Report::compute(&base_rec.scenarios, &new_rec.scenarios);
     report.render(&base_dir, &new_dir);
-    if fail_on_regression && !report.regressed.is_empty() {
-        return ExitCode::TestFailure;
+
+    if fail_on_regression {
+        // An incomplete/cancelled NEW run cannot certify "no regressions".
+        if new_rec.completion != record::RunCompletion::Completed {
+            eprintln!(
+                "error: the new run did not complete ({}) — cannot certify no regressions",
+                completion_word(new_rec.completion)
+            );
+            return ExitCode::TestFailure;
+        }
+        if !report.regressed.is_empty() {
+            return ExitCode::TestFailure;
+        }
     }
     ExitCode::Success
+}
+
+fn completion_word(c: record::RunCompletion) -> &'static str {
+    match c {
+        record::RunCompletion::Completed => "completed",
+        record::RunCompletion::Cancelled => "cancelled",
+        record::RunCompletion::Incomplete => "incomplete — no RunFinished",
+    }
+}
+
+/// Warn (always, even without --fail-on-regression) when a diffed record did
+/// not complete, so a human is never misled by a partial run.
+fn incomplete_banner(which: &str, dir: &Path, c: record::RunCompletion) {
+    if c != record::RunCompletion::Completed {
+        crate::render::outln!(
+            "⚠ {which} run {} is {} — results may be partial",
+            run_name(dir),
+            completion_word(c)
+        );
+    }
 }
 
 /// Resolve the two records to compare. One positional → base vs latest; none →
@@ -167,13 +201,14 @@ impl Report {
         let (mut base_ms, mut new_ms) = (0u64, 0u64);
         for ((text, ord), new_step) in &new.steps {
             if let Some(base_step) = base.steps.get(&(text.clone(), *ord)) {
-                base_ms += base_step.duration_ms;
-                new_ms += new_step.duration_ms;
+                base_ms = base_ms.saturating_add(base_step.duration_ms);
+                new_ms = new_ms.saturating_add(new_step.duration_ms);
             }
         }
         let delta = new_ms.saturating_sub(base_ms);
         if delta >= SLOWER_MIN_DELTA_MS
-            && new_ms * SLOWER_MIN_RATIO_DEN >= base_ms * SLOWER_MIN_RATIO_NUM
+            && new_ms.saturating_mul(SLOWER_MIN_RATIO_DEN)
+                >= base_ms.saturating_mul(SLOWER_MIN_RATIO_NUM)
         {
             self.slower.push(format!(
                 "    ⏱ {}  {base_ms}ms → {new_ms}ms (+{delta}ms)",

@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use proef_fixture::{API_TOKEN, Fixture};
 
 /// The minimal `proef.toml` the inline-macro fixture tests need: just `base`,
@@ -1258,4 +1259,186 @@ fn secret_valued_captures_never_promote_to_global_state() {
             "secret-valued capture persisted: {text}"
         );
     }
+}
+
+// §3.2: `proef diff --fail-on-regression` must not pass on a truncated or
+// cancelled new run. The synthetic run dirs below skip real execution and
+// write `events.jsonl` directly by serializing `Event`s (the JSONL stream IS
+// the record, ADR-0008) — mirroring record.rs's own test helpers.
+
+/// A valid uuid-v7-shaped dir name (`fsutil::is_run_id` parses via
+/// `uuid::Uuid::try_parse`) so `all_runs` picks these up under the default
+/// `diff` resolution (no base/new given → previous vs latest).
+const DIFF_BASE_RUN_ID: &str = "00000000-0000-0000-0000-000000000001";
+const DIFF_NEW_RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+
+/// Write `events` as one JSON object per line into `<runs_root>/<id>/events.jsonl`.
+fn write_run(runs_root: &Path, id: &str, events: &[proef_core::event::Event]) {
+    let dir = runs_root.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join("events.jsonl"), body).unwrap();
+}
+
+fn diff_run_started(run_id: &str) -> proef_core::event::Event {
+    proef_core::event::Event::RunStarted {
+        schema: proef_core::event::EVENT_SCHEMA_VERSION,
+        run_id: std::sync::Arc::from(run_id),
+    }
+}
+
+fn diff_step_finished() -> proef_core::event::Event {
+    use proef_core::step::{Status, StepRef};
+    proef_core::event::Event::StepFinished {
+        scenario: std::sync::Arc::from("health"),
+        engine: std::sync::Arc::from("hurl"),
+        step: StepRef {
+            file: std::sync::Arc::from("case.feature"),
+            line: 1,
+            text: std::sync::Arc::from("health is checked"),
+        },
+        status: Status::Passed,
+        attempts: 1,
+        duration_ms: 10,
+        captures: Vec::new(),
+        detail: None,
+        attempt_details: Vec::new(),
+    }
+}
+
+fn diff_scenario_finished() -> proef_core::event::Event {
+    proef_core::event::Event::ScenarioFinished {
+        scenario: std::sync::Arc::from("health"),
+        file: std::sync::Arc::from("case.feature"),
+        status: proef_core::step::Status::Passed,
+        timestamp_ms: None,
+        worker: None,
+    }
+}
+
+fn diff_run_finished(cancelled: bool) -> proef_core::event::Event {
+    proef_core::event::Event::RunFinished {
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        cancelled,
+    }
+}
+
+/// A complete run: one passing scenario, tail `RunFinished { cancelled: false }`.
+fn complete_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+        diff_run_finished(false),
+    ]
+}
+
+/// A truncated/died run: same scenario, but no tail `RunFinished` at all.
+fn incomplete_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+    ]
+}
+
+/// A cancelled run: tail `RunFinished { cancelled: true }`.
+fn cancelled_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+        diff_run_finished(true),
+    ]
+}
+
+/// §3.2: a new run with no tail `RunFinished` (truncated/died) cannot certify
+/// "no regressions" — `--fail-on-regression` must fail it even though the one
+/// scenario present didn't itself regress.
+#[test]
+fn fail_on_regression_fails_when_new_run_is_incomplete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &incomplete_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff", "--fail-on-regression"])
+        .assert()
+        .code(1)
+        .stderr(
+            predicates::str::contains("INCOMPLETE").or(predicates::str::contains("cannot certify")),
+        );
+}
+
+/// §3.2: a cancelled new run is likewise not gate-clean, with wording that
+/// distinguishes it from a plain incomplete/truncated run.
+#[test]
+fn fail_on_regression_fails_when_new_run_was_cancelled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &cancelled_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff", "--fail-on-regression"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("cancelled"));
+}
+
+/// Without `--fail-on-regression`, diff stays informational (exit 0) but still
+/// banners an incomplete record so a human is never misled by a partial run.
+#[test]
+fn plain_diff_reports_incomplete_but_exits_zero() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &incomplete_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.to_lowercase().contains("incomplete"),
+        "expected an incomplete-run banner: {stdout}"
+    );
 }

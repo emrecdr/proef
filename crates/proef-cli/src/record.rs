@@ -66,10 +66,31 @@ pub struct StepRun {
     pub duration_ms: u64,
 }
 
-/// Read a full run record into a `(file, scenario) -> ScenarioRun` map. The
-/// `(file, scenario)` key is the run-wide identity ADR-0008 added `file` for;
-/// records that predate the field key under `file = ""`.
-pub fn read_record(record_dir: &Path) -> Result<BTreeMap<(String, String), ScenarioRun>, String> {
+/// Whether a run record represents a complete run — read from the tail
+/// `RunFinished` event (ADR-0008). A truncated/died run has no `RunFinished`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunCompletion {
+    /// Ended with `RunFinished { cancelled: false }`.
+    Completed,
+    /// Ended with `RunFinished { cancelled: true }`.
+    Cancelled,
+    /// No `RunFinished` — the run was truncated or the process died.
+    Incomplete,
+}
+
+/// A full run record: every scenario outcome plus whether the run completed.
+#[derive(Debug, Clone)]
+pub struct Record {
+    /// `(file, scenario) -> outcome`.
+    pub scenarios: BTreeMap<(String, String), ScenarioRun>,
+    /// Whether the run reached its tail `RunFinished`.
+    pub completion: RunCompletion,
+}
+
+/// Read a full run record: the `(file, scenario) -> ScenarioRun` map plus
+/// completion. The `(file, scenario)` key is the run-wide identity ADR-0008
+/// added `file` for; records that predate the field key under `file = ""`.
+pub fn read_record(record_dir: &Path) -> Result<Record, String> {
     let events_path = record_dir.join("events.jsonl");
     let text = std::fs::read_to_string(&events_path)
         .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
@@ -81,6 +102,7 @@ pub fn read_record(record_dir: &Path) -> Result<BTreeMap<(String, String), Scena
     // steps get distinct keys instead of overwriting each other.
     let mut seen: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut record: BTreeMap<(String, String), ScenarioRun> = BTreeMap::new();
+    let mut completion = RunCompletion::Incomplete;
     for line in text.lines() {
         match serde_json::from_str::<Event>(line) {
             Ok(Event::StepFinished {
@@ -124,10 +146,20 @@ pub fn read_record(record_dir: &Path) -> Result<BTreeMap<(String, String), Scena
                 let steps = pending.remove(&key).unwrap_or_default();
                 record.insert(key, ScenarioRun { status, steps });
             }
+            Ok(Event::RunFinished { cancelled, .. }) => {
+                completion = if cancelled {
+                    RunCompletion::Cancelled
+                } else {
+                    RunCompletion::Completed
+                };
+            }
             _ => {}
         }
     }
-    Ok(record)
+    Ok(Record {
+        scenarios: record,
+        completion,
+    })
 }
 
 /// The `(file, scenario)` identity of every scenario that failed in a record —
@@ -135,6 +167,7 @@ pub fn read_record(record_dir: &Path) -> Result<BTreeMap<(String, String), Scena
 /// [`read_record`] so there is one record reader, not two.
 pub fn failed_scenarios(record_dir: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(read_record(record_dir)?
+        .scenarios
         .into_iter()
         .filter(|(_, run)| run.status == Status::Failed)
         .map(|(key, _)| key)
@@ -205,6 +238,7 @@ mod tests {
         );
         let record = read_record(tmp.path()).unwrap();
         let run = record
+            .scenarios
             .get(&("f.feature".to_string(), "S".to_string()))
             .unwrap();
         // Both occurrences survive (pre-fix the second overwrote the first → len 1).
@@ -237,9 +271,11 @@ mod tests {
         let record = read_record(tmp.path()).unwrap();
         // Each file's scenario S has ONE "GET /x" → each must be ordinal 0.
         let a = record
+            .scenarios
             .get(&("a.feature".to_string(), "S".to_string()))
             .unwrap();
         let b = record
+            .scenarios
             .get(&("b.feature".to_string(), "S".to_string()))
             .unwrap();
         assert!(
