@@ -146,8 +146,11 @@ impl Report {
     /// A step whose attempt count rose between runs is a flakiness signal (the
     /// engine had to retry more). Diffs steps by text, so line shifts don't lie.
     fn note_flaky(&mut self, key: &Key, base: &ScenarioRun, new: &ScenarioRun) {
-        for (text, new_step) in &new.steps {
-            let base_attempts = base.steps.get(text).map_or(1, |step| step.attempts);
+        for ((text, ord), new_step) in &new.steps {
+            let base_attempts = base
+                .steps
+                .get(&(text.clone(), *ord))
+                .map_or(1, |step| step.attempts);
             if new_step.attempts > base_attempts {
                 self.flaky.push(format!(
                     "    ⚠ {} — step \"{text}\" {base_attempts}→{} attempt(s)",
@@ -162,8 +165,8 @@ impl Report {
     /// only when it is both proportionally and absolutely slower.
     fn note_slower(&mut self, key: &Key, base: &ScenarioRun, new: &ScenarioRun) {
         let (mut base_ms, mut new_ms) = (0u64, 0u64);
-        for (text, new_step) in &new.steps {
-            if let Some(base_step) = base.steps.get(text) {
+        for ((text, ord), new_step) in &new.steps {
+            if let Some(base_step) = base.steps.get(&(text.clone(), *ord)) {
                 base_ms += base_step.duration_ms;
                 new_ms += new_step.duration_ms;
             }
