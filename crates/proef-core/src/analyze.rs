@@ -90,13 +90,14 @@ impl SuiteAnalysis {
 
 /// Recompute the whole suite in one pass: read every pack and feature through
 /// the provider, accumulate every diagnostic per source name, and record the
-/// binding and macro relations editors need. Broken packs short-circuit feature
-/// binding (no cascade); a parse-failed feature is skipped, not fatal.
+/// binding and macro relations editors need. A broken pack contributes its own
+/// diagnostic and is excluded from the loaded set, but does not stop the rest
+/// of the suite from binding; a parse-failed feature is skipped, not fatal.
 pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     let mut out = SuiteAnalysis::default();
 
-    // Packs first: a broken pack blocks binding, so on pack failure we publish
-    // pack diagnostics and skip feature binding (no cascade).
+    // Packs first: a broken pack contributes its own diagnostic below and is
+    // excluded from the loaded set, but its siblings still load.
     let mut sources = pack::builtin_sources();
     let pack_names = ctx.provider.discover_packs().unwrap_or_default();
     for name in &pack_names {
@@ -109,16 +110,15 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
         }
     }
 
-    let packs: Arc<PackSet> = match pack::load(&sources, ctx.kinds) {
-        Ok(set) => Arc::new(set),
-        Err(err) => {
-            for d in front_error_diags(err) {
-                let name = d.source_name.clone().unwrap_or_default();
-                out.push_diags(&name, [d]);
-            }
-            return out; // packs broken → do not cascade into feature binding
-        }
-    };
+    // Collect-all load: a broken pack contributes its diagnostic and is
+    // excluded from the set, but its siblings still load — the editor keeps
+    // binding against the good packs instead of going dark (v0.5.1 fix).
+    let (loaded, pack_diags) = pack::load_collecting(&sources, ctx.kinds);
+    for d in pack_diags {
+        let name = d.source_name.clone().unwrap_or_default();
+        out.push_diags(&name, [d]);
+    }
+    let packs: Arc<PackSet> = Arc::new(loaded);
 
     // Macro vocabulary for completion / go-to-def targets.
     for m in packs.macros.values() {
@@ -207,15 +207,6 @@ fn read_error_diag(name: &str, msg: &str) -> Diag {
         format!("cannot read {name}: {msg}"),
     )
     .with_source(name.to_owned(), Arc::from(""))
-}
-
-fn front_error_diags(err: crate::diag::FrontError) -> Vec<Diag> {
-    match err {
-        crate::diag::FrontError::Diagnostics(list) => list,
-        crate::diag::FrontError::Core(core) => {
-            vec![Diag::error("proef::pack::load", core.to_string())]
-        }
-    }
 }
 
 /// Parse-validate the exact emitted artifact text with the claiming engine's
@@ -489,15 +480,20 @@ mod tests {
         );
     }
 
-    // §9's other half: a broken pack short-circuits before feature binding even
-    // starts, so a perfectly normal feature must not be falsely reported.
+    // A broken pack degrades gracefully: it reports its own error, but the good
+    // pack still loads, so a feature binding against a good-pack macro survives.
+    // One broken pack must never zero the whole suite's analysis (v0.5.1 fix).
     #[test]
-    fn analyze_broken_pack_short_circuits_before_feature_binding() {
+    fn analyze_degrades_when_one_pack_is_broken() {
         let mut files = BTreeMap::new();
-        // `deny_unknown_fields` on the pack schema's root: `bogus` is not a
-        // recognized key, so `serde_norway::from_str::<RawPack>` returns `Err`
-        // and `pack::load` returns `Err(FrontError::Diagnostics(..))` carrying
-        // `proef::pack::yaml` (mirrors `tests/errors/pack__yaml`).
+        files.insert(
+            "packs/good.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+            ),
+        );
+        // `bogus` is not a recognized root key → deny_unknown_fields → this pack
+        // fails to parse and contributes proef::pack::yaml, but must not sink the rest.
         files.insert(
             "packs/broken.yaml".to_owned(),
             Arc::from("macros: {}\nbogus: true\n"),
@@ -508,36 +504,34 @@ mod tests {
         );
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
-            packs: vec!["packs/broken.yaml".to_owned()],
+            packs: vec!["packs/good.yaml".to_owned(), "packs/broken.yaml".to_owned()],
             files,
         };
         let empty = BTreeMap::new();
         let analysis = analyze_suite(&ctx_over(&provider, &empty));
 
-        // The broken pack carries its yaml diagnostic — proof `pack::load`'s
-        // `Err` branch was actually hit.
+        // The broken pack still reports its own diagnostic.
         let pack_diags = analysis
             .diagnostics
             .get("packs/broken.yaml")
-            .expect("pack bucket");
+            .expect("broken pack bucket");
         assert!(
             pack_diags.iter().any(|d| d.code == "proef::pack::yaml"),
             "the broken pack must carry its yaml diagnostic: {pack_diags:?}"
         );
 
-        // Feature binding never ran: no bindings recorded anywhere, and the
-        // feature was not even visited (no bucket, so certainly no
-        // `proef::bind::*` diagnostics) — proof `analyze_suite` returned early.
+        // The good pack still loaded: its macro is in the vocabulary...
         assert!(
-            analysis.bindings.is_empty(),
-            "no bindings should be produced when the pack fails to load: {:?}",
-            analysis.bindings
+            analysis.macros.iter().any(|m| m.name == "greet"),
+            "the good pack's macro must survive the broken sibling"
         );
-        let feature_diags = analysis.diagnostics.get("f.feature");
+        // ...and the feature bound against it — no cascade, no zeroing.
         assert!(
-            feature_diags
-                .is_none_or(|diags| !diags.iter().any(|d| d.code.starts_with("proef::bind::"))),
-            "the feature must not be falsely reported when the pack short-circuited binding: {feature_diags:?}"
+            analysis
+                .bindings
+                .iter()
+                .any(|b| b.macro_name == "greet" && b.feature == "f.feature"),
+            "the feature must still bind to the good-pack macro despite the broken pack"
         );
     }
 }
