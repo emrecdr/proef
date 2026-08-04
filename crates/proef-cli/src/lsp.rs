@@ -5,7 +5,10 @@
 //! `${env:…}`/`${url:…}`/`${vars:…}` scopes, and the disk-backed source
 //! provider — is built here, at the process boundary, and injected. The core
 //! stays sans-IO; the LSP is a second front-end over it, mirroring how a normal
-//! run assembles the same inputs (`front::run`).
+//! run assembles the same inputs (`front::run`). The analysis root is the
+//! configured suite (`ProjectConfig::default_suite_path`), not the whole
+//! working-directory tree — the same convention `resolve_suite_path` uses for
+//! `proef test`, so the two never diverge.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -37,12 +40,27 @@ pub fn run() -> ExitCode {
         })
         .collect();
 
-    // The suite root is the current directory — already absolute (the
-    // absolute-path invariant the LSP keys every source name on), and left
-    // uncanonicalized so source names stay identical to the client's document
-    // URIs (canonicalizing would resolve symlinks and desync them). Computed
-    // once and reused for both the provider and the config root.
-    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Load proef.toml once — it drives both the suite root and the ${url}/${vars} scope.
+    let config = ProjectConfig::load().unwrap_or_default();
+    let active_env = std::env::var("PROEF_ENV").ok();
+
+    // Root at the configured suite ([run] suite, else the tests/ convention),
+    // made absolute against cwd and left uncanonicalized so source names stay
+    // identical to the client's document URIs (canonicalizing would resolve
+    // symlinks and desync them). Falls back to cwd when no suite resolves, so
+    // the server always starts. Scoping here keeps the analyzer off target/,
+    // docs/, and any deliberately-broken fixture corpus outside the suite.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = config
+        .default_suite_path()
+        .map(|rel| {
+            if rel.is_absolute() {
+                rel
+            } else {
+                cwd.join(rel)
+            }
+        })
+        .unwrap_or(cwd);
 
     // Injected environment snapshot (`${env:…}`), assembled like front::run: a
     // foreign non-UTF-8 variable must not abort startup — it can never match a
@@ -52,8 +70,10 @@ pub fn run() -> ExitCode {
         .collect();
 
     // v1: config vars are a startup snapshot — editing `proef.toml` needs a
-    // server restart to re-read. Loaded through the CLI's own config path.
-    let config_vars = load_config_vars_snapshot();
+    // server restart to re-read.
+    let config_vars = config
+        .config_vars(active_env.as_deref())
+        .unwrap_or_default();
 
     let cfg = proef_lsp::ServerConfig {
         transport: proef_lsp::Transport::Stdio,
@@ -73,19 +93,4 @@ pub fn run() -> ExitCode {
             ExitCode::SystemError
         }
     }
-}
-
-/// Build the `${url:…}` / `${vars:…}` scope the same way the suite commands do
-/// (`ProjectConfig::config_vars` for the active environment). Best-effort at the
-/// LSP edge: a missing or malformed `proef.toml`, or an unknown `PROEF_ENV`,
-/// falls back to an empty scope so the server still analyzes — config-backed
-/// `${url:}`/`${vars:}` references may then warn until the file is fixed and the
-/// server restarted.
-fn load_config_vars_snapshot() -> BTreeMap<String, String> {
-    // The active environment mirrors the CLI: no `--env` flag exists for `lsp`,
-    // so `PROEF_ENV` is the only selector.
-    let active_env = std::env::var("PROEF_ENV").ok();
-    ProjectConfig::load()
-        .and_then(|config| config.config_vars(active_env.as_deref()))
-        .unwrap_or_default()
 }

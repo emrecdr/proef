@@ -221,6 +221,18 @@ impl ProjectConfig {
         self.run.suite.as_deref()
     }
 
+    /// The default suite directory: `[run] suite` if set, else the `tests/`
+    /// convention when it exists on disk, else None. The single place both the
+    /// suite commands (`resolve_suite_path`) and the LSP derive "which directory
+    /// is the suite", so the two never diverge.
+    pub fn default_suite_path(&self) -> Option<PathBuf> {
+        if let Some(suite) = self.suite() {
+            return Some(PathBuf::from(suite));
+        }
+        let convention = PathBuf::from("tests");
+        convention.is_dir().then_some(convention)
+    }
+
     /// The suite-level setup feature (`[run] setup`), if any (ADR-0014).
     pub fn setup(&self) -> Option<&str> {
         self.run.setup.as_deref()
@@ -333,6 +345,35 @@ mod tests {
         let config = parse("[run]\nsuite = \"e2e\"\n");
         assert_eq!(config.suite(), Some("e2e"));
         assert_eq!(ProjectConfig::default().suite(), None);
+    }
+
+    #[test]
+    fn default_suite_path_prefers_run_suite_then_tests_convention() {
+        // Explicit `[run] suite` wins, no filesystem probe involved.
+        let config = parse("[run]\nsuite = \"e2e\"\n");
+        assert_eq!(config.default_suite_path(), Some(PathBuf::from("e2e")));
+
+        // With no `[run] suite`, the fallback is the `tests/` convention —
+        // exercised in a tempdir so the result can't depend on this crate's
+        // own `tests/` directory (nextest runs unit tests with the crate
+        // manifest dir as cwd, and `crates/proef-cli/tests/` exists).
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let prev = std::env::current_dir().expect("read cwd");
+        std::env::set_current_dir(&tmp).expect("cd into tempdir");
+
+        assert_eq!(
+            ProjectConfig::default().default_suite_path(),
+            None,
+            "no tests/ dir present"
+        );
+        std::fs::create_dir("tests").expect("create tests/ dir");
+        assert_eq!(
+            ProjectConfig::default().default_suite_path(),
+            Some(PathBuf::from("tests")),
+            "tests/ convention found"
+        );
+
+        std::env::set_current_dir(prev).expect("restore cwd");
     }
 
     #[test]
