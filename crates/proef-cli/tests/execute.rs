@@ -713,6 +713,110 @@ fn teardown_failure_is_a_distinct_cleanup_fault() {
     );
 }
 
+/// ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
+/// directory would run every feature under it as the phase *and* leave them
+/// in the pool (`exclude_phase_features` matches a single file path), running
+/// each scenario twice — reject it loudly instead.
+///
+/// This exercises real `test` execution, not `--dry-run`: `--dry-run` routes
+/// to `commands::dry_run`, which validates only the suite path and never
+/// looks at `[run] setup`/`teardown` at all — `run_phase` (where the guard
+/// lives) is only reachable from a real run. The guard fires before
+/// `run_phase` calls `front::run` or dispatches any batch, so nothing here
+/// ever hits the network — no fixture server needed.
+#[test]
+fn directory_valued_setup_is_rejected_not_double_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // A suite with one ordinary feature.
+    std::fs::create_dir_all(root.join("suite")).unwrap();
+    std::fs::write(
+        root.join("suite/main.feature"),
+        "Feature: M\n  Scenario: S\n    When I noop\n",
+    )
+    .unwrap();
+    // A DIRECTORY of setup features (the misconfiguration).
+    std::fs::create_dir_all(root.join("setup")).unwrap();
+    std::fs::write(
+        root.join("setup/a.feature"),
+        "Feature: A\n  Scenario: SA\n    When I noop\n",
+    )
+    .unwrap();
+    // Minimal pack so `I noop` binds (mirror execute.rs's existing fixture packs).
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(
+        root.join("suite/packs/p.yaml"),
+        "macros:\n  noop:\n    match: \"I noop\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"suite\"\nsetup = \"setup\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .args(["test"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "[run] setup must be a feature file, not a directory",
+        ));
+}
+
+/// Companion to `directory_valued_setup_is_rejected_not_double_run`: a
+/// single-FILE setup must still run once and be excluded from the pool — the
+/// guard fires only for directories, not the good path. Real execution
+/// (exit 0 proves the request actually went through), mirroring
+/// `setup_shares_globals_teardown_runs_and_both_are_excluded` (the setup file
+/// lives inside `suite/`, like that test — pack discovery walks down from a
+/// phase file's parent directory, so a phase file needs to share a subtree
+/// with its pack).
+#[test]
+fn single_file_setup_still_runs_once() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(0);
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    assert_eq!(
+        events
+            .matches(r#""event":"scenario_started","scenario":"provision""#)
+            .count(),
+        1,
+        "setup must run exactly once, and not also in the pool: {events}"
+    );
+    assert!(events.contains(r#""scenario":"passes""#), "{events}");
+}
+
 /// US-4: `saveAs: global` persists across scenarios and lands in
 /// `.proef-state.json` (atomic World persistence).
 #[test]
