@@ -1261,7 +1261,7 @@ fn secret_valued_captures_never_promote_to_global_state() {
     }
 }
 
-// §3.2: `proef diff --fail-on-regression` must not pass on a truncated or
+// `proef diff --fail-on-regression` must not pass on a truncated or
 // cancelled new run. The synthetic run dirs below skip real execution and
 // write `events.jsonl` directly by serializing `Event`s (the JSONL stream IS
 // the record, ADR-0008) — mirroring record.rs's own test helpers.
@@ -1358,9 +1358,9 @@ fn cancelled_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
     ]
 }
 
-/// §3.2: a new run with no tail `RunFinished` (truncated/died) cannot certify
-/// "no regressions" — `--fail-on-regression` must fail it even though the one
-/// scenario present didn't itself regress.
+/// ADR-0008: a new run with no tail `RunFinished` (truncated/died) cannot
+/// certify "no regressions" — `--fail-on-regression` must fail it even
+/// though the one scenario present didn't itself regress.
 #[test]
 fn fail_on_regression_fails_when_new_run_is_incomplete() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1387,7 +1387,7 @@ fn fail_on_regression_fails_when_new_run_is_incomplete() {
         );
 }
 
-/// §3.2: a cancelled new run is likewise not gate-clean, with wording that
+/// A cancelled new run is likewise not gate-clean, with wording that
 /// distinguishes it from a plain incomplete/truncated run.
 #[test]
 fn fail_on_regression_fails_when_new_run_was_cancelled() {

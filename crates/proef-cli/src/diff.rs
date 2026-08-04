@@ -2,7 +2,8 @@
 //! IS the record (ADR-0008); diff replays two of them and reports scenario
 //! status transitions (regressions, fixes) plus per-step flakiness and perf
 //! deltas. Identity is `(file, scenario)` — the run-wide identity ADR-0008
-//! added `file` for — and steps diff on `text`, never the volatile `line`.
+//! added `file` for — and steps diff on `(text, ordinal)`, never the volatile
+//! `line`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -178,7 +179,8 @@ impl Report {
     }
 
     /// A step whose attempt count rose between runs is a flakiness signal (the
-    /// engine had to retry more). Diffs steps by text, so line shifts don't lie.
+    /// engine had to retry more). Diffs steps by `(text, ordinal)`, so line
+    /// shifts don't lie.
     fn note_flaky(&mut self, key: &Key, base: &ScenarioRun, new: &ScenarioRun) {
         for ((text, ord), new_step) in &new.steps {
             let base_attempts = base
@@ -195,7 +197,7 @@ impl Report {
         }
     }
 
-    /// Sum durations over steps present (by text) in both runs; flag a scenario
+    /// Sum durations over steps present (by `(text, ordinal)`) in both runs; flag a scenario
     /// only when it is both proportionally and absolutely slower.
     fn note_slower(&mut self, key: &Key, base: &ScenarioRun, new: &ScenarioRun) {
         let (mut base_ms, mut new_ms) = (0u64, 0u64);
