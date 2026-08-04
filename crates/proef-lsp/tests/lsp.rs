@@ -129,7 +129,10 @@ fn wait_for_response<T: serde::de::DeserializeOwned>(client: &Connection, id: &R
 /// inspect either `result` or `error`.
 fn wait_for_response_message(client: &Connection, id: &RequestId) -> Message {
     loop {
-        let msg = client.receiver.recv().unwrap();
+        let msg = client
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("response timely");
         if let Message::Response(ref r) = msg
             && &r.id == id
         {
@@ -178,9 +181,10 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
         files,
     };
 
-    // The `hurl` step kind must be registered (with no `validate` probe) so the
-    // pack loads and the feature is bound; an empty registry would leave every
-    // `hurl:` step an unknown kind, so the feature would never bind.
+    // The `hurl` step kind is registered (with no `validate` probe) so the
+    // pack loads without an `unknown_step_kind` diagnostic on it; the feature
+    // step here is deliberately left unbound by the `serch`/`search` typo in
+    // `feature_text()`, independent of kind registration.
     let kinds = vec![StepKindSpec {
         prefix: "hurl",
         schema: "true",
