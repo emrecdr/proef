@@ -46,3 +46,11 @@ engines can't know exit codes, core can't know engine internals.
 Associated `type Error` on engine traits — erased behind `dyn` anyway. anyhow
 everywhere — loses matchable categories that exit codes require. snafu — per-crate
 context ergonomics we don't yet need; revisit if the workspace grows past ~10 crates.
+
+## Amendment — 2026-08-04 (exit code 130 documented, not a variant)
+
+`test` and `watch` hard-exit with code **130** (128+SIGINT) on a *second* Ctrl-C
+while a run is already cancelling (ADR-0007) — the shell's own convention for a
+signal-terminated process. This is a sanctioned OS-signal escape hatch, not a
+graceful outcome the fault-category model classifies, so it is intentionally
+**not** an `ExitCode` variant; `ExitCode` stays the total 0/1/2/3 mapping above.

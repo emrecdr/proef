@@ -6,6 +6,31 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A directory-valued `[run] setup`/`teardown` is now a loud user error.**
+  ADR-0014 defines setup/teardown as a single feature file; a directory ran
+  every feature under it as the phase and again in the pool (a silent
+  double-run) — that path is closed.
+- Diagnostics no longer panic when stderr is a closed pipe: `print_all` and
+  `report_front_error`'s trailing `"{errors} error(s)"` summary line are now
+  routed through an EPIPE-safe `errln!` guard (mirroring `outln!`'s stdout
+  guard), so `proef test --dry-run <broken suite> |& head` exits cleanly
+  instead of panicking (exit 101).
+- `diff` step records are now keyed by `(text, occurrence ordinal)` instead of
+  text alone — macro-expanded steps that share text no longer collide in the
+  last-write-wins map and silently drop out of the diff.
+- `diff --fail-on-regression` now fails when the new run is incomplete or
+  cancelled (was a silent pass), and banners any incomplete/cancelled record
+  in the diff output either way. Its slower-step duration math is hardened
+  against overflow (saturating arithmetic).
+
+### Documentation
+
+- The second-interrupt hard-exit code **130** (128+SIGINT) is now documented
+  for `test` and `watch` (TECH-SPEC §10, ADR-0009) — a deliberate escape
+  hatch outside the typed 0/1/2/3 `ExitCode` taxonomy.
+
 ## [0.5.0] - 2026-08-04 (LSP language server)
 
 ### Added

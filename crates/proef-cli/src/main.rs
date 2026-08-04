@@ -31,6 +31,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+/// Hard-exit code on a second interrupt: 128 + SIGINT(2), the shell
+/// convention. Deliberately outside the typed `ExitCode` taxonomy (ADR-0009
+/// amendment) — not a graceful outcome, so it bypasses the enum entirely.
+pub(crate) const INTERRUPT_EXIT_CODE: i32 = 130;
+
 /// Machine output formats (`--output`). A typed enum so an unknown value is a
 /// clap usage error — exit 2 (ADR-0009) — never a silent fall-back to the
 /// human report.

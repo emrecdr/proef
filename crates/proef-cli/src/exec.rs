@@ -177,7 +177,7 @@ pub fn execute(
         let _ = ctrlc::set_handler(move || {
             if once.swap(true, Ordering::SeqCst) {
                 eprintln!("\nsecond interrupt — hard exit");
-                std::process::exit(130);
+                std::process::exit(crate::INTERRUPT_EXIT_CODE);
             }
             eprintln!("\ninterrupt — cancelling after current batches (Ctrl-C again to force)");
             handler_token.cancel();
