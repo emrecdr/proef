@@ -146,3 +146,46 @@ fn corrupt_store_is_recovered_by_set_and_flagged_by_doctor() {
         .code(0)
         .stdout(contains("tok"));
 }
+
+// EPIPE is a POSIX signal-pipe behavior and `head` may be absent on Windows;
+// the fix under test (render.rs's `errln!`) is cross-platform even though
+// this reproduction is unix-only.
+#[cfg(unix)]
+#[test]
+fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
+    use std::process::{Command, Stdio};
+    // `head -c0` reads nothing then exits, closing the read end of the pipe so
+    // the next stderr write from proef gets EPIPE. The diagnostic renderer must
+    // swallow it (exit with the normal error code), never panic with 101.
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    // Point at the whole seeded broken corpus so validation streams many
+    // diagnostics to stderr (repo-relative: tests/errors/ fails dry-run by
+    // design) — enough bytes that the write reliably lands after the reader
+    // closes the pipe, rather than racing a single small diagnostic.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let errors_dir = std::path::Path::new(repo_root).join("../../tests/errors");
+
+    let mut proef = Command::new(&bin)
+        .args(["test", "--dry-run"])
+        .arg(&errors_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Consume nothing then drop the reader to close the pipe early.
+    let mut head = Command::new("head")
+        .args(["-c", "0"])
+        .stdin(proef.stderr.take().unwrap())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _ = head.wait();
+    let status = proef.wait().unwrap();
+    // The exact non-zero code doesn't matter; 101 (panic) must NOT occur.
+    assert_ne!(
+        status.code(),
+        Some(101),
+        "diagnostic render panicked on EPIPE"
+    );
+}
