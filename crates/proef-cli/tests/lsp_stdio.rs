@@ -4,7 +4,7 @@
 //! shutdown/exit — the regression guard for the writer-thread leak.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -42,12 +42,13 @@ fn stdio_server_exits_after_shutdown_and_exit() {
         .current_dir(dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
 
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut stderr = child.stderr.take().unwrap();
 
     // initialize → expect a result
     write_msg(
@@ -90,13 +91,23 @@ fn stdio_server_exits_after_shutdown_and_exit() {
             break status;
         }
         if Instant::now() >= deadline {
+            // The process is dying (or dead) now, so its stderr write end is
+            // closing — safe to drain to EOF here without risking a deadlock
+            // against a still-running child.
             let _ = child.kill();
-            panic!("proef lsp did not exit within 10s after shutdown/exit — writer thread leaked");
+            let mut captured = String::new();
+            let _ = stderr.read_to_string(&mut captured);
+            panic!(
+                "proef lsp did not exit within 10s after shutdown/exit — writer thread leaked\nstderr:\n{captured}"
+            );
         }
         std::thread::sleep(Duration::from_millis(25));
     };
-    assert!(
-        status.success(),
-        "proef lsp exited with {status:?}, expected success"
-    );
+    if !status.success() {
+        // The child has already exited, so reading its stderr to EOF here
+        // cannot block on a still-running process.
+        let mut captured = String::new();
+        let _ = stderr.read_to_string(&mut captured);
+        panic!("proef lsp exited with {status:?}, expected success\nstderr:\n{captured}");
+    }
 }

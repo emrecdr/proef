@@ -70,7 +70,7 @@ pinned crate source and proef code — not assumed.
   `proef.toml` has no `[run] suite`, so the `tests/` convention (`resolve_suite_path`,
   main.rs:228-246) resolves to `tests/`, which *contains* the broken `tests/errors/`
   corpus. So root-at-suite alone is insufficient — degradation is load-bearing; root-at-suite
-  is complementary scoping (out of `target/`, `docs/`, `tests/errors/`).
+  is complementary scoping (out of `target/`, `docs/`).
 - **§2.3b overlay — confirmed a real bug.** `lsp_types::Uri` Eq/Hash compare the *raw*
   `as_str()` string with no normalization (`uri.rs:68-80`; `fluent_uri` has no Eq at all);
   `(` is legal *bare* in a URI path (fluent_uri `SUB_DELIMS`), so `file:///a(b` (client)

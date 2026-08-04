@@ -48,8 +48,12 @@ pub fn run() -> ExitCode {
     // made absolute against cwd and left uncanonicalized so source names stay
     // identical to the client's document URIs (canonicalizing would resolve
     // symlinks and desync them). Falls back to cwd when no suite resolves, so
-    // the server always starts. Scoping here keeps the analyzer off target/,
-    // docs/, and any deliberately-broken fixture corpus outside the suite.
+    // the server always starts. Scoping here keeps the analyzer off paths
+    // outside the resolved suite (target/, docs/, …) — it does NOT exclude
+    // tests/errors/, the deliberately-broken fixture corpus, which lives
+    // inside the tests/ convention. What keeps that corpus from blanking the
+    // analysis is degradation (analyze_suite keeps whatever packs load
+    // instead of discarding the whole set on one broken pack), not scoping.
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = config
         .default_suite_path()
