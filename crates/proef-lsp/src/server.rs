@@ -114,6 +114,12 @@ pub fn run(mut cfg: ServerConfig) -> Result<(), ServerError> {
 
     main_loop(&connection, &cfg)?;
 
+    // Release the sole writer Sender: lsp-server's stdio writer thread loops on
+    // its receiver and only ends when every Sender drops. IoThreads::join()
+    // waits on that thread, so joining while `connection` is alive would block
+    // forever. Dropping it here lets the writer finish and the join complete.
+    drop(connection);
+
     if let Some(threads) = io_threads {
         threads.join().map_err(ServerError::Io)?;
     }
