@@ -261,6 +261,24 @@ fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State)
     diagnostics::publish(connection, &analysis, &mut state.published);
 }
 
+/// Deserialize a request's params, or produce an `InvalidParams` error Response
+/// to send back. A malformed request is then *answered* and the loop continues,
+/// instead of propagating out of `main_loop` and taking the server down.
+// The Err variant carries the Response we're about to send anyway (the rare,
+// non-hot malformed-params path), so boxing it would only add an allocation.
+#[allow(clippy::result_large_err)]
+fn parse_params<P: serde::de::DeserializeOwned>(
+    req: &lsp_server::Request,
+) -> Result<P, lsp_server::Response> {
+    serde_json::from_value(req.params.clone()).map_err(|e| {
+        lsp_server::Response::new_err(
+            req.id.clone(),
+            lsp_server::ErrorCode::InvalidParams as i32,
+            format!("invalid params for {}: {e}", req.method),
+        )
+    })
+}
+
 fn dispatch_request(
     connection: &Connection,
     cfg: &ServerConfig,
@@ -270,8 +288,15 @@ fn dispatch_request(
     use lsp_types::request::{Completion, GotoDefinition, References, Request as _};
 
     if req.method == GotoDefinition::METHOD {
-        let params: lsp_types::GotoDefinitionParams = serde_json::from_value(req.params.clone())
-            .map_err(|e| ServerError::Protocol(e.to_string()))?;
+        let params: lsp_types::GotoDefinitionParams = match parse_params(req) {
+            Ok(p) => p,
+            Err(resp) => {
+                return connection
+                    .sender
+                    .send(Message::Response(resp))
+                    .map_err(|e| ServerError::Protocol(e.to_string()));
+            }
+        };
         // No analysis (a panicked recompute) is not an error to the client —
         // it just means we have nothing to offer this request; respond with
         // no result rather than propagating the failure.
@@ -292,8 +317,15 @@ fn dispatch_request(
     }
 
     if req.method == Completion::METHOD {
-        let params: lsp_types::CompletionParams = serde_json::from_value(req.params.clone())
-            .map_err(|e| ServerError::Protocol(e.to_string()))?;
+        let params: lsp_types::CompletionParams = match parse_params(req) {
+            Ok(p) => p,
+            Err(resp) => {
+                return connection
+                    .sender
+                    .send(Message::Response(resp))
+                    .map_err(|e| ServerError::Protocol(e.to_string()));
+            }
+        };
         // No analysis (a panicked recompute) yields no completions, never a
         // dropped/errored response.
         let items = current_analysis(cfg, state)
@@ -314,8 +346,15 @@ fn dispatch_request(
     }
 
     if req.method == References::METHOD {
-        let params: lsp_types::ReferenceParams = serde_json::from_value(req.params.clone())
-            .map_err(|e| ServerError::Protocol(e.to_string()))?;
+        let params: lsp_types::ReferenceParams = match parse_params(req) {
+            Ok(p) => p,
+            Err(resp) => {
+                return connection
+                    .sender
+                    .send(Message::Response(resp))
+                    .map_err(|e| ServerError::Protocol(e.to_string()));
+            }
+        };
         // No analysis (a panicked recompute) yields no references, never a
         // dropped/errored response — mirrors definition/completion.
         let locations = current_analysis(cfg, state)
