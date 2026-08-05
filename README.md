@@ -153,12 +153,16 @@ full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 |---|---|
 | `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
+| `proef macros [path]` | list every macro with its call count, flagging pattern macros no scenario binds (`--env`, `--output json`) |
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
+| `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
+| `proef report [run-id]` | write a self-contained HTML report for a run (`-o FILE`) |
 | `proef schema` | print/install the pack JSON Schema (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
 | `proef fmt <path>` | canonicalize raw hurl blocks inside packs (`--check` for CI) |
 | `proef doctor` | native library, environment, and secret store/key checks |
+| `proef lsp` | language server over stdio — diagnostics, go-to-definition, completion, references (see [`docs/EDITORS.md`](docs/EDITORS.md)) |
 
 **Exit codes are a contract:** `0` ok · `1` test failure (incl. cancelled runs) ·
 `2` user error · `3` system error.
@@ -187,6 +191,7 @@ Run records land under `.proef-runs/<run-id>/` (events.jsonl, run.log, artifacts
 crates/proef-core/         engine-agnostic front end, IR, emitter, orchestrator, events
 crates/proef-engine-hurl/  the API engine over embedded hurl (pinned =8.0.1)
 crates/proef-cli/          the `proef` binary
+crates/proef-lsp/          language server over the sans-IO core (`proef lsp`)
 crates/proef-fixture/      dev-only in-process fixture API server
 crates/proef-harness/      one nextest/IDE test per scenario (libtest-mimic)
 xtask/                     fixture runner, hurl-upgrade canary, automation

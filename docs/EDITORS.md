@@ -11,11 +11,12 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
 - **Completion** — step completions offering the suite's macro patterns.
 - **Find-references** — every step across the suite that a given macro binds.
 
-The server analyzes **one suite rooted at the directory it is launched in**
-(its working directory), discovering every `.feature` file and every
-`packs/*.yaml` / `packs/*.yml` macro pack beneath it — the same discovery a
-normal `proef` run uses. Launch your editor from the suite root (or configure the
-server's root/working directory to it).
+The server analyzes **the configured suite** — `proef.toml`'s `[run] suite` if
+set, else the `tests/` convention — resolved under the directory it is launched
+in (its working directory), discovering every `.feature` file and every
+`packs/*.yaml` / `packs/*.yml` macro pack beneath that root — the same
+resolution `proef test` uses, so the two never diverge. Launch your editor from
+the project root (or configure the server's root/working directory to it).
 
 ## File types served
 
@@ -36,8 +37,9 @@ vim.api.nvim_create_autocmd("FileType", {
     vim.lsp.start({
       name = "proef",
       cmd = { "proef", "lsp" },
-      -- The server analyzes the suite rooted at its working directory; anchor
-      -- it at the nearest proef.toml (or the current file's directory).
+      -- The server scopes analysis to the configured suite under its launch
+      -- directory; anchor root_dir at the nearest proef.toml (or the current
+      -- file's directory) so the two agree.
       root_dir = vim.fs.dirname(
         vim.fs.find({ "proef.toml" }, { upward = true, path = args.file })[1]
       ) or vim.fs.dirname(args.file),
@@ -110,9 +112,11 @@ This is the first release of the language server. Known boundaries:
 - **No VS Code extension yet.** v1 is a server-only generic-LSP binary. It works
   with any editor that speaks generic LSP (Neovim, Helix, Emacs, Sublime LSP, …);
   a VS Code wrapper is a possible follow-up.
-- **Overlay lookup can miss on symlinked roots or divergent URI encoding.** The
-  server resolves the suite root from an uncanonicalized `current_dir()`, and
-  matches open buffers to disk files by file URI. If the suite root is reached
-  through a symlink, or an editor's percent-encoding of the URI diverges from
-  the server's, the overlay lookup can miss and the LSP analyzes the saved
-  on-disk bytes instead of the unsaved buffer.
+- **Overlay lookup can still miss if the suite root is reached through a
+  symlink.** The root is deliberately left uncanonicalized (canonicalizing
+  would resolve symlinks and desync source names from the client's document
+  URIs), so if an editor resolves a symlinked suite root differently than the
+  server's raw working directory, the overlay lookup can miss and the LSP
+  analyzes the saved on-disk bytes instead of the unsaved buffer. An editor's
+  percent-encoding choice no longer matters here — the overlay matches open
+  buffers by decoded source name, not the raw URI.

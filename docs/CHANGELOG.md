@@ -13,6 +13,31 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   targets, and lands on the macro's `match:` line rather than its name key
   (falling back to the name key for use-only macros with no `match:`).
 
+### Fixed
+
+- **LSP: the stdio server now exits cleanly.** `proef lsp` dropped the connection
+  after joining the transport threads, so the writer thread (holding the sole
+  channel Sender) never ended and the process leaked. It now drops the connection
+  before joining. Covered by a real stdio subprocess lifecycle test.
+- **LSP: a malformed request no longer crashes the server.** A bad document URI or
+  out-of-range position propagated a deserialization error out of the event loop
+  and exited the process; the request now gets an `InvalidParams` (-32602) reply
+  and the server keeps serving.
+- **LSP: one broken pack no longer blanks the whole suite.** `analyze_suite` now
+  keeps the packs that loaded (and reports the broken one's diagnostic) instead of
+  zeroing all bindings, completion, and go-to-definition on any pack error.
+- **LSP: analysis is scoped to the configured suite.** The server roots at
+  `[run] suite` (else the `tests/` convention) under its launch directory rather
+  than walking the entire working tree, sharing the CLI's suite resolution.
+- **LSP: unsaved edits are honored for paths with special characters.** The
+  open-buffer overlay is keyed by source name instead of the raw file URI, so a
+  path segment containing sub-delimiters (`(`, `+`, `'`, …) no longer misses.
+
+### Documentation
+
+- Documented `proef-lsp` and the `lsp`/`macros`/`diff`/`report` subcommands across
+  the README, TECH-SPEC CLI/dependency references, and the RELEASING publish order.
+
 ## [0.5.0] - 2026-08-04 (LSP language server)
 
 ### Added
