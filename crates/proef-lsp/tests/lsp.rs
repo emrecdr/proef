@@ -286,8 +286,165 @@ fn definition_on_a_step_jumps_to_the_macro() {
         }
     };
     assert_eq!(target.uri, name_to_url(&pack_name).unwrap());
-    // The macro name "greet" is on line 1 of the pack.
-    assert_eq!(target.range.start.line, 1);
+    // `match: "I greet {who}"` is line 3 of the pack — the landing anchor
+    // preferred over the macro's name-key line (line 1).
+    assert_eq!(target.range.start.line, 3);
+
+    shutdown(&client, server);
+}
+
+#[test]
+fn definition_on_a_use_line_jumps_to_the_target_macro() {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let pack_text = "macros:\n  base:\n    match: I am the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    match: the wrapper\n    steps:\n      - use: base\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, pack_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // "      - use: base" is line 9; char 13 lands inside `use: base`'s span
+    // (on the "base" target name).
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(10),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: pack_url.clone(),
+                    },
+                    position: Position {
+                        line: 9,
+                        character: 13,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let target: Location = match loc {
+        GotoDefinitionResponse::Scalar(l) => l,
+        GotoDefinitionResponse::Array(mut v) => v.remove(0),
+        GotoDefinitionResponse::Link(links) => {
+            panic!("unexpected definition response: {links:?}")
+        }
+    };
+    assert_eq!(target.uri, pack_url);
+    // `base`'s `match:` line is line 2 — the anchor `use:` resolves to.
+    assert_eq!(target.range.start.line, 2);
+
+    shutdown(&client, server);
+}
+
+#[test]
+fn definition_on_a_step_lands_on_the_match_line() {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let feature_text = "Feature: F\n  Scenario: S\n    When the wrapper\n";
+    let pack_text = "macros:\n  base:\n    match: I am the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    match: the wrapper\n    steps:\n      - use: base\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // "    When the wrapper" is line 2; char 9 lands inside the step's span.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(10),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 9,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let target: Location = match loc {
+        GotoDefinitionResponse::Scalar(l) => l,
+        GotoDefinitionResponse::Array(mut v) => v.remove(0),
+        GotoDefinitionResponse::Link(links) => {
+            panic!("unexpected definition response: {links:?}")
+        }
+    };
+    assert_eq!(target.uri, name_to_url(&pack_name).unwrap());
+    // `wrapper`'s `match:` line is line 7, NOT its name-key line (6).
+    assert_eq!(target.range.start.line, 7);
 
     shutdown(&client, server);
 }
