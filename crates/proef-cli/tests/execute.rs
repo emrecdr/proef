@@ -669,6 +669,46 @@ fn setup_shares_globals_teardown_runs_and_both_are_excluded() {
     );
 }
 
+/// A bare-filename `[run] setup` at the project root (no directory prefix) must
+/// resolve its packs from the cwd, not from an empty derived base: `Path::parent()`
+/// returns `Some("")` for a bare filename, and pre-fix that empty path was handed
+/// to `read_dir` directly, aborting the run with "cannot read directory ".
+#[test]
+fn bare_filename_setup_at_project_root_resolves_packs() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\nsetup = \"setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: use it\n    When the suite probes health\n",
+    )
+    .unwrap();
+    // Setup feature at the PROJECT ROOT — a bare filename, no directory prefix.
+    std::fs::write(
+        cwd.path().join("setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(0); // exit 0 proves the bare-filename setup's packs resolved from cwd
+}
+
 /// ADR-0014: a teardown failure is a distinct non-zero signal (exit 3, a
 /// cleanup fault) — the suite's own green verdict still stands.
 #[test]

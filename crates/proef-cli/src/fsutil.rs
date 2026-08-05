@@ -1,6 +1,6 @@
 //! Small filesystem helpers shared by commands that rewrite user files.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Write `contents` to `path` via a process-unique sibling temp file and an
 /// atomic rename: an interrupt mid-write must never leave a user's file
@@ -46,4 +46,41 @@ fn sibling_tmp(path: &Path) -> std::path::PathBuf {
 /// as a run dir.
 pub fn is_run_id(name: &str) -> bool {
     uuid::Uuid::try_parse(name).is_ok()
+}
+
+/// The directory a file path lives in, for deriving a search/context base.
+/// `Path::parent()` returns `Some("")` for a bare filename (no directory
+/// component) — an empty path that is not a usable directory — so normalize
+/// both the empty and `None` cases to `.` (the current directory), matching
+/// how an explicit `./name` already resolves.
+pub(crate) fn parent_dir(path: &Path) -> PathBuf {
+    path.parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn parent_dir_normalizes_a_bare_filename_to_cwd() {
+        // A bare filename has an EMPTY parent (Some("")), which is not a usable
+        // directory — it must resolve to "." (cwd), like an explicit "./name".
+        assert_eq!(parent_dir(Path::new("setup.feature")), PathBuf::from("."));
+        assert_eq!(parent_dir(Path::new("x")), PathBuf::from("."));
+        assert_eq!(parent_dir(Path::new("./setup.feature")), PathBuf::from("."));
+        // A real directory component is preserved unchanged (cross-platform).
+        assert_eq!(
+            parent_dir(Path::new("suite/setup.feature")),
+            PathBuf::from("suite")
+        );
+        // Absolute path preserved (POSIX-only assertion — Windows abs paths differ).
+        #[cfg(unix)]
+        assert_eq!(
+            parent_dir(Path::new("/abs/x.feature")),
+            PathBuf::from("/abs")
+        );
+    }
 }

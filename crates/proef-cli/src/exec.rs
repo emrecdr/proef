@@ -725,9 +725,9 @@ fn build_specs(
                     // The run itself is unaffected (the engine reads bodies
                     // from the suite, fenced by its context dir) — an
                     // incomplete run record is a warning, not a failure.
-                    if let Some(root) = Path::new(feature_file.path.as_str()).parent()
-                        && let Err(err) =
-                            crate::assets::copy_assets(&artifact.hurl_text, root, &artifacts_dir)
+                    let root = crate::fsutil::parent_dir(Path::new(feature_file.path.as_str()));
+                    if let Err(err) =
+                        crate::assets::copy_assets(&artifact.hurl_text, &root, &artifacts_dir)
                     {
                         eprintln!("warning: run record for {}.hurl: {err}", artifact.slug);
                     }
@@ -746,9 +746,9 @@ fn build_specs(
                 file: Arc::clone(&file_arc),
                 name: Arc::from(scenario.lowered.name.as_str()),
                 line: scenario.lowered.line,
-                file_root: Path::new(feature.file.path.as_str())
-                    .parent()
-                    .map(Path::to_path_buf),
+                file_root: Some(crate::fsutil::parent_dir(Path::new(
+                    feature.file.path.as_str(),
+                ))),
                 prepare,
             });
         }
