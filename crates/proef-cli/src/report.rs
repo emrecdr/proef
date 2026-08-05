@@ -43,7 +43,7 @@ pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> Ex
 /// sits in the run dir (the common case), else the run dir's `artifacts` path so
 /// the links still resolve from wherever `-o` put the file.
 fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
-    let out_dir = out_path.parent().unwrap_or(Path::new(""));
+    let out_dir = crate::fsutil::parent_dir(out_path);
     if out_dir == record_dir {
         "artifacts".to_owned()
     } else {

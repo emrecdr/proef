@@ -1537,10 +1537,12 @@ fn failure_summary_does_not_panic_on_a_closed_stderr_pipe() {
         .unwrap();
     let _ = head.wait();
     let status = proef.wait().unwrap();
-    // The exact non-zero code doesn't matter; 101 (panic) must NOT occur.
-    assert_ne!(
+    // Pins two things at once: no panic (101), and the run actually reached a
+    // normal test-failure outcome — so the test cannot silently decay into
+    // asserting nothing if the corpus ever stops failing.
+    assert_eq!(
         status.code(),
-        Some(101),
-        "the execution failure summary panicked on EPIPE"
+        Some(1),
+        "expected the contracted test-failure exit, not a panic or an early abort"
     );
 }

@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The CLI no longer panics when stderr is a closed pipe.** Every remaining
+  raw `eprintln!` in `proef-cli` now routes through the EPIPE-safe `errln!`
+  guard added in 0.5.2, so `proef test … |& head` ends the pipeline with the
+  contracted exit code instead of aborting with 101 — a code outside the typed
+  0/1/2/3 taxonomy (ADR-0009). The execution failure summary, which writes
+  several lines per failing scenario, was the largest remaining exposure. A
+  source-scanning test now keeps raw `eprintln!` out of the crate.
+
+### Changed
+
+- `proef report` derives its output directory through the shared
+  `fsutil::parent_dir` helper instead of an open-coded empty-parent fallback,
+  so there is one spelling of that derivation. Internal consistency only — the
+  emitted artifact links are unchanged.
+
 ## [0.5.2] - 2026-08-05 (CLI correctness)
 
 ### Fixed

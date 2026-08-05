@@ -779,7 +779,7 @@ fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path)
 /// time). Only directories *named by a run id* are candidates — `runs-dir`
 /// may be `.` or otherwise shared with user content, and rotation must never
 /// Best-effort run-record write: the run proceeds on failure, but never
-/// silently (matches the asset-copy warning path in the same closure).
+/// silently (matches the asset-copy warning path in `write_run_record`).
 fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
     if let Err(err) = std::fs::write(path, contents) {
         crate::render::errln!("warning: cannot write {}: {err}", path.display());
