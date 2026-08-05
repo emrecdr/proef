@@ -6,6 +6,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **LSP go-to-definition: `use:` references and `match:` landing (ADR-0017).**
+  Go-to-definition now jumps from a `use:` reference in a pack to the macro it
+  targets, and lands on the macro's `match:` line rather than its name key
+  (falling back to the name key for use-only macros with no `match:`).
+
 ### Fixed
 
 - **LSP: the stdio server now exits cleanly.** `proef lsp` dropped the connection
