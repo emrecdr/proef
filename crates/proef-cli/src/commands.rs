@@ -410,9 +410,8 @@ pub fn artifacts(
             }
             // Copy referenced `file,…;` assets next to the artifact so stock
             // `hurl --test <file>` replays without proef's context root.
-            if let Some(root) = Path::new(feature.file.path.as_str()).parent()
-                && let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, root, out_dir)
-            {
+            let root = crate::fsutil::parent_dir(Path::new(feature.file.path.as_str()));
+            if let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, &root, out_dir) {
                 eprintln!("error: {}.hurl: {err}", artifact.slug);
                 return match err {
                     crate::assets::AssetCopyError::Unsafe(_) => ExitCode::UserError,
@@ -462,9 +461,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
 
     let mut schema_dirs: Vec<PathBuf> = Vec::new();
     for pack_path in add_to {
-        let dir = pack_path
-            .parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let dir = crate::fsutil::parent_dir(pack_path);
         if !schema_dirs.contains(&dir) {
             if let Err(err) = crate::fsutil::write_atomic(&dir.join(SCHEMA_FILE), &rendered) {
                 eprintln!(

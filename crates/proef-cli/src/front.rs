@@ -301,8 +301,7 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
     let base = if path.is_dir() {
         path.to_path_buf()
     } else {
-        path.parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+        crate::fsutil::parent_dir(path)
     };
     let mut sources = Vec::new();
     for pack_path in pack_files(&base)? {
