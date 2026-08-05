@@ -22,7 +22,7 @@ fn config_vars_for(
         .config_vars(active_env)
         .map(Arc::new)
         .map_err(|message| {
-            eprintln!("error: {message}");
+            crate::render::errln!("error: {message}");
             ExitCode::UserError
         })
 }
@@ -134,8 +134,8 @@ pub fn dry_run(
             Err(proef_core::diag::FrontError::Core(_)) => Vec::new(),
         };
         match crate::sarif::write(&diags, sarif_path) {
-            Ok(()) => eprintln!("sarif report: {}", sarif_path.display()),
-            Err(message) => eprintln!("error: {message}"),
+            Ok(()) => crate::render::errln!("sarif report: {}", sarif_path.display()),
+            Err(message) => crate::render::errln!("error: {message}"),
         }
     }
 
@@ -372,7 +372,7 @@ pub fn artifacts(
     };
 
     if let Err(err) = std::fs::create_dir_all(out_dir) {
-        eprintln!("error: cannot create {}: {err}", out_dir.display());
+        crate::render::errln!("error: cannot create {}: {err}", out_dir.display());
         return ExitCode::SystemError;
     }
 
@@ -385,7 +385,7 @@ pub fn artifacts(
             let map_json = match serde_json::to_string_pretty(&artifact.map) {
                 Ok(json) => format!("{json}\n"),
                 Err(err) => {
-                    eprintln!("error: cannot serialize sidecar map: {err}");
+                    crate::render::errln!("error: cannot serialize sidecar map: {err}");
                     return ExitCode::SystemError;
                 }
             };
@@ -401,7 +401,7 @@ pub fn artifacts(
             }
             for (name, content) in files {
                 if let Err(err) = std::fs::write(out_dir.join(&name), content) {
-                    eprintln!(
+                    crate::render::errln!(
                         "error: cannot write {}: {err}",
                         out_dir.join(&name).display()
                     );
@@ -412,7 +412,7 @@ pub fn artifacts(
             // `hurl --test <file>` replays without proef's context root.
             let root = crate::fsutil::parent_dir(Path::new(feature.file.path.as_str()));
             if let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, &root, out_dir) {
-                eprintln!("error: {}.hurl: {err}", artifact.slug);
+                crate::render::errln!("error: {}.hurl: {err}", artifact.slug);
                 return match err {
                     crate::assets::AssetCopyError::Unsafe(_) => ExitCode::UserError,
                     crate::assets::AssetCopyError::Io(_) => ExitCode::SystemError,
@@ -449,7 +449,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
             // The old `"true"` fallback was the accept-everything schema —
             // `--add-to` would have installed it and silently disabled
             // editor validation. Fail like every other serialization error.
-            eprintln!("error: cannot serialize the pack schema: {err}");
+            crate::render::errln!("error: cannot serialize the pack schema: {err}");
             return ExitCode::SystemError;
         }
     };
@@ -464,7 +464,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
         let dir = crate::fsutil::parent_dir(pack_path);
         if !schema_dirs.contains(&dir) {
             if let Err(err) = crate::fsutil::write_atomic(&dir.join(SCHEMA_FILE), &rendered) {
-                eprintln!(
+                crate::render::errln!(
                     "error: cannot write {}: {err}",
                     dir.join(SCHEMA_FILE).display()
                 );
@@ -475,7 +475,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
         let text = match std::fs::read_to_string(pack_path) {
             Ok(text) => text,
             Err(err) => {
-                eprintln!("error: cannot read {}: {err}", pack_path.display());
+                crate::render::errln!("error: cannot read {}: {err}", pack_path.display());
                 return ExitCode::UserError;
             }
         };
@@ -484,7 +484,7 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
             continue;
         }
         if let Err(err) = crate::fsutil::write_atomic(pack_path, &format!("{MODELINE}\n{text}")) {
-            eprintln!("error: cannot write {}: {err}", pack_path.display());
+            crate::render::errln!("error: cannot write {}: {err}", pack_path.display());
             return ExitCode::SystemError;
         }
         crate::render::outln!("  ok {} (modeline added)", pack_path.display());
@@ -506,10 +506,10 @@ pub(crate) fn report_front_error(err: &proef_core::diag::FrontError) -> ExitCode
             render::errln!("{errors} error(s)");
         }
         proef_core::diag::FrontError::Core(core) => {
-            eprintln!("error: {core}");
+            crate::render::errln!("error: {core}");
             let mut source = std::error::Error::source(core);
             while let Some(err) = source {
-                eprintln!("  caused by: {err}");
+                crate::render::errln!("  caused by: {err}");
                 source = err.source();
             }
         }

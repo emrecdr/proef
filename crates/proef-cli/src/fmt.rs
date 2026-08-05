@@ -16,7 +16,7 @@ use proef_core::error::ExitCode;
 pub fn fmt(path: &Path, check: bool) -> ExitCode {
     let packs = discover(path);
     if packs.is_empty() {
-        eprintln!("error: no pack files found under `{}`", path.display());
+        crate::render::errln!("error: no pack files found under `{}`", path.display());
         return ExitCode::UserError;
     }
     let mut dirty = false;
@@ -24,7 +24,7 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
         let text = match std::fs::read_to_string(&pack) {
             Ok(text) => text,
             Err(err) => {
-                eprintln!("error: cannot read {}: {err}", pack.display());
+                crate::render::errln!("error: cannot read {}: {err}", pack.display());
                 return ExitCode::SystemError;
             }
         };
@@ -34,7 +34,7 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
             if check {
                 crate::render::outln!("  needs formatting: {}", pack.display());
             } else if let Err(err) = crate::fsutil::write_atomic(&pack, &formatted) {
-                eprintln!("error: cannot write {}: {err}", pack.display());
+                crate::render::errln!("error: cannot write {}: {err}", pack.display());
                 return ExitCode::SystemError;
             } else {
                 crate::render::outln!("  formatted: {}", pack.display());

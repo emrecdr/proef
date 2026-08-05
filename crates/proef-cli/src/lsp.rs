@@ -93,7 +93,7 @@ pub fn run() -> ExitCode {
     match proef_lsp::run(cfg) {
         Ok(()) => ExitCode::Success,
         Err(err) => {
-            eprintln!("proef lsp: {err}");
+            crate::render::errln!("proef lsp: {err}");
             ExitCode::SystemError
         }
     }

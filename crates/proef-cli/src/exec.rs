@@ -66,7 +66,7 @@ pub fn execute(
         | (_, Err(message), ..)
         | (_, _, Err(message), _)
         | (_, _, _, Err(message)) => {
-            eprintln!("error: {message}");
+            crate::render::errln!("error: {message}");
             return ExitCode::UserError;
         }
     };
@@ -88,7 +88,7 @@ pub fn execute(
     let secrets = match crate::secretstore::resolve_all(&secret_names) {
         Ok(secrets) => Arc::new(secrets),
         Err(missing) => {
-            eprintln!("error: missing secret value(s): {}", missing.join(", "));
+            crate::render::errln!("error: missing secret value(s): {}", missing.join(", "));
             return ExitCode::UserError;
         }
     };
@@ -102,7 +102,7 @@ pub fn execute(
     // user error; a clean prior run has nothing to rerun (exit 0).
     let rerun_set = if rerun {
         let Some(dir) = crate::record::resolve_dir(&runs_root, None) else {
-            eprintln!("error: --rerun found no prior run record to rerun from");
+            crate::render::errln!("error: --rerun found no prior run record to rerun from");
             return ExitCode::UserError;
         };
         match crate::record::failed_scenarios(&dir) {
@@ -112,7 +112,7 @@ pub fn execute(
             }
             Ok(failed) => Some(failed),
             Err(err) => {
-                eprintln!("error: {err}");
+                crate::render::errln!("error: {err}");
                 return ExitCode::UserError;
             }
         }
@@ -124,7 +124,7 @@ pub fn execute(
     let run_dir = runs_root.join(front.run_id.as_ref());
     let artifacts_dir = run_dir.join("artifacts");
     if let Err(err) = std::fs::create_dir_all(&artifacts_dir) {
-        eprintln!("error: cannot create run dir {}: {err}", run_dir.display());
+        crate::render::errln!("error: cannot create run dir {}: {err}", run_dir.display());
         return ExitCode::SystemError;
     }
 
@@ -132,7 +132,7 @@ pub fn execute(
     let events_file = match std::fs::File::create(run_dir.join("events.jsonl")) {
         Ok(file) => file,
         Err(err) => {
-            eprintln!("error: cannot create events.jsonl: {err}");
+            crate::render::errln!("error: cannot create events.jsonl: {err}");
             return ExitCode::SystemError;
         }
     };
@@ -140,7 +140,9 @@ pub fn execute(
         Ok(file) => Some(file),
         Err(err) => {
             // Best-effort mirror — the run proceeds, but never silently.
-            eprintln!("warning: cannot create run.log (console mirror disabled): {err}");
+            crate::render::errln!(
+                "warning: cannot create run.log (console mirror disabled): {err}"
+            );
             None
         }
     };
@@ -176,10 +178,12 @@ pub fn execute(
         let once = AtomicBool::new(false);
         let _ = ctrlc::set_handler(move || {
             if once.swap(true, Ordering::SeqCst) {
-                eprintln!("\nsecond interrupt — hard exit");
+                crate::render::errln!("\nsecond interrupt — hard exit");
                 std::process::exit(crate::INTERRUPT_EXIT_CODE);
             }
-            eprintln!("\ninterrupt — cancelling after current batches (Ctrl-C again to force)");
+            crate::render::errln!(
+                "\ninterrupt — cancelling after current batches (Ctrl-C again to force)"
+            );
             handler_token.cancel();
         });
         cancel
@@ -189,7 +193,7 @@ pub fn execute(
     let store = match GlobalStore::load(Path::new(".proef-state.json")) {
         Ok(store) => Arc::new(Mutex::new(store)),
         Err(err) => {
-            eprintln!("error: {err}");
+            crate::render::errln!("error: {err}");
             return ExitCode::SystemError;
         }
     };
@@ -221,7 +225,7 @@ pub fn execute(
             Err(code) => return code,
             Ok(summary) => {
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
-                    eprintln!("error: setup failed — aborting before the suite runs");
+                    crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
                 }
             }
@@ -250,7 +254,7 @@ pub fn execute(
         front.run_id
     );
     if machine_stdout {
-        eprintln!("{status_line}");
+        crate::render::errln!("{status_line}");
     } else {
         crate::render::outln!("{status_line}");
     }
@@ -286,7 +290,7 @@ pub fn execute(
             Err(_) => teardown_exit = ExitCode::SystemError,
             Ok(summary) => {
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
-                    eprintln!(
+                    crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
                     );
                     teardown_exit = ExitCode::SystemError;
@@ -299,7 +303,7 @@ pub fn execute(
     if let Ok(guard) = store.lock()
         && let Err(err) = guard.save(Path::new(".proef-state.json"))
     {
-        eprintln!("warning: cannot persist global state: {err}");
+        crate::render::errln!("warning: cannot persist global state: {err}");
     }
 
     // Failure details (feature line + artifact span already inside details).
@@ -311,7 +315,7 @@ pub fn execute(
                 runner::Fault::User(message) => ("user error", message),
                 runner::Fault::System(message) => ("system error", message),
             };
-            eprintln!(
+            crate::render::errln!(
                 "{kind}: {}:{} {} — {}",
                 outcome.file,
                 outcome.line,
@@ -323,14 +327,14 @@ pub fn execute(
             if step.status == proef_core::step::Status::Failed
                 && let Some(detail) = &step.detail
             {
-                eprintln!(
+                crate::render::errln!(
                     "  ✗ {}:{} — {}",
                     step.step.file,
                     step.step.line,
                     redactions.apply(detail)
                 );
                 if let Some(hint) = &step.reproduce_hint {
-                    eprintln!("    curl: {}", redactions.apply(hint));
+                    crate::render::errln!("    curl: {}", redactions.apply(hint));
                 }
             }
         }
@@ -348,7 +352,7 @@ pub fn execute(
                 } else {
                     String::new()
                 };
-                eprintln!("  reproduce: hurl --test {}{vars_arg}", artifact.display());
+                crate::render::errln!("  reproduce: hurl --test {}{vars_arg}", artifact.display());
             }
         }
     }
@@ -364,10 +368,10 @@ pub fn execute(
     };
     if let Some(junit_path) = junit_path {
         match crate::ci_reports::write_junit(&summary, &front.run_id, &junit_path, &redactions) {
-            Ok(()) => eprintln!("junit report: {}", junit_path.display()),
+            Ok(()) => crate::render::errln!("junit report: {}", junit_path.display()),
             Err(message) => {
                 // A CI job gating on this file must not see exit 0.
-                eprintln!("error: {message}");
+                crate::render::errln!("error: {message}");
                 junit_failed = true;
             }
         }
@@ -414,7 +418,7 @@ pub fn execute(
         })
         .count();
     if quarantined_failures > 0 {
-        eprintln!(
+        crate::render::errln!(
             "note: {quarantined_failures} quarantined scenario(s) failed but did not gate the run"
         );
     }
@@ -426,11 +430,11 @@ pub fn execute(
     let base_exit = summary.exit_code_excluding(&non_gating);
     let exit = match crate::sla::check(&summary, sla_thresholds) {
         Some(report) if base_exit == ExitCode::Success => {
-            eprintln!("{report}");
+            crate::render::errln!("{report}");
             ExitCode::TestFailure
         }
         Some(report) => {
-            eprintln!("{report}");
+            crate::render::errln!("{report}");
             base_exit
         }
         None => base_exit,
@@ -535,7 +539,7 @@ fn run_phase(
     // in the pool (exclude_phase_features matches a single file path), running
     // each scenario twice. Reject it loudly instead of silently double-running.
     if path.is_dir() {
-        eprintln!(
+        crate::render::errln!(
             "error: [run] {label} must be a feature file, not a directory ({})",
             path.display()
         );
@@ -549,7 +553,7 @@ fn run_phase(
         Arc::clone(config_vars),
     )
     .map_err(|err| {
-        eprintln!("error: {label} feature failed to validate:");
+        crate::render::errln!("error: {label} feature failed to validate:");
         crate::commands::report_front_error(&err)
     })?;
     render::print_all(&front.warnings);
@@ -563,7 +567,7 @@ fn run_phase(
     let secrets = match crate::secretstore::resolve_all(&names) {
         Ok(secrets) => Arc::new(secrets),
         Err(missing) => {
-            eprintln!(
+            crate::render::errln!(
                 "error: {label} missing secret value(s): {}",
                 missing.join(", ")
             );
@@ -573,7 +577,7 @@ fn run_phase(
 
     let specs = build_specs(&front, None, None, None, None, artifacts_dir);
     if specs.is_empty() {
-        eprintln!(
+        crate::render::errln!(
             "error: {label} feature `{}` has no scenarios",
             path.display()
         );
@@ -716,38 +720,8 @@ fn build_specs(
                 };
                 let lowered = lower::lower(&bound, &ctx)?;
                 let artifact = emit::emit(&lowered, &stem, world).map(|artifact| {
-                    // The run dir holds the exact executed bytes. Record
-                    // writes are best-effort (the run proceeds) but never
-                    // silent — the record is the debugging surface.
-                    write_or_warn(
-                        &artifacts_dir.join(format!("{}.hurl", artifact.slug)),
-                        &artifact.hurl_text,
-                    );
-                    if let Ok(map_json) = serde_json::to_string_pretty(&artifact.map) {
-                        write_or_warn(
-                            &artifacts_dir.join(format!("{}.map.json", artifact.slug)),
-                            format!("{map_json}\n"),
-                        );
-                    }
-                    if let Some(vars) = &artifact.vars {
-                        write_or_warn(&artifacts_dir.join(format!("{}.vars", artifact.slug)), vars);
-                    }
-                    // Referenced `file,…;` assets ride along so the run-dir
-                    // artifact replays under stock hurl (ADR-0010 hand-off).
-                    // The run itself is unaffected (the engine reads bodies
-                    // from the suite, fenced by its context dir) — an
-                    // incomplete run record is a warning, not a failure.
                     let root = crate::fsutil::parent_dir(Path::new(feature_file.path.as_str()));
-                    if let Err(err) =
-                        crate::assets::copy_assets(&artifact.hurl_text, &root, &artifacts_dir)
-                    {
-                        eprintln!("warning: run record for {}.hurl: {err}", artifact.slug);
-                    }
-                    ArtifactRef {
-                        slug: Arc::from(artifact.slug.as_str()),
-                        text: Arc::from(artifact.hurl_text.as_str()),
-                        map: Arc::new(artifact.map),
-                    }
+                    write_run_record(artifact, &artifacts_dir, &root)
                 });
                 Ok(Prepared {
                     batches: lowered.batches,
@@ -768,6 +742,39 @@ fn build_specs(
     specs
 }
 
+/// Write one scenario's run-dir record — the `.hurl`/`.map.json`/`.vars`
+/// sidecars plus any referenced assets — and hand back the artifact the
+/// engine executes against. The run dir holds the exact executed bytes.
+/// Record writes are best-effort (the run proceeds) but never silent — the
+/// record is the debugging surface.
+fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path) -> ArtifactRef {
+    write_or_warn(
+        &artifacts_dir.join(format!("{}.hurl", artifact.slug)),
+        &artifact.hurl_text,
+    );
+    if let Ok(map_json) = serde_json::to_string_pretty(&artifact.map) {
+        write_or_warn(
+            &artifacts_dir.join(format!("{}.map.json", artifact.slug)),
+            format!("{map_json}\n"),
+        );
+    }
+    if let Some(vars) = &artifact.vars {
+        write_or_warn(&artifacts_dir.join(format!("{}.vars", artifact.slug)), vars);
+    }
+    // Referenced `file,…;` assets ride along so the run-dir artifact replays
+    // under stock hurl (ADR-0010 hand-off). The run itself is unaffected
+    // (the engine reads bodies from the suite, fenced by its context dir) —
+    // an incomplete run record is a warning, not a failure.
+    if let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, root, artifacts_dir) {
+        crate::render::errln!("warning: run record for {}.hurl: {err}", artifact.slug);
+    }
+    ArtifactRef {
+        slug: Arc::from(artifact.slug.as_str()),
+        text: Arc::from(artifact.hurl_text.as_str()),
+        map: Arc::new(artifact.map),
+    }
+}
+
 /// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
 /// time). Only directories *named by a run id* are candidates — `runs-dir`
 /// may be `.` or otherwise shared with user content, and rotation must never
@@ -775,7 +782,7 @@ fn build_specs(
 /// silently (matches the asset-copy warning path in the same closure).
 fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
     if let Err(err) = std::fs::write(path, contents) {
-        eprintln!("warning: cannot write {}: {err}", path.display());
+        crate::render::errln!("warning: cannot write {}: {err}", path.display());
     }
 }
 
