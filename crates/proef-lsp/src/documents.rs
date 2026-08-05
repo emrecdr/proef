@@ -136,32 +136,41 @@ fn percent_encode_segment(segment: &str, out: &mut String) {
     }
 }
 
-/// Open-buffer text keyed by document URI. Absent key ⇒ read from disk.
+/// Open-buffer text keyed by *source name* (`url_to_name` of the document URI) —
+/// the same identity the rest of the pipeline uses. Keying by the decoded name
+/// (not the raw `Uri`) makes the client's percent-encoding choice irrelevant, so
+/// an open buffer is found regardless of how sub-delims were encoded. Absent key
+/// ⇒ read from disk.
 #[derive(Debug, Default)]
 pub struct Documents {
-    open: HashMap<Uri, Arc<str>>,
+    open: HashMap<String, Arc<str>>,
 }
 
 impl Documents {
     /// Records (or replaces) the client-owned text for `url` on `textDocument/didOpen`.
+    // `url` is only borrowed for `url_to_name`, but callers already own a fresh
+    // `Uri` deserialized from the notification and have no further use for it —
+    // taking it by value keeps the call site a plain move, not a needless borrow.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn open(&mut self, url: Uri, text: String) {
-        self.open.insert(url, Arc::from(text));
+        self.open.insert(url_to_name(&url), Arc::from(text));
     }
 
     /// Replaces the client-owned text for `url` on `textDocument/didChange`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn change(&mut self, url: Uri, text: String) {
-        self.open.insert(url, Arc::from(text));
+        self.open.insert(url_to_name(&url), Arc::from(text));
     }
 
     /// Forgets the client-owned text for `url` on `textDocument/didClose`; the
-    /// overlay falls back to disk for that URI afterward.
+    /// overlay falls back to disk for that source afterward.
     pub fn close(&mut self, url: &Uri) {
-        self.open.remove(url);
+        self.open.remove(&url_to_name(url));
     }
 
-    /// The open-buffer text for `url`, if the client has it open.
-    pub fn get(&self, url: &Uri) -> Option<&str> {
-        self.open.get(url).map(|t| &**t)
+    /// The open-buffer text for source `name`, if the client has it open.
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.open.get(name).map(|t| &**t)
     }
 }
 
@@ -189,9 +198,7 @@ impl SourceProvider for OverlaySourceProvider<'_> {
         self.disk.discover_packs()
     }
     fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
-        if let Some(url) = name_to_url(name)
-            && let Some(text) = self.overlay.get(&url)
-        {
+        if let Some(text) = self.overlay.get(name) {
             return Ok(Arc::from(text));
         }
         self.disk.read(name)
@@ -219,13 +226,14 @@ mod tests {
     #[test]
     fn overlay_prefers_open_text_and_forgets_on_close() {
         let mut docs = Documents::default();
-        let u = name_to_url(&native_abs("suite/a.feature")).unwrap();
+        let name = native_abs("suite/a.feature");
+        let u = name_to_url(&name).unwrap();
         docs.open(u.clone(), "first".to_owned());
-        assert_eq!(docs.get(&u), Some("first"));
+        assert_eq!(docs.get(&name), Some("first"));
         docs.change(u.clone(), "second".to_owned());
-        assert_eq!(docs.get(&u), Some("second"));
+        assert_eq!(docs.get(&name), Some("second"));
         docs.close(&u);
-        assert_eq!(docs.get(&u), None);
+        assert_eq!(docs.get(&name), None);
     }
 
     #[test]
@@ -283,6 +291,47 @@ mod tests {
         // reading prefers the open buffer
         assert_eq!(
             &*overlay.read(&native_abs("s/a.feature")).unwrap(),
+            "in editor"
+        );
+    }
+
+    // A path segment may legally contain sub-delims like `(`; lsp_types::Uri Eq
+    // compares raw strings, so a raw-Uri-keyed overlay missed when the client left
+    // `(` bare but name_to_url percent-encoded it. Keying by source name (which is
+    // decoded) makes the encoding irrelevant — the open buffer is always found.
+    #[test]
+    fn overlay_finds_open_buffer_for_paths_with_sub_delims() {
+        struct DiskStub;
+        impl SourceProvider for DiskStub {
+            fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec![native_abs("s/a(b.feature")])
+            }
+            fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec![])
+            }
+            fn read(&self, _name: &str) -> Result<Arc<str>, ProviderError> {
+                Ok(Arc::from("on disk"))
+            }
+        }
+
+        let mut docs = Documents::default();
+        // A client (e.g. Neovim) opens the doc with the sub-delim left BARE — legal
+        // and common. name_to_url percent-encodes it, so pre-fix the raw-Uri-keyed
+        // overlay (keyed by the client's bare form) missed read()'s re-derived
+        // encoded form.
+        let u = name_to_url(&native_abs("s/a(b.feature"))
+            .unwrap()
+            .as_str()
+            .replace("%28", "(")
+            .parse::<Uri>()
+            .unwrap();
+        docs.open(u, "in editor".to_owned());
+        let disk = DiskStub;
+        let overlay = OverlaySourceProvider::new(&docs, &disk);
+
+        // The unsaved buffer must win over disk despite the `(` in the path.
+        assert_eq!(
+            &*overlay.read(&native_abs("s/a(b.feature")).unwrap(),
             "in editor"
         );
     }

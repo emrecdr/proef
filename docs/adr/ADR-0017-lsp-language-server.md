@@ -68,3 +68,13 @@ go-to-definition, completion, and find-references. Key choices:
 - **Diagnostics-only or diagnostics+go-to-def MVP** — considered; the operator chose the full
   feature set for v1 (the complete authoring experience), sequenced internally so value still
   lands incrementally.
+
+## Amendment — 2026-08-04 (go-to-definition gaps closed)
+
+v1 go-to-definition resolved only feature step → macro, landing on the macro's name key; two
+narrower targets were cut and recorded only in a source comment. Both are now implemented: a
+`use:` reference inside a pack jumps to the macro it names, and either path lands on the
+macro's `match:` line when one is locatable (falling back to the name key for use-only
+macros). Both are best-effort text-scan locators in `proef-core::pack::locate`, indexed at
+analyze time, following the existing sans-IO/text-scan idiom already used there — no parser
+change.

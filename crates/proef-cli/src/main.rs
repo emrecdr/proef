@@ -237,12 +237,8 @@ fn resolve_suite_path(
     if let Some(path) = path {
         return Ok(path);
     }
-    if let Some(suite) = config.suite() {
-        return Ok(PathBuf::from(suite));
-    }
-    let convention = PathBuf::from("tests");
-    if convention.is_dir() {
-        return Ok(convention);
+    if let Some(suite) = config.default_suite_path() {
+        return Ok(suite);
     }
     eprintln!(
         "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"

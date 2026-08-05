@@ -60,10 +60,10 @@ repo-root `CLAUDE.md` carry the live status.
 ## Naming & identifiers
 
 Project/binary **`proef`** · crates **`proef-core`**, **`proef-engine-hurl`**, **`proef-cli`**,
-**`proef-fixture`**, **`proef-harness`**
+**`proef-fixture`**, **`proef-harness`**, **`proef-lsp`**
 · run records **`.proef-runs/`** · persistent
 World **`.proef-state.json`** · config **`proef.toml`**. The crates.io names
-`proef`, `proef-core`, and `proef-engine-hurl` are published and owned.
+`proef`, `proef-core`, `proef-engine-hurl`, and `proef-lsp` are published and owned.
 
 ## Provenance
 

@@ -6,8 +6,32 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **LSP go-to-definition: `use:` references and `match:` landing (ADR-0017).**
+  Go-to-definition now jumps from a `use:` reference in a pack to the macro it
+  targets, and lands on the macro's `match:` line rather than its name key
+  (falling back to the name key for use-only macros with no `match:`).
+
 ### Fixed
 
+- **LSP: the stdio server now exits cleanly.** `proef lsp` dropped the connection
+  after joining the transport threads, so the writer thread (holding the sole
+  channel Sender) never ended and the process leaked. It now drops the connection
+  before joining. Covered by a real stdio subprocess lifecycle test.
+- **LSP: a malformed request no longer crashes the server.** A bad document URI or
+  out-of-range position propagated a deserialization error out of the event loop
+  and exited the process; the request now gets an `InvalidParams` (-32602) reply
+  and the server keeps serving.
+- **LSP: one broken pack no longer blanks the whole suite.** `analyze_suite` now
+  keeps the packs that loaded (and reports the broken one's diagnostic) instead of
+  zeroing all bindings, completion, and go-to-definition on any pack error.
+- **LSP: analysis is scoped to the configured suite.** The server roots at
+  `[run] suite` (else the `tests/` convention) under its launch directory rather
+  than walking the entire working tree, sharing the CLI's suite resolution.
+- **LSP: unsaved edits are honored for paths with special characters.** The
+  open-buffer overlay is keyed by source name instead of the raw file URI, so a
+  path segment containing sub-delimiters (`(`, `+`, `'`, …) no longer misses.
 - **A directory-valued `[run] setup`/`teardown` is now a loud user error.**
   ADR-0014 defines setup/teardown as a single feature file; a directory ran
   every feature under it as the phase and again in the pool (a silent
@@ -27,6 +51,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- Documented `proef-lsp` and the `lsp`/`macros`/`diff`/`report` subcommands across
+  the README, TECH-SPEC CLI/dependency references, and the RELEASING publish order.
 - The second-interrupt hard-exit code **130** (128+SIGINT) is now documented
   for `test` and `watch` (TECH-SPEC §10, ADR-0009) — a deliberate escape
   hatch outside the typed 0/1/2/3 `ExitCode` taxonomy.

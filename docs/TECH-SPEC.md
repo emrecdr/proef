@@ -256,10 +256,14 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
 proef flows [file|dir] [--env NAME] [--output json]
+proef macros [file|dir] [--env NAME] [--output json]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
+proef diff [base] [new] [--fail-on-regression]
+proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]
+proef lsp
 ```
 
 A path-less `test`/`flows`/`artifacts` resolves `[run] suite` then the `tests/`
@@ -309,14 +313,17 @@ Engine: `hurl =8.0.1`, `hurl_core =8.0.1` (`--locked`; ADR-0003). Core: `gherkin
 `serde 1`, `serde_json 1`, `serde_norway 0.9`, `schemars 1`, `thiserror 2`,
 `tokio-util 0.7` (default-features = false; CancellationToken only). CLI: `clap 4`
 (derive, env), `miette 7` (fancy), `uuid 1` (v7), `notify =8.2.0`, `ctrlc`,
-`chacha20poly1305 rpassword base64`, `quick-junit`, `toml`. Fixture/harness (dev):
+`chacha20poly1305 rpassword base64`, `quick-junit`, `toml`. LSP: `lsp-server 0.7`,
+`lsp-types 0.97` (proef-lsp's stdio transport, wired into `proef lsp`). Fixture/harness (dev):
 `tiny_http` (ADR-0011 — axum conflicts with the tokio-runtime ban), `libtest-mimic`.
 Engine runtime: `tempfile` (Netscape cookie round-trip between batches, §5).
 Dev: `insta assert_cmd predicates proptest tempfile quick-xml` + `cargo-fuzz`
 targets; `openssl-sys` rides as the engine's `vendored-openssl` feature carrier. Synthetic
 data (`${fake:*}`) is a dependency-free SplitMix64/FNV implementation in-core — the
-`fake` crate was not needed. Datetime never enters our code (the jiff-not-chrono rule
-stands for the day it does). Banned: serde_yaml/serde_yml, chrono (ours), reqwest
+`fake` crate was not needed. Datetime uses `jiff`, never `chrono`, in our own code
+(hurl's internal chrono is its business) — currently `jiff` is a dev-only dependency
+of the fixture's `/health` identity; the sans-IO core still reads no clock (injected
+timestamps only). Banned: serde_yaml/serde_yml, chrono (ours), reqwest
 (superseded), maybe-async, async-trait (v1). Build prereqs (doctor-checked): Debian
 `build-essential pkg-config libssl-dev libcurl4-openssl-dev libxml2-dev libclang-dev`;
 macOS: Xcode CLT.
