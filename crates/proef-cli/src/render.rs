@@ -22,6 +22,20 @@ macro_rules! outln {
 }
 pub(crate) use outln;
 
+/// Print a line to stderr, tolerating a closed pipe. Diagnostics go to stderr,
+/// so `proef … |& head` must end the pipeline quietly (exit contract, never a
+/// 101 panic). `BrokenPipe` is swallowed; any other stderr error is also
+/// dropped — stderr is the only diagnostic channel, so a broken stderr has
+/// nowhere left to report to (writing the failure to stdout would corrupt
+/// program output).
+macro_rules! errln {
+    ($($arg:tt)*) => {{
+        use ::std::io::Write as _;
+        let _ = writeln!(::std::io::stderr(), $($arg)*);
+    }};
+}
+pub(crate) use errln;
+
 /// Install the global miette hook: unicode graphics, color only when the
 /// terminal wants it.
 pub fn install() {
@@ -43,7 +57,7 @@ pub fn print_all(diags: &[Diag]) {
         .partition(|d| d.severity == proef_core::diag::Severity::Error);
     for diag in errors.iter().chain(warnings.iter()) {
         let report = miette::Report::new(Rendered::from(*diag));
-        eprintln!("{report:?}");
+        errln!("{report:?}");
     }
 }
 

@@ -36,7 +36,7 @@ jobs:
         uses: ./.github/actions/native-deps
 
       - name: Install pinned toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master # zizmor: ignore[ref-version-mismatch] — no version tags; pinned to a reviewed master commit
         with:
           toolchain: "1.97.1"
           components: rustfmt, clippy
@@ -92,7 +92,7 @@ jobs:
           persist-credentials: false
 
       - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master # zizmor: ignore[ref-version-mismatch] — no version tags; pinned to a reviewed master commit
         with:
           toolchain: nightly
 
@@ -135,7 +135,7 @@ jobs:
         uses: ./.github/actions/native-deps
 
       - name: Install pinned toolchain
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master # zizmor: ignore[ref-version-mismatch] — no version tags; pinned to a reviewed master commit
         with:
           toolchain: "1.97.1"
 

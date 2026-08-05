@@ -501,7 +501,9 @@ pub(crate) fn report_front_error(err: &proef_core::diag::FrontError) -> ExitCode
                 .iter()
                 .filter(|d| d.severity == proef_core::diag::Severity::Error)
                 .count();
-            eprintln!("{errors} error(s)");
+            // Same stream as print_all's diagnostics above — a closed reader
+            // must not turn this trailing summary line into a 101 panic.
+            render::errln!("{errors} error(s)");
         }
         proef_core::diag::FrontError::Core(core) => {
             eprintln!("error: {core}");

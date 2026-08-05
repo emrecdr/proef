@@ -15,7 +15,7 @@ use crate::emit;
 use crate::engine::StepKindSpec;
 use crate::feature;
 use crate::lower::{self, LowerCtx};
-use crate::pack::{self, PackSet, PackSource};
+use crate::pack::{self, MacroBody, MacroStepKind, PackSet, PackSource};
 use crate::provider::SourceProvider;
 use crate::world::{GlobalStore, World};
 
@@ -44,6 +44,21 @@ pub struct MacroRef {
     /// Byte span of the macro's name key in the *normalized* pack source, when
     /// locatable. This is the definition anchor go-to-definition jumps to.
     pub def_span: Option<Span>,
+    /// Byte span of the macro's `match:` line, when locatable — the preferred
+    /// go-to-definition landing anchor (falls back to `def_span`).
+    pub match_span: Option<Span>,
+}
+
+/// One `use:` reference inside a pack → the macro it resolves to. Powers
+/// go-to-definition from a `use:` line to the target macro's definition.
+#[derive(Debug, Clone)]
+pub struct UseRef {
+    /// Source name of the pack the `use:` line lives in.
+    pub pack: String,
+    /// Byte span of the `use:` line in the *normalized* pack source.
+    pub span: Span,
+    /// The macro the reference resolves to (globally unique name).
+    pub target_macro: String,
 }
 
 /// The product of one wholesale recompute: every feature's read from here.
@@ -55,6 +70,8 @@ pub struct SuiteAnalysis {
     pub bindings: Vec<Binding>,
     /// Every macro definition across the loaded packs.
     pub macros: Vec<MacroRef>,
+    /// Every `use:` reference across the loaded packs, resolved to its target.
+    pub use_refs: Vec<UseRef>,
 }
 
 /// Everything `analyze_suite` needs, injected at the IO edge (sans-IO core).
@@ -90,13 +107,14 @@ impl SuiteAnalysis {
 
 /// Recompute the whole suite in one pass: read every pack and feature through
 /// the provider, accumulate every diagnostic per source name, and record the
-/// binding and macro relations editors need. Broken packs short-circuit feature
-/// binding (no cascade); a parse-failed feature is skipped, not fatal.
+/// binding and macro relations editors need. A broken pack contributes its own
+/// diagnostic and is excluded from the loaded set, but does not stop the rest
+/// of the suite from binding; a parse-failed feature is skipped, not fatal.
 pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     let mut out = SuiteAnalysis::default();
 
-    // Packs first: a broken pack blocks binding, so on pack failure we publish
-    // pack diagnostics and skip feature binding (no cascade).
+    // Packs first: a broken pack contributes its own diagnostic below and is
+    // excluded from the loaded set, but its siblings still load.
     let mut sources = pack::builtin_sources();
     let pack_names = ctx.provider.discover_packs().unwrap_or_default();
     for name in &pack_names {
@@ -109,16 +127,15 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
         }
     }
 
-    let packs: Arc<PackSet> = match pack::load(&sources, ctx.kinds) {
-        Ok(set) => Arc::new(set),
-        Err(err) => {
-            for d in front_error_diags(err) {
-                let name = d.source_name.clone().unwrap_or_default();
-                out.push_diags(&name, [d]);
-            }
-            return out; // packs broken → do not cascade into feature binding
-        }
-    };
+    // Collect-all load: a broken pack contributes its diagnostic and is
+    // excluded from the set, but its siblings still load — the editor keeps
+    // binding against the good packs instead of going dark (v0.5.1 fix).
+    let (loaded, pack_diags) = pack::load_collecting(&sources, ctx.kinds);
+    for d in pack_diags {
+        let name = d.source_name.clone().unwrap_or_default();
+        out.push_diags(&name, [d]);
+    }
+    let packs: Arc<PackSet> = Arc::new(loaded);
 
     // Macro vocabulary for completion / go-to-def targets.
     for m in packs.macros.values() {
@@ -128,8 +145,11 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
             params: m.params.clone(),
             pack: m.pack.clone(),
             def_span: m.span,
+            match_span: m.match_span,
         });
     }
+
+    out.use_refs = index_use_refs(&packs);
 
     let world = World::new(GlobalStore::default());
 
@@ -194,6 +214,43 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     out
 }
 
+/// Index every `use:` reference → its resolved target, for go-to-def from a
+/// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
+/// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
+/// counts come from the macro's own steps and source, a mismatch means the line
+/// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
+/// pairing is unreliable and that macro is skipped entirely rather than risk a
+/// wrong `Some`.
+fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
+    let mut use_refs = Vec::new();
+    for m in packs.macros.values() {
+        let MacroBody::Steps(steps) = &m.body else {
+            continue;
+        };
+        let targets: Vec<&str> = steps
+            .iter()
+            .filter_map(|step| match &step.kind {
+                MacroStepKind::Use { target, .. } => Some(target.as_str()),
+                MacroStepKind::Payload { .. } => None,
+            })
+            .collect();
+        let spans = crate::pack::locate::use_line_spans(&m.source, &m.name);
+        if spans.len() != targets.len() {
+            continue; // line scan and parsed steps disagree → pairing unreliable, skip
+        }
+        for (span, target) in spans.into_iter().zip(targets) {
+            if let Some(target_macro) = packs.find_use_target(target) {
+                use_refs.push(UseRef {
+                    pack: m.pack.clone(),
+                    span,
+                    target_macro: target_macro.name.clone(),
+                });
+            }
+        }
+    }
+    use_refs
+}
+
 fn feature_stem(name: &str) -> String {
     std::path::Path::new(name).file_stem().map_or_else(
         || "feature".to_owned(),
@@ -207,15 +264,6 @@ fn read_error_diag(name: &str, msg: &str) -> Diag {
         format!("cannot read {name}: {msg}"),
     )
     .with_source(name.to_owned(), Arc::from(""))
-}
-
-fn front_error_diags(err: crate::diag::FrontError) -> Vec<Diag> {
-    match err {
-        crate::diag::FrontError::Diagnostics(list) => list,
-        crate::diag::FrontError::Core(core) => {
-            vec![Diag::error("proef::pack::load", core.to_string())]
-        }
-    }
 }
 
 /// Parse-validate the exact emitted artifact text with the claiming engine's
@@ -489,15 +537,20 @@ mod tests {
         );
     }
 
-    // §9's other half: a broken pack short-circuits before feature binding even
-    // starts, so a perfectly normal feature must not be falsely reported.
+    // A broken pack degrades gracefully: it reports its own error, but the good
+    // pack still loads, so a feature binding against a good-pack macro survives.
+    // One broken pack must never zero the whole suite's analysis (v0.5.1 fix).
     #[test]
-    fn analyze_broken_pack_short_circuits_before_feature_binding() {
+    fn analyze_degrades_when_one_pack_is_broken() {
         let mut files = BTreeMap::new();
-        // `deny_unknown_fields` on the pack schema's root: `bogus` is not a
-        // recognized key, so `serde_norway::from_str::<RawPack>` returns `Err`
-        // and `pack::load` returns `Err(FrontError::Diagnostics(..))` carrying
-        // `proef::pack::yaml` (mirrors `tests/errors/pack__yaml`).
+        files.insert(
+            "packs/good.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+            ),
+        );
+        // `bogus` is not a recognized root key → deny_unknown_fields → this pack
+        // fails to parse and contributes proef::pack::yaml, but must not sink the rest.
         files.insert(
             "packs/broken.yaml".to_owned(),
             Arc::from("macros: {}\nbogus: true\n"),
@@ -508,36 +561,132 @@ mod tests {
         );
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
-            packs: vec!["packs/broken.yaml".to_owned()],
+            packs: vec!["packs/good.yaml".to_owned(), "packs/broken.yaml".to_owned()],
             files,
         };
         let empty = BTreeMap::new();
         let analysis = analyze_suite(&ctx_over(&provider, &empty));
 
-        // The broken pack carries its yaml diagnostic — proof `pack::load`'s
-        // `Err` branch was actually hit.
+        // The broken pack still reports its own diagnostic.
         let pack_diags = analysis
             .diagnostics
             .get("packs/broken.yaml")
-            .expect("pack bucket");
+            .expect("broken pack bucket");
         assert!(
             pack_diags.iter().any(|d| d.code == "proef::pack::yaml"),
             "the broken pack must carry its yaml diagnostic: {pack_diags:?}"
         );
 
-        // Feature binding never ran: no bindings recorded anywhere, and the
-        // feature was not even visited (no bucket, so certainly no
-        // `proef::bind::*` diagnostics) — proof `analyze_suite` returned early.
+        // The good pack still loaded: its macro is in the vocabulary...
         assert!(
-            analysis.bindings.is_empty(),
-            "no bindings should be produced when the pack fails to load: {:?}",
-            analysis.bindings
+            analysis.macros.iter().any(|m| m.name == "greet"),
+            "the good pack's macro must survive the broken sibling"
         );
-        let feature_diags = analysis.diagnostics.get("f.feature");
+        // ...and the feature bound against it — no cascade, no zeroing.
         assert!(
-            feature_diags
-                .is_none_or(|diags| !diags.iter().any(|d| d.code.starts_with("proef::bind::"))),
-            "the feature must not be falsely reported when the pack short-circuited binding: {feature_diags:?}"
+            analysis
+                .bindings
+                .iter()
+                .any(|b| b.macro_name == "greet" && b.feature == "f.feature"),
+            "the feature must still bind to the good-pack macro despite the broken pack"
         );
+    }
+
+    #[test]
+    fn analyze_records_use_refs_and_match_spans() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - use: base\n",
+            ),
+        );
+        let provider = MemProvider {
+            features: vec![],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        // The `use: base` line is indexed, resolved to `base`.
+        let u = analysis
+            .use_refs
+            .iter()
+            .find(|u| u.target_macro == "base")
+            .expect("use_ref for base");
+        assert_eq!(u.pack, "packs/p.yaml");
+        let src = provider_text(&provider, "packs/p.yaml");
+        assert_eq!(&src[u.span.start..u.span.end], "use: base");
+
+        // `base` carries a match_span; `wrapper` (use-only) does not.
+        let base = analysis
+            .macros
+            .iter()
+            .find(|m| m.name == "base")
+            .expect("macro base");
+        assert!(base.match_span.is_some());
+        let wrapper = analysis
+            .macros
+            .iter()
+            .find(|m| m.name == "wrapper")
+            .expect("macro wrapper");
+        assert!(wrapper.match_span.is_none());
+    }
+
+    // Guards the ordinal alignment between parsed `Use` steps and textual `use:`
+    // lines: a flow-style step (`- {use: base}`) is valid YAML and parses to a
+    // `Use` step, but the line scanner's `use:`-prefix match does not see it (the
+    // line reads `- {use: base}`, not a `use:`-prefixed line after the dash
+    // strip). Mixed with a block-style `use:` line in the same macro, the parsed
+    // count (2) and textual count (1) diverge — per-ordinal pairing would silently
+    // attribute the wrong textual span to a step. `index_use_refs` must skip
+    // `UseRef` generation for that macro entirely rather than emit a wrong `Some`.
+    #[test]
+    fn analyze_skips_use_refs_when_flow_and_block_style_counts_diverge() {
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n",
+            ),
+        );
+        let provider = MemProvider {
+            features: vec![],
+            packs: vec!["packs/p.yaml".to_owned()],
+            files,
+        };
+        let empty = BTreeMap::new();
+        let analysis = analyze_suite(&ctx_over(&provider, &empty));
+
+        // The pack is valid (flow-style `use:` is legal YAML) — no error
+        // diagnostics, so `analyze_suite` did not short-circuit before indexing.
+        let errors: usize = analysis
+            .diagnostics
+            .values()
+            .flatten()
+            .filter(|d| d.severity == crate::diag::Severity::Error)
+            .count();
+        assert_eq!(
+            errors, 0,
+            "the mixed-style pack must be valid, zero errors: {:?}",
+            analysis.diagnostics
+        );
+
+        // `base` has no `use:` steps of its own, so any `UseRef` in this suite
+        // would have to come from `wrapper` — the count mismatch must suppress
+        // all of them (no wrong-target/wrong-span `UseRef`, per the "never a
+        // wrong `Some`" contract).
+        assert!(
+            analysis.use_refs.is_empty(),
+            "count mismatch must skip UseRef generation for wrapper entirely, \
+             not emit a misaligned pairing: {:?}",
+            analysis.use_refs
+        );
+    }
+
+    // Small helper to read a source back for span assertions.
+    fn provider_text(p: &MemProvider, name: &str) -> String {
+        p.read(name).expect("provider source").to_string()
     }
 }

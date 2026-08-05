@@ -5,6 +5,13 @@
 # set PROEF_BASE_URL to point it at another backend, or add a per-environment
 # override under [env.<name>.url].
 
+# Path-less commands (`proef test`, `proef lsp`, …) default to this suite, so a
+# repo-root `proef lsp` analyzes the clean reference corpus. tests/errors/ is the
+# seeded broken corpus — always run explicitly (it fails dry-run by design),
+# never as the default suite.
+[run]
+suite = "tests/features"
+
 [url]
 base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"
 

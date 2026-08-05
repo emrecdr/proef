@@ -31,6 +31,11 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+/// Hard-exit code on a second interrupt: 128 + SIGINT(2), the shell
+/// convention. Deliberately outside the typed `ExitCode` taxonomy (ADR-0009
+/// amendment) — not a graceful outcome, so it bypasses the enum entirely.
+pub(crate) const INTERRUPT_EXIT_CODE: i32 = 130;
+
 /// Machine output formats (`--output`). A typed enum so an unknown value is a
 /// clap usage error — exit 2 (ADR-0009) — never a silent fall-back to the
 /// human report.
@@ -232,12 +237,8 @@ fn resolve_suite_path(
     if let Some(path) = path {
         return Ok(path);
     }
-    if let Some(suite) = config.suite() {
-        return Ok(PathBuf::from(suite));
-    }
-    let convention = PathBuf::from("tests");
-    if convention.is_dir() {
-        return Ok(convention);
+    if let Some(suite) = config.default_suite_path() {
+        return Ok(suite);
     }
     eprintln!(
         "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"

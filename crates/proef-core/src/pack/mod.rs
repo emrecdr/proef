@@ -7,7 +7,7 @@
 //! validation pass 8). Loading is pure: the CLI discovers files and hands
 //! [`PackSource`]s in; built-in packs are embedded at build time.
 
-mod locate;
+pub(crate) mod locate;
 mod schema;
 mod validate;
 
@@ -174,6 +174,8 @@ pub struct Macro {
     pub source: Arc<str>,
     /// Span of the macro's name in the pack file, when locatable.
     pub span: Option<Span>,
+    /// Span of the macro's `match:` line in the pack file, when locatable.
+    pub match_span: Option<Span>,
 }
 
 /// A macro is either a sequence of request steps or an assert-only `expect:`
@@ -249,9 +251,16 @@ pub struct ExpectItem {
 // ---------------------------------------------------------------------------
 
 /// Parse and validate `sources` against the registered engine step `kinds`
-/// (validation passes 1–8, TECH-SPEC §4.1). All diagnostics are collected —
-/// one bad pack does not hide problems in another.
-pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, FrontError> {
+/// (validation passes 1–8, TECH-SPEC §4.1), returning the partial [`PackSet`]
+/// built from every pack that parses+normalizes AND all diagnostics collected
+/// along the way. A pack that fails to parse contributes only its diagnostic
+/// and is excluded from the set — it never sinks its siblings. This is the
+/// collect-all half that the LSP's `analyze_suite` needs so one broken pack
+/// does not zero the whole suite; `load` is the fail-fast wrapper for a run.
+pub(crate) fn load_collecting(
+    sources: &[PackSource],
+    kinds: &[StepKindSpec],
+) -> (PackSet, Vec<Diag>) {
     let mut diags: Vec<Diag> = Vec::new();
     let mut set = PackSet::default();
     let mut raw_packs: Vec<(usize, String, RawPack)> = Vec::new();
@@ -305,7 +314,14 @@ pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, F
     }
 
     validate::run_cross_macro_passes(&set, kinds, &mut diags);
+    (set, diags)
+}
 
+/// Parse and validate `sources`, failing on the first error-severity diagnostic
+/// (the fail-fast contract a real `proef` run depends on). All diagnostics are
+/// still collected — one bad pack does not hide problems in another.
+pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, FrontError> {
+    let (set, diags) = load_collecting(sources, kinds);
     if diags
         .iter()
         .any(|d| d.severity == crate::diag::Severity::Error)

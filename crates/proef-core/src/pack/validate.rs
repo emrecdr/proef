@@ -38,6 +38,7 @@ pub(crate) fn normalize_macro(
     diags: &mut Vec<Diag>,
 ) -> Option<Macro> {
     let span = locate::macro_span(&source.text, name);
+    let match_span = locate::match_span(&source.text, name);
     let at = |diag: Diag| {
         diag.with_source(source.name.clone(), Arc::clone(&source.text))
             .maybe_span(span)
@@ -123,6 +124,7 @@ pub(crate) fn normalize_macro(
         body,
         source: Arc::clone(&source.text),
         span,
+        match_span,
     })
 }
 

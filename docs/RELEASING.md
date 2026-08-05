@@ -59,7 +59,8 @@ From a clean, green `main` (all gates local + CI):
 # 1. Cut the changelog: move [Unreleased] → [X.Y.Z] - date, update bottom links.
 # 2. Bump the version in the root Cargo.toml — BOTH places:
 #      [workspace.package] version = "X.Y.Z"       (the crates' own version)
-#      [workspace.dependencies] proef-core / proef-engine-hurl version = "X.Y.Z"
+#      [workspace.dependencies] proef-core / proef-engine-hurl / proef-lsp
+#        version = "X.Y.Z"
 #        (the inter-crate pins — belt-and-suspenders for independent crates.io
 #         publish; a stale pin no longer satisfies the bumped version and fails
 #         resolution, so these move in lockstep with the line above).
@@ -91,8 +92,8 @@ The tag push triggers `.github/workflows/release.yml`, which:
 
 `workflow_dispatch` runs build+attest only — a full matrix smoke without
 publishing. crates.io publication remains a deliberate manual `cargo publish`
-per crate in dependency order (core → engine-hurl → proef) and is **not**
-automated.
+per crate in dependency order (core → engine-hurl → lsp → proef — `proef-lsp`
+before `proef`, which depends on it non-optionally) and is **not** automated.
 
 ## History
 
