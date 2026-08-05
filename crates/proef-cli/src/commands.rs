@@ -503,7 +503,7 @@ pub(crate) fn report_front_error(err: &proef_core::diag::FrontError) -> ExitCode
                 .count();
             // Same stream as print_all's diagnostics above — a closed reader
             // must not turn this trailing summary line into a 101 panic.
-            render::errln!("{errors} error(s)");
+            crate::render::errln!("{errors} error(s)");
         }
         proef_core::diag::FrontError::Core(core) => {
             crate::render::errln!("error: {core}");

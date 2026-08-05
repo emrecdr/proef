@@ -182,10 +182,12 @@ fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
         .unwrap();
     let _ = head.wait();
     let status = proef.wait().unwrap();
-    // The exact non-zero code doesn't matter; 101 (panic) must NOT occur.
-    assert_ne!(
+    // Pins two things at once: no panic (101), and the diagnostic path was
+    // actually reached — the seeded broken corpus fails `--dry-run`
+    // validation by design, which is the contracted user-error exit (2).
+    assert_eq!(
         status.code(),
-        Some(101),
-        "diagnostic render panicked on EPIPE"
+        Some(2),
+        "expected the contracted user-error exit, not a panic or an early abort"
     );
 }

@@ -1,9 +1,10 @@
-//! Drift guard: `proef-cli` writes to stderr only through the EPIPE-safe
-//! `render::errln!` macro, never a raw `eprintln!`.
+//! Drift guard: `proef-cli` writes to stdout and stderr only through the
+//! EPIPE-safe `render::outln!` / `render::errln!` macros, never a raw
+//! `print!`, `println!`, `eprint!`, or `eprintln!`.
 //!
-//! `eprintln!` panics when its write fails, and a closed stderr pipe surfaces
-//! as EPIPE (Rust ignores SIGPIPE), so a raw call aborts with exit 101 —
-//! outside the typed 0/1/2/3 taxonomy (ADR-0009).
+//! Each of those four std macros panics when its write fails, and a closed
+//! pipe on the other end surfaces as EPIPE (Rust ignores SIGPIPE), so a raw
+//! call aborts with exit 101 — outside the typed 0/1/2/3 taxonomy (ADR-0009).
 //!
 //! This lives in `tests/` rather than a `#[cfg(test)] mod` inside `src/` for a
 //! correctness reason, not a stylistic one: a source-scanning assertion placed
@@ -28,8 +29,12 @@ fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// `println!` does NOT contain `"print!"` as a substring (the `ln` sits
+/// between them), so each macro needs its own needle.
+const FORBIDDEN_MACROS: [&str; 4] = ["eprintln!", "eprint!", "println!", "print!"];
+
 #[test]
-fn cli_sources_never_use_a_raw_eprintln() {
+fn cli_sources_never_use_a_raw_print_macro() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_sources(&src, &mut files);
@@ -44,7 +49,7 @@ fn cli_sources_never_use_a_raw_eprintln() {
     for file in &files {
         let text = std::fs::read_to_string(file).expect("readable source file");
         for (index, line) in text.lines().enumerate() {
-            if line.contains("eprintln!") {
+            if FORBIDDEN_MACROS.iter().any(|needle| line.contains(needle)) {
                 offenders.push(format!("{}:{}", file.display(), index + 1));
             }
         }
@@ -52,7 +57,8 @@ fn cli_sources_never_use_a_raw_eprintln() {
 
     assert!(
         offenders.is_empty(),
-        "raw eprintln! panics on a closed stderr pipe — use crate::render::errln! instead:\n  {}",
+        "raw print/eprint macro panics on a closed pipe — use crate::render::outln! for \
+         stdout or crate::render::errln! for stderr instead:\n  {}",
         offenders.join("\n  ")
     );
 }

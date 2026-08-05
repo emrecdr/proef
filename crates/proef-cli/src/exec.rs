@@ -775,9 +775,6 @@ fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path)
     }
 }
 
-/// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
-/// time). Only directories *named by a run id* are candidates — `runs-dir`
-/// may be `.` or otherwise shared with user content, and rotation must never
 /// Best-effort run-record write: the run proceeds on failure, but never
 /// silently (matches the asset-copy warning path in `write_run_record`).
 fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
@@ -786,6 +783,9 @@ fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
     }
 }
 
+/// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
+/// time). Only directories *named by a run id* are candidates — `runs-dir`
+/// may be `.` or otherwise shared with user content, and rotation must never
 /// touch anything proef did not create — and the in-flight run never is.
 fn rotate_runs(runs_dir: &Path, current_run: &str) {
     let Ok(entries) = std::fs::read_dir(runs_dir) else {
