@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-05 (CLI correctness)
+
 ### Fixed
 
 - **A directory-valued `[run] setup`/`teardown` is now a loud user error.**
@@ -24,6 +26,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   cancelled (was a silent pass), and banners any incomplete/cancelled record
   in the diff output either way. Its slower-step duration math is hardened
   against overflow (saturating arithmetic).
+- **A bare-filename `[run] setup`/`teardown` (or suite path) now resolves its
+  packs and assets from the current directory.** A path with no directory
+  component (e.g. `setup = "setup.feature"` at the project root) has an empty
+  `Path::parent()`, which produced a `cannot read directory` failure; it now
+  normalizes to `.` (the current directory) via a shared `fsutil::parent_dir`
+  helper at the pack/asset base-derivation sites.
 
 ### Documentation
 
