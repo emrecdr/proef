@@ -268,7 +268,10 @@ proef lsp
 
 A path-less `test`/`flows`/`artifacts` resolves `[run] suite` then the `tests/`
 convention (else exit 2). Exit codes: 0 ok · 1 test failure · 2 user error · 3
-system error (typed enum, assert_cmd-pinned). Config precedence: built-in defaults
+system error (typed enum, assert_cmd-pinned). A second interrupt (Ctrl-C) while
+a `test`/`watch` run is cancelling forces an immediate hard exit with code
+**130** (128+SIGINT, the shell convention) — deliberately outside the graceful
+0/1/2/3 taxonomy, so it is not an `ExitCode` variant. Config precedence: built-in defaults
 < `proef.toml` base tables < active `[env.<name>]` (selected by `--env`/`PROEF_ENV`)
 < flags; suite variables `${url:key}`/`${vars:key}` resolve from `[url]`/`[vars]`
 deep-merged with the active env (ADR-0012). Secrets additionally resolve

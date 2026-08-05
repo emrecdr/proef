@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use proef_fixture::{API_TOKEN, Fixture};
 
 /// The minimal `proef.toml` the inline-macro fixture tests need: just `base`,
@@ -713,6 +714,110 @@ fn teardown_failure_is_a_distinct_cleanup_fault() {
     );
 }
 
+/// ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
+/// directory would run every feature under it as the phase *and* leave them
+/// in the pool (`exclude_phase_features` matches a single file path), running
+/// each scenario twice — reject it loudly instead.
+///
+/// This exercises real `test` execution, not `--dry-run`: `--dry-run` routes
+/// to `commands::dry_run`, which validates only the suite path and never
+/// looks at `[run] setup`/`teardown` at all — `run_phase` (where the guard
+/// lives) is only reachable from a real run. The guard fires before
+/// `run_phase` calls `front::run` or dispatches any batch, so nothing here
+/// ever hits the network — no fixture server needed.
+#[test]
+fn directory_valued_setup_is_rejected_not_double_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    // A suite with one ordinary feature.
+    std::fs::create_dir_all(root.join("suite")).unwrap();
+    std::fs::write(
+        root.join("suite/main.feature"),
+        "Feature: M\n  Scenario: S\n    When I noop\n",
+    )
+    .unwrap();
+    // A DIRECTORY of setup features (the misconfiguration).
+    std::fs::create_dir_all(root.join("setup")).unwrap();
+    std::fs::write(
+        root.join("setup/a.feature"),
+        "Feature: A\n  Scenario: SA\n    When I noop\n",
+    )
+    .unwrap();
+    // Minimal pack so `I noop` binds (mirror execute.rs's existing fixture packs).
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(
+        root.join("suite/packs/p.yaml"),
+        "macros:\n  noop:\n    match: \"I noop\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"suite\"\nsetup = \"setup\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(root)
+        .env("NO_COLOR", "1")
+        .args(["test"])
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(
+            "[run] setup must be a feature file, not a directory",
+        ));
+}
+
+/// Companion to `directory_valued_setup_is_rejected_not_double_run`: a
+/// single-FILE setup must still run once and be excluded from the pool — the
+/// guard fires only for directories, not the good path. Real execution
+/// (exit 0 proves the request actually went through), mirroring
+/// `setup_shares_globals_teardown_runs_and_both_are_excluded` (the setup file
+/// lives inside `suite/`, like that test — pack discovery walks down from a
+/// phase file's parent directory, so a phase file needs to share a subtree
+/// with its pack).
+#[test]
+fn single_file_setup_still_runs_once() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(0);
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    assert_eq!(
+        events
+            .matches(r#""event":"scenario_started","scenario":"provision""#)
+            .count(),
+        1,
+        "setup must run exactly once, and not also in the pool: {events}"
+    );
+    assert!(events.contains(r#""scenario":"passes""#), "{events}");
+}
+
 /// US-4: `saveAs: global` persists across scenarios and lands in
 /// `.proef-state.json` (atomic World persistence).
 #[test]
@@ -1154,4 +1259,186 @@ fn secret_valued_captures_never_promote_to_global_state() {
             "secret-valued capture persisted: {text}"
         );
     }
+}
+
+// `proef diff --fail-on-regression` must not pass on a truncated or
+// cancelled new run. The synthetic run dirs below skip real execution and
+// write `events.jsonl` directly by serializing `Event`s (the JSONL stream IS
+// the record, ADR-0008) — mirroring record.rs's own test helpers.
+
+/// A valid uuid-v7-shaped dir name (`fsutil::is_run_id` parses via
+/// `uuid::Uuid::try_parse`) so `all_runs` picks these up under the default
+/// `diff` resolution (no base/new given → previous vs latest).
+const DIFF_BASE_RUN_ID: &str = "00000000-0000-0000-0000-000000000001";
+const DIFF_NEW_RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+
+/// Write `events` as one JSON object per line into `<runs_root>/<id>/events.jsonl`.
+fn write_run(runs_root: &Path, id: &str, events: &[proef_core::event::Event]) {
+    let dir = runs_root.join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = events
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join("events.jsonl"), body).unwrap();
+}
+
+fn diff_run_started(run_id: &str) -> proef_core::event::Event {
+    proef_core::event::Event::RunStarted {
+        schema: proef_core::event::EVENT_SCHEMA_VERSION,
+        run_id: std::sync::Arc::from(run_id),
+    }
+}
+
+fn diff_step_finished() -> proef_core::event::Event {
+    use proef_core::step::{Status, StepRef};
+    proef_core::event::Event::StepFinished {
+        scenario: std::sync::Arc::from("health"),
+        engine: std::sync::Arc::from("hurl"),
+        step: StepRef {
+            file: std::sync::Arc::from("case.feature"),
+            line: 1,
+            text: std::sync::Arc::from("health is checked"),
+        },
+        status: Status::Passed,
+        attempts: 1,
+        duration_ms: 10,
+        captures: Vec::new(),
+        detail: None,
+        attempt_details: Vec::new(),
+    }
+}
+
+fn diff_scenario_finished() -> proef_core::event::Event {
+    proef_core::event::Event::ScenarioFinished {
+        scenario: std::sync::Arc::from("health"),
+        file: std::sync::Arc::from("case.feature"),
+        status: proef_core::step::Status::Passed,
+        timestamp_ms: None,
+        worker: None,
+    }
+}
+
+fn diff_run_finished(cancelled: bool) -> proef_core::event::Event {
+    proef_core::event::Event::RunFinished {
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        cancelled,
+    }
+}
+
+/// A complete run: one passing scenario, tail `RunFinished { cancelled: false }`.
+fn complete_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+        diff_run_finished(false),
+    ]
+}
+
+/// A truncated/died run: same scenario, but no tail `RunFinished` at all.
+fn incomplete_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+    ]
+}
+
+/// A cancelled run: tail `RunFinished { cancelled: true }`.
+fn cancelled_pass_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),
+        diff_scenario_finished(),
+        diff_run_finished(true),
+    ]
+}
+
+/// ADR-0008: a new run with no tail `RunFinished` (truncated/died) cannot
+/// certify "no regressions" — `--fail-on-regression` must fail it even
+/// though the one scenario present didn't itself regress.
+#[test]
+fn fail_on_regression_fails_when_new_run_is_incomplete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &incomplete_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff", "--fail-on-regression"])
+        .assert()
+        .code(1)
+        .stderr(
+            predicates::str::contains("INCOMPLETE").or(predicates::str::contains("cannot certify")),
+        );
+}
+
+/// A cancelled new run is likewise not gate-clean, with wording that
+/// distinguishes it from a plain incomplete/truncated run.
+#[test]
+fn fail_on_regression_fails_when_new_run_was_cancelled() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &cancelled_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff", "--fail-on-regression"])
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("cancelled"));
+}
+
+/// Without `--fail-on-regression`, diff stays informational (exit 0) but still
+/// banners an incomplete record so a human is never misled by a partial run.
+#[test]
+fn plain_diff_reports_incomplete_but_exits_zero() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    write_run(
+        &runs,
+        DIFF_BASE_RUN_ID,
+        &complete_pass_events(DIFF_BASE_RUN_ID),
+    );
+    write_run(
+        &runs,
+        DIFF_NEW_RUN_ID,
+        &incomplete_pass_events(DIFF_NEW_RUN_ID),
+    );
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .args(["diff"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.to_lowercase().contains("incomplete"),
+        "expected an incomplete-run banner: {stdout}"
+    );
 }

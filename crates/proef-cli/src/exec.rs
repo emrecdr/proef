@@ -177,7 +177,7 @@ pub fn execute(
         let _ = ctrlc::set_handler(move || {
             if once.swap(true, Ordering::SeqCst) {
                 eprintln!("\nsecond interrupt — hard exit");
-                std::process::exit(130);
+                std::process::exit(crate::INTERRUPT_EXIT_CODE);
             }
             eprintln!("\ninterrupt — cancelling after current batches (Ctrl-C again to force)");
             handler_token.cancel();
@@ -530,6 +530,18 @@ fn run_phase(
     cancel: &CancellationToken,
     artifacts_dir: &Path,
 ) -> Result<runner::RunSummary, ExitCode> {
+    // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
+    // directory would run every feature under it as the phase AND leave them
+    // in the pool (exclude_phase_features matches a single file path), running
+    // each scenario twice. Reject it loudly instead of silently double-running.
+    if path.is_dir() {
+        eprintln!(
+            "error: [run] {label} must be a feature file, not a directory ({})",
+            path.display()
+        );
+        return Err(ExitCode::UserError);
+    }
+
     let front = front::run(
         path,
         ResolveMode::DryRun,

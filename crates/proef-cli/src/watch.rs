@@ -58,7 +58,7 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
         let _ = ctrlc::set_handler(move || {
             if pressed.swap(true, Ordering::SeqCst) {
                 eprintln!("\nsecond interrupt — hard exit");
-                std::process::exit(130);
+                std::process::exit(crate::INTERRUPT_EXIT_CODE);
             }
             eprintln!(
                 "\n[watch] interrupt — cancelling the current run, leaving watch (Ctrl-C again to force)"
