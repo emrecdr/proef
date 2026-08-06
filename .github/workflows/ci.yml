@@ -46,7 +46,10 @@ jobs:
       - name: Install gate tools
         uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
         with:
-          tool: cargo-nextest,cargo-deny,cargo-machete,zizmor
+          # zizmor is pinned: it gates the build, and an unpinned analyser
+          # turns "latest publishes a new audit" into a red gate on an
+          # unchanged tree. Bump deliberately, like any other gate input.
+          tool: cargo-nextest,cargo-deny,cargo-machete,zizmor@1.29.0
 
       - name: rustfmt
         run: cargo fmt --all --check
