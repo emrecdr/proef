@@ -116,6 +116,33 @@ a reader can recognise it, rather than silently shipping a subtly wrong number.
 - LSP rooting (branch 4).
 - All Tier 2/3 findings.
 
+## Adjacent observations (not scoped here)
+
+A quality pass over the preceding branch surfaced two structural points that
+belong with this subsystem rather than with the correctness fixes above.
+Recorded so they are not rediscovered.
+
+**The incompleteness banner is spliced into rendered HTML.**
+`report.rs`'s `banner_incomplete` inserts the notice with
+`html.replacen("<h1>", …, 1)`, because `render_html` has no banner parameter
+and the preceding branch deliberately left `proef-core` untouched. The renderer
+already knows the fact — it computes `run_finished: Option<…>` in its single
+pass, and `None` *is* "incomplete". The renderer emitting its own banner would
+remove both the string-matching and the duplicated wording between `explain`
+and `report`. Two tests pin the banner's presence and absence, so markup drift
+fails the suite rather than silently no-opping; this is a robustness
+improvement, not a live defect.
+
+**Phase membership is inferred, not recorded.** `explain` and the HTML renderer
+each independently approximate "this failure was a setup/teardown fault" from
+the suite-only `failed` count being zero. Neither the event schema nor `Record`
+tags which phase a scenario belongs to. The heuristic is correct whenever a
+phase failure occurs alone and degrades to an unlabelled failure when a suite
+failure co-occurs — a known, accepted limitation. A phase tag computed once in
+`record::parse_record` would let every consumer read it directly instead of a
+third one reinventing the rule. Note this is additive to the record, not to the
+event schema, so ADR-0008's additive-only constraint is not engaged.
+
 ## Breaking-change treatment
 
 D1 and D2 turn silent successes into failures. A pipeline that today exits `0`
