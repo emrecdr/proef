@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-06 (closed-pipe safety)
+
 ### Fixed
 
 - **The CLI no longer panics when stderr is a closed pipe.** Every remaining

@@ -112,3 +112,19 @@ before `proef`, which depends on it non-optionally) and is **not** automated.
 - `v0.3.1` — secret hardening: `secret rm`, `PROEF_KEY` CI override, the
   saveAs-vs-secret promotion guard, doctor store/key health, corrupt-store
   recovery, warned-step reasons on the console
+- `v0.4.0` — external config & environments (`proef.toml` `[url]`/`[vars]`/
+  `[env.<name>]`, `${url:}`/`${vars:}`, `--env`/`PROEF_ENV`, ADR-0012), default
+  suite path, and the competitive-review breadth pass — breaking: the pack root
+  key `templates:` became `macros:` with no alias (ADR-0004 amendment)
+- `v0.5.0` — the `proef-lsp` language server: diagnostics, completion,
+  go-to-definition and references over the sans-IO core (ADR-0017)
+- `v0.5.1` — LSP correctness: process-leak, malformed-request crash,
+  broken-pack degradation, root-at-suite, overlay keying; `use:`/`match:`
+  go-to-definition
+- `v0.5.2` — CLI correctness: diff step-collision, truncated-run gate,
+  setup double-run, the first EPIPE guard, overflow hardening, bare-filename
+  path resolution, exit-130 documentation
+- `v0.5.3` — closed-pipe safety: every remaining raw `eprintln!` in
+  `proef-cli` routed through the EPIPE-safe guard (with a source-scanning
+  drift test), and `proef-lsp`'s panic-recovery notice no longer kills the
+  server it just rescued
