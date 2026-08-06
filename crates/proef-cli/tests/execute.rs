@@ -1736,3 +1736,56 @@ fn setup_failure_still_closes_the_record_with_one_pair() {
     assert_eq!(started, 1, "expected exactly one run_started:\n{record}");
     assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
 }
+
+/// A record with no `run_finished` is a truncated run — OOM-kill, CI timeout,
+/// crash. `explain` and `report` are the post-mortem tools, so they are exactly
+/// the ones that must say so instead of rendering it as complete.
+#[test]
+fn explain_and_report_flag_a_truncated_record() {
+    let cwd = tempfile::tempdir().unwrap();
+    let run = cwd
+        .path()
+        .join(".proef-runs/0198f3c1-0000-7000-8000-000000000001");
+    std::fs::create_dir_all(&run).unwrap();
+    // Starts, runs one scenario to completion, then stops: no run_finished.
+    std::fs::write(
+        run.join("events.jsonl"),
+        concat!(
+            r#"{"schema":1,"event":"run_started","run_id":"0198f3c1-0000-7000-8000-000000000001","scenarios":2}"#, "\n",
+            r#"{"schema":1,"event":"scenario_started","scenario":"first","file":"suite/a.feature"}"#, "\n",
+            r#"{"schema":1,"event":"scenario_finished","scenario":"first","file":"suite/a.feature","status":"passed","line":3}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let mut explain = assert_cmd::Command::cargo_bin("proef").unwrap();
+    let assert = explain
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("incomplete"),
+        "explain must flag incompleteness: {out}"
+    );
+    // The record holds one passed scenario; reporting zeros is the bug.
+    assert!(
+        !out.contains("0 passed · 0 failed · 0 skipped"),
+        "totals must come from the scenarios present, not the missing tail: {out}"
+    );
+
+    let out_html = cwd.path().join("report.html");
+    let mut report = assert_cmd::Command::cargo_bin("proef").unwrap();
+    report
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    assert!(
+        html.contains("incomplete"),
+        "report must banner incompleteness"
+    );
+}
