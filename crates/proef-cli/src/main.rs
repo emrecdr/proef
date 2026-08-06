@@ -16,6 +16,7 @@ mod explain;
 mod fmt;
 mod front;
 mod fsutil;
+mod init;
 mod lsp;
 mod record;
 mod registry;
@@ -163,6 +164,11 @@ enum Command {
         /// Write the schema next to these pack files and add editor modelines
         #[arg(long = "add-to", num_args = 1..)]
         add_to: Vec<PathBuf>,
+    },
+    /// Scaffold a minimal working suite in a new or existing directory
+    Init {
+        /// Target directory (default: the current directory)
+        dir: Option<PathBuf>,
     },
     /// Check native libraries and environment prerequisites for all registered engines
     Doctor,
@@ -374,6 +380,7 @@ fn main() -> std::process::ExitCode {
             }
         },
         Command::Schema { add_to } => commands::schema(&add_to),
+        Command::Init { dir } => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
         Command::Doctor => commands::doctor(&registry::engines()),
         Command::Secret { action } => {
             let result = match action {
