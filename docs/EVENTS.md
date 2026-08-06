@@ -48,8 +48,8 @@ verdict**: scenario counts for the primary suite only (ADR-0014). `[run]
 setup`/`teardown` scenarios still appear as their own `scenario_started`/
 `scenario_finished` events earlier in the stream, but are excluded from these
 totals, so they agree with the console `summary:` line, `proef explain`,
-`--output json`, JUnit, TAP, the SLA gate, and the exit code · `cancelled`
-(bool, **only present when true**).
+`proef report`'s HTML headline, `--output json`, JUnit, TAP, the SLA gate,
+and the exit code · `cancelled` (bool, **only present when true**).
 
 ## Example stream
 

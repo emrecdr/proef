@@ -718,34 +718,43 @@ fn bare_filename_setup_at_project_root_resolves_packs() {
 /// teardown (1 failed)) while JUnit/`--output json`/TAP — which read the
 /// suite's own `RunSummary` directly — said "1 passed, 0 failed". Suite-only
 /// totals make the console line agree with those surfaces again.
-#[test]
-fn teardown_failure_is_a_distinct_cleanup_fault() {
-    let fixture = Fixture::start().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+/// A green suite (one passing scenario) with a `[run] teardown` that fails —
+/// the shape that makes a phase-only failure visible: the suite's own verdict
+/// is all-pass, so `RunFinished`'s suite-only totals (ADR-0014) legitimately
+/// read `0 failed` while the teardown scenario itself still shows up Failed
+/// in the record.
+fn write_teardown_only_suite(cwd: &Path) {
+    std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
     std::fs::write(
-        cwd.path().join("proef.toml"),
+        cwd.join("proef.toml"),
         "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/teardown.feature"),
+        cwd.join("suite/teardown.feature"),
         "Feature: T\n  Scenario: broken cleanup\n    When teardown probes health\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/case.feature"),
+        cwd.join("suite/case.feature"),
         "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
+        cwd.join("suite/packs/p.yaml"),
         "macros:\n  teardownProbe:\n    match: teardown probes health\n    steps:\n      \
          - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
          suiteProbe:\n    match: the suite probes health\n    steps:\n      \
          - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
     )
     .unwrap();
+}
+
+#[test]
+fn teardown_failure_is_a_distinct_cleanup_fault() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
 
     let assert = proef_in(cwd.path(), &fixture)
         .args(["test", "suite"])
@@ -767,6 +776,137 @@ fn teardown_failure_is_a_distinct_cleanup_fault() {
     assert!(
         events.contains(r#""event":"run_finished","passed":1,"failed":0,"skipped":0"#),
         "run_finished must be the suite's totals only, not folding in teardown's failure: {events}"
+    );
+}
+
+/// `explain` must still name and detail a phase-only failure even though the
+/// suite-only headline (ADR-0014) legitimately reads `0 failed` — a green
+/// suite with a broken teardown is exactly the case a post-mortem tool exists
+/// to surface, and the process exits non-zero for it (exit 3).
+#[test]
+fn explain_details_a_green_suite_with_a_failing_teardown() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("1 passed · 0 failed · 0 skipped"),
+        "headline stays the suite's own (all-pass) verdict: {out}"
+    );
+    assert!(
+        out.contains("broken cleanup"),
+        "the failing teardown scenario must be named even though the \
+         headline reads 0 failed: {out}"
+    );
+    assert!(
+        out.contains("artifacts:"),
+        "the failure detail block (artifact/log path) must still print: {out}"
+    );
+}
+
+/// The setup-fails counterpart: the main suite never runs at all (ADR-0014 —
+/// a broken setup aborts before the pool starts), so the headline is
+/// `0 passed · 0 failed · 0 skipped`, yet `explain` must still name the
+/// failing setup scenario instead of printing nothing (exit 2).
+#[test]
+fn explain_details_a_failing_setup() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("0 passed · 0 failed · 0 skipped"),
+        "headline is empty — the suite never ran: {out}"
+    );
+    assert!(
+        out.contains("broken setup"),
+        "the failing setup scenario must be named even though the headline \
+         reads 0 failed: {out}"
+    );
+    assert!(
+        out.contains("artifacts:"),
+        "the failure detail block (artifact/log path) must still print: {out}"
+    );
+}
+
+/// `proef report`'s HTML headline must agree with `explain` and the record's
+/// own `run_finished` totals — a green suite with a failing teardown must not
+/// read as `1 passed · 1 failed` in the HTML while every other surface says
+/// `1 passed · 0 failed`.
+#[test]
+fn report_headline_matches_explain_on_a_failing_teardown() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3);
+
+    let out_html = cwd.path().join("report.html");
+    proef_in(cwd.path(), &fixture)
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    assert!(
+        html.contains(r#"<span class="count pass">1 passed</span>"#),
+        "HTML headline must report the suite's own passed count: {html}"
+    );
+    assert!(
+        html.contains(r#"<span class="count fail">0 failed</span>"#),
+        "HTML headline must agree with explain/run_finished (0 failed), not \
+         count the failing teardown block into the headline: {html}"
+    );
+    // The teardown scenario's own block must still render — dropping it
+    // would lose real information — just not be folded into the headline.
+    assert!(
+        html.contains("broken cleanup"),
+        "the failing teardown scenario's block must still render: {html}"
     );
 }
 

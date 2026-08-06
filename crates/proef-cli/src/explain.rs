@@ -89,14 +89,34 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         "{passed} passed · {failed} failed · {skipped} skipped · {steps} step(s), {attempts} attempt(s)"
     );
 
-    if failed > 0 {
+    // Gate on whether the record holds ANY failed scenario, not on the
+    // suite-only `failed` above: `[run] setup`/`teardown` scenarios can fail
+    // while the suite itself is untouched, so `failed == 0` does not mean
+    // nothing broke — it means nothing in the *suite* broke (ADR-0014). A
+    // post-mortem tool that goes silent on a phase failure is the exact bug
+    // this branch exists to eliminate.
+    if rec
+        .scenarios
+        .values()
+        .any(|run| run.status == Status::Failed)
+    {
         // Per-step failure detail (file:line, message) isn't carried by the
         // record's `StepRun` (attempts/duration only), so it comes from the
         // same raw events already in hand.
         let failures = failure_detail(&events);
+        // Whenever the headline itself reads `0 failed`, every failure listed
+        // below is necessarily one the headline excludes on purpose — a
+        // setup/teardown fault, never a suite failure the headline forgot
+        // (a counted suite failure would have made `failed` nonzero). Label
+        // it so the two lines read as consistent, not contradictory.
+        let label = if failed == 0 {
+            "failed (setup/teardown — excluded from the totals above)"
+        } else {
+            "failed"
+        };
         for (key, run) in &rec.scenarios {
             if run.status == Status::Failed {
-                crate::render::outln!("\nfailed: {}", key.1);
+                crate::render::outln!("\n{label}: {}", key.1);
                 for line in failures.get(key).into_iter().flatten() {
                     crate::render::outln!("{line}");
                 }
