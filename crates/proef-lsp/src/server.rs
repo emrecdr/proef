@@ -4,6 +4,7 @@
 //! a burst of keystrokes into one recompute that republishes diagnostics.
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -250,7 +251,15 @@ fn current_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
     {
         return Some(analysis);
     }
-    eprintln!("proef-lsp: suite analysis panicked; keeping previous state");
+    // The recovery notice must not become the failure it reports: the
+    // `eprintln` macro panics when its write fails, and a closed stderr is EPIPE
+    // (Rust ignores SIGPIPE) — which would take down the very server this
+    // `catch_unwind` exists to keep alive. Swallow the write error; stderr is
+    // the only channel here, so there is nowhere left to report it.
+    let _ = writeln!(
+        std::io::stderr(),
+        "proef-lsp: suite analysis panicked; keeping previous state"
+    );
     None
 }
 

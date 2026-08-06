@@ -15,6 +15,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   0/1/2/3 taxonomy (ADR-0009). The execution failure summary, which writes
   several lines per failing scenario, was the largest remaining exposure. A
   source-scanning test now keeps raw `eprintln!` out of the crate.
+- **The language server no longer dies while recovering from a panic.**
+  `proef-lsp` reports a caught analysis panic on stderr; that report used a raw
+  `eprintln!`, which panics when its write fails — so a closed stderr (EPIPE)
+  took down the very server the surrounding `catch_unwind` exists to keep
+  alive. The write is now explicitly unchecked. Ships without a test: reaching
+  the line needs a real analysis panic *and* a closed stderr, and the panic is
+  not injectable without a test-only hook in shipping code; the mechanism
+  itself is already covered by the CLI's closed-pipe tests.
 
 ### Changed
 
