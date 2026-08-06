@@ -19,6 +19,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `feature::ragged_examples` | An Examples row's cell count differs from the header | |
 | `feature::bad_examples_header` | Duplicate or empty Examples column name | |
 | `feature::unknown_placeholder` | An outline step uses `<name>` not present in the header | ✓ |
+| `feature::empty_scenario` | A scenario has no steps (background included) | ✓ |
 
 ## `proef::pack::*` — macro-pack loading and validation
 
@@ -105,6 +106,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-24 of the 59 codes carry a seeded corpus case today; the corpus guard asserts
+25 of the 60 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

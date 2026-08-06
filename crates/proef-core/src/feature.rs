@@ -356,7 +356,7 @@ fn concrete_scenario(
     };
 
     let name = check(&scenario.name, scenario.span, "the scenario name");
-    let steps = steps
+    let steps: Vec<StepDefn> = steps
         .iter()
         .map(|step| {
             let text = check(&step.value, step.span, "a step");
@@ -383,6 +383,24 @@ fn concrete_scenario(
             }
         })
         .collect();
+
+    // gherkin makes steps optional, so a header with a commented-out or
+    // never-written body parses clean, binds to nothing, lowers to zero
+    // batches, and folds to Passed — silently green forever. Catch it here,
+    // where every other structural feature-file defect is caught.
+    if steps.is_empty() {
+        diags.push(
+            Diag::error(
+                "proef::feature::empty_scenario",
+                format!("scenario `{name}` has no steps"),
+            )
+            .with_source(path.to_owned(), Arc::clone(source))
+            .with_span(clamp(scenario.span, source))
+            .with_help(
+                "a scenario must have at least one step — a commented-out body is the usual cause",
+            ),
+        );
+    }
 
     ScenarioDef {
         name,
@@ -521,6 +539,30 @@ mod tests {
         let steps = &feature.scenarios[0].steps;
         assert_eq!(steps.len(), 4, "And/But bind by text like any step");
         assert_eq!(steps[1].text, "I do another");
+    }
+
+    #[test]
+    fn scenario_with_no_steps_is_an_error() {
+        // gherkin makes steps optional, so a header with a commented-out or
+        // never-written body must not parse clean — it would bind to
+        // nothing, lower to zero batches, and fold to Passed.
+        let text = "Feature: F\n  Scenario: todo later\n";
+        let errs = parse("f.feature", text).unwrap_err();
+        assert_eq!(errs[0].code, "proef::feature::empty_scenario");
+        assert!(
+            errs[0].message.contains("todo later"),
+            "{}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn scenario_with_only_background_steps_is_not_empty() {
+        // A Background contributes real steps, so a scenario with no steps of
+        // its own still runs something and must not be flagged.
+        let text = "Feature: F\n  Background:\n    Given the api is available\n\n  Scenario: S\n";
+        let feature = parse("f.feature", text).unwrap();
+        assert_eq!(feature.scenarios[0].steps.len(), 1);
     }
 
     #[test]
