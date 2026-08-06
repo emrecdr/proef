@@ -1546,3 +1546,136 @@ fn failure_summary_does_not_panic_on_a_closed_stderr_pipe() {
         "expected the contracted test-failure exit, not a panic or an early abort"
     );
 }
+
+/// A suite with `[run] setup` + `[run] teardown`, a PASSING setup, a FAILING
+/// main scenario, and a PASSING teardown — the shape that makes phase-blended
+/// records visible: the last `run_finished` (teardown's, all-passing) would
+/// otherwise win the headline over the suite's own failure.
+fn write_phase_suite(cwd: &Path) {
+    std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\n\
+         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When setup probes health\n",
+    )
+    .unwrap();
+    // The fixture answers /health with 200; asserting 500 fails this scenario
+    // (same technique as `failure_maps_to_feature_line_and_artifact_span`).
+    std::fs::write(
+        cwd.join("suite/case.feature"),
+        "Feature: F\n  Scenario: health asserts the wrong status\n    \
+         When the health endpoint is checked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: cleanup\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n  \
+         mainProbe:\n    match: the health endpoint is checked\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+}
+
+/// The newest run record's `events.jsonl`, as written under `.proef-runs/`.
+fn latest_events_jsonl(cwd: &Path) -> String {
+    std::fs::read_to_string(latest_run_dir(cwd).join("events.jsonl")).unwrap()
+}
+
+/// A run with setup and teardown must still produce ONE record: one
+/// `run_started` line and one `run_finished` line. Three head/tail pairs make
+/// every whole-file consumer read phase-blended results.
+#[test]
+fn phases_produce_a_single_run_started_and_run_finished() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    // Build a suite with a PASSING setup, a FAILING main scenario, and a
+    // PASSING teardown. The failing main is what makes the bug visible: the
+    // last `run_finished` (teardown's) would otherwise win the headline.
+    write_phase_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+
+    let record = latest_events_jsonl(cwd.path());
+    let started = record
+        .lines()
+        .filter(|l| l.contains("\"run_started\""))
+        .count();
+    let finished = record
+        .lines()
+        .filter(|l| l.contains("\"run_finished\""))
+        .count();
+    assert_eq!(started, 1, "expected exactly one run_started:\n{record}");
+    assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
+}
+
+/// `explain` must report the run's own verdict, not the last phase's. Before
+/// the fix this printed "1 passed · 0 failed" directly above a printed failure.
+#[test]
+fn explain_reports_the_failure_not_the_teardown_totals() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_phase_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("1 failed"),
+        "headline must show the failure: {out}"
+    );
+    assert!(
+        !out.contains("1 passed · 0 failed"),
+        "headline must not be teardown's totals: {out}"
+    );
+}
+
+/// The console run header keys off `RunStarted`, so suppressing phase head/tail
+/// must also collapse the three headers a phased run used to print.
+#[test]
+fn console_prints_the_run_header_once_per_run() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_phase_suite(cwd.path());
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    // `ConsoleReporter::on_event`'s `Event::RunStarted` arm writes `"proef run
+    // {run_id}"` to `self.out` (report.rs:217-218) — the actual per-phase
+    // header the suppressor collapses. (`"running "` — the `status_line` built
+    // once per `execute()` call regardless of phase count, exec.rs:253 — was
+    // corrected to this: it is printed identically before and after the fix,
+    // so it never discriminated the regression.) `self.out` is stdout here
+    // (no `--output json`/`tap`, so `machine_stdout` is false and `console_out`
+    // is `std::io::stdout()`, exec.rs:154-158) — the same stream `out` reads.
+    assert_eq!(
+        out.matches("proef run ").count(),
+        1,
+        "run header should appear once, not once per phase: {out}"
+    );
+}

@@ -170,6 +170,17 @@ pub fn execute(
     // the core stays sans-IO. `stamp` runs on the emitting worker thread.
     let sink = stamp_scenario_timing(proef_core::report::sink(reporters, redactions.clone()));
 
+    // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
+    // which brackets its own work with `RunStarted`/`RunFinished`. A record
+    // must carry exactly one pair overall (ADR-0008), so the phases run
+    // against a wrapper that drops that pair, and the CLI emits the single
+    // pair itself, around all three (open here, closed after teardown below).
+    let phase_sink = suppress_run_head_tail(sink.clone());
+    sink.emit(&Event::RunStarted {
+        schema: proef_core::event::EVENT_SCHEMA_VERSION,
+        run_id: Arc::clone(&front.run_id),
+    });
+
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
     let cancel = external_cancel.unwrap_or_else(|| {
@@ -206,6 +217,13 @@ pub fn execute(
     let setup_path = config.setup().map(PathBuf::from);
     let teardown_path = config.teardown().map(PathBuf::from);
 
+    // Totals across every phase — accumulated (not assigned) as each phase's
+    // own `RunSummary` completes, so the single `RunFinished` closed below
+    // reports the whole run, never just the last phase's counts.
+    let mut total_passed = 0usize;
+    let mut total_failed = 0usize;
+    let mut total_skipped = 0usize;
+
     // Setup runs first and merges its globals *before* the pool snapshots the
     // store. A setup failure aborts here, never masked — a broken fixture is a
     // user/system fault, not a test failure that would gate on exit 1.
@@ -218,12 +236,15 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &sink,
+            &phase_sink,
             &cancel,
             &artifacts_dir,
         ) {
             Err(code) => return code,
             Ok(summary) => {
+                total_passed += summary.passed;
+                total_failed += summary.failed;
+                total_skipped += summary.skipped;
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
@@ -268,7 +289,10 @@ pub fn execute(
         secrets,
         http: http_defaults,
     };
-    let summary = runner::run(specs, &engines, &store, &run_config, &sink, &cancel);
+    let summary = runner::run(specs, &engines, &store, &run_config, &phase_sink, &cancel);
+    total_passed += summary.passed;
+    total_failed += summary.failed;
+    total_skipped += summary.skipped;
 
     // Suite-level teardown: runs after the pool (setup succeeded, or there was
     // none). Its failure is a distinct non-zero signal (exit 3), never a
@@ -283,12 +307,15 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &sink,
+            &phase_sink,
             &cancel,
             &artifacts_dir,
         ) {
             Err(_) => teardown_exit = ExitCode::SystemError,
             Ok(summary) => {
+                total_passed += summary.passed;
+                total_failed += summary.failed;
+                total_skipped += summary.skipped;
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
                     crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
@@ -298,6 +325,17 @@ pub fn execute(
             }
         }
     }
+
+    // Close the record: one `RunFinished` for the whole run, totals aggregated
+    // across every phase — never assigned from just the last one (the bug this
+    // task fixes: an assign-not-accumulate reader like `explain` would
+    // otherwise report the last phase's totals above a failure it just listed).
+    sink.emit(&Event::RunFinished {
+        passed: total_passed,
+        failed: total_failed,
+        skipped: total_skipped,
+        cancelled: cancel.is_cancelled(),
+    });
 
     // Persist the World (atomic temp+rename, 0600 — ADR-0005).
     if let Ok(guard) = store.lock()
@@ -513,6 +551,17 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
             }),
             other => inner.emit(other),
         }
+    })
+}
+
+/// A sink that drops `RunStarted`/`RunFinished` and passes everything else
+/// through. Each phase calls `runner::run`, which brackets its own work with
+/// that pair; a record must carry exactly one pair overall (ADR-0008), so the
+/// phases run against this wrapper and the caller emits the single pair.
+fn suppress_run_head_tail(inner: EventSink) -> EventSink {
+    EventSink::new(move |event| match event {
+        Event::RunStarted { .. } | Event::RunFinished { .. } => {}
+        other => inner.emit(other),
     })
 }
 
