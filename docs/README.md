@@ -29,6 +29,7 @@ repo-root `CLAUDE.md` carry the live status.
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
 | — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: architecture-validated candidate improvements (proposed, not committed) | maintainers |
+| — | [FIRST-RUN-UX-REVIEW.md](FIRST-RUN-UX-REVIEW.md) | External first-use review of 0.5.3 with maintainer validation notes: what the first thirty minutes cost, and which findings were acted on | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
 | — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |

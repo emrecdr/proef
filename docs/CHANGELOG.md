@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`proef init` scaffolds a working suite.** It writes the files
+  `GETTING-STARTED.md` teaches — `proef.toml`, one `.feature`, one matching
+  pack — installs the pack JSON Schema for editor completion, and prints the
+  next command. Nothing is ever overwritten, so a second run is a no-op and no
+  `--force` flag exists to destroy authored work. A test asserts the scaffold
+  passes `--dry-run` unchanged.
+- The README now shows a parameterized macro and states the load-bearing
+  non-goals, including the supported path for teams that already have a hurl
+  corpus.
+
+### Changed
+
+- A passing `--dry-run` now names the next command. Every failure path already
+  named a remedy; the success path stopped talking at the moment a new user
+  decides whether to continue.
+
+### Fixed
+
+- `resolve::missing_config_var` now suggests the closest key defined in the
+  same namespace, matching `resolve::unknown_variable` and
+  `resolve::fake_unknown`. Candidates are namespace-scoped, so a `${url:…}`
+  typo can never suggest a `[vars]` key. The code also gains the seeded corpus
+  case it was missing.
+- `proef init` no longer rewrites a pack it declined to create. Installing the
+  editor modeline ran unconditionally, so a hand-authored `suite/packs/api.yaml`
+  reported as "already exists" was still modified; the schema install is now
+  gated on the file having been created, and an existing pack gets a hint
+  naming `proef schema --add-to` instead.
+
 ### Documentation
 
 - The stdout/stderr macro rule is now written down where contributors look:

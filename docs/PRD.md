@@ -97,6 +97,10 @@ release and replays the suite; pins move only after it is green (runbook in
 IMPLEMENTATION-PLAN §7).
 US-12 (P1, M5) IDE/nextest integration. *AC:* the libtest-mimic harness lists one test
 per scenario and `cargo nextest run` executes and reports them.
+US-13 (P1) I can start from something that works. *AC:* `proef init` writes a
+minimal suite (`proef.toml`, one `.feature`, one matching pack) that passes
+`--dry-run` unchanged, installs the pack JSON Schema for editor completion, and
+never overwrites an existing file.
 
 ## 6. Functional requirements (condensed; TECH-SPEC is normative)
 
