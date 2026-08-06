@@ -114,7 +114,10 @@ never import each other. The structural acceptance test: *adding an engine leave
   business). **`notify` pinned 8.2.0** (9.x is a prerelease). **Banned:** reqwest
   (superseded by the embedded engine), `async-trait`/`maybe-async` (ADR-0006),
   tokio runtime (only `tokio-util` with `default-features = false` for
-  `CancellationToken`).
+  `CancellationToken`). **Also banned — raw print macros in `proef-cli`:**
+  `println!`/`eprintln!` panic when the write fails, so a closed pipe
+  (`proef … | head`) aborts with 101, outside the typed exit contract; use
+  `crate::render::outln!` / `errln!`, which a source-scanning test enforces.
 - **Core purity (sans-IO lite):** `proef-core` does no IO, reads no clocks/env, and
   generates no randomness — `run_id`, timestamps, and env snapshots are injected values.
   This is what makes snapshots/properties deterministic; do not break it for

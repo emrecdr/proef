@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Documentation
+
+- The stdout/stderr macro rule is now written down where contributors look:
+  `docs/CONTRIBUTING.md` ("Rules that are easy to trip over") and `CLAUDE.md`.
+  0.5.3 began enforcing it with a source-scanning test, so a raw `println!` or
+  `eprintln!` in `proef-cli` failed the suite with nothing explaining the rule
+  or naming `render::outln!`/`errln!` as the sanctioned spellings.
+
 ## [0.5.3] - 2026-08-06 (closed-pipe safety)
 
 ### Fixed

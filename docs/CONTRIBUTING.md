@@ -56,6 +56,11 @@ runs nightly.
   by design).
 - **YAML is `serde_norway`**, datetime is `jiff`, and reqwest/async-trait/
   a tokio runtime are banned (see `CLAUDE.md` for the full list and why).
+- **No raw print macros in `proef-cli`.** Use `crate::render::outln!` for
+  stdout and `crate::render::errln!` for stderr. `println!`/`eprintln!` panic
+  when the write fails, and a closed pipe (`proef … | head`) surfaces as EPIPE
+  rather than a signal — so a raw macro aborts with 101, outside the typed
+  0/1/2/3 exit contract (ADR-0009). A source-scanning test enforces this.
 
 ## Testing
 
