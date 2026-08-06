@@ -173,13 +173,11 @@ pub fn execute(
     // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
     // which brackets its own work with `RunStarted`/`RunFinished`. A record
     // must carry exactly one pair overall (ADR-0008), so the phases run
-    // against a wrapper that drops that pair, and the CLI emits the single
-    // pair itself, around all three (open here, closed after teardown below).
+    // against a wrapper that drops that pair, and a `RunRecord` guard owns
+    // the single pair for the whole run — opened below and closed by an
+    // explicit `drop` after teardown, with `Drop` as the backstop for every
+    // early return in between (see `RunRecord`).
     let phase_sink = suppress_run_head_tail(sink.clone());
-    sink.emit(&Event::RunStarted {
-        schema: proef_core::event::EVENT_SCHEMA_VERSION,
-        run_id: Arc::clone(&front.run_id),
-    });
 
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
@@ -200,6 +198,8 @@ pub fn execute(
         cancel
     });
 
+    let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
+
     // Shared global store (scenario merge-back through the lock, §12).
     let store = match GlobalStore::load(Path::new(".proef-state.json")) {
         Ok(store) => Arc::new(Mutex::new(store)),
@@ -216,13 +216,6 @@ pub fn execute(
     // promotions reach every scenario. The core runner stays tag-agnostic.
     let setup_path = config.setup().map(PathBuf::from);
     let teardown_path = config.teardown().map(PathBuf::from);
-
-    // Totals across every phase — accumulated (not assigned) as each phase's
-    // own `RunSummary` completes, so the single `RunFinished` closed below
-    // reports the whole run, never just the last phase's counts.
-    let mut total_passed = 0usize;
-    let mut total_failed = 0usize;
-    let mut total_skipped = 0usize;
 
     // Setup runs first and merges its globals *before* the pool snapshots the
     // store. A setup failure aborts here, never masked — a broken fixture is a
@@ -242,9 +235,7 @@ pub fn execute(
         ) {
             Err(code) => return code,
             Ok(summary) => {
-                total_passed += summary.passed;
-                total_failed += summary.failed;
-                total_skipped += summary.skipped;
+                record.add(&summary);
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
@@ -290,9 +281,7 @@ pub fn execute(
         http: http_defaults,
     };
     let summary = runner::run(specs, &engines, &store, &run_config, &phase_sink, &cancel);
-    total_passed += summary.passed;
-    total_failed += summary.failed;
-    total_skipped += summary.skipped;
+    record.add(&summary);
 
     // Suite-level teardown: runs after the pool (setup succeeded, or there was
     // none). Its failure is a distinct non-zero signal (exit 3), never a
@@ -313,9 +302,7 @@ pub fn execute(
         ) {
             Err(_) => teardown_exit = ExitCode::SystemError,
             Ok(summary) => {
-                total_passed += summary.passed;
-                total_failed += summary.failed;
-                total_skipped += summary.skipped;
+                record.add(&summary);
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
                     crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
@@ -326,16 +313,14 @@ pub fn execute(
         }
     }
 
-    // Close the record: one `RunFinished` for the whole run, totals aggregated
-    // across every phase — never assigned from just the last one (the bug this
-    // task fixes: an assign-not-accumulate reader like `explain` would
-    // otherwise report the last phase's totals above a failure it just listed).
-    sink.emit(&Event::RunFinished {
-        passed: total_passed,
-        failed: total_failed,
-        skipped: total_skipped,
-        cancelled: cancel.is_cancelled(),
-    });
+    // Close the record here, at the same point every phase has finished and
+    // before the failure details / JUnit / SLA report below are printed —
+    // `ConsoleReporter` keys its `summary:` line off `RunFinished`
+    // (report.rs), so closing later would print that line after the failure
+    // detail instead of before it. Every early return above this point closes
+    // the record too, via `RunRecord::drop`, with whatever totals had
+    // accumulated so far — never zero-but-silently-missing.
+    drop(record);
 
     // Persist the World (atomic temp+rename, 0600 — ADR-0005).
     if let Ok(guard) = store.lock()
@@ -557,12 +542,63 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
 /// A sink that drops `RunStarted`/`RunFinished` and passes everything else
 /// through. Each phase calls `runner::run`, which brackets its own work with
 /// that pair; a record must carry exactly one pair overall (ADR-0008), so the
-/// phases run against this wrapper and the caller emits the single pair.
+/// phases run against this wrapper and `RunRecord` emits the single pair.
 fn suppress_run_head_tail(inner: EventSink) -> EventSink {
     EventSink::new(move |event| match event {
         Event::RunStarted { .. } | Event::RunFinished { .. } => {}
         other => inner.emit(other),
     })
+}
+
+/// Owns the run's single `RunStarted`/`RunFinished` pair (ADR-0008).
+/// `RunRecord::open` emits the head; `Drop` emits the tail — structurally,
+/// not by remembering to emit it at every `return` between the two. Each
+/// phase's `RunSummary` folds into the running totals via `add`, so whichever
+/// path closes the record — the explicit `drop` after teardown, or `Drop`
+/// firing on an early return — reports the whole run, never just the last
+/// phase's counts or an empty tail.
+struct RunRecord<'a> {
+    sink: &'a EventSink,
+    cancel: &'a CancellationToken,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+}
+
+impl<'a> RunRecord<'a> {
+    /// Emit `RunStarted` and open the guard that will emit `RunFinished` when
+    /// it drops.
+    fn open(sink: &'a EventSink, cancel: &'a CancellationToken, run_id: &Arc<str>) -> Self {
+        sink.emit(&Event::RunStarted {
+            schema: proef_core::event::EVENT_SCHEMA_VERSION,
+            run_id: Arc::clone(run_id),
+        });
+        Self {
+            sink,
+            cancel,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+        }
+    }
+
+    /// Fold one phase's outcome counts into the run's running totals.
+    fn add(&mut self, summary: &runner::RunSummary) {
+        self.passed += summary.passed;
+        self.failed += summary.failed;
+        self.skipped += summary.skipped;
+    }
+}
+
+impl Drop for RunRecord<'_> {
+    fn drop(&mut self) {
+        self.sink.emit(&Event::RunFinished {
+            passed: self.passed,
+            failed: self.failed,
+            skipped: self.skipped,
+            cancelled: self.cancel.is_cancelled(),
+        });
+    }
 }
 
 /// Run a suite-level setup/teardown feature once, sequentially, against the

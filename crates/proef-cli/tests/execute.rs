@@ -1650,6 +1650,15 @@ fn explain_reports_the_failure_not_the_teardown_totals() {
         !out.contains("1 passed · 0 failed"),
         "headline must not be teardown's totals: {out}"
     );
+
+    // Pin the aggregation itself, not just the headline text: setup (1
+    // passed) + suite (1 failed) + teardown (1 passed) must be *summed* into
+    // one `run_finished`, not assigned from whichever phase closed last.
+    let record = latest_events_jsonl(cwd.path());
+    assert!(
+        record.contains(r#""event":"run_finished","passed":2,"failed":1,"skipped":0"#),
+        "run_finished must report totals summed across all three phases: {record}"
+    );
 }
 
 /// The console run header keys off `RunStarted`, so suppressing phase head/tail
@@ -1666,16 +1675,64 @@ fn console_prints_the_run_header_once_per_run() {
         .code(1);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     // `ConsoleReporter::on_event`'s `Event::RunStarted` arm writes `"proef run
-    // {run_id}"` to `self.out` (report.rs:217-218) — the actual per-phase
-    // header the suppressor collapses. (`"running "` — the `status_line` built
-    // once per `execute()` call regardless of phase count, exec.rs:253 — was
-    // corrected to this: it is printed identically before and after the fix,
-    // so it never discriminated the regression.) `self.out` is stdout here
-    // (no `--output json`/`tap`, so `machine_stdout` is false and `console_out`
-    // is `std::io::stdout()`, exec.rs:154-158) — the same stream `out` reads.
+    // {run_id}"` to `self.out` (report.rs:217-218) — the per-run header, once
+    // per `RunStarted`. `self.out` is stdout here (no `--output json`/`tap`,
+    // so `machine_stdout` is false and `console_out` is `std::io::stdout()`,
+    // exec.rs:154-158) — the same stream `out` reads.
     assert_eq!(
         out.matches("proef run ").count(),
         1,
         "run header should appear once, not once per phase: {out}"
     );
+}
+
+/// The critical regression this test guards: a failing `[run] setup` used to
+/// `return` between the record's `RunStarted` and `RunFinished`, leaving a
+/// record with a head, setup's scenario events, and no tail — this is the
+/// exact shape `RunRecord`'s `Drop` closes even on that early-return path.
+#[test]
+fn setup_failure_still_closes_the_record_with_one_pair() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2); // user error — same path as setup_failure_aborts_the_run_as_a_user_error
+
+    let record = latest_events_jsonl(cwd.path());
+    let started = record
+        .lines()
+        .filter(|l| l.contains("\"run_started\""))
+        .count();
+    let finished = record
+        .lines()
+        .filter(|l| l.contains("\"run_finished\""))
+        .count();
+    assert_eq!(started, 1, "expected exactly one run_started:\n{record}");
+    assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
 }
