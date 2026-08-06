@@ -429,6 +429,10 @@ mod tests {
                 config_vars: map(&[
                     ("url:base", "https://api.example"),
                     ("vars:apiVersion", "v1"),
+                    // Edit-distance-1 from the `${url:nearvar}` typo used by
+                    // missing_config_var_never_suggests_across_namespaces —
+                    // deliberately placed in the wrong namespace.
+                    ("vars:nearvars", "v2"),
                 ]),
                 world: World::new(store),
             }
@@ -536,6 +540,19 @@ mod tests {
         assert!(
             message.contains("did you mean `base`"),
             "expected a suggestion naming the near key, got: {message}"
+        );
+    }
+
+    #[test]
+    fn missing_config_var_never_suggests_across_namespaces() {
+        // A `vars:` key that is edit-closer than any `url:` key must not be
+        // offered for a `${url:…}` typo — candidates are namespace-scoped.
+        let f = Fixture::new();
+        let err = resolve("${url:nearvar}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            !message.contains("did you mean `nearvars`"),
+            "suggestion crossed namespaces: {message}"
         );
     }
 

@@ -36,6 +36,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   reported as "already exists" was still modified; the schema install is now
   gated on the file having been created, and an existing pack gets a hint
   naming `proef schema --add-to` instead.
+- **Setup and teardown no longer corrupt the run record.** Each phase bracketed
+  its own `run_started`/`run_finished`, so one record held up to three pairs and
+  `proef explain` reported the last phase's totals — printing "1 passed ·
+  0 failed" above a failure it had just listed. The record now carries one pair
+  with totals aggregated across phases, and the console run header prints once
+  per run instead of once per phase.
+- **`report` and `explain` flag a truncated run.** Both rendered an incomplete
+  record as if it were whole; `explain` also derived its headline solely from
+  the missing tail event, reporting all zeros for a record that held completed
+  scenarios. Both now read through the same record reader `diff` uses.
+- **`worker` is the slot a scenario occupied, not a per-scenario counter.** The
+  timeline drew one lane per scenario regardless of `--jobs`.
+- **A scenario with no steps is now an error.** It previously bound to nothing,
+  ran nothing, and passed — so a commented-out scenario body stayed green.
+- **Run rotation only treats hyphenated UUID directories as run records.** The
+  parser also accepted bare 32-hex, `urn:uuid:` and braced spellings, which
+  rotation could then delete when the runs directory points somewhere shared.
+- The nightly canary can fail again: its step piped through `tee` without
+  `pipefail`, so a red canary exited 0 and the open-an-issue step was
+  unreachable.
+- The raw-print-macro guard now covers `proef-lsp`, where stdout is the
+  JSON-RPC channel and a stray print corrupts protocol framing.
 
 ### Documentation
 
