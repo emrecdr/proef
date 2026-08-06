@@ -52,6 +52,25 @@ fn init_never_overwrites_an_existing_file() {
     );
 }
 
+/// A hand-authored pack is never rewritten, even by the schema-install step:
+/// a skipped pack must come out byte-identical, not just get a pass on the
+/// create/overwrite loop and then get modelined anyway.
+#[test]
+fn init_never_rewrites_an_existing_pack_via_schema_install() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packs_dir = tmp.path().join("suite/packs");
+    std::fs::create_dir_all(&packs_dir).unwrap();
+    let pack = packs_dir.join("api.yaml");
+    let original = "macros:\n  mine:\n    match: my own step\n    steps: []\n";
+    std::fs::write(&pack, original).unwrap();
+    proef(tmp.path()).arg("init").assert().code(0);
+    assert_eq!(
+        std::fs::read_to_string(&pack).unwrap(),
+        original,
+        "init modified a pre-existing pack file"
+    );
+}
+
 /// The schema install runs as part of init, so editor completion works on the
 /// first run without discovering a flag.
 #[test]

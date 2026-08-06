@@ -27,7 +27,8 @@ const FEATURE: &str = r#"Feature: Directory search
     When the operator searches for "Acme"
 "#;
 
-const PACK: &str = r"macros:
+const PACK: &str = r"# Replace these paths with your own API's — ${url:base} is set in proef.toml.
+macros:
   health:
     match: the service is healthy
     steps:
@@ -59,6 +60,7 @@ pub fn init(dir: &Path) -> ExitCode {
 
     let mut created = 0usize;
     let mut skipped = 0usize;
+    let mut pack_created = false;
     for (path, contents) in &files {
         if path.exists() {
             crate::render::outln!("  skipped {} (already exists)", path.display());
@@ -76,13 +78,28 @@ pub fn init(dir: &Path) -> ExitCode {
         }
         crate::render::outln!("  created {}", path.display());
         created += 1;
+        if *path == pack_path {
+            pack_created = true;
+        }
     }
 
-    // The same install path `proef schema --add-to` runs — one implementation
-    // of "write the schema and the modeline", not two.
-    let schema_exit = crate::commands::schema(std::slice::from_ref(&pack_path));
-    if schema_exit != ExitCode::Success {
-        return schema_exit;
+    // Only install the schema/modeline into the pack `init` itself just wrote:
+    // running it unconditionally would rewrite a pack this same run reported
+    // as "skipped (already exists)", silently breaking the never-overwrite
+    // guarantee above.
+    if pack_created {
+        // The same install path `proef schema --add-to` runs — one implementation
+        // of "write the schema and the modeline", not two.
+        let schema_exit = crate::commands::schema(std::slice::from_ref(&pack_path));
+        if schema_exit != ExitCode::Success {
+            return schema_exit;
+        }
+    } else {
+        crate::render::outln!(
+            "  {} already exists — run `proef schema --add-to {}` to install editor completion",
+            pack_path.display(),
+            pack_path.display()
+        );
     }
 
     if created == 0 {
