@@ -83,7 +83,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `resolve::unknown_variable` | `${name}` found in no scope (suggests the closest) | ✓ |
 | `resolve::missing_env` | `${env:NAME}` unset and no `:-default` given | |
-| `resolve::missing_config_var` | `${url:key}` / `${vars:key}` defined in neither `proef.toml` nor the active `[env.<name>]` | |
+| `resolve::missing_config_var` | `${url:key}` / `${vars:key}` defined in neither `proef.toml` nor the active `[env.<name>]` | ✓ |
 | `resolve::missing_global` | `${global:key}` absent from the World (strict mode) | |
 | `resolve::unknown_namespace` | `${ns:…}` with an unknown namespace | |
 | `resolve::unknown_run_field` | `${run:…}` other than `${run:id}` | |
@@ -105,6 +105,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-23 of the 59 codes carry a seeded corpus case today; the corpus guard asserts
+24 of the 59 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
