@@ -6,6 +6,14 @@
 //! Nothing is ever overwritten: an existing file is reported and left alone,
 //! which makes a second run a no-op and removes any need for a `--force` flag
 //! that could destroy authored work.
+//!
+//! The scaffold is a deliberately smaller suite than the tutorial builds by
+//! hand: no `Then the first hit is record "r-1"` step, no `firstHit`
+//! `expect:` macro, no `${secret:apiToken}`, and `search` targets a plain
+//! `/search` route instead of the tutorial's real one. Pasting the tutorial's
+//! `Then` line into the scaffold's feature file fails with
+//! `bind::unbound_step` — the two are not meant to be identical, just
+//! consistent with each other everywhere they overlap.
 
 use std::path::{Path, PathBuf};
 
@@ -48,14 +56,20 @@ macros:
           HTTP 200
 ";
 
+// Mirrors the root `.gitignore`'s `proef runtime outputs` entry: the first
+// run under the scaffold produces both, and `proef.toml` (project config) is
+// the only proef-owned file meant to be committed.
+const GITIGNORE: &str = ".proef-runs/\n.proef-state.json\n";
+
 /// Scaffold a suite under `dir`, then install the pack schema and print the
 /// next command.
 pub fn init(dir: &Path) -> ExitCode {
     let pack_path = dir.join("suite/packs/api.yaml");
-    let files: [(PathBuf, &str); 3] = [
+    let files: [(PathBuf, &str); 4] = [
         (dir.join("proef.toml"), CONFIG),
         (dir.join("suite/case.feature"), FEATURE),
         (pack_path.clone(), PACK),
+        (dir.join(".gitignore"), GITIGNORE),
     ];
 
     let mut created = 0usize;
@@ -89,11 +103,14 @@ pub fn init(dir: &Path) -> ExitCode {
     // guarantee above.
     if pack_created {
         // The same install path `proef schema --add-to` runs — one implementation
-        // of "write the schema and the modeline", not two.
+        // of "write the schema and the modeline", not two. It always writes the
+        // schema JSON file alongside the pack, so that's one more file created
+        // than the loop above counted.
         let schema_exit = crate::commands::schema(std::slice::from_ref(&pack_path));
         if schema_exit != ExitCode::Success {
             return schema_exit;
         }
+        created += 1;
     } else {
         crate::render::outln!(
             "  {} already exists — run `proef schema --add-to {}` to install editor completion",
@@ -107,6 +124,19 @@ pub fn init(dir: &Path) -> ExitCode {
     } else {
         crate::render::outln!("\ncreated {created} file(s), skipped {skipped}");
     }
-    crate::render::outln!("next: proef test --dry-run");
+    // The printed command must actually work from the cwd `init` was run in:
+    // a scaffold under a subdirectory needs `cd` first, since `proef.toml`
+    // discovery only walks up from the working directory, never down into a
+    // path argument. The scaffold's routes are placeholders nothing serves,
+    // so the next command says that too — otherwise dry-run's green light
+    // walks straight into a red `proef test`.
+    let next_test = if dir == Path::new(".") {
+        "proef test --dry-run".to_owned()
+    } else {
+        format!("cd {} && proef test --dry-run", dir.display())
+    };
+    crate::render::outln!(
+        "next: {next_test}  (then point ${{url:base}} at your API — the scaffold's routes are placeholders)"
+    );
     ExitCode::Success
 }

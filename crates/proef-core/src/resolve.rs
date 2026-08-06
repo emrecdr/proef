@@ -550,8 +550,12 @@ mod tests {
         let f = Fixture::new();
         let err = resolve("${url:nearvar}", &f.ctx(ResolveMode::Strict)).unwrap_err();
         let message = err.to_string();
+        // Strictly stronger than pinning just the specific candidate name: no
+        // suggestion at all is correct here, since `url:` has no close match
+        // of its own — a future change that started suggesting some *other*
+        // wrong-namespace key would still be caught.
         assert!(
-            !message.contains("did you mean `nearvars`"),
+            !message.contains("did you mean"),
             "suggestion crossed namespaces: {message}"
         );
     }

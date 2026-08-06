@@ -33,24 +33,35 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         .collect();
     let rec = record::parse_record(&events);
 
-    // Scenario totals come from the scenarios the record actually holds —
-    // never from `RunFinished`, which a truncated record has none of. Step
-    // and attempt totals come straight from the raw events instead: a step
-    // only attaches to `rec.scenarios` once its `ScenarioFinished` arrives
-    // (`record::parse_record`), so a scenario still in flight when the
-    // stream ends would otherwise vanish from the headline — exactly the
-    // case a post-mortem tool exists to report on.
-    let count = |want: Status| {
-        rec.scenarios
-            .values()
-            .filter(|run| run.status == want)
-            .count()
+    // A complete/cancelled record's tail `RunFinished` carries the run's own
+    // verdict — main-suite scenarios only, `[run] setup`/`teardown` excluded
+    // (ADR-0014) — so reading it here is what keeps this headline agreeing
+    // with the console `summary:` line, JUnit, `--output json`, TAP, the SLA
+    // gate, and the exit code. A *truncated* record has no `RunFinished` to
+    // read (`rec.totals` is `None`), so fall back to counting the scenarios
+    // the record actually holds — the only totals a dead run can offer.
+    let (passed, failed, skipped) = if let Some(totals) = rec.totals {
+        (totals.passed, totals.failed, totals.skipped)
+    } else {
+        let count = |want: Status| {
+            rec.scenarios
+                .values()
+                .filter(|run| run.status == want)
+                .count()
+        };
+        (
+            count(Status::Passed),
+            count(Status::Failed),
+            count(Status::Skipped),
+        )
     };
-    let (passed, failed, skipped) = (
-        count(Status::Passed),
-        count(Status::Failed),
-        count(Status::Skipped),
-    );
+    // Step/attempt totals are unrelated to the suite-only scenario counts
+    // above — they count every step in the stream, `[run] setup`/`teardown`
+    // included, straight from the raw events rather than `rec.scenarios`: a
+    // step only attaches there once its `ScenarioFinished` arrives
+    // (`record::parse_record`), so a scenario still in flight when a
+    // truncated stream ends would otherwise vanish from the headline —
+    // exactly the case a post-mortem tool exists to report on.
     let (mut steps, mut attempts) = (0usize, 0u64);
     for event in &events {
         if let Event::StepFinished {

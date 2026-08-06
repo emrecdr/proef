@@ -143,6 +143,11 @@ macOS: Xcode Command Line Tools; Windows: vcpkg (see
 
 ## Quick start
 
+Fastest path: `proef init` scaffolds a working suite (`proef.toml`, one
+`.feature`, one pack) into the current directory and prints the next command —
+no secret to store, since the scaffold's pack references none. Building one
+by hand:
+
 A suite is one directory; `proef test <dir>` discovers everything in it by two
 conventions — no configuration points files at each other:
 

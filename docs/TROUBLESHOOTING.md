@@ -98,3 +98,11 @@ exact executed `.hurl` files. `proef explain` summarizes the latest run,
 perf), and `proef report [run]` writes a self-contained HTML page of a run; the
 `reproduce: hurl --test …` line under a failure replays the artifact with stock
 hurl, taking proef out of the loop entirely.
+
+A **cancelled** run (Ctrl-C) is a *complete* record, not a truncated one —
+`proef explain`/`proef report` never banner it as incomplete, because its
+nonzero `skipped` count already says what didn't get to run. `proef diff
+--fail-on-regression` disagrees on purpose: it still refuses to certify "no
+regressions" against a cancelled run, since a regression could be hiding among
+the scenarios it never reached. The three commands' differing treatment of
+`cancelled` is a deliberate choice, not an inconsistency.

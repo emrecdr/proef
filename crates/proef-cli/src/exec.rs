@@ -234,7 +234,11 @@ pub fn execute(
         ) {
             Err(code) => return code,
             Ok(summary) => {
-                record.add(&summary);
+                // `RunRecord`'s totals are the main-suite verdict only (ADR-0014):
+                // setup's own outcome still drives the exit code below, and its
+                // scenarios are still visible as events in the record, but it is
+                // never folded into `passed`/`failed`/`skipped` — those must match
+                // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
@@ -301,7 +305,11 @@ pub fn execute(
         ) {
             Err(_) => teardown_exit = ExitCode::SystemError,
             Ok(summary) => {
-                record.add(&summary);
+                // Excluded from `record`'s totals for the same reason setup is
+                // (above): teardown's own scenario events still land in the
+                // record, and its failure still forces the exit code (below),
+                // but a green suite with a broken teardown must not misread as
+                // the API under test having failed (ADR-0014).
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
                     crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
@@ -573,11 +581,18 @@ fn suppress_run_head_tail(inner: EventSink) -> EventSink {
 
 /// Owns the run's single `RunStarted`/`RunFinished` pair (ADR-0008).
 /// `RunRecord::open` emits the head; `Drop` emits the tail — structurally,
-/// not by remembering to emit it at every `return` between the two. Each
-/// phase's `RunSummary` folds into the running totals via `add`, so whichever
-/// path closes the record — the explicit `drop` after teardown, or `Drop`
-/// firing on an early return — reports the whole run, never just the last
-/// phase's counts or an empty tail.
+/// not by remembering to emit it at every `return` between the two. Totals
+/// are the **main-suite verdict only** (ADR-0014): `add` is called once, for
+/// the suite's own `RunSummary`, never for `[run] setup`/`teardown` — so
+/// `run_finished`'s `passed`/`failed`/`skipped` agree with the console
+/// `summary:` line, `explain`, `--output json`, `JUnit`, TAP, the SLA gate, and
+/// the exit code, all of which already read the suite alone. Phase outcomes
+/// stay fully visible as their own `scenario_started`/`scenario_finished`
+/// events, and phase failures still drive the exit code through
+/// `phase_failed`, independent of these totals. Whichever path closes the
+/// record — the explicit `drop` after teardown, or `Drop` firing on an early
+/// return — reports whatever the suite had accumulated, never a phase's
+/// counts or a silently-empty tail.
 struct RunRecord<'a> {
     sink: &'a EventSink,
     cancel: &'a CancellationToken,
@@ -603,7 +618,8 @@ impl<'a> RunRecord<'a> {
         }
     }
 
-    /// Fold one phase's outcome counts into the run's running totals.
+    /// Fold the main suite's outcome counts into the run's totals — called
+    /// once, for the suite's own `RunSummary` only (see the struct doc).
     fn add(&mut self, summary: &runner::RunSummary) {
         self.passed += summary.passed;
         self.failed += summary.failed;
@@ -613,6 +629,14 @@ impl<'a> RunRecord<'a> {
 
 impl Drop for RunRecord<'_> {
     fn drop(&mut self) {
+        // A panic unwinding through this frame means the run died mid-flight —
+        // emitting a well-formed `RunFinished` here would certify a crashed run
+        // as complete (`RunCompletion::Completed`), the exact hole the
+        // truncated-record work exists to close. Leave the record without a
+        // tail; it reads back as `RunCompletion::Incomplete`.
+        if std::thread::panicking() {
+            return;
+        }
         self.sink.emit(&Event::RunFinished {
             passed: self.passed,
             failed: self.failed,
@@ -932,5 +956,54 @@ impl Write for Tee {
             let _ = file.flush();
         }
         self.0.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::panic::AssertUnwindSafe;
+    use std::sync::{Arc, Mutex};
+
+    use super::RunRecord;
+    use proef_core::cancel::CancellationToken;
+    use proef_core::event::{Event, EventSink};
+
+    /// A run that panics mid-flight must stay `RunCompletion::Incomplete`, not
+    /// certify as complete. Nothing sets `panic = "abort"`, so unwind is live —
+    /// a panic reaching `execute`'s frame runs `RunRecord::drop` while
+    /// unwinding, and this pins that `Drop::drop`'s `thread::panicking()` guard
+    /// really does suppress the tail `RunFinished` in that case, not just in
+    /// principle. `catch_unwind` (rather than `#[should_panic]`) lets the test
+    /// inspect what the sink received *after* the unwind, which is the whole
+    /// point.
+    #[test]
+    fn drop_during_panic_does_not_emit_run_finished() {
+        let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = {
+            let events = Arc::clone(&events);
+            EventSink::new(move |event| events.lock().unwrap().push(event.clone()))
+        };
+        let cancel = CancellationToken::new();
+        let run_id: Arc<str> = Arc::from("test-run");
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _record = RunRecord::open(&sink, &cancel, &run_id);
+            panic!("simulated mid-run crash");
+        }));
+        assert!(result.is_err(), "the closure must have panicked");
+
+        let events = events.lock().unwrap();
+        assert!(
+            events.iter().any(|e| matches!(e, Event::RunStarted { .. })),
+            "RunStarted must still have been emitted by `open`: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::RunFinished { .. })),
+            "a panicking drop must never emit RunFinished: {events:?}"
+        );
     }
 }

@@ -78,13 +78,32 @@ pub enum RunCompletion {
     Incomplete,
 }
 
+/// The main-suite scenario totals carried by the tail `RunFinished` event
+/// (ADR-0014: setup/teardown are excluded, so this is the run's own verdict —
+/// the same numbers the console `summary:` line, `JUnit`, `--output json`, TAP,
+/// the SLA gate, and the exit code all report).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunTotals {
+    /// Scenarios that passed.
+    pub passed: usize,
+    /// Scenarios that failed.
+    pub failed: usize,
+    /// Scenarios that were skipped.
+    pub skipped: usize,
+}
+
 /// A full run record: every scenario outcome plus whether the run completed.
 #[derive(Debug, Clone)]
 pub struct Record {
-    /// `(file, scenario) -> outcome`.
+    /// `(file, scenario) -> outcome`. Populated from every `scenario_finished`
+    /// in the stream, `[run] setup`/`teardown` scenarios included — the record
+    /// keeps their events, even though `totals` excludes them.
     pub scenarios: BTreeMap<(String, String), ScenarioRun>,
     /// Whether the run reached its tail `RunFinished`.
     pub completion: RunCompletion,
+    /// The tail `RunFinished`'s own totals — `None` exactly when `completion
+    /// == RunCompletion::Incomplete` (no tail event to read them from).
+    pub totals: Option<RunTotals>,
 }
 
 /// Fold already-parsed events into a full run record: the `(file, scenario)
@@ -107,6 +126,7 @@ pub fn parse_record(events: &[Event]) -> Record {
     let mut seen: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut record: BTreeMap<(String, String), ScenarioRun> = BTreeMap::new();
     let mut completion = RunCompletion::Incomplete;
+    let mut totals: Option<RunTotals> = None;
     for event in events {
         match event {
             Event::StepFinished {
@@ -156,12 +176,22 @@ pub fn parse_record(events: &[Event]) -> Record {
                     },
                 );
             }
-            Event::RunFinished { cancelled, .. } => {
+            Event::RunFinished {
+                passed,
+                failed,
+                skipped,
+                cancelled,
+            } => {
                 completion = if *cancelled {
                     RunCompletion::Cancelled
                 } else {
                     RunCompletion::Completed
                 };
+                totals = Some(RunTotals {
+                    passed: *passed,
+                    failed: *failed,
+                    skipped: *skipped,
+                });
             }
             _ => {}
         }
@@ -169,6 +199,7 @@ pub fn parse_record(events: &[Event]) -> Record {
     Record {
         scenarios: record,
         completion,
+        totals,
     }
 }
 

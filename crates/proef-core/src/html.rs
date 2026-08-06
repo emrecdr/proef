@@ -354,6 +354,7 @@ const STYLE: &str = "\
 @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--pass:#3fb950;--fail:#f85149;--skip:#8a8a8a;--warn:#d29922;--card:#161b22}}\
 *{box-sizing:border-box}body{margin:0;padding:2rem;max-width:60rem;margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}\
 h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
+.incomplete-banner{color:var(--warn);font-weight:600;margin:0 0 1rem}\
 .summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0 0 1.5rem}\
 .count{font-weight:600;padding:.15rem .6rem;border-radius:999px;background:var(--card)}\
 .count.pass{color:var(--pass)}.count.fail{color:var(--fail)}.count.skip{color:var(--skip)}.count.warn{color:var(--warn)}\

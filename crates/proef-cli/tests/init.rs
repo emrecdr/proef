@@ -92,6 +92,11 @@ fn scaffold_carries_the_pack_schema_and_modeline() {
 
 /// A passing dry-run names the next command. Every failure path already names
 /// a remedy; the success path is where a new user decides whether to continue.
+/// `init` scaffolds into "." here, so `[run] suite` picks the suite up with no
+/// path argument — the printed `next: proef test` must actually run clean,
+/// not merely be printed (that gap is why the bug shipped: see the two tests
+/// below for the cases where a bare `next: proef test[--dry-run]` does NOT
+/// work from the caller's cwd).
 #[test]
 fn dry_run_success_names_the_next_command() {
     let tmp = tempfile::tempdir().unwrap();
@@ -102,4 +107,93 @@ fn dry_run_success_names_the_next_command() {
         .code(0)
         .stdout(contains("dry-run OK"))
         .stdout(contains("next: proef test"));
+
+    // The nudge is a bare `proef test` (no `--dry-run`): with the scaffold's
+    // `[run] suite = "suite"`, it needs no path argument — running it must not
+    // fail at argument/config resolution (a live target for the real network
+    // call is a separate concern from what this nudge is pinning).
+    proef(tmp.path())
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
+/// `proef init <dir>` scaffolds into a subdirectory, but `proef.toml`
+/// discovery only walks *up* from the working directory, never down into a
+/// path argument (`crate::config::find_config`) — so a bare
+/// `proef test --dry-run`, run from the same cwd `init` ran in, cannot find
+/// the scaffolded config. Before the fix this was exactly the printed nudge,
+/// and running it failed with "no path given and no default suite found".
+/// Also pins that the nudge warns about the scaffold's placeholder routes —
+/// nothing serves `/search`, so a chained `init` → dry-run → real `test`
+/// otherwise walks a newcomer into a failing run with no signpost.
+#[test]
+fn init_into_a_subdirectory_prints_a_working_next_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let assert = proef(tmp.path())
+        .args(["init", "api-tests"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains(
+            "next: cd api-tests && proef test --dry-run  (then point ${url:base} at your API — the scaffold's routes are placeholders)"
+        ),
+        "nudge must `cd` into the scaffolded directory and warn about placeholder routes: {out}"
+    );
+
+    // Run it for real — `current_dir` is `cd api-tests &&`'s equivalent for a
+    // directly-spawned (non-shell) child process.
+    proef(&tmp.path().join("api-tests"))
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
+/// `--dry-run`'s "next" nudge must echo an explicit suite path — a bare
+/// `proef test` only rediscovers a *defaulted* path (`[run] suite`/`tests/`)
+/// on its own. Before the fix, `proef test mysuite --dry-run` in a project
+/// with no `[run] suite` printed a bare `next: proef test`, which then failed
+/// with "no path given and no default suite found".
+#[test]
+fn dry_run_with_an_explicit_path_echoes_it_in_the_next_command() {
+    let fixture = proef_fixture::Fixture::start().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("mysuite/packs")).unwrap();
+    // Deliberately no `[run] suite` — the suite lives at a name `test` (no
+    // path) can never default to.
+    std::fs::write(
+        tmp.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("mysuite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the service is healthy\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("mysuite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the service is healthy\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = proef(tmp.path())
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "mysuite", "--dry-run"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("next: proef test mysuite"),
+        "nudge must echo the explicit path: {out}"
+    );
+
+    // Run the exact printed command for real.
+    proef(tmp.path())
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "mysuite"])
+        .assert()
+        .code(0);
 }

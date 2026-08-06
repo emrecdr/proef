@@ -711,7 +711,13 @@ fn bare_filename_setup_at_project_root_resolves_packs() {
 }
 
 /// ADR-0014: a teardown failure is a distinct non-zero signal (exit 3, a
-/// cleanup fault) — the suite's own green verdict still stands.
+/// cleanup fault) — the suite's own green verdict still stands. This also
+/// pins a console/JUnit disagreement that once existed here: with teardown's
+/// failing scenario folded into `RunRecord`'s totals, the console `summary:`
+/// line read "2 passed · 1 failed" (setup-less here, so suite (1 passed) +
+/// teardown (1 failed)) while JUnit/`--output json`/TAP — which read the
+/// suite's own `RunSummary` directly — said "1 passed, 0 failed". Suite-only
+/// totals make the console line agree with those surfaces again.
 #[test]
 fn teardown_failure_is_a_distinct_cleanup_fault() {
     let fixture = Fixture::start().unwrap();
@@ -745,12 +751,22 @@ fn teardown_failure_is_a_distinct_cleanup_fault() {
         .args(["test", "suite"])
         .assert()
         .code(3); // cleanup fault, distinct from a test failure (1) or green (0)
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(stderr.contains("teardown failed"), "{stderr}");
+    assert!(
+        stdout.contains("summary: 1 passed · 0 failed · 0 skipped"),
+        "console summary must be the suite's own verdict, not blended with \
+         teardown's failure: {stdout}"
+    );
     let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
     assert!(
         events.contains(r#""scenario":"passes""#),
         "the suite itself ran: {events}"
+    );
+    assert!(
+        events.contains(r#""event":"run_finished","passed":1,"failed":0,"skipped":0"#),
+        "run_finished must be the suite's totals only, not folding in teardown's failure: {events}"
     );
 }
 
@@ -1624,8 +1640,13 @@ fn phases_produce_a_single_run_started_and_run_finished() {
     assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
 }
 
-/// `explain` must report the run's own verdict, not the last phase's. Before
-/// the fix this printed "1 passed · 0 failed" directly above a printed failure.
+/// `explain` must report the suite's own verdict, never a blend with
+/// setup/teardown (ADR-0014). Before the run-record merge fix this printed
+/// "1 passed · 0 failed" — teardown's own totals, the last phase to close its
+/// own `run_finished` — directly above a printed failure. Summing all three
+/// phases instead (setup's 1 passed + suite's 1 failed + teardown's 1 passed)
+/// would silently count setup/teardown scenarios as if they were part of the
+/// suite; the ruling is suite-only totals, so this pins that instead.
 #[test]
 fn explain_reports_the_failure_not_the_teardown_totals() {
     let fixture = Fixture::start().unwrap();
@@ -1643,21 +1664,30 @@ fn explain_reports_the_failure_not_the_teardown_totals() {
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        out.contains("1 failed"),
-        "headline must show the failure: {out}"
+        out.contains("0 passed · 1 failed · 0 skipped"),
+        "headline must be the suite's own verdict: {out}"
     );
     assert!(
         !out.contains("1 passed · 0 failed"),
         "headline must not be teardown's totals: {out}"
     );
+    assert!(
+        !out.contains("2 passed"),
+        "headline must not sum setup+suite+teardown scenarios: {out}"
+    );
 
-    // Pin the aggregation itself, not just the headline text: setup (1
-    // passed) + suite (1 failed) + teardown (1 passed) must be *summed* into
-    // one `run_finished`, not assigned from whichever phase closed last.
+    // Pin the aggregation itself, not just the headline text: only the
+    // suite's own outcome (1 failed) reaches `run_finished`. Setup's pass and
+    // teardown's pass are still visible as their own scenario events in the
+    // record (asserted below) — just never folded into these totals.
     let record = latest_events_jsonl(cwd.path());
     assert!(
-        record.contains(r#""event":"run_finished","passed":2,"failed":1,"skipped":0"#),
-        "run_finished must report totals summed across all three phases: {record}"
+        record.contains(r#""event":"run_finished","passed":0,"failed":1,"skipped":0"#),
+        "run_finished must report the suite's totals only, not summed across phases: {record}"
+    );
+    assert!(
+        record.contains(r#""scenario":"provision""#) && record.contains(r#""scenario":"cleanup""#),
+        "setup/teardown scenarios must still appear as events in the record: {record}"
     );
 }
 
@@ -1784,8 +1814,12 @@ fn explain_and_report_flag_a_truncated_record() {
         .assert()
         .code(0);
     let html = std::fs::read_to_string(&out_html).unwrap();
+    // Not a bare `contains("incomplete")`: the page's stylesheet always
+    // carries the `.incomplete-banner` rule, so that substring alone would
+    // pass even if the banner paragraph itself were never inserted. The
+    // banner's own wording is the real signal.
     assert!(
-        html.contains("incomplete"),
+        html.contains("run incomplete"),
         "report must banner incompleteness"
     );
 }
@@ -1904,8 +1938,12 @@ fn cancelled_record_is_not_bannered_as_incomplete() {
         .assert()
         .code(0);
     let html = std::fs::read_to_string(&out_html).unwrap();
+    // Not a bare `contains("incomplete")`: the page's stylesheet always
+    // carries the `.incomplete-banner` rule (used only when the banner
+    // paragraph is actually inserted), so that substring is present on every
+    // report regardless of completion. The banner's own wording is the signal.
     assert!(
-        !html.contains("incomplete"),
+        !html.contains("run incomplete"),
         "report must not banner a cancelled run as incomplete: {html}"
     );
 }
@@ -1922,7 +1960,7 @@ fn worker_is_a_slot_index_not_a_scenario_ordinal() {
     let cwd = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
-    let mut feature = String::from("# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n");
+    let mut feature = String::from("Feature: F\n");
     for n in 1..=3 {
         let _ = writeln!(
             feature,
