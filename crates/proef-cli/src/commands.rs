@@ -202,6 +202,7 @@ pub fn dry_run(
         totals.4,
         front.warnings.len()
     );
+    crate::render::outln!("next: proef test");
     ExitCode::Success
 }
 

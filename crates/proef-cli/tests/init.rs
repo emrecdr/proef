@@ -89,3 +89,17 @@ fn scaffold_carries_the_pack_schema_and_modeline() {
         "pack modeline missing: {pack}"
     );
 }
+
+/// A passing dry-run names the next command. Every failure path already names
+/// a remedy; the success path is where a new user decides whether to continue.
+#[test]
+fn dry_run_success_names_the_next_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef(tmp.path()).arg("init").assert().code(0);
+    proef(tmp.path())
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0)
+        .stdout(contains("dry-run OK"))
+        .stdout(contains("next: proef test"));
+}
