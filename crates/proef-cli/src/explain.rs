@@ -1,10 +1,10 @@
 //! `proef explain [run-id]` — summarize a run from its record. The JSONL event
 //! stream **is** the record (ADR-0008): explain reads through
-//! `crate::record::read_record`, the reader `diff` already uses, so a
-//! truncated record is never mistaken for a complete one.
+//! `crate::record::parse_record`, the same fold `diff`'s `read_record` uses,
+//! so a truncated record is never mistaken for a complete one.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use proef_core::error::ExitCode;
 use proef_core::event::Event;
@@ -19,17 +19,27 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };
-    let rec = match record::read_record(&record_dir) {
-        Ok(rec) => rec,
+    let events_path = record_dir.join("events.jsonl");
+    let text = match std::fs::read_to_string(&events_path) {
+        Ok(text) => text,
         Err(err) => {
-            crate::render::errln!("error: {err}");
+            crate::render::errln!("error: cannot read {}: {err}", events_path.display());
             return ExitCode::UserError;
         }
     };
+    let events: Vec<Event> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let rec = record::parse_record(&events);
 
-    // Headline totals come from the scenarios the record actually holds, not
-    // from `RunFinished` — a truncated record has no `RunFinished` but may
-    // still hold scenarios that ran to completion.
+    // Scenario totals come from the scenarios the record actually holds —
+    // never from `RunFinished`, which a truncated record has none of. Step
+    // and attempt totals come straight from the raw events instead: a step
+    // only attaches to `rec.scenarios` once its `ScenarioFinished` arrives
+    // (`record::parse_record`), so a scenario still in flight when the
+    // stream ends would otherwise vanish from the headline — exactly the
+    // case a post-mortem tool exists to report on.
     let count = |want: Status| {
         rec.scenarios
             .values()
@@ -41,9 +51,17 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         count(Status::Failed),
         count(Status::Skipped),
     );
-    let all_steps = || rec.scenarios.values().flat_map(|run| run.steps.values());
-    let steps = all_steps().count();
-    let attempts: u64 = all_steps().map(|step| u64::from(step.attempts)).sum();
+    let (mut steps, mut attempts) = (0usize, 0u64);
+    for event in &events {
+        if let Event::StepFinished {
+            attempts: step_attempts,
+            ..
+        } = event
+        {
+            steps += 1;
+            attempts += u64::from(*step_attempts);
+        }
+    }
 
     crate::render::outln!(
         "run {} — {}",
@@ -62,14 +80,13 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
 
     if failed > 0 {
         // Per-step failure detail (file:line, message) isn't carried by the
-        // record's `StepRun` (attempts/duration only), so it still comes from
-        // the raw events — read only now that there is a failure to explain.
-        let failures = failure_detail(&record_dir);
+        // record's `StepRun` (attempts/duration only), so it comes from the
+        // same raw events already in hand.
+        let failures = failure_detail(&events);
         for (key, run) in &rec.scenarios {
             if run.status == Status::Failed {
-                let scenario = &key.1;
-                crate::render::outln!("\nfailed: {scenario}");
-                for line in failures.get(scenario).into_iter().flatten() {
+                crate::render::outln!("\nfailed: {}", key.1);
+                for line in failures.get(key).into_iter().flatten() {
                     crate::render::outln!("{line}");
                 }
             }
@@ -83,20 +100,22 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     ExitCode::Success
 }
 
-/// `scenario -> per-step failure lines` (`file:line`, message, attempts) —
-/// the detail the record's `StepRun` doesn't carry, read from the raw events.
-fn failure_detail(record_dir: &Path) -> BTreeMap<String, Vec<String>> {
-    let text = std::fs::read_to_string(record_dir.join("events.jsonl")).unwrap_or_default();
-    let mut failures: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for line in text.lines() {
-        let Ok(Event::StepFinished {
+/// `(file, scenario) -> per-step failure lines` (`file:line`, message,
+/// attempts) — the detail the record's `StepRun` doesn't carry. Keyed by
+/// `(file, scenario)`, matching `Record::scenarios`' run-wide identity
+/// (ADR-0008): two same-named scenarios in different files must not share
+/// each other's failure lines.
+fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
+    let mut failures: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    for event in events {
+        let Event::StepFinished {
             scenario,
             step,
             status: Status::Failed,
             attempts,
             detail,
             ..
-        }) = serde_json::from_str::<Event>(line)
+        } = event
         else {
             continue;
         };
@@ -105,7 +124,7 @@ fn failure_detail(record_dir: &Path) -> BTreeMap<String, Vec<String>> {
             .map(|d| format!("\n      {d}"))
             .unwrap_or_default();
         failures
-            .entry(scenario.to_string())
+            .entry((step.file.to_string(), scenario.to_string()))
             .or_default()
             .push(format!(
                 "  ✗ {}:{} — {} ({attempts} attempt(s)){why}",

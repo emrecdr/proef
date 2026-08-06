@@ -1789,3 +1789,123 @@ fn explain_and_report_flag_a_truncated_record() {
         "report must banner incompleteness"
     );
 }
+
+/// A truncated record where one scenario finished and a second is still in
+/// flight (`ScenarioStarted` + steps, no matching `ScenarioFinished`) when
+/// the stream ends — the shape a crash/OOM-kill/CI-timeout actually leaves
+/// behind, and the case the whole truncated-record fix exists for.
+fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    use proef_core::event::Event;
+    use proef_core::step::{Status, StepRef};
+    use std::sync::Arc;
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),     // "health" scenario: 1 step, 1 attempt.
+        diff_scenario_finished(), // "health" finishes.
+        Event::ScenarioStarted {
+            scenario: Arc::from("second"),
+            file: Arc::from("case.feature"),
+            timestamp_ms: None,
+            worker: None,
+        },
+        Event::StepFinished {
+            scenario: Arc::from("second"),
+            engine: Arc::from("hurl"),
+            step: StepRef {
+                file: Arc::from("case.feature"),
+                line: 5,
+                text: Arc::from("in-flight step one"),
+            },
+            status: Status::Passed,
+            attempts: 3,
+            duration_ms: 5,
+            captures: Vec::new(),
+            detail: None,
+            attempt_details: Vec::new(),
+        },
+        Event::StepFinished {
+            scenario: Arc::from("second"),
+            engine: Arc::from("hurl"),
+            step: StepRef {
+                file: Arc::from("case.feature"),
+                line: 6,
+                text: Arc::from("in-flight step two"),
+            },
+            status: Status::Passed,
+            attempts: 2,
+            duration_ms: 5,
+            captures: Vec::new(),
+            detail: None,
+            attempt_details: Vec::new(),
+        },
+        // No `ScenarioFinished` for "second", and no tail `RunFinished` at all.
+    ]
+}
+
+/// `explain`'s step/attempt totals must count a still-in-flight scenario's
+/// steps, not just the ones attached to a finished `ScenarioFinished` — a
+/// step only attaches to `Record::scenarios` once its scenario closes
+/// (`record::parse_record`), so counting from `rec.scenarios` alone silently
+/// drops the dying scenario's step evidence from a truncated record.
+#[test]
+fn explain_counts_steps_from_a_still_in_flight_scenario() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    let run_id = "00000000-0000-0000-0000-000000000003";
+    write_run(&runs, run_id, &truncated_with_in_flight_events(run_id));
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    // 1 attempt (finished "health") + 3 + 2 (in-flight "second") = 3 steps, 6 attempts.
+    assert!(
+        out.contains("3 step(s), 6 attempt(s)"),
+        "the in-flight scenario's steps must still count toward the headline: {out}"
+    );
+}
+
+/// A cancelled run is a *complete* run (`RunFinished { cancelled: true }`),
+/// not an incomplete one — `record::RunCompletion` keeps the two apart.
+/// `diff` bans everything that `!= Completed` from certifying "no
+/// regressions" (`diff.rs`), but `explain`/`report` must not borrow that
+/// wider rule for their incompleteness banner: a cancelled run has nothing
+/// missing to apologize for.
+#[test]
+fn cancelled_record_is_not_bannered_as_incomplete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    let run_id = "00000000-0000-0000-0000-000000000004";
+    write_run(&runs, run_id, &cancelled_pass_events(run_id));
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        !out.contains("incomplete"),
+        "a cancelled run must not banner as incomplete: {out}"
+    );
+
+    let out_html = tmp.path().join("report.html");
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    assert!(
+        !html.contains("incomplete"),
+        "report must not banner a cancelled run as incomplete: {html}"
+    );
+}

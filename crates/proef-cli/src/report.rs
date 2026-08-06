@@ -17,15 +17,6 @@ pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> Ex
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };
-    // `read_record` is the single source of truth for completion (`diff`'s
-    // reader) — a truncated record must never render as if the run finished.
-    let rec = match crate::record::read_record(&record_dir) {
-        Ok(rec) => rec,
-        Err(err) => {
-            crate::render::errln!("error: {err}");
-            return ExitCode::UserError;
-        }
-    };
     let events_path = record_dir.join("events.jsonl");
     let text = match std::fs::read_to_string(&events_path) {
         Ok(text) => text,
@@ -38,6 +29,12 @@ pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> Ex
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
+    // Read once, parse once: `render_html` needs the raw events (steps,
+    // timing, detail — pruned out of `Record`) and completion needs
+    // `parse_record`'s fold over the same events, not a second
+    // `read_to_string`/parse pass — a live run's tail `RunFinished` landing
+    // between two reads would otherwise let one disagree with the other.
+    let rec = crate::record::parse_record(&events);
 
     let out_path = output.map_or_else(|| record_dir.join("report.html"), Path::to_path_buf);
     let href = artifacts_href(&record_dir, &out_path);
