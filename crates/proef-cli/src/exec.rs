@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use proef_core::cancel::CancellationToken;
@@ -498,42 +497,64 @@ pub fn execute(
 
 /// Wrap `inner` so scenario lifecycle events are stamped with run-relative
 /// timing (`timestamp_ms`) and a stable 0-based `worker` index (ADR-0015). The
-/// clock and thread-id reads happen here, in the CLI, on the emitting worker
-/// thread — the sans-IO core never sees them. Non-scenario events pass through.
+/// clock reads happen here, in the CLI, on the emitting worker thread — the
+/// sans-IO core never sees them. Non-scenario events pass through.
 fn stamp_scenario_timing(inner: EventSink) -> EventSink {
     let start = Instant::now();
-    let workers: Arc<Mutex<HashMap<ThreadId, u64>>> = Arc::new(Mutex::new(HashMap::new()));
+    // `worker` is the 0-based slot the scenario occupied, so the timeline shows
+    // occupancy of the `--jobs` workers (ADR-0015). A fresh OS thread is
+    // spawned per scenario, so thread identity would yield a per-scenario
+    // ordinal instead; slots are assigned on start and released on finish.
+    // Release keys on scenario identity because an abandoned scenario's
+    // finish is emitted by the watchdog sweep, not by the worker thread.
+    let slots: Arc<Mutex<HashMap<(String, String), u64>>> = Arc::new(Mutex::new(HashMap::new()));
     EventSink::new(move |event| {
         let now_ms = || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let worker_index = || {
-            let mut map = workers.lock().unwrap_or_else(PoisonError::into_inner);
-            let next = u64::try_from(map.len()).unwrap_or(u64::MAX);
-            *map.entry(std::thread::current().id()).or_insert(next)
+        let acquire_slot = |scenario: &str, file: &str| {
+            let mut map = slots.lock().unwrap_or_else(PoisonError::into_inner);
+            let taken: BTreeSet<u64> = map.values().copied().collect();
+            // Pigeonhole: with `taken.len()` occupied slots, some slot in
+            // `0..=taken.len()` is always free, so bounding here (unlike an
+            // unbounded `0u64..`) is exact, not a truncation.
+            let bound = u64::try_from(taken.len()).unwrap_or(u64::MAX);
+            let slot = (0..=bound).find(|i| !taken.contains(i)).unwrap_or(0);
+            map.insert((scenario.to_owned(), file.to_owned()), slot);
+            slot
+        };
+        let release_slot = |scenario: &str, file: &str| {
+            let mut map = slots.lock().unwrap_or_else(PoisonError::into_inner);
+            map.remove(&(scenario.to_owned(), file.to_owned()));
         };
         match event {
             Event::ScenarioStarted { scenario, file, .. } => inner.emit(&Event::ScenarioStarted {
                 scenario: scenario.clone(),
                 file: file.clone(),
                 timestamp_ms: Some(now_ms()),
-                worker: Some(worker_index()),
+                worker: Some(acquire_slot(scenario, file)),
             }),
             // `ScenarioFinished` is emitted from the main dispatcher thread, not
             // the worker that ran the scenario, so it carries only the end
             // timestamp — the worker identity comes from `ScenarioStarted`, which
             // *is* emitted on the worker thread. (The end time is the dispatcher's
-            // processing instant, a close approximation — ADR-0015.)
+            // processing instant, a close approximation — ADR-0015.) Releasing the
+            // slot here — keyed on scenario identity, not thread — is what lets an
+            // abandoned scenario's watchdog-swept finish (dispatcher thread) free
+            // it correctly.
             Event::ScenarioFinished {
                 scenario,
                 file,
                 status,
                 ..
-            } => inner.emit(&Event::ScenarioFinished {
-                scenario: scenario.clone(),
-                file: file.clone(),
-                status: *status,
-                timestamp_ms: Some(now_ms()),
-                worker: None,
-            }),
+            } => {
+                release_slot(scenario, file);
+                inner.emit(&Event::ScenarioFinished {
+                    scenario: scenario.clone(),
+                    file: file.clone(),
+                    status: *status,
+                    timestamp_ms: Some(now_ms()),
+                    worker: None,
+                });
+            }
             other => inner.emit(other),
         }
     })

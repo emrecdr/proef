@@ -1909,3 +1909,48 @@ fn cancelled_record_is_not_bannered_as_incomplete() {
         "report must not banner a cancelled run as incomplete: {html}"
     );
 }
+
+/// With one job, every scenario runs on the one worker slot — so every stamped
+/// `worker` must be 0. The pre-existing snapshot test uses a single scenario,
+/// where a per-scenario ordinal and a worker slot are numerically identical;
+/// this needs two or more to tell the two models apart.
+#[test]
+fn worker_is_a_slot_index_not_a_scenario_ordinal() {
+    use std::fmt::Write as _;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    let mut feature = String::from("# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n");
+    for n in 1..=3 {
+        let _ = writeln!(
+            feature,
+            "  Scenario: case {n}\n    When the health endpoint is checked"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), feature).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(0);
+
+    let record = latest_events_jsonl(cwd.path());
+    let stamped: Vec<&str> = record
+        .lines()
+        .filter(|l| l.contains("\"worker\""))
+        .collect();
+    assert!(stamped.len() >= 3, "expected stamped events: {record}");
+    for line in &stamped {
+        assert!(
+            line.contains("\"worker\":0"),
+            "every event should stamp slot 0 at --jobs 1: {line}"
+        );
+    }
+}
