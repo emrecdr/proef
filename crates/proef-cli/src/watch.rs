@@ -39,12 +39,12 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
     }) {
         Ok(watcher) => watcher,
         Err(err) => {
-            eprintln!("error: cannot start watcher: {err}");
+            crate::render::errln!("error: cannot start watcher: {err}");
             return ExitCode::SystemError;
         }
     };
     if let Err(err) = watcher.watch(path, RecursiveMode::Recursive) {
-        eprintln!("error: cannot watch {}: {err}", path.display());
+        crate::render::errln!("error: cannot watch {}: {err}", path.display());
         return ExitCode::SystemError;
     }
 
@@ -57,10 +57,10 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
         let pressed = AtomicBool::new(false);
         let _ = ctrlc::set_handler(move || {
             if pressed.swap(true, Ordering::SeqCst) {
-                eprintln!("\nsecond interrupt — hard exit");
+                crate::render::errln!("\nsecond interrupt — hard exit");
                 std::process::exit(crate::INTERRUPT_EXIT_CODE);
             }
-            eprintln!(
+            crate::render::errln!(
                 "\n[watch] interrupt — cancelling the current run, leaving watch (Ctrl-C again to force)"
             );
             stop.store(true, Ordering::SeqCst);
@@ -79,7 +79,7 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
         if stop.load(Ordering::SeqCst) {
             return code;
         }
-        eprintln!(
+        crate::render::errln!(
             "\n[watch] run finished (exit {}) — watching {} for changes (Ctrl-C to stop)",
             code.code(),
             path.display()
@@ -97,6 +97,6 @@ pub fn watch_loop(path: &Path, mut once: impl FnMut(CancellationToken) -> ExitCo
             }
         }
         while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
-        eprintln!("[watch] change detected — rerunning\n");
+        crate::render::errln!("[watch] change detected — rerunning\n");
     }
 }

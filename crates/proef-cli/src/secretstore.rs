@@ -129,7 +129,7 @@ pub fn load_or_create_key() -> Result<[u8; 32], SecretError> {
             let encoded = base64::engine::general_purpose::STANDARD.encode(key);
             match write_private(&path, encoded.as_bytes()) {
                 Ok(()) => {
-                    eprintln!("created project key {}", path.display());
+                    crate::render::errln!("created project key {}", path.display());
                     Ok(key)
                 }
                 // Lost the creation race: a concurrent proef won a moment
@@ -254,7 +254,7 @@ fn load_store_or_recover() -> Result<BTreeMap<String, String>, SecretError> {
                     "{STORE_FILE} is invalid ({err}) and cannot be moved aside: {rename_err}"
                 ))
             })?;
-            eprintln!(
+            crate::render::errln!(
                 "warning: {STORE_FILE} was corrupt ({err}) — moved to {backup}, starting fresh"
             );
             Ok(BTreeMap::new())

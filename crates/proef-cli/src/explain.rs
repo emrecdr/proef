@@ -16,14 +16,14 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     } else if let Some(dir) = crate::record::latest_run(&runs_root) {
         dir
     } else {
-        eprintln!("error: no run records under {}", runs_root.display());
+        crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };
     let events_path = record_dir.join("events.jsonl");
     let text = match std::fs::read_to_string(&events_path) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("error: cannot read {}: {err}", events_path.display());
+            crate::render::errln!("error: cannot read {}: {err}", events_path.display());
             return ExitCode::UserError;
         }
     };

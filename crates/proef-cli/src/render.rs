@@ -16,7 +16,7 @@ macro_rules! outln {
         if let Err(err) = writeln!(::std::io::stdout(), $($arg)*)
             && err.kind() != ::std::io::ErrorKind::BrokenPipe
         {
-            eprintln!("error: cannot write to stdout: {err}");
+            crate::render::errln!("error: cannot write to stdout: {err}");
         }
     }};
 }

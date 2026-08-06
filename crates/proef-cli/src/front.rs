@@ -322,7 +322,7 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
 /// must never produce a silent green run.
 pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
-    eprintln!("error: no scenarios matched the filters (check --tags/--scenario)");
+    crate::render::errln!("error: no scenarios matched the filters (check --tags/--scenario)");
     proef_core::error::ExitCode::UserError
 }
 

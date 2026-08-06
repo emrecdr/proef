@@ -1482,3 +1482,67 @@ fn plain_diff_reports_incomplete_but_exits_zero() {
         "expected an incomplete-run banner: {stdout}"
     );
 }
+
+/// A closed stderr pipe must not panic the execution path. `head -c0` reads
+/// nothing and exits, closing the read end, so every later stderr write gets
+/// EPIPE — and a raw `eprintln!` would abort with 101, outside the typed
+/// 0/1/2/3 exit taxonomy (ADR-0009). Unix-only because EPIPE and `head` are
+/// POSIX; the guard under test is cross-platform.
+#[cfg(unix)]
+#[test]
+fn failure_summary_does_not_panic_on_a_closed_stderr_pipe() {
+    use std::fmt::Write as _;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+
+    // Several failing scenarios: the summary writes a fault line, a failed-step
+    // line, a curl hint and a reproduce line per failure, so the write lands
+    // well after the reader closes instead of racing one short line.
+    let mut feature = String::from("# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n");
+    for n in 1..=6 {
+        let _ = write!(
+            feature,
+            "  Scenario: health case {n}\n    When the health endpoint is checked\n"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), feature).unwrap();
+    // The fixture answers /health with 200; asserting 500 fails every scenario.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n",
+    )
+    .unwrap();
+
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let mut proef = std::process::Command::new(&bin)
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .env("PROEF_SECRET_APITOKEN", API_TOKEN)
+        .args(["test", "suite"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Consume nothing, then drop the reader to close the pipe early.
+    let mut head = std::process::Command::new("head")
+        .args(["-c", "0"])
+        .stdin(proef.stderr.take().unwrap())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let _ = head.wait();
+    let status = proef.wait().unwrap();
+    // Pins two things at once: no panic (101), and the run actually reached a
+    // normal test-failure outcome — so the test cannot silently decay into
+    // asserting nothing if the corpus ever stops failing.
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "expected the contracted test-failure exit, not a panic or an early abort"
+    );
+}

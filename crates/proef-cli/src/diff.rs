@@ -33,21 +33,21 @@ pub fn diff(
     let (base_dir, new_dir) = match resolve_pair(&runs_root, base, new) {
         Ok(pair) => pair,
         Err(message) => {
-            eprintln!("error: {message}");
+            crate::render::errln!("error: {message}");
             return ExitCode::UserError;
         }
     };
     let base_rec = match record::read_record(&base_dir) {
         Ok(rec) => rec,
         Err(err) => {
-            eprintln!("error: {err}");
+            crate::render::errln!("error: {err}");
             return ExitCode::UserError;
         }
     };
     let new_rec = match record::read_record(&new_dir) {
         Ok(rec) => rec,
         Err(err) => {
-            eprintln!("error: {err}");
+            crate::render::errln!("error: {err}");
             return ExitCode::UserError;
         }
     };
@@ -61,7 +61,7 @@ pub fn diff(
     if fail_on_regression {
         // An incomplete/cancelled NEW run cannot certify "no regressions".
         if new_rec.completion != record::RunCompletion::Completed {
-            eprintln!(
+            crate::render::errln!(
                 "error: the new run did not complete ({}) — cannot certify no regressions",
                 completion_word(new_rec.completion)
             );

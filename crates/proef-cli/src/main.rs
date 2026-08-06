@@ -56,7 +56,7 @@ fn json_only(output: Option<OutputFormat>) -> Result<bool, proef_core::error::Ex
         None => Ok(false),
         Some(OutputFormat::Json) => Ok(true),
         Some(OutputFormat::Tap) => {
-            eprintln!("error: --output tap is only supported by `proef test`");
+            crate::render::errln!("error: --output tap is only supported by `proef test`");
             Err(proef_core::error::ExitCode::UserError)
         }
     }
@@ -240,7 +240,7 @@ fn resolve_suite_path(
     if let Some(suite) = config.default_suite_path() {
         return Ok(suite);
     }
-    eprintln!(
+    crate::render::errln!(
         "error: no path given and no default suite found — pass a path, set `[run] suite` in proef.toml, or create a `tests/` directory"
     );
     Err(proef_core::error::ExitCode::UserError)
@@ -251,7 +251,7 @@ fn resolve_suite_path(
 /// config is read a single time, not once per consumer.
 fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
     config::ProjectConfig::load().map_err(|message| {
-        eprintln!("error: {message}");
+        crate::render::errln!("error: {message}");
         proef_core::error::ExitCode::UserError
     })
 }
@@ -301,7 +301,7 @@ fn main() -> std::process::ExitCode {
             Ok((config, path, active_env)) => {
                 match tags.as_deref().map(proef_core::tags::parse).transpose() {
                     Err(message) => {
-                        eprintln!("error: {message}");
+                        crate::render::errln!("error: {message}");
                         proef_core::error::ExitCode::UserError
                     }
                     Ok(tag_filter) => {
@@ -384,7 +384,7 @@ fn main() -> std::process::ExitCode {
             match result {
                 Ok(()) => proef_core::error::ExitCode::Success,
                 Err(err) => {
-                    eprintln!("error: {}", err.message());
+                    crate::render::errln!("error: {}", err.message());
                     // The variant carries the ADR-0009 classification: a typo
                     // exits 2, an unwritable key dir or lock failure exits 3.
                     match err {
@@ -402,7 +402,7 @@ fn main() -> std::process::ExitCode {
             match config::ProjectConfig::load() {
                 Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
                 Err(message) => {
-                    eprintln!("error: {message}");
+                    crate::render::errln!("error: {message}");
                     proef_core::error::ExitCode::UserError
                 }
             }
@@ -419,14 +419,14 @@ fn main() -> std::process::ExitCode {
                 fail_on_regression,
             ),
             Err(message) => {
-                eprintln!("error: {message}");
+                crate::render::errln!("error: {message}");
                 proef_core::error::ExitCode::UserError
             }
         },
         Command::Report { run_id, output } => match config::ProjectConfig::load() {
             Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
             Err(message) => {
-                eprintln!("error: {message}");
+                crate::render::errln!("error: {message}");
                 proef_core::error::ExitCode::UserError
             }
         },
