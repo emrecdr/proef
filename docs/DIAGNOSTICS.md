@@ -29,7 +29,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::duplicate_macro` | Two macros share a name | ✓ |
 | `pack::empty_macro` | A macro has neither `steps:` nor `expect:` | |
 | `pack::steps_and_expect` | A macro has both `steps:` and `expect:` | |
-| `pack::empty_expect` | An `expect:` item asserts nothing | |
+| `pack::empty_expect` | An `expect:` item asserts nothing | ✓ |
 | `pack::empty_step` | A step has no payload and no `use:` | |
 | `pack::multiple_payloads` | A step has more than one payload key | |
 | `pack::unknown_step_kind` | The payload key names no registered engine | ✓ |
@@ -106,6 +106,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-25 of the 60 codes carry a seeded corpus case today; the corpus guard asserts
+26 of the 60 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

@@ -1,0 +1,12 @@
+macros:
+  check:
+    match: I check the thing
+    steps:
+      - hurl: |
+          GET http://x/health
+          HTTP 200
+  empty:
+    match: nothing binds this
+    expect:
+      - hurl: |
+

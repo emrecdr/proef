@@ -87,13 +87,38 @@ pub(crate) fn normalize_macro(
         }
         (true, Some(items)) => {
             let mut expect = Vec::new();
+            // Positional pairing with `hurl:` lines in source order: only
+            // items that carry the key produce one (assert-only macros have
+            // no `steps:`, so every `hurl:` line in the block is an expect
+            // item's), so the ordinal advances only when `item.hurl` is `Some`.
+            let hurl_spans = locate::expect_hurl_line_spans(&source.text, name);
+            let mut hurl_ordinal = 0usize;
             for (index, item) in items.iter().enumerate() {
-                if item.status.is_none() && item.hurl.is_none() {
-                    diags.push(at(Diag::error(
-                        "proef::pack::empty_expect",
-                        format!("macro `{name}` expect item {index} asserts nothing — give it `status:` and/or `hurl:` assert lines"),
-                    )));
+                let has_hurl_key = item.hurl.is_some();
+                // A blank or whitespace-only `hurl:` block scalar carries no
+                // assert lines — same as omitting the key outright (and, left
+                // unrejected, lowers to a zero-line merged-asserts step that
+                // underflows the sidecar span arithmetic).
+                let fragment_is_blank = item
+                    .hurl
+                    .as_deref()
+                    .is_none_or(|fragment| fragment.trim().is_empty());
+                if item.status.is_none() && fragment_is_blank {
+                    diags.push(
+                        at(Diag::error(
+                            "proef::pack::empty_expect",
+                            format!("macro `{name}` expect item {index} asserts nothing — give it `status:` and/or `hurl:` assert lines"),
+                        ))
+                        .maybe_span(has_hurl_key.then(|| hurl_spans.get(hurl_ordinal).copied()).flatten())
+                        .with_help("an `expect:` item must carry at least one assert line, from `status:` and/or non-blank `hurl:` content"),
+                    );
+                    if has_hurl_key {
+                        hurl_ordinal += 1;
+                    }
                     continue;
+                }
+                if has_hurl_key {
+                    hurl_ordinal += 1;
                 }
                 expect.push(ExpectItem {
                     status: item.status.clone(),
@@ -768,6 +793,39 @@ mod tests {
         schema: "true",
         validate: Some(deny),
     }];
+
+    /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
+    /// line — lowering it would produce a zero-line merged-asserts step, which
+    /// underflows the sidecar's `start + lines - 1` span arithmetic. Pack
+    /// validation rejects it before that can happen, spanning the `hurl:`
+    /// line itself rather than the whole macro.
+    #[test]
+    fn whitespace_only_expect_fragment_is_rejected() {
+        let source = PackSource {
+            name: "expect.yaml".into(),
+            text: Arc::from(
+                "macros:\n  empty:\n    match: nothing binds this\n    expect:\n      - hurl: |\n\n",
+            ),
+        };
+        let err = pack::load(&[source], KINDS).unwrap_err();
+        let FrontError::Diagnostics(diags) = err else {
+            panic!("diagnostics expected");
+        };
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::empty_expect")
+            .unwrap_or_else(|| panic!("expected proef::pack::empty_expect in {diags:?}"));
+        assert!(diag.help.is_some(), "a remediation hint is expected");
+        let text = diag.source_text.as_ref().unwrap();
+        let span = diag
+            .span
+            .unwrap_or_else(|| panic!("expected a span: {diag:?}"));
+        assert_eq!(
+            &text[span.start..span.end],
+            "hurl: |",
+            "span should land on the empty fragment's `hurl:` line, not the whole macro"
+        );
+    }
 
     /// Structured payloads reach the engine's validator at load time —
     /// the same gate raw payloads have always had.

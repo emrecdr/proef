@@ -91,6 +91,14 @@ pub(crate) fn payload_line_span(
     None
 }
 
+/// Content spans of every `hurl:` line in `macro_name`'s `expect:` items, in
+/// textual order — pairs positionally with items whose `hurl` field is
+/// `Some(..)` (an assert-only macro has no `steps:`, so every `hurl:` line in
+/// its block belongs to an `expect:` item).
+pub(crate) fn expect_hurl_line_spans(text: &str, macro_name: &str) -> Vec<Span> {
+    key_line_spans(text, macro_name, "hurl")
+}
+
 /// Every content span, in textual order, of the lines in `macro_name`'s block
 /// whose content (after stripping a leading `- ` sequence dash) begins `<key>:` —
 /// each the line's trimmed content, so a cursor anywhere on it resolves. One scan
@@ -191,6 +199,19 @@ mod tests {
         // A macro with no `use:` → empty (never panics).
         assert!(use_line_spans(USE_PACK, "base").is_empty());
         assert!(use_line_spans(USE_PACK, "absent").is_empty());
+    }
+
+    const EXPECT_PACK: &str = "macros:\n  checkThing:\n    expect:\n      - status: \"200\"\n      - hurl: |\n          jsonpath \"$.a\" exists\n      - status: \"201\"\n        hurl: |\n          jsonpath \"$.b\" exists\n";
+
+    #[test]
+    fn expect_hurl_lines_pair_positionally_with_hurl_bearing_items() {
+        // Three items, only the last two carry `hurl:` — the returned spans
+        // skip the status-only item rather than leaving a hole.
+        let spans = expect_hurl_line_spans(EXPECT_PACK, "checkThing");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(&EXPECT_PACK[spans[0].start..spans[0].end], "hurl: |");
+        assert_eq!(&EXPECT_PACK[spans[1].start..spans[1].end], "hurl: |");
+        assert!(expect_hurl_line_spans(EXPECT_PACK, "absent").is_empty());
     }
 
     const MIXED_USE_PACK: &str = "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n";
