@@ -6,6 +6,76 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`proef init` scaffolds a working suite.** It writes the files
+  `GETTING-STARTED.md` teaches — `proef.toml`, one `.feature`, one matching
+  pack — installs the pack JSON Schema for editor completion, and prints the
+  next command. Nothing is ever overwritten, so a second run is a no-op and no
+  `--force` flag exists to destroy authored work. A test asserts the scaffold
+  passes `--dry-run` unchanged.
+- The README now shows a parameterized macro and states the load-bearing
+  non-goals, including the supported path for teams that already have a hurl
+  corpus.
+
+### Changed
+
+- A passing `--dry-run` now names the next command. Every failure path already
+  named a remedy; the success path stopped talking at the moment a new user
+  decides whether to continue.
+- **A scenario with no steps is now an error, not a silent pass — breaking.**
+  A `Scenario:` with a commented-out or never-written body previously bound to
+  nothing, ran nothing, and exited 0; it now exits 2, through `proef test`,
+  `proef flows`, the libtest-mimic harness, and `proef-lsp` (which re-analyzes
+  on `didChange`, so a half-typed `Scenario:` now shows a live error while
+  you're still typing it). Per `docs/RELEASING.md`, any breaking change is
+  MINOR — this forces the next release to be **0.6.0, not 0.5.4**.
+
+### Fixed
+
+- `resolve::missing_config_var` now suggests the closest key defined in the
+  same namespace, matching `resolve::unknown_variable` and
+  `resolve::fake_unknown`. Candidates are namespace-scoped, so a `${url:…}`
+  typo can never suggest a `[vars]` key. The code also gains the seeded corpus
+  case it was missing.
+- `proef init` no longer rewrites a pack it declined to create. Installing the
+  editor modeline ran unconditionally, so a hand-authored `suite/packs/api.yaml`
+  reported as "already exists" was still modified; the schema install is now
+  gated on the file having been created, and an existing pack gets a hint
+  naming `proef schema --add-to` instead.
+- **Setup and teardown no longer corrupt the run record.** Each phase bracketed
+  its own `run_started`/`run_finished`, so one record held up to three pairs and
+  `proef explain` reported the last phase's totals — printing "1 passed ·
+  0 failed" above a failure it had just listed. The record now carries one
+  pair, and its `run_finished` totals are the main suite's own verdict —
+  `[run] setup`/`teardown` scenarios still appear as their own events in the
+  record, but are never folded into `passed`/`failed`/`skipped`, so those
+  numbers agree with the console `summary:` line, JUnit, `--output json`, TAP,
+  the SLA gate, and the exit code. The console run header also prints once per
+  run instead of once per phase.
+- **`report` and `explain` flag a truncated run.** Both rendered an incomplete
+  record as if it were whole; `explain` also derived its headline solely from
+  the missing tail event, reporting all zeros for a record that held completed
+  scenarios. Both now read through the same record reader `diff` uses.
+- **`explain`'s step/attempt totals count a still-in-flight scenario.** A step
+  only attached to the record once its `ScenarioFinished` landed, so a
+  scenario still running when a truncated record's stream ended had its step
+  evidence silently dropped from the headline — the one place a post-mortem
+  tool most needs it. Totals now fold the raw events directly instead.
+- **`explain`'s failure detail is keyed `(file, scenario)`, not scenario name
+  alone.** Two same-named scenarios in different files previously bled each
+  other's failure output together.
+- **`worker` is the slot a scenario occupied, not a per-scenario counter.** The
+  timeline drew one lane per scenario regardless of `--jobs`.
+- **Run rotation only treats hyphenated UUID directories as run records.** The
+  parser also accepted bare 32-hex, `urn:uuid:` and braced spellings, which
+  rotation could then delete when the runs directory points somewhere shared.
+- The nightly canary can fail again: its step piped through `tee` without
+  `pipefail`, so a red canary exited 0 and the open-an-issue step was
+  unreachable.
+- The raw-print-macro guard now covers `proef-lsp`, where stdout is the
+  JSON-RPC channel and a stray print corrupts protocol framing.
+
 ### Documentation
 
 - The stdout/stderr macro rule is now written down where contributors look:

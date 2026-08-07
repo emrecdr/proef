@@ -202,6 +202,20 @@ fn expand_scenario(
         return;
     }
 
+    // Checked here, before expansion, like every other outline-level defect
+    // above (`no_examples`) — `base_steps` is the same for every Examples row,
+    // so checking it once per row inside `concrete_scenario` would emit one
+    // identical `empty_scenario` diagnostic per row instead of once.
+    if base_steps.is_empty() {
+        diags.push(empty_scenario_diag(
+            &scenario.name,
+            scenario.span,
+            path,
+            source,
+        ));
+        return;
+    }
+
     let mut expanded: Vec<ScenarioDef> = Vec::new();
     for examples in &scenario.examples {
         let Some(table) = &examples.table else {
@@ -296,7 +310,11 @@ fn expand_scenario(
 /// Disambiguate duplicate scenario names feature-wide with `#N` suffixes —
 /// names key artifact slugs, console buffers, and events, so two scenarios
 /// sharing a name would silently overwrite each other's artifact and drain
-/// each other's console output.
+/// each other's console output. It is also the sole guarantee behind the
+/// worker free-list key `(scenario, file)` (`proef-cli`'s
+/// `exec::stamp_scenario_timing`) and behind `Record::scenarios`'s
+/// `(file, scenario)` key (`proef-cli::record`), on which `explain`'s totals
+/// and `--rerun`'s identity depend.
 fn dedup_names(scenarios: &mut [ScenarioDef]) {
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
     for scenario_def in scenarios.iter() {
@@ -356,7 +374,7 @@ fn concrete_scenario(
     };
 
     let name = check(&scenario.name, scenario.span, "the scenario name");
-    let steps = steps
+    let steps: Vec<StepDefn> = steps
         .iter()
         .map(|step| {
             let text = check(&step.value, step.span, "a step");
@@ -384,12 +402,37 @@ fn concrete_scenario(
         })
         .collect();
 
+    // gherkin makes steps optional, so a header with a commented-out or
+    // never-written body parses clean, binds to nothing, lowers to zero
+    // batches, and folds to Passed — silently green forever. Catch it here,
+    // where every other structural feature-file defect is caught. (The
+    // outline path checks this pre-expansion instead — see the call site
+    // above `concrete_scenario`'s per-row loop — so this arm only ever fires
+    // for the plain-scenario path, once.)
+    if steps.is_empty() {
+        diags.push(empty_scenario_diag(&name, scenario.span, path, source));
+    }
+
     ScenarioDef {
         name,
         tags: strip_tag_markers(tags),
         steps,
         line: scenario.position.line,
     }
+}
+
+/// The "scenario has no steps" diagnostic, shared by the plain-scenario path
+/// (`concrete_scenario`, called once) and the outline pre-expansion check
+/// (`expand_scenario`, checked once before any row is expanded) — one
+/// diagnostic per empty scenario body, never one per Examples row.
+fn empty_scenario_diag(name: &str, span: gherkin::Span, path: &str, source: &Arc<str>) -> Diag {
+    Diag::error(
+        "proef::feature::empty_scenario",
+        format!("scenario `{name}` has no steps"),
+    )
+    .with_source(path.to_owned(), Arc::clone(source))
+    .with_span(clamp(span, source))
+    .with_help("a scenario must have at least one step — a commented-out body is the usual cause")
 }
 
 /// Substitute `<col>` placeholders; returns the text and the first unknown
@@ -521,6 +564,51 @@ mod tests {
         let steps = &feature.scenarios[0].steps;
         assert_eq!(steps.len(), 4, "And/But bind by text like any step");
         assert_eq!(steps[1].text, "I do another");
+    }
+
+    #[test]
+    fn scenario_with_no_steps_is_an_error() {
+        // gherkin makes steps optional, so a header with a commented-out or
+        // never-written body must not parse clean — it would bind to
+        // nothing, lower to zero batches, and fold to Passed.
+        let text = "Feature: F\n  Scenario: todo later\n";
+        let errs = parse("f.feature", text).unwrap_err();
+        assert_eq!(errs[0].code, "proef::feature::empty_scenario");
+        assert!(
+            errs[0].message.contains("todo later"),
+            "{}",
+            errs[0].message
+        );
+    }
+
+    #[test]
+    fn empty_scenario_outline_reports_once_not_once_per_row() {
+        // A 3-row Examples table with an empty outline body must not emit
+        // three identical `empty_scenario` diagnostics at the same span —
+        // every sibling outline-level defect (`no_examples`,
+        // `bad_examples_header`) reports once, and this must match.
+        let text = "Feature: F\n  Scenario Outline: todo later\n\n    Examples:\n      \
+            | n |\n      | 1 |\n      | 2 |\n      | 3 |\n";
+        let errs = parse("f.feature", text).unwrap_err();
+        let empty_scenario_errs: Vec<_> = errs
+            .iter()
+            .filter(|e| e.code == "proef::feature::empty_scenario")
+            .collect();
+        assert_eq!(
+            empty_scenario_errs.len(),
+            1,
+            "expected exactly one empty_scenario diagnostic, got {}: {errs:?}",
+            empty_scenario_errs.len()
+        );
+    }
+
+    #[test]
+    fn scenario_with_only_background_steps_is_not_empty() {
+        // A Background contributes real steps, so a scenario with no steps of
+        // its own still runs something and must not be flagged.
+        let text = "Feature: F\n  Background:\n    Given the api is available\n\n  Scenario: S\n";
+        let feature = parse("f.feature", text).unwrap();
+        assert_eq!(feature.scenarios[0].steps.len(), 1);
     }
 
     #[test]

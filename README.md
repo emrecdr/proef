@@ -50,7 +50,20 @@ macros:
           HTTP 201
           [Captures]
           envId: jsonpath "$.id"
+  search:
+    params: [term]
+    match: the operator searches for {term}
+    steps:
+      - hurl: |
+          GET ${url:base}/search
+          [Query]
+          q: ${term}
+          HTTP 200
 ```
+
+`search` binds a sentence with a placeholder: every `{capture}` in `match:` must
+be a declared `params:` entry, and quoted arguments in the feature sentence
+shed their quotes once captured.
 
 Running it validates everything statically, executes against the embedded engine, and
 leaves a complete record:
@@ -84,6 +97,22 @@ summary: 12 passed · 0 failed · 0 skipped
 - **Engine-agnostic core.** Adding an engine leaves `proef-core` diff-empty; that is
   the acceptance test for the seam.
 
+## What proef deliberately isn't
+
+These are settled non-goals, not gaps awaiting a contribution:
+
+- **No importing or round-tripping hand-written hurl files.** Artifacts flow
+  outward only: `proef artifacts` emits `.hurl` you can run with stock hurl,
+  and nothing reads `.hurl` back in.
+- **No API mocking or contract testing**, and no load testing.
+- **No second engine.** The factory/session seam exists for dependency
+  hygiene (ADR-0002), not as a roadmap.
+- **No desktop dashboard or server mode**, and no dynamic plugin loading.
+
+**Already have a hurl corpus?** The supported path is pasting your existing
+request bodies into a pack's `steps[].hurl` blocks — they are raw hurl,
+validated by the real parser at pack load, so they carry over unmodified.
+
 ## Installation
 
 Pick whichever fits your machine:
@@ -113,6 +142,11 @@ macOS: Xcode Command Line Tools; Windows: vcpkg (see
 `.github/workflows/windows.yml`). Verify any install with `proef doctor`.
 
 ## Quick start
+
+Fastest path: `proef init` scaffolds a working suite (`proef.toml`, one
+`.feature`, one pack) into the current directory and prints the next command —
+no secret to store, since the scaffold's pack references none. Building one
+by hand:
 
 A suite is one directory; `proef test <dir>` discovers everything in it by two
 conventions — no configuration points files at each other:

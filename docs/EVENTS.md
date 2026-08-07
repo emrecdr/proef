@@ -43,8 +43,13 @@ records that predate the field) · `status` · `timestamp_ms` (u64, run-relative
 end ms — **only present** with injected timing; carries no `worker`, since it is
 emitted from the main dispatcher thread, not the scenario's worker — ADR-0015).
 
-**`run_finished`** — tail. `passed` · `failed` · `skipped` (scenario counts)
-· `cancelled` (bool, **only present when true**).
+**`run_finished`** — tail. `passed` · `failed` · `skipped` — the **main-suite
+verdict**: scenario counts for the primary suite only (ADR-0014). `[run]
+setup`/`teardown` scenarios still appear as their own `scenario_started`/
+`scenario_finished` events earlier in the stream, but are excluded from these
+totals, so they agree with the console `summary:` line, `proef explain`,
+`proef report`'s HTML headline, `--output json`, JUnit, TAP, the SLA gate,
+and the exit code · `cancelled` (bool, **only present when true**).
 
 ## Example stream
 
@@ -75,6 +80,6 @@ emitted from the main dispatcher thread, not the scenario's worker — ADR-0015)
 
 ```bash
 jq -r 'select(.event=="step_finished" and .status=="failed") | "\(.step.file):\(.step.line) \(.detail)"' events.jsonl
-jq -r 'select(.event=="run_finished")' events.jsonl          # the totals
+jq -r 'select(.event=="run_finished")' events.jsonl          # the suite verdict (setup/teardown excluded)
 jq -r 'select(.event=="entry_running") | .retry' events.jsonl | sort | uniq -c   # retry pressure
 ```

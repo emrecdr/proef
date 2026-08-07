@@ -1,0 +1,16 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+assertion_line: 405
+expression: stderr
+---
+proef::feature::empty_scenario
+
+  × scenario `todo later` has no steps
+   ╭─[tests/errors/feature__empty_scenario/case.feature:2:3]
+ 1 │ Feature: E
+ 2 │   Scenario: todo later
+   ·   ─────────────────────
+   ╰────
+  help: a scenario must have at least one step — a commented-out body is the usual cause
+
+1 error(s)

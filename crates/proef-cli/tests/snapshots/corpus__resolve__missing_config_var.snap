@@ -1,0 +1,14 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::resolve::missing_config_var
+
+  × in macro `fetch`: url variable `bse` is not set — define `[url]` `bse` in proef.toml (or in the active `[env.<name>.url]`) — did you mean `base`?
+   ╭─[tests/errors/resolve__missing_config_var/case.feature:3:5]
+ 2 │   Scenario: S
+ 3 │     When I fetch the page
+   ·     ─────────────────────
+   ╰────
+
+1 error(s)

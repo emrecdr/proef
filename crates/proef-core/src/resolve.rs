@@ -100,13 +100,16 @@ pub enum ResolveError {
     /// `${url:key}` / `${vars:key}` referencing a value defined in neither the
     /// base `proef.toml` table nor the active `[env.<name>]` profile.
     #[error(
-        "{namespace} variable `{key}` is not set — define `[{namespace}]` `{key}` in proef.toml (or in the active `[env.<name>.{namespace}]`)"
+        "{namespace} variable `{key}` is not set — define `[{namespace}]` `{key}` in proef.toml (or in the active `[env.<name>.{namespace}]`){}",
+        suggestion.as_ref().map(|s| format!(" — did you mean `{s}`?")).unwrap_or_default()
     )]
     MissingConfigVar {
         /// The namespace as written (`url` or `vars`).
         namespace: String,
         /// The referenced key.
         key: String,
+        /// Closest key defined in the same namespace, when one is near.
+        suggestion: Option<String>,
     },
     /// `${ns:…}` with an unrecognized namespace.
     #[error(
@@ -355,16 +358,27 @@ fn resolve_config_var(
     arg: &str,
     ctx: &ResolveCtx<'_>,
 ) -> Result<String, ResolveError> {
-    match ctx.config_vars.get(name) {
-        Some(value) => Ok(value.clone()),
-        None => probe_or(
-            ResolveError::MissingConfigVar {
-                namespace: namespace.to_owned(),
-                key: arg.to_owned(),
-            },
-            ctx.mode,
-        ),
+    if let Some(value) = ctx.config_vars.get(name) {
+        return Ok(value.clone());
     }
+    // Candidates are scoped to the same namespace, so a `url:` typo can never
+    // suggest a `vars:` key. Keys are stored as `namespace:key`.
+    let prefix = format!("{namespace}:");
+    let suggestion = crate::matcher::closest(
+        arg,
+        ctx.config_vars
+            .keys()
+            .filter_map(|k| k.strip_prefix(&prefix)),
+    )
+    .map(str::to_owned);
+    probe_or(
+        ResolveError::MissingConfigVar {
+            namespace: namespace.to_owned(),
+            key: arg.to_owned(),
+            suggestion,
+        },
+        ctx.mode,
+    )
 }
 
 /// In [`ResolveMode::Probe`], soften might-resolve-later failures to the
@@ -415,6 +429,10 @@ mod tests {
                 config_vars: map(&[
                     ("url:base", "https://api.example"),
                     ("vars:apiVersion", "v1"),
+                    // Edit-distance-1 from the `${url:nearvar}` typo used by
+                    // missing_config_var_never_suggests_across_namespaces —
+                    // deliberately placed in the wrong namespace.
+                    ("vars:nearvars", "v2"),
                 ]),
                 world: World::new(store),
             }
@@ -511,6 +529,35 @@ mod tests {
         assert!(resolve("${vars:nope}", &f.ctx(ResolveMode::DryRun)).is_err());
         // Probe (pack-lint) tolerates it.
         assert!(resolve("${url:admin}", &f.ctx(ResolveMode::Probe)).is_ok());
+    }
+
+    #[test]
+    fn missing_config_var_suggests_the_closest_key_in_the_same_namespace() {
+        let f = Fixture::new();
+        // The fixture defines `url:base`; `bse` is one edit away.
+        let err = resolve("${url:bse}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("did you mean `base`"),
+            "expected a suggestion naming the near key, got: {message}"
+        );
+    }
+
+    #[test]
+    fn missing_config_var_never_suggests_across_namespaces() {
+        // A `vars:` key that is edit-closer than any `url:` key must not be
+        // offered for a `${url:…}` typo — candidates are namespace-scoped.
+        let f = Fixture::new();
+        let err = resolve("${url:nearvar}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let message = err.to_string();
+        // Strictly stronger than pinning just the specific candidate name: no
+        // suggestion at all is correct here, since `url:` has no close match
+        // of its own — a future change that started suggesting some *other*
+        // wrong-namespace key would still be caught.
+        assert!(
+            !message.contains("did you mean"),
+            "suggestion crossed namespaces: {message}"
+        );
     }
 
     #[test]

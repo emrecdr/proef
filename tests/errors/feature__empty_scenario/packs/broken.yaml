@@ -1,0 +1,7 @@
+macros:
+  noop:
+    match: nothing binds here
+    steps:
+      - hurl: |
+          GET http://x/health
+          HTTP 200

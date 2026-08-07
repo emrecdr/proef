@@ -16,6 +16,7 @@ mod explain;
 mod fmt;
 mod front;
 mod fsutil;
+mod init;
 mod lsp;
 mod record;
 mod registry;
@@ -164,6 +165,11 @@ enum Command {
         #[arg(long = "add-to", num_args = 1..)]
         add_to: Vec<PathBuf>,
     },
+    /// Scaffold a minimal working suite in a new or existing directory
+    Init {
+        /// Target directory (default: the current directory)
+        dir: Option<PathBuf>,
+    },
     /// Check native libraries and environment prerequisites for all registered engines
     Doctor,
     /// Manage the encrypted secret store (values never appear in artifacts)
@@ -294,56 +300,63 @@ fn main() -> std::process::ExitCode {
             sarif,
             rerun,
             env,
-        } => match prepare(path, env) {
-            Err(code) => code,
-            // Parse the tag expression once (it is constant across watch reruns);
-            // a malformed one is a user error, before any scenario runs.
-            Ok((config, path, active_env)) => {
-                match tags.as_deref().map(proef_core::tags::parse).transpose() {
-                    Err(message) => {
-                        crate::render::errln!("error: {message}");
-                        proef_core::error::ExitCode::UserError
-                    }
-                    Ok(tag_filter) => {
-                        let run_once = |cancel| {
-                            if dry_run {
-                                commands::dry_run(
-                                    &path,
-                                    tag_filter.as_ref(),
-                                    scenario.as_deref(),
-                                    scenario_file.as_deref(),
-                                    active_env.as_deref(),
-                                    run_id.clone(),
-                                    sarif.as_deref(),
-                                    &config,
-                                )
+        } => {
+            // Captured before `prepare` consumes `path`: `dry_run`'s "next
+            // command" nudge must echo the path the user actually typed, not
+            // a defaulted one a bare `proef test` already finds on its own.
+            let path_given = path.is_some();
+            match prepare(path, env) {
+                Err(code) => code,
+                // Parse the tag expression once (it is constant across watch reruns);
+                // a malformed one is a user error, before any scenario runs.
+                Ok((config, path, active_env)) => {
+                    match tags.as_deref().map(proef_core::tags::parse).transpose() {
+                        Err(message) => {
+                            crate::render::errln!("error: {message}");
+                            proef_core::error::ExitCode::UserError
+                        }
+                        Ok(tag_filter) => {
+                            let run_once = |cancel| {
+                                if dry_run {
+                                    commands::dry_run(
+                                        &path,
+                                        path_given,
+                                        tag_filter.as_ref(),
+                                        scenario.as_deref(),
+                                        scenario_file.as_deref(),
+                                        active_env.as_deref(),
+                                        run_id.clone(),
+                                        sarif.as_deref(),
+                                        &config,
+                                    )
+                                } else {
+                                    exec::execute(
+                                        &path,
+                                        tag_filter.as_ref(),
+                                        jobs,
+                                        output,
+                                        junit.as_deref(),
+                                        scenario.as_deref(),
+                                        scenario_file.as_deref(),
+                                        active_env.as_deref(),
+                                        run_id.clone(),
+                                        rerun,
+                                        &config,
+                                        cancel, // None = execute installs its own Ctrl-C handler
+                                    )
+                                }
+                            };
+                            if watch_mode {
+                                // The loop owns Ctrl-C and hands each run its token.
+                                watch::watch_loop(&path, |token| run_once(Some(token)))
                             } else {
-                                exec::execute(
-                                    &path,
-                                    tag_filter.as_ref(),
-                                    jobs,
-                                    output,
-                                    junit.as_deref(),
-                                    scenario.as_deref(),
-                                    scenario_file.as_deref(),
-                                    active_env.as_deref(),
-                                    run_id.clone(),
-                                    rerun,
-                                    &config,
-                                    cancel, // None = execute installs its own Ctrl-C handler
-                                )
+                                run_once(None)
                             }
-                        };
-                        if watch_mode {
-                            // The loop owns Ctrl-C and hands each run its token.
-                            watch::watch_loop(&path, |token| run_once(Some(token)))
-                        } else {
-                            run_once(None)
                         }
                     }
                 }
             }
-        },
+        }
         Command::Flows { path, output, env } => match json_only(output) {
             Err(code) => code,
             Ok(output_json) => match prepare(path, env) {
@@ -374,6 +387,7 @@ fn main() -> std::process::ExitCode {
             }
         },
         Command::Schema { add_to } => commands::schema(&add_to),
+        Command::Init { dir } => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
         Command::Doctor => commands::doctor(&registry::engines()),
         Command::Secret { action } => {
             let result = match action {

@@ -13,6 +13,30 @@ engine `hurl`:
   ...
 ```
 
+## 0. Or scaffold it: `proef init`
+
+```console
+$ proef init
+  created proef.toml
+  created suite/case.feature
+  created suite/packs/api.yaml
+  created .gitignore
+  ok suite/packs/api.yaml (modeline added)
+
+created 5 file(s), skipped 0
+next: proef test --dry-run  (then point ${url:base} at your API — the scaffold's routes are placeholders)
+```
+
+`proef init` writes the three files this walkthrough builds by hand below —
+`proef.toml`, `suite/case.feature`, `suite/packs/api.yaml` — plus the pack
+JSON Schema and a `.gitignore`. It is a deliberately *smaller* suite than the
+one this tutorial builds: no `Then the first hit is record "r-1"` step, no
+`firstHit` `expect:` macro, no `${secret:apiToken}`, and `search` targets a
+plain `/search` route instead of the tutorial's `/api/v1/admin/search/records`.
+Pasting the tutorial's `Then` line into the scaffold's feature file fails with
+`bind::unbound_step` — read on to build the fuller suite by hand, or extend
+the scaffold yourself once you understand the pieces.
+
 ## 1. A suite is two things
 
 ```

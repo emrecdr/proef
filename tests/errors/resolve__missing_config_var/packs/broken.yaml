@@ -1,0 +1,7 @@
+macros:
+  fetch:
+    match: I fetch the page
+    steps:
+      - hurl: |
+          GET ${url:bse}/health
+          HTTP 200

@@ -1042,6 +1042,7 @@ pub proef_core::resolve::ResolveError::FakeUnknown::suggestion: core::option::Op
 pub proef_core::resolve::ResolveError::MissingConfigVar
 pub proef_core::resolve::ResolveError::MissingConfigVar::key: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingConfigVar::namespace: alloc::string::String
+pub proef_core::resolve::ResolveError::MissingConfigVar::suggestion: core::option::Option<alloc::string::String>
 pub proef_core::resolve::ResolveError::MissingEnv
 pub proef_core::resolve::ResolveError::MissingEnv::name: alloc::string::String
 pub proef_core::resolve::ResolveError::MissingGlobal

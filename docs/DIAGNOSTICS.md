@@ -19,6 +19,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `feature::ragged_examples` | An Examples row's cell count differs from the header | |
 | `feature::bad_examples_header` | Duplicate or empty Examples column name | |
 | `feature::unknown_placeholder` | An outline step uses `<name>` not present in the header | ✓ |
+| `feature::empty_scenario` | A scenario has no steps (background included) | ✓ |
 
 ## `proef::pack::*` — macro-pack loading and validation
 
@@ -83,7 +84,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `resolve::unknown_variable` | `${name}` found in no scope (suggests the closest) | ✓ |
 | `resolve::missing_env` | `${env:NAME}` unset and no `:-default` given | |
-| `resolve::missing_config_var` | `${url:key}` / `${vars:key}` defined in neither `proef.toml` nor the active `[env.<name>]` | |
+| `resolve::missing_config_var` | `${url:key}` / `${vars:key}` defined in neither `proef.toml` nor the active `[env.<name>]` (suggests the closest) | ✓ |
 | `resolve::missing_global` | `${global:key}` absent from the World (strict mode) | |
 | `resolve::unknown_namespace` | `${ns:…}` with an unknown namespace | |
 | `resolve::unknown_run_field` | `${run:…}` other than `${run:id}` | |
@@ -105,6 +106,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-23 of the 59 codes carry a seeded corpus case today; the corpus guard asserts
+25 of the 60 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

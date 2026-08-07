@@ -8,7 +8,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use proef_core::cancel::CancellationToken;
@@ -170,6 +169,15 @@ pub fn execute(
     // the core stays sans-IO. `stamp` runs on the emitting worker thread.
     let sink = stamp_scenario_timing(proef_core::report::sink(reporters, redactions.clone()));
 
+    // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
+    // which brackets its own work with `RunStarted`/`RunFinished`. A record
+    // must carry exactly one pair overall (ADR-0008), so the phases run
+    // against a wrapper that drops that pair, and a `RunRecord` guard owns
+    // the single pair for the whole run — opened below and closed by an
+    // explicit `drop` after teardown, with `Drop` as the backstop for every
+    // early return in between (see `RunRecord`).
+    let phase_sink = suppress_run_head_tail(sink.clone());
+
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
     let cancel = external_cancel.unwrap_or_else(|| {
@@ -188,6 +196,8 @@ pub fn execute(
         });
         cancel
     });
+
+    let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
 
     // Shared global store (scenario merge-back through the lock, §12).
     let store = match GlobalStore::load(Path::new(".proef-state.json")) {
@@ -218,12 +228,17 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &sink,
+            &phase_sink,
             &cancel,
             &artifacts_dir,
         ) {
             Err(code) => return code,
             Ok(summary) => {
+                // `RunRecord`'s totals are the main-suite verdict only (ADR-0014):
+                // setup's own outcome still drives the exit code below, and its
+                // scenarios are still visible as events in the record, but it is
+                // never folded into `passed`/`failed`/`skipped` — those must match
+                // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
@@ -268,7 +283,8 @@ pub fn execute(
         secrets,
         http: http_defaults,
     };
-    let summary = runner::run(specs, &engines, &store, &run_config, &sink, &cancel);
+    let summary = runner::run(specs, &engines, &store, &run_config, &phase_sink, &cancel);
+    record.add(&summary);
 
     // Suite-level teardown: runs after the pool (setup succeeded, or there was
     // none). Its failure is a distinct non-zero signal (exit 3), never a
@@ -283,12 +299,17 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &sink,
+            &phase_sink,
             &cancel,
             &artifacts_dir,
         ) {
             Err(_) => teardown_exit = ExitCode::SystemError,
             Ok(summary) => {
+                // Excluded from `record`'s totals for the same reason setup is
+                // (above): teardown's own scenario events still land in the
+                // record, and its failure still forces the exit code (below),
+                // but a green suite with a broken teardown must not misread as
+                // the API under test having failed (ADR-0014).
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
                     crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
@@ -298,6 +319,15 @@ pub fn execute(
             }
         }
     }
+
+    // Close the record here, at the same point every phase has finished and
+    // before the failure details / JUnit / SLA report below are printed —
+    // `ConsoleReporter` keys its `summary:` line off `RunFinished`
+    // (report.rs), so closing later would print that line after the failure
+    // detail instead of before it. Every early return above this point closes
+    // the record too, via `RunRecord::drop`, with whatever totals had
+    // accumulated so far — never zero-but-silently-missing.
+    drop(record);
 
     // Persist the World (atomic temp+rename, 0600 — ADR-0005).
     if let Ok(guard) = store.lock()
@@ -475,45 +505,145 @@ pub fn execute(
 
 /// Wrap `inner` so scenario lifecycle events are stamped with run-relative
 /// timing (`timestamp_ms`) and a stable 0-based `worker` index (ADR-0015). The
-/// clock and thread-id reads happen here, in the CLI, on the emitting worker
-/// thread — the sans-IO core never sees them. Non-scenario events pass through.
+/// clock reads happen here, in the CLI, on the emitting worker thread — the
+/// sans-IO core never sees them. Non-scenario events pass through.
 fn stamp_scenario_timing(inner: EventSink) -> EventSink {
     let start = Instant::now();
-    let workers: Arc<Mutex<HashMap<ThreadId, u64>>> = Arc::new(Mutex::new(HashMap::new()));
+    // `worker` is the 0-based slot the scenario occupied, so the timeline shows
+    // occupancy of the `--jobs` workers (ADR-0015). A fresh OS thread is
+    // spawned per scenario, so thread identity would yield a per-scenario
+    // ordinal instead; slots are assigned on start and released on finish.
+    // Release keys on scenario identity because an abandoned scenario's
+    // finish is emitted by the watchdog sweep, not by the worker thread.
+    let slots: Arc<Mutex<HashMap<(String, String), u64>>> = Arc::new(Mutex::new(HashMap::new()));
     EventSink::new(move |event| {
         let now_ms = || u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let worker_index = || {
-            let mut map = workers.lock().unwrap_or_else(PoisonError::into_inner);
-            let next = u64::try_from(map.len()).unwrap_or(u64::MAX);
-            *map.entry(std::thread::current().id()).or_insert(next)
+        let acquire_slot = |scenario: &str, file: &str| {
+            let mut map = slots.lock().unwrap_or_else(PoisonError::into_inner);
+            let taken: BTreeSet<u64> = map.values().copied().collect();
+            // Pigeonhole: with `taken.len()` occupied slots, some slot in
+            // `0..=taken.len()` is always free, so bounding here (unlike an
+            // unbounded `0u64..`) is exact, not a truncation.
+            let bound = u64::try_from(taken.len()).unwrap_or(u64::MAX);
+            let slot = (0..=bound).find(|i| !taken.contains(i)).unwrap_or(0);
+            map.insert((scenario.to_owned(), file.to_owned()), slot);
+            slot
+        };
+        let release_slot = |scenario: &str, file: &str| {
+            let mut map = slots.lock().unwrap_or_else(PoisonError::into_inner);
+            map.remove(&(scenario.to_owned(), file.to_owned()));
         };
         match event {
             Event::ScenarioStarted { scenario, file, .. } => inner.emit(&Event::ScenarioStarted {
                 scenario: scenario.clone(),
                 file: file.clone(),
                 timestamp_ms: Some(now_ms()),
-                worker: Some(worker_index()),
+                worker: Some(acquire_slot(scenario, file)),
             }),
             // `ScenarioFinished` is emitted from the main dispatcher thread, not
             // the worker that ran the scenario, so it carries only the end
             // timestamp — the worker identity comes from `ScenarioStarted`, which
             // *is* emitted on the worker thread. (The end time is the dispatcher's
-            // processing instant, a close approximation — ADR-0015.)
+            // processing instant, a close approximation — ADR-0015.) Releasing the
+            // slot here — keyed on scenario identity, not thread — is what lets an
+            // abandoned scenario's watchdog-swept finish (dispatcher thread) free
+            // it correctly.
             Event::ScenarioFinished {
                 scenario,
                 file,
                 status,
                 ..
-            } => inner.emit(&Event::ScenarioFinished {
-                scenario: scenario.clone(),
-                file: file.clone(),
-                status: *status,
-                timestamp_ms: Some(now_ms()),
-                worker: None,
-            }),
+            } => {
+                release_slot(scenario, file);
+                inner.emit(&Event::ScenarioFinished {
+                    scenario: scenario.clone(),
+                    file: file.clone(),
+                    status: *status,
+                    timestamp_ms: Some(now_ms()),
+                    worker: None,
+                });
+            }
             other => inner.emit(other),
         }
     })
+}
+
+/// A sink that drops `RunStarted`/`RunFinished` and passes everything else
+/// through. Each phase calls `runner::run`, which brackets its own work with
+/// that pair; a record must carry exactly one pair overall (ADR-0008), so the
+/// phases run against this wrapper and `RunRecord` emits the single pair.
+fn suppress_run_head_tail(inner: EventSink) -> EventSink {
+    EventSink::new(move |event| match event {
+        Event::RunStarted { .. } | Event::RunFinished { .. } => {}
+        other => inner.emit(other),
+    })
+}
+
+/// Owns the run's single `RunStarted`/`RunFinished` pair (ADR-0008).
+/// `RunRecord::open` emits the head; `Drop` emits the tail — structurally,
+/// not by remembering to emit it at every `return` between the two. Totals
+/// are the **main-suite verdict only** (ADR-0014): `add` is called once, for
+/// the suite's own `RunSummary`, never for `[run] setup`/`teardown` — so
+/// `run_finished`'s `passed`/`failed`/`skipped` agree with the console
+/// `summary:` line, `explain`, `--output json`, `JUnit`, TAP, the SLA gate, and
+/// the exit code, all of which already read the suite alone. Phase outcomes
+/// stay fully visible as their own `scenario_started`/`scenario_finished`
+/// events, and phase failures still drive the exit code through
+/// `phase_failed`, independent of these totals. Whichever path closes the
+/// record — the explicit `drop` after teardown, or `Drop` firing on an early
+/// return — reports whatever the suite had accumulated, never a phase's
+/// counts or a silently-empty tail.
+struct RunRecord<'a> {
+    sink: &'a EventSink,
+    cancel: &'a CancellationToken,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+}
+
+impl<'a> RunRecord<'a> {
+    /// Emit `RunStarted` and open the guard that will emit `RunFinished` when
+    /// it drops.
+    fn open(sink: &'a EventSink, cancel: &'a CancellationToken, run_id: &Arc<str>) -> Self {
+        sink.emit(&Event::RunStarted {
+            schema: proef_core::event::EVENT_SCHEMA_VERSION,
+            run_id: Arc::clone(run_id),
+        });
+        Self {
+            sink,
+            cancel,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+        }
+    }
+
+    /// Fold the main suite's outcome counts into the run's totals — called
+    /// once, for the suite's own `RunSummary` only (see the struct doc).
+    fn add(&mut self, summary: &runner::RunSummary) {
+        self.passed += summary.passed;
+        self.failed += summary.failed;
+        self.skipped += summary.skipped;
+    }
+}
+
+impl Drop for RunRecord<'_> {
+    fn drop(&mut self) {
+        // A panic unwinding through this frame means the run died mid-flight —
+        // emitting a well-formed `RunFinished` here would certify a crashed run
+        // as complete (`RunCompletion::Completed`), the exact hole the
+        // truncated-record work exists to close. Leave the record without a
+        // tail; it reads back as `RunCompletion::Incomplete`.
+        if std::thread::panicking() {
+            return;
+        }
+        self.sink.emit(&Event::RunFinished {
+            passed: self.passed,
+            failed: self.failed,
+            skipped: self.skipped,
+            cancelled: self.cancel.is_cancelled(),
+        });
+    }
 }
 
 /// Run a suite-level setup/teardown feature once, sequentially, against the
@@ -826,5 +956,54 @@ impl Write for Tee {
             let _ = file.flush();
         }
         self.0.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::panic::AssertUnwindSafe;
+    use std::sync::{Arc, Mutex};
+
+    use super::RunRecord;
+    use proef_core::cancel::CancellationToken;
+    use proef_core::event::{Event, EventSink};
+
+    /// A run that panics mid-flight must stay `RunCompletion::Incomplete`, not
+    /// certify as complete. Nothing sets `panic = "abort"`, so unwind is live —
+    /// a panic reaching `execute`'s frame runs `RunRecord::drop` while
+    /// unwinding, and this pins that `Drop::drop`'s `thread::panicking()` guard
+    /// really does suppress the tail `RunFinished` in that case, not just in
+    /// principle. `catch_unwind` (rather than `#[should_panic]`) lets the test
+    /// inspect what the sink received *after* the unwind, which is the whole
+    /// point.
+    #[test]
+    fn drop_during_panic_does_not_emit_run_finished() {
+        let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = {
+            let events = Arc::clone(&events);
+            EventSink::new(move |event| events.lock().unwrap().push(event.clone()))
+        };
+        let cancel = CancellationToken::new();
+        let run_id: Arc<str> = Arc::from("test-run");
+
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _record = RunRecord::open(&sink, &cancel, &run_id);
+            panic!("simulated mid-run crash");
+        }));
+        assert!(result.is_err(), "the closure must have panicked");
+
+        let events = events.lock().unwrap();
+        assert!(
+            events.iter().any(|e| matches!(e, Event::RunStarted { .. })),
+            "RunStarted must still have been emitted by `open`: {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::RunFinished { .. })),
+            "a panicking drop must never emit RunFinished: {events:?}"
+        );
     }
 }

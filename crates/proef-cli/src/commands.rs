@@ -103,9 +103,15 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
+///
+/// `path_given` is whether the caller passed an explicit suite path (as
+/// opposed to `[run] suite`/`tests/` default resolution) — it decides whether
+/// the printed "next command" echoes that path: a bare `proef test` only
+/// rediscovers a *defaulted* path on its own.
 #[allow(clippy::too_many_arguments)]
 pub fn dry_run(
     path: &Path,
+    path_given: bool,
     tags: Option<&proef_core::tags::TagExpr>,
     scenario: Option<&str>,
     scenario_file: Option<&str>,
@@ -202,6 +208,14 @@ pub fn dry_run(
         totals.4,
         front.warnings.len()
     );
+    // A bare `proef test` only rediscovers the suite on its own when this run
+    // resolved a *default* path — an explicit path must be echoed, or the
+    // printed command exits 2 with "no path given and no default suite found".
+    if path_given {
+        crate::render::outln!("next: proef test {}", path.display());
+    } else {
+        crate::render::outln!("next: proef test");
+    }
     ExitCode::Success
 }
 

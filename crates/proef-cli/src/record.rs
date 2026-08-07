@@ -78,22 +78,45 @@ pub enum RunCompletion {
     Incomplete,
 }
 
+/// The main-suite scenario totals carried by the tail `RunFinished` event
+/// (ADR-0014: setup/teardown are excluded, so this is the run's own verdict —
+/// the same numbers the console `summary:` line, `JUnit`, `--output json`, TAP,
+/// the SLA gate, and the exit code all report).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunTotals {
+    /// Scenarios that passed.
+    pub passed: usize,
+    /// Scenarios that failed.
+    pub failed: usize,
+    /// Scenarios that were skipped.
+    pub skipped: usize,
+}
+
 /// A full run record: every scenario outcome plus whether the run completed.
 #[derive(Debug, Clone)]
 pub struct Record {
-    /// `(file, scenario) -> outcome`.
+    /// `(file, scenario) -> outcome`. Populated from every `scenario_finished`
+    /// in the stream, `[run] setup`/`teardown` scenarios included — the record
+    /// keeps their events, even though `totals` excludes them.
     pub scenarios: BTreeMap<(String, String), ScenarioRun>,
     /// Whether the run reached its tail `RunFinished`.
     pub completion: RunCompletion,
+    /// The tail `RunFinished`'s own totals — `None` exactly when `completion
+    /// == RunCompletion::Incomplete` (no tail event to read them from).
+    pub totals: Option<RunTotals>,
 }
 
-/// Read a full run record: the `(file, scenario) -> ScenarioRun` map plus
-/// completion. The `(file, scenario)` key is the run-wide identity ADR-0008
-/// added `file` for; records that predate the field key under `file = ""`.
-pub fn read_record(record_dir: &Path) -> Result<Record, String> {
-    let events_path = record_dir.join("events.jsonl");
-    let text = std::fs::read_to_string(&events_path)
-        .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
+/// Fold already-parsed events into a full run record: the `(file, scenario)
+/// -> ScenarioRun` map plus completion. The `(file, scenario)` key is the
+/// run-wide identity ADR-0008 added `file` for; records that predate the
+/// field key under `file = ""`.
+///
+/// Takes `&[Event]` rather than a path so a caller that also needs the raw
+/// events for something else (`report`'s `render_html`) can read and parse
+/// the file exactly once and derive both from the same in-memory events —
+/// two reads of a live run's `events.jsonl` can otherwise race and disagree
+/// on whether the tail `RunFinished` had landed yet.
+pub fn parse_record(events: &[Event]) -> Record {
     // Steps stream in before their `ScenarioFinished`; buffer them by
     // `(step.file, scenario)` and attach to each scenario as it closes.
     let mut pending: BTreeMap<(String, String), BTreeMap<(String, usize), StepRun>> =
@@ -103,15 +126,16 @@ pub fn read_record(record_dir: &Path) -> Result<Record, String> {
     let mut seen: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut record: BTreeMap<(String, String), ScenarioRun> = BTreeMap::new();
     let mut completion = RunCompletion::Incomplete;
-    for line in text.lines() {
-        match serde_json::from_str::<Event>(line) {
-            Ok(Event::StepFinished {
+    let mut totals: Option<RunTotals> = None;
+    for event in events {
+        match event {
+            Event::StepFinished {
                 scenario,
                 step,
                 attempts,
                 duration_ms,
                 ..
-            }) => {
+            } => {
                 let text_key = step.text.to_string();
                 let ord = {
                     let counter = seen
@@ -131,35 +155,68 @@ pub fn read_record(record_dir: &Path) -> Result<Record, String> {
                     .insert(
                         (text_key, ord),
                         StepRun {
-                            attempts,
-                            duration_ms,
+                            attempts: *attempts,
+                            duration_ms: *duration_ms,
                         },
                     );
             }
-            Ok(Event::ScenarioFinished {
+            Event::ScenarioFinished {
                 scenario,
                 file,
                 status,
                 ..
-            }) => {
+            } => {
                 let key = (file.to_string(), scenario.to_string());
                 let steps = pending.remove(&key).unwrap_or_default();
-                record.insert(key, ScenarioRun { status, steps });
+                record.insert(
+                    key,
+                    ScenarioRun {
+                        status: *status,
+                        steps,
+                    },
+                );
             }
-            Ok(Event::RunFinished { cancelled, .. }) => {
-                completion = if cancelled {
+            Event::RunFinished {
+                passed,
+                failed,
+                skipped,
+                cancelled,
+            } => {
+                completion = if *cancelled {
                     RunCompletion::Cancelled
                 } else {
                     RunCompletion::Completed
                 };
+                totals = Some(RunTotals {
+                    passed: *passed,
+                    failed: *failed,
+                    skipped: *skipped,
+                });
             }
             _ => {}
         }
     }
-    Ok(Record {
+    Record {
         scenarios: record,
         completion,
-    })
+        totals,
+    }
+}
+
+/// Read a full run record from `<record_dir>/events.jsonl` — a thin file-IO
+/// wrapper over [`parse_record`]. Callers that also need the raw events
+/// (`report`) should read and parse the file themselves and call
+/// `parse_record` directly instead, rather than paying for — and risking a
+/// second, possibly-inconsistent view from — a second read of a live run.
+pub fn read_record(record_dir: &Path) -> Result<Record, String> {
+    let events_path = record_dir.join("events.jsonl");
+    let text = std::fs::read_to_string(&events_path)
+        .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
+    let events: Vec<Event> = text
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    Ok(parse_record(&events))
 }
 
 /// The `(file, scenario)` identity of every scenario that failed in a record —

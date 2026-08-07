@@ -51,6 +51,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
     let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
     let mut total_steps = 0usize;
     let mut total_attempts = 0u64;
+    let mut run_finished: Option<(usize, usize, usize)> = None;
 
     for event in events {
         match event {
@@ -100,20 +101,26 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                     blocks[at].worker = *worker;
                 }
             }
+            Event::RunFinished {
+                passed,
+                failed,
+                skipped,
+                ..
+            } => {
+                run_finished = Some((*passed, *failed, *skipped));
+            }
             _ => {}
         }
     }
 
-    let (mut passed, mut failed, mut skipped, mut warned) = (0usize, 0usize, 0usize, 0usize);
-    for block in &blocks {
-        match block.status {
-            Some(Status::Passed) => passed += 1,
-            Some(Status::Failed) => failed += 1,
-            Some(Status::Skipped) => skipped += 1,
-            Some(Status::Warned) => warned += 1,
-            None => {}
-        }
-    }
+    let (passed, failed, skipped) = suite_totals(run_finished, &blocks);
+    // `warned` is informational only — never part of the aligned three
+    // numbers above (no other surface breaks it out either) — so it stays a
+    // plain count of every rendered block regardless of phase.
+    let warned = blocks
+        .iter()
+        .filter(|block| block.status == Some(Status::Warned))
+        .count();
 
     let mut html = String::with_capacity(2048 + blocks.len() * 256);
     let _ = writeln!(
@@ -138,10 +145,34 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
 
     render_timeline(&mut html, &blocks);
     for block in &blocks {
-        render_block(&mut html, block, artifacts_href);
+        render_block(&mut html, block, artifacts_href, failed);
     }
     html.push_str("</body>\n</html>\n");
     html
+}
+
+/// The headline `(passed, failed, skipped)` — mirrors every other surface
+/// that reads `RunFinished` (console `summary:`, `explain`, `--output json`,
+/// `JUnit`, TAP, the SLA gate, the exit code): main-suite scenarios only,
+/// `[run] setup`/`teardown` excluded (ADR-0014). A truncated record has no
+/// `RunFinished` to read, so fall back to counting every rendered block — the
+/// only totals a dead run can offer.
+fn suite_totals(
+    run_finished: Option<(usize, usize, usize)>,
+    blocks: &[ScenarioBlock],
+) -> (usize, usize, usize) {
+    run_finished.unwrap_or_else(|| {
+        let (mut passed, mut failed, mut skipped) = (0usize, 0usize, 0usize);
+        for block in blocks {
+            match block.status {
+                Some(Status::Passed) => passed += 1,
+                Some(Status::Failed) => failed += 1,
+                Some(Status::Skipped) => skipped += 1,
+                Some(Status::Warned) | None => {}
+            }
+        }
+        (passed, failed, skipped)
+    })
 }
 
 /// Find or create the block for `(file, scenario)`, preserving first-seen order.
@@ -164,8 +195,19 @@ fn block_index(
 }
 
 /// One `<details>` per scenario — failures open by default so the report leads
-/// with what broke.
-fn render_block(html: &mut String, block: &ScenarioBlock, artifacts_href: &str) {
+/// with what broke. `headline_failed` is the aligned failed count in the
+/// summary bar above (`RunFinished`'s, suite-only per ADR-0014, or the
+/// counted-block fallback on a truncated record): a block whose own status is
+/// `Failed` while that count is `0` cannot be one of the failures the
+/// headline counts — it is necessarily a `[run] setup`/`teardown` fault
+/// excluded from it, so it is flagged here rather than left to read as the
+/// page contradicting its own summary.
+fn render_block(
+    html: &mut String,
+    block: &ScenarioBlock,
+    artifacts_href: &str,
+    headline_failed: usize,
+) {
     let status = block.status.unwrap_or(Status::Skipped);
     let open = if status == Status::Failed {
         " open"
@@ -182,6 +224,11 @@ fn render_block(html: &mut String, block: &ScenarioBlock, artifacts_href: &str) 
         file = esc(&block.file),
         name = esc(&block.name),
     );
+    if status == Status::Failed && headline_failed == 0 {
+        html.push_str(
+            " <span class=\"phase-note\">setup/teardown — excluded from totals above</span>",
+        );
+    }
     // Link the artifact only when the scenario actually ran hurl steps (else
     // no `.hurl` was emitted for it).
     if !block.steps.is_empty() {
@@ -354,6 +401,7 @@ const STYLE: &str = "\
 @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--pass:#3fb950;--fail:#f85149;--skip:#8a8a8a;--warn:#d29922;--card:#161b22}}\
 *{box-sizing:border-box}body{margin:0;padding:2rem;max-width:60rem;margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}\
 h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
+.incomplete-banner{color:var(--warn);font-weight:600;margin:0 0 1rem}\
 .summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:0 0 1.5rem}\
 .count{font-weight:600;padding:.15rem .6rem;border-radius:999px;background:var(--card)}\
 .count.pass{color:var(--pass)}.count.fail{color:var(--fail)}.count.skip{color:var(--skip)}.count.warn{color:var(--warn)}\
@@ -365,6 +413,7 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .pill.pass{background:var(--pass)}.pill.fail{background:var(--fail)}.pill.skip{background:var(--skip)}.pill.warn{background:var(--warn)}\
 .loc{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}\
 .artifact{margin-left:auto;font-size:.85rem;color:var(--muted)}\
+.phase-note{color:var(--muted);font-size:.78rem;font-style:italic}\
 .steps{margin:0;padding:.2rem .8rem .8rem 2rem;border-top:1px solid var(--line)}\
 .steps li{margin:.3rem 0}.steps .glyph{font-weight:700}\
 li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph{color:var(--skip)}li.warn .glyph{color:var(--warn)}\

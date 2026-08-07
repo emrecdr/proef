@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use proef_core::error::ExitCode;
 use proef_core::event::Event;
 
+use crate::record::RunCompletion;
+
 /// Render the named run (or the latest) to a standalone HTML file. Defaults to
 /// `report.html` inside the run dir so the `artifacts/` deep-links resolve.
 pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> ExitCode {
@@ -27,16 +29,36 @@ pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> Ex
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
+    // Read once, parse once: `render_html` needs the raw events (steps,
+    // timing, detail — pruned out of `Record`) and completion needs
+    // `parse_record`'s fold over the same events, not a second
+    // `read_to_string`/parse pass — a live run's tail `RunFinished` landing
+    // between two reads would otherwise let one disagree with the other.
+    let rec = crate::record::parse_record(&events);
 
     let out_path = output.map_or_else(|| record_dir.join("report.html"), Path::to_path_buf);
     let href = artifacts_href(&record_dir, &out_path);
-    let html = proef_core::html::render_html(&events, &href);
+    let mut html = proef_core::html::render_html(&events, &href);
+    if rec.completion == RunCompletion::Incomplete {
+        html = banner_incomplete(&html);
+    }
     if let Err(err) = std::fs::write(&out_path, html) {
         crate::render::errln!("error: cannot write {}: {err}", out_path.display());
         return ExitCode::SystemError;
     }
     crate::render::outln!("wrote {}", out_path.display());
     ExitCode::Success
+}
+
+/// `render_html` has no banner parameter — `proef-core` stays untouched — so
+/// prepend the incompleteness notice to the page's existing heading, the same
+/// wording `explain` prints for the same condition.
+fn banner_incomplete(html: &str) -> String {
+    html.replacen(
+        "<h1>",
+        "<p class=\"incomplete-banner\">⚠ run incomplete — no run_finished; results are partial</p>\n<h1>",
+        1,
+    )
 }
 
 /// The href prefix for artifact deep-links: a bare `artifacts` when the report

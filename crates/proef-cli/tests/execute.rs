@@ -711,46 +711,202 @@ fn bare_filename_setup_at_project_root_resolves_packs() {
 }
 
 /// ADR-0014: a teardown failure is a distinct non-zero signal (exit 3, a
-/// cleanup fault) — the suite's own green verdict still stands.
-#[test]
-fn teardown_failure_is_a_distinct_cleanup_fault() {
-    let fixture = Fixture::start().unwrap();
-    let cwd = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+/// cleanup fault) — the suite's own green verdict still stands. This also
+/// pins a console/JUnit disagreement that once existed here: with teardown's
+/// failing scenario folded into `RunRecord`'s totals, the console `summary:`
+/// line read "2 passed · 1 failed" (setup-less here, so suite (1 passed) +
+/// teardown (1 failed)) while JUnit/`--output json`/TAP — which read the
+/// suite's own `RunSummary` directly — said "1 passed, 0 failed". Suite-only
+/// totals make the console line agree with those surfaces again.
+/// A green suite (one passing scenario) with a `[run] teardown` that fails —
+/// the shape that makes a phase-only failure visible: the suite's own verdict
+/// is all-pass, so `RunFinished`'s suite-only totals (ADR-0014) legitimately
+/// read `0 failed` while the teardown scenario itself still shows up Failed
+/// in the record.
+fn write_teardown_only_suite(cwd: &Path) {
+    std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
     std::fs::write(
-        cwd.path().join("proef.toml"),
+        cwd.join("proef.toml"),
         "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/teardown.feature"),
+        cwd.join("suite/teardown.feature"),
         "Feature: T\n  Scenario: broken cleanup\n    When teardown probes health\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/case.feature"),
+        cwd.join("suite/case.feature"),
         "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
     )
     .unwrap();
     std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
+        cwd.join("suite/packs/p.yaml"),
         "macros:\n  teardownProbe:\n    match: teardown probes health\n    steps:\n      \
          - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
          suiteProbe:\n    match: the suite probes health\n    steps:\n      \
          - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
     )
     .unwrap();
+}
+
+#[test]
+fn teardown_failure_is_a_distinct_cleanup_fault() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
 
     let assert = proef_in(cwd.path(), &fixture)
         .args(["test", "suite"])
         .assert()
         .code(3); // cleanup fault, distinct from a test failure (1) or green (0)
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(stderr.contains("teardown failed"), "{stderr}");
+    assert!(
+        stdout.contains("summary: 1 passed · 0 failed · 0 skipped"),
+        "console summary must be the suite's own verdict, not blended with \
+         teardown's failure: {stdout}"
+    );
     let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
     assert!(
         events.contains(r#""scenario":"passes""#),
         "the suite itself ran: {events}"
+    );
+    assert!(
+        events.contains(r#""event":"run_finished","passed":1,"failed":0,"skipped":0"#),
+        "run_finished must be the suite's totals only, not folding in teardown's failure: {events}"
+    );
+}
+
+/// `explain` must still name and detail a phase-only failure even though the
+/// suite-only headline (ADR-0014) legitimately reads `0 failed` — a green
+/// suite with a broken teardown is exactly the case a post-mortem tool exists
+/// to surface, and the process exits non-zero for it (exit 3).
+#[test]
+fn explain_details_a_green_suite_with_a_failing_teardown() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("1 passed · 0 failed · 0 skipped"),
+        "headline stays the suite's own (all-pass) verdict: {out}"
+    );
+    assert!(
+        out.contains("broken cleanup"),
+        "the failing teardown scenario must be named even though the \
+         headline reads 0 failed: {out}"
+    );
+    assert!(
+        out.contains("artifacts:"),
+        "the failure detail block (artifact/log path) must still print: {out}"
+    );
+}
+
+/// The setup-fails counterpart: the main suite never runs at all (ADR-0014 —
+/// a broken setup aborts before the pool starts), so the headline is
+/// `0 passed · 0 failed · 0 skipped`, yet `explain` must still name the
+/// failing setup scenario instead of printing nothing (exit 2).
+#[test]
+fn explain_details_a_failing_setup() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("0 passed · 0 failed · 0 skipped"),
+        "headline is empty — the suite never ran: {out}"
+    );
+    assert!(
+        out.contains("broken setup"),
+        "the failing setup scenario must be named even though the headline \
+         reads 0 failed: {out}"
+    );
+    assert!(
+        out.contains("artifacts:"),
+        "the failure detail block (artifact/log path) must still print: {out}"
+    );
+}
+
+/// `proef report`'s HTML headline must agree with `explain` and the record's
+/// own `run_finished` totals — a green suite with a failing teardown must not
+/// read as `1 passed · 1 failed` in the HTML while every other surface says
+/// `1 passed · 0 failed`.
+#[test]
+fn report_headline_matches_explain_on_a_failing_teardown() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3);
+
+    let out_html = cwd.path().join("report.html");
+    proef_in(cwd.path(), &fixture)
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    assert!(
+        html.contains(r#"<span class="count pass">1 passed</span>"#),
+        "HTML headline must report the suite's own passed count: {html}"
+    );
+    assert!(
+        html.contains(r#"<span class="count fail">0 failed</span>"#),
+        "HTML headline must agree with explain/run_finished (0 failed), not \
+         count the failing teardown block into the headline: {html}"
+    );
+    // The teardown scenario's own block must still render — dropping it
+    // would lose real information — just not be folded into the headline.
+    assert!(
+        html.contains("broken cleanup"),
+        "the failing teardown scenario's block must still render: {html}"
     );
 }
 
@@ -1545,4 +1701,434 @@ fn failure_summary_does_not_panic_on_a_closed_stderr_pipe() {
         Some(1),
         "expected the contracted test-failure exit, not a panic or an early abort"
     );
+}
+
+/// A suite with `[run] setup` + `[run] teardown`, a PASSING setup, a FAILING
+/// main scenario, and a PASSING teardown — the shape that makes phase-blended
+/// records visible: the last `run_finished` (teardown's, all-passing) would
+/// otherwise win the headline over the suite's own failure.
+fn write_phase_suite(cwd: &Path) {
+    std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\n\
+         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/setup.feature"),
+        "Feature: S\n  Scenario: provision\n    When setup probes health\n",
+    )
+    .unwrap();
+    // The fixture answers /health with 200; asserting 500 fails this scenario
+    // (same technique as `failure_maps_to_feature_line_and_artifact_span`).
+    std::fs::write(
+        cwd.join("suite/case.feature"),
+        "Feature: F\n  Scenario: health asserts the wrong status\n    \
+         When the health endpoint is checked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: cleanup\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n  \
+         mainProbe:\n    match: the health endpoint is checked\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+}
+
+/// The newest run record's `events.jsonl`, as written under `.proef-runs/`.
+fn latest_events_jsonl(cwd: &Path) -> String {
+    std::fs::read_to_string(latest_run_dir(cwd).join("events.jsonl")).unwrap()
+}
+
+/// A run with setup and teardown must still produce ONE record: one
+/// `run_started` line and one `run_finished` line. Three head/tail pairs make
+/// every whole-file consumer read phase-blended results.
+#[test]
+fn phases_produce_a_single_run_started_and_run_finished() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    // Build a suite with a PASSING setup, a FAILING main scenario, and a
+    // PASSING teardown. The failing main is what makes the bug visible: the
+    // last `run_finished` (teardown's) would otherwise win the headline.
+    write_phase_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+
+    let record = latest_events_jsonl(cwd.path());
+    let started = record
+        .lines()
+        .filter(|l| l.contains("\"run_started\""))
+        .count();
+    let finished = record
+        .lines()
+        .filter(|l| l.contains("\"run_finished\""))
+        .count();
+    assert_eq!(started, 1, "expected exactly one run_started:\n{record}");
+    assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
+}
+
+/// `explain` must report the suite's own verdict, never a blend with
+/// setup/teardown (ADR-0014). Before the run-record merge fix this printed
+/// "1 passed · 0 failed" — teardown's own totals, the last phase to close its
+/// own `run_finished` — directly above a printed failure. Summing all three
+/// phases instead (setup's 1 passed + suite's 1 failed + teardown's 1 passed)
+/// would silently count setup/teardown scenarios as if they were part of the
+/// suite; the ruling is suite-only totals, so this pins that instead.
+#[test]
+fn explain_reports_the_failure_not_the_teardown_totals() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_phase_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("0 passed · 1 failed · 0 skipped"),
+        "headline must be the suite's own verdict: {out}"
+    );
+    assert!(
+        !out.contains("1 passed · 0 failed"),
+        "headline must not be teardown's totals: {out}"
+    );
+    assert!(
+        !out.contains("2 passed"),
+        "headline must not sum setup+suite+teardown scenarios: {out}"
+    );
+
+    // Pin the aggregation itself, not just the headline text: only the
+    // suite's own outcome (1 failed) reaches `run_finished`. Setup's pass and
+    // teardown's pass are still visible as their own scenario events in the
+    // record (asserted below) — just never folded into these totals.
+    let record = latest_events_jsonl(cwd.path());
+    assert!(
+        record.contains(r#""event":"run_finished","passed":0,"failed":1,"skipped":0"#),
+        "run_finished must report the suite's totals only, not summed across phases: {record}"
+    );
+    assert!(
+        record.contains(r#""scenario":"provision""#) && record.contains(r#""scenario":"cleanup""#),
+        "setup/teardown scenarios must still appear as events in the record: {record}"
+    );
+}
+
+/// The console run header keys off `RunStarted`, so suppressing phase head/tail
+/// must also collapse the three headers a phased run used to print.
+#[test]
+fn console_prints_the_run_header_once_per_run() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_phase_suite(cwd.path());
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    // `ConsoleReporter::on_event`'s `Event::RunStarted` arm writes `"proef run
+    // {run_id}"` to `self.out` (report.rs:217-218) — the per-run header, once
+    // per `RunStarted`. `self.out` is stdout here (no `--output json`/`tap`,
+    // so `machine_stdout` is false and `console_out` is `std::io::stdout()`,
+    // exec.rs:154-158) — the same stream `out` reads.
+    assert_eq!(
+        out.matches("proef run ").count(),
+        1,
+        "run header should appear once, not once per phase: {out}"
+    );
+}
+
+/// The critical regression this test guards: a failing `[run] setup` used to
+/// `return` between the record's `RunStarted` and `RunFinished`, leaving a
+/// record with a head, setup's scenario events, and no tail — this is the
+/// exact shape `RunRecord`'s `Drop` closes even on that early-return path.
+#[test]
+fn setup_failure_still_closes_the_record_with_one_pair() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2); // user error — same path as setup_failure_aborts_the_run_as_a_user_error
+
+    let record = latest_events_jsonl(cwd.path());
+    let started = record
+        .lines()
+        .filter(|l| l.contains("\"run_started\""))
+        .count();
+    let finished = record
+        .lines()
+        .filter(|l| l.contains("\"run_finished\""))
+        .count();
+    assert_eq!(started, 1, "expected exactly one run_started:\n{record}");
+    assert_eq!(finished, 1, "expected exactly one run_finished:\n{record}");
+}
+
+/// A record with no `run_finished` is a truncated run — OOM-kill, CI timeout,
+/// crash. `explain` and `report` are the post-mortem tools, so they are exactly
+/// the ones that must say so instead of rendering it as complete.
+#[test]
+fn explain_and_report_flag_a_truncated_record() {
+    let cwd = tempfile::tempdir().unwrap();
+    let run = cwd
+        .path()
+        .join(".proef-runs/0198f3c1-0000-7000-8000-000000000001");
+    std::fs::create_dir_all(&run).unwrap();
+    // Starts, runs one scenario to completion, then stops: no run_finished.
+    std::fs::write(
+        run.join("events.jsonl"),
+        concat!(
+            r#"{"schema":1,"event":"run_started","run_id":"0198f3c1-0000-7000-8000-000000000001","scenarios":2}"#, "\n",
+            r#"{"schema":1,"event":"scenario_started","scenario":"first","file":"suite/a.feature"}"#, "\n",
+            r#"{"schema":1,"event":"scenario_finished","scenario":"first","file":"suite/a.feature","status":"passed","line":3}"#, "\n",
+        ),
+    )
+    .unwrap();
+
+    let mut explain = assert_cmd::Command::cargo_bin("proef").unwrap();
+    let assert = explain
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("incomplete"),
+        "explain must flag incompleteness: {out}"
+    );
+    // The record holds one passed scenario; reporting zeros is the bug.
+    assert!(
+        !out.contains("0 passed · 0 failed · 0 skipped"),
+        "totals must come from the scenarios present, not the missing tail: {out}"
+    );
+
+    let out_html = cwd.path().join("report.html");
+    let mut report = assert_cmd::Command::cargo_bin("proef").unwrap();
+    report
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    // Not a bare `contains("incomplete")`: the page's stylesheet always
+    // carries the `.incomplete-banner` rule, so that substring alone would
+    // pass even if the banner paragraph itself were never inserted. The
+    // banner's own wording is the real signal.
+    assert!(
+        html.contains("run incomplete"),
+        "report must banner incompleteness"
+    );
+}
+
+/// A truncated record where one scenario finished and a second is still in
+/// flight (`ScenarioStarted` + steps, no matching `ScenarioFinished`) when
+/// the stream ends — the shape a crash/OOM-kill/CI-timeout actually leaves
+/// behind, and the case the whole truncated-record fix exists for.
+fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event> {
+    use proef_core::event::Event;
+    use proef_core::step::{Status, StepRef};
+    use std::sync::Arc;
+    vec![
+        diff_run_started(run_id),
+        diff_step_finished(),     // "health" scenario: 1 step, 1 attempt.
+        diff_scenario_finished(), // "health" finishes.
+        Event::ScenarioStarted {
+            scenario: Arc::from("second"),
+            file: Arc::from("case.feature"),
+            timestamp_ms: None,
+            worker: None,
+        },
+        Event::StepFinished {
+            scenario: Arc::from("second"),
+            engine: Arc::from("hurl"),
+            step: StepRef {
+                file: Arc::from("case.feature"),
+                line: 5,
+                text: Arc::from("in-flight step one"),
+            },
+            status: Status::Passed,
+            attempts: 3,
+            duration_ms: 5,
+            captures: Vec::new(),
+            detail: None,
+            attempt_details: Vec::new(),
+        },
+        Event::StepFinished {
+            scenario: Arc::from("second"),
+            engine: Arc::from("hurl"),
+            step: StepRef {
+                file: Arc::from("case.feature"),
+                line: 6,
+                text: Arc::from("in-flight step two"),
+            },
+            status: Status::Passed,
+            attempts: 2,
+            duration_ms: 5,
+            captures: Vec::new(),
+            detail: None,
+            attempt_details: Vec::new(),
+        },
+        // No `ScenarioFinished` for "second", and no tail `RunFinished` at all.
+    ]
+}
+
+/// `explain`'s step/attempt totals must count a still-in-flight scenario's
+/// steps, not just the ones attached to a finished `ScenarioFinished` — a
+/// step only attaches to `Record::scenarios` once its scenario closes
+/// (`record::parse_record`), so counting from `rec.scenarios` alone silently
+/// drops the dying scenario's step evidence from a truncated record.
+#[test]
+fn explain_counts_steps_from_a_still_in_flight_scenario() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    let run_id = "00000000-0000-0000-0000-000000000003";
+    write_run(&runs, run_id, &truncated_with_in_flight_events(run_id));
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    // 1 attempt (finished "health") + 3 + 2 (in-flight "second") = 3 steps, 6 attempts.
+    assert!(
+        out.contains("3 step(s), 6 attempt(s)"),
+        "the in-flight scenario's steps must still count toward the headline: {out}"
+    );
+}
+
+/// A cancelled run is a *complete* run (`RunFinished { cancelled: true }`),
+/// not an incomplete one — `record::RunCompletion` keeps the two apart.
+/// `diff` bans everything that `!= Completed` from certifying "no
+/// regressions" (`diff.rs`), but `explain`/`report` must not borrow that
+/// wider rule for their incompleteness banner: a cancelled run has nothing
+/// missing to apologize for.
+#[test]
+fn cancelled_record_is_not_bannered_as_incomplete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runs = tmp.path().join(".proef-runs");
+    let run_id = "00000000-0000-0000-0000-000000000004";
+    write_run(&runs, run_id, &cancelled_pass_events(run_id));
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        !out.contains("incomplete"),
+        "a cancelled run must not banner as incomplete: {out}"
+    );
+
+    let out_html = tmp.path().join("report.html");
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(tmp.path())
+        .env("NO_COLOR", "1")
+        .args(["report", "-o", &out_html.display().to_string()])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(&out_html).unwrap();
+    // Not a bare `contains("incomplete")`: the page's stylesheet always
+    // carries the `.incomplete-banner` rule (used only when the banner
+    // paragraph is actually inserted), so that substring is present on every
+    // report regardless of completion. The banner's own wording is the signal.
+    assert!(
+        !html.contains("run incomplete"),
+        "report must not banner a cancelled run as incomplete: {html}"
+    );
+}
+
+/// With one job, every scenario runs on the one worker slot — so every stamped
+/// `worker` must be 0. The pre-existing snapshot test uses a single scenario,
+/// where a per-scenario ordinal and a worker slot are numerically identical;
+/// this needs two or more to tell the two models apart.
+#[test]
+fn worker_is_a_slot_index_not_a_scenario_ordinal() {
+    use std::fmt::Write as _;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    let mut feature = String::from("Feature: F\n");
+    for n in 1..=3 {
+        let _ = writeln!(
+            feature,
+            "  Scenario: case {n}\n    When the health endpoint is checked"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), feature).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(0);
+
+    let record = latest_events_jsonl(cwd.path());
+    let stamped: Vec<&str> = record
+        .lines()
+        .filter(|l| l.contains("\"worker\""))
+        .collect();
+    assert!(stamped.len() >= 3, "expected stamped events: {record}");
+    for line in &stamped {
+        assert!(
+            line.contains("\"worker\":0"),
+            "every event should stamp slot 0 at --jobs 1: {line}"
+        );
+    }
 }

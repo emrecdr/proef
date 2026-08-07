@@ -38,6 +38,7 @@ jobs:
 
       - name: Canary — build + test against the next hurl release
         id: canary
+        shell: bash
         run: cargo run -p xtask -- canary 2>&1 | tee canary.log
 
       - name: Open an issue on red
