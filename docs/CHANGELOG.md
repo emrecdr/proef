@@ -30,6 +30,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   usize` occurrence counter supplied by the caller, and `Resolution::fakes`
   was removed — `resolve()` no longer owns the counter itself.
 
+### Fixed
+
+- **`.map.json` no longer lists captures that were never made.** The sidecar's
+  capture scan was fence-unaware — a literal `[Captures]` line inside a
+  fenced (```…```) body re-armed it — and it recognised only the stock HTTP
+  methods, so an entry opened by a custom method (`PROPFIND`, …) never ended
+  the previous scan. Both let capture names that don't exist in the emitted
+  entry land in `.map.json`, a normative artifact (ADR-0010). The scan is now
+  fence-aware and shares the lowering pass's method recogniser
+  (`is_method_line`) instead of carrying a second, weaker copy.
+
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 
 ### Added

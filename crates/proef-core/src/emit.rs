@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::lower::LoweredScenario;
+use crate::lower::{LoweredScenario, is_method_line};
 use crate::step::{StepPayload, StepRef};
 use crate::world::World;
 
@@ -246,11 +246,26 @@ fn trimmed_lines(payload: &str) -> Vec<&str> {
 
 /// Capture names declared in `[Captures]` sections (a textual scan over our
 /// own canonical text — the engine parses it for real).
+///
+/// Fence-aware: a fenced (```…```) body is opaque to the scan — a literal
+/// `[Captures]` line inside a docstring body must not re-arm it — and a
+/// custom-method entry line ends the previous entry via [`is_method_line`],
+/// the same recogniser the lowering pass uses. Otherwise phantom rows reach
+/// `.map.json`, a normative artifact (ADR-0010).
 fn capture_names(body: &[&str]) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_captures = false;
+    let mut in_fence = false;
     for line in body {
         let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            in_captures = false;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         if trimmed == "[Captures]" {
             in_captures = true;
             continue;
@@ -266,7 +281,7 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             continue;
         }
         // So does a body opener: nothing after it in this entry is a capture.
-        if trimmed.starts_with('{') || trimmed.starts_with('<') || trimmed.starts_with("```") {
+        if trimmed.starts_with('{') || trimmed.starts_with('<') {
             in_captures = false;
             continue;
         }
@@ -286,13 +301,12 @@ fn capture_names(body: &[&str]) -> Vec<String> {
     names
 }
 
-/// Does this canonical-emission line open a new request or response (ending
-/// any `[Captures]` run)?
+/// Does this canonical-emission line open a new request, response, or
+/// comment (ending any `[Captures]` run)? Requests are recognised via
+/// [`is_method_line`] — the lowering pass's recogniser — so a custom method
+/// (`PROPFIND`, …) ends the scan exactly as it ends an entry there.
 fn starts_entry_line(trimmed: &str) -> bool {
-    const STARTERS: &[&str] = &[
-        "GET ", "POST ", "PUT ", "DELETE ", "PATCH ", "HEAD ", "OPTIONS ", "HTTP ", "HTTP/",
-    ];
-    trimmed.starts_with('#') || STARTERS.iter().any(|s| trimmed.starts_with(s))
+    trimmed.starts_with('#') || trimmed.starts_with("HTTP") || is_method_line(trimmed)
 }
 
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
@@ -453,6 +467,32 @@ mod tests {
             "HTTP 200",
         ];
         assert_eq!(capture_names(&body), vec!["id"]);
+    }
+
+    #[test]
+    fn capture_scan_ignores_fenced_lines_and_ends_at_custom_methods() {
+        // A fenced `[Captures]` must not re-arm the scan, and a custom method
+        // must end the previous entry — otherwise phantom rows reach the
+        // sidecar, which is a normative artifact (ADR-0010).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "real: jsonpath \"$.id\"",
+            "",
+            "PROPFIND http://x/b",
+            "```",
+            "[Captures]",
+            "phantom: jsonpath \"$.nope\"",
+            "```",
+            "HTTP 207",
+        ];
+        let names = capture_names(&body);
+        assert!(names.contains(&"real".to_owned()), "{names:?}");
+        assert!(
+            !names.contains(&"phantom".to_owned()),
+            "fenced capture leaked into the sidecar: {names:?}"
+        );
     }
 
     #[test]

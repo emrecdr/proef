@@ -620,7 +620,10 @@ fn is_header_line(trimmed: &str) -> bool {
 /// Is this trimmed line an entry-opening method line (`GET http://…`)? Custom
 /// methods are any ≥ 3-char run of ASCII uppercase / `-` — except `HTTP`,
 /// which opens a response.
-fn is_method_line(trimmed: &str) -> bool {
+///
+/// Shared with the emitter's capture scan (`emit::capture_names`) — one
+/// canonical method recogniser, not a duplicate.
+pub(crate) fn is_method_line(trimmed: &str) -> bool {
     trimmed.split_whitespace().next().is_some_and(|word| {
         word.len() >= 3
             && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')
