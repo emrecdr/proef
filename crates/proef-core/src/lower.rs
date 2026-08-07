@@ -69,6 +69,14 @@ const MAX_EXPANSION_DEPTH: usize = 32;
 struct Refs {
     secrets: BTreeSet<String>,
     globals: BTreeSet<String>,
+    /// `${fake:*}` occurrence counter, shared across every step in the
+    /// scenario (not reset per `resolve()` call) so two steps each asking
+    /// for a fresh `${fake:email}` get distinct values. Scoped to one
+    /// `lower()` call — i.e. one scenario — which keeps it a pure function
+    /// of `(run_id, the scenario's own step order)`: `lower()` runs
+    /// single-threaded per scenario (`runner.rs`: scenario-per-OS-thread),
+    /// so no cross-scenario or cross-thread ordering ever reaches it.
+    fakes: usize,
 }
 
 /// Lower one bound scenario into engine batches.
@@ -182,7 +190,7 @@ fn expand_macro(
             world: ctx.world,
             mode: ctx.mode,
         };
-        match resolve::resolve(text, &resolve_ctx) {
+        match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
             Ok(resolution) => {
                 refs.secrets.extend(resolution.secrets);
                 refs.globals.extend(resolution.globals);
@@ -299,6 +307,13 @@ fn expand_step(
             );
         }
         MacroStepKind::Payload { kind, payload } => {
+            // The label annotates *this* step for humans (artifact comments,
+            // events) — it must report the fake values the step actually
+            // used, not mint fresh ones of its own. Remember where the
+            // occurrence counter stood before the functional resolves
+            // (payload, then guard) so the label can replay from the same
+            // base afterward.
+            let label_fakes_start = refs.fakes;
             let payload = match payload {
                 PayloadForm::Raw(text) => {
                     let Some(resolved) = resolve_in(text, refs, warnings, diags) else {
@@ -341,11 +356,36 @@ fn expand_step(
             };
             // Labels resolve like payloads (same scope, same strictness) —
             // otherwise raw `${…}` leaks into artifact comments and events.
+            // But a label is a *replay*, not a new use: it shares whatever
+            // `${…}` text the payload/guard already resolved (typically the
+            // same captured arg, e.g. `name: search ${term}` next to
+            // `q: ${term}`), so it resolves from a scratch copy of the
+            // counter rewound to `label_fakes_start` — reproducing the
+            // payload's own fake values instead of consuming fresh
+            // occurrences that would then shift every later step's fakes by
+            // one. Restoring to a *fixed* end (wherever payload/guard left
+            // off) is only correct when the label is an exact mirror: a
+            // label with a `${fake:…}` the payload never had still consumes
+            // real occurrences during the replay, and blindly rewinding past
+            // them would hand those numbers back out to a later step —
+            // colliding with a value this label already displayed. So the
+            // real counter is restored to the *high-water mark* of the two —
+            // wherever payload/guard left off, or wherever the label's own
+            // replay reached, whichever is further — never below either.
+            // Mirrored references replay with no trace (unaffected, the
+            // common case); any extra reference the label consumes stays
+            // consumed and can never be reissued.
+            let functional_fakes_end = refs.fakes;
             let label = match &macro_step.name {
-                Some(name) => match resolve_in(name, refs, warnings, diags) {
-                    Some(resolved) => Some(resolved),
-                    None => return,
-                },
+                Some(name) => {
+                    refs.fakes = label_fakes_start;
+                    let resolved = resolve_in(name, refs, warnings, diags);
+                    refs.fakes = functional_fakes_end.max(refs.fakes);
+                    match resolved {
+                        Some(resolved) => Some(resolved),
+                        None => return,
+                    }
+                }
                 None => None,
             };
             out.push(LoweredStep {
@@ -580,7 +620,10 @@ fn is_header_line(trimmed: &str) -> bool {
 /// Is this trimmed line an entry-opening method line (`GET http://…`)? Custom
 /// methods are any ≥ 3-char run of ASCII uppercase / `-` — except `HTTP`,
 /// which opens a response.
-fn is_method_line(trimmed: &str) -> bool {
+///
+/// Shared with the emitter's capture scan (`emit::capture_names`) — one
+/// canonical method recogniser, not a duplicate.
+pub(crate) fn is_method_line(trimmed: &str) -> bool {
     trimmed.split_whitespace().next().is_some_and(|word| {
         word.len() >= 3
             && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')
@@ -851,6 +894,80 @@ mod tests {
         assert_eq!(errs[0].code, "proef::lower::then_before_when");
     }
 
+    /// Pack validation only sees the *unresolved* pack text (`item.hurl`),
+    /// which is non-blank here (`"${vars:blank}"`) — the emptiness only
+    /// appears once `${vars:key}` resolves against a `proef.toml` value that
+    /// happens to be `""` (a legitimate, env-conditional authoring pattern:
+    /// extra asserts present in some environments, none in others). That
+    /// still lowers to a zero-line `MergedAsserts` step, and the sidecar
+    /// emitter must never turn a zero-line step into an inverted
+    /// `.map.json` span (ADR-0010: emitted artifacts are the normative
+    /// contract).
+    #[test]
+    fn an_expect_fragment_that_resolves_empty_does_not_invert_the_merged_span() {
+        const PACK: &str = r#"macros:
+  ping:
+    match: the service is pinged
+    steps:
+      - hurl: |
+          GET ${url:base}/ping
+          HTTP 200
+  expectBlank:
+    match: nothing extra is asserted
+    expect:
+      - hurl: "${vars:blank}"
+"#;
+        let packs = pack::load(
+            &[PackSource {
+                name: "test.yaml".into(),
+                text: Arc::from(PACK),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    Given the service is pinged\n    Then nothing extra is asserted\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let config_vars = BTreeMap::from([
+            ("url:base".to_owned(), "http://fixture.local".to_owned()),
+            ("vars:blank".to_owned(), String::new()),
+        ]);
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(lowered.batches[0].steps.len(), 2);
+        let StepPayload::MergedAsserts { lines } = lowered.batches[0].steps[1].payload else {
+            panic!("expected a merged-asserts step for the Then line");
+        };
+        assert_eq!(lines, 0, "the fragment resolved to nothing");
+
+        let artifact = crate::emit::emit(&lowered, "t", &world).unwrap();
+        for entry in &artifact.map.entries {
+            let [start, end] = entry.hurl_lines;
+            assert!(
+                start <= end,
+                "inverted span for a zero-line merge: {start}..{end}"
+            );
+        }
+    }
+
     /// `${…}` resolves inside structured payload string values,
     /// recursively — keys stay literal (they are schema, not data).
     #[test]
@@ -1030,5 +1147,178 @@ mod tests {
         // Scenario-wide ordinals — the sidecar `batch` key engines filter by.
         let indexes: Vec<usize> = batches.iter().map(|b| b.index).collect();
         assert_eq!(indexes, vec![0, 1, 2]);
+    }
+
+    /// A step's label replays the payload's `${fake:…}` values (the same
+    /// occurrence) instead of minting a fresh one — so the artifact comment
+    /// never names data the request didn't actually send — and that replay
+    /// must leave no trace on the running counter: a later step's own fake
+    /// still lands on the very next occurrence, not one the label
+    /// incidentally borrowed.
+    #[test]
+    fn label_mirrors_the_payloads_fake_values_without_shifting_later_steps() {
+        const FAKE_PACK: &str = r#"macros:
+  searchFor:
+    params: [term]
+    match: "the operator searches for {term}"
+    steps:
+      - name: "search for ${term}"
+        hurl: |
+          GET ${url:base}/search
+          [Query]
+          q: ${term}
+          HTTP 200
+  pingFake:
+    match: a fresh fake is requested
+    steps:
+      - hurl: |
+          GET ${url:base}/ping
+          [Query]
+          v: ${fake:lastName}
+          HTTP 200
+"#;
+        let packs = pack::load(
+            &[PackSource {
+                name: "fakes.yaml".into(),
+                text: Arc::from(FAKE_PACK),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    When the operator searches for ${fake:lastName}\n    Then a fresh fake is requested\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let config_vars =
+            BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
+        )
+        .unwrap();
+
+        // Both steps share one hurl batch (no optional/engine boundary).
+        assert_eq!(lowered.batches[0].steps.len(), 2);
+        let StepPayload::HurlEntries(search) = &lowered.batches[0].steps[0].payload else {
+            panic!("expected hurl entries");
+        };
+        let label = lowered.batches[0].steps[0].label.as_deref().unwrap();
+
+        // The payload's request resolves the scenario's first ${fake:…} —
+        // occurrence 0 — and the label mirrors that exact value.
+        let occurrence_0 = crate::fake::generate("run-0001", 0, "lastName").unwrap();
+        assert!(
+            search.contains(&format!("q: {occurrence_0}")),
+            "payload: {search}"
+        );
+        assert!(label.contains(&occurrence_0), "label: {label}");
+
+        // The second step's own fake continues from occurrence 1 — proof
+        // the label's replay above did not silently consume it.
+        let StepPayload::HurlEntries(ping) = &lowered.batches[0].steps[1].payload else {
+            panic!("expected hurl entries");
+        };
+        let occurrence_1 = crate::fake::generate("run-0001", 1, "lastName").unwrap();
+        assert!(ping.contains(&format!("v: {occurrence_1}")), "ping: {ping}");
+    }
+
+    /// The mirrored-replay above only covers a label that is an *exact*
+    /// mirror of its payload. A label with *more* `${fake:…}` references
+    /// than its payload still consumes real occurrences during its replay —
+    /// blindly rewinding the counter back to wherever the payload/guard left
+    /// off would hand those consumed occurrences back out to a later step,
+    /// which would then display a value the label already showed.
+    #[test]
+    fn label_with_more_fakes_than_its_payload_does_not_leak_occurrences_to_later_steps() {
+        const FAKE_PACK: &str = r#"macros:
+  unmirroredLabel:
+    match: a label mentions more fakes than its payload
+    steps:
+      - name: "${fake:lastName} vs ${fake:lastName}"
+        hurl: |
+          GET ${url:base}/probe
+          [Query]
+          q: ${fake:lastName}
+          HTTP 200
+  pingFake:
+    match: a fresh fake is requested
+    steps:
+      - hurl: |
+          GET ${url:base}/ping
+          [Query]
+          v: ${fake:lastName}
+          HTTP 200
+"#;
+        let packs = pack::load(
+            &[PackSource {
+                name: "unmirrored.yaml".into(),
+                text: Arc::from(FAKE_PACK),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    When a label mentions more fakes than its payload\n    Then a fresh fake is requested\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let config_vars =
+            BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
+        )
+        .unwrap();
+
+        // Both steps share one hurl batch.
+        assert_eq!(lowered.batches[0].steps.len(), 2);
+        let label = lowered.batches[0].steps[0].label.as_deref().unwrap();
+        let StepPayload::HurlEntries(ping) = &lowered.batches[0].steps[1].payload else {
+            panic!("expected hurl entries");
+        };
+
+        // The label's payload uses occurrence 0; the label itself has a
+        // *second* `${fake:lastName}` the payload never had, which must
+        // consume occurrence 1 for real.
+        let occurrence_0 = crate::fake::generate("run-0001", 0, "lastName").unwrap();
+        let occurrence_1 = crate::fake::generate("run-0001", 1, "lastName").unwrap();
+        assert!(label.contains(&occurrence_0), "label: {label}");
+        assert!(label.contains(&occurrence_1), "label: {label}");
+
+        // The next step's own, independent fake must continue *past* what
+        // the label already consumed — occurrence 2 — never occurrence 1,
+        // which the label already displayed.
+        let occurrence_2 = crate::fake::generate("run-0001", 2, "lastName").unwrap();
+        assert!(
+            !ping.contains(&format!("v: {occurrence_1}")),
+            "the next step's fake reused an occurrence the label already \
+             displayed: {ping}"
+        );
+        assert!(ping.contains(&format!("v: {occurrence_2}")), "ping: {ping}");
     }
 }

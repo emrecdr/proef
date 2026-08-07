@@ -12,9 +12,9 @@
 //! monotonic-clock use is confined to budget enforcement and never enters
 //! events (durations are engine-measured).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use crate::cancel::CancellationToken;
@@ -167,6 +167,113 @@ enum Msg {
     },
 }
 
+/// A scenario's run-wide identity: `(file, scenario)`, matching the pairing
+/// `identities`/`ScenarioOutcome` already use.
+type ScenarioId = (Arc<str>, Arc<str>);
+
+/// The gate's mutable state, behind one lock (see [`RecordGate`]).
+struct GateState {
+    /// Scenario identities that have been finalized — a worker's late event
+    /// for one of these is dropped rather than reaching `inner`.
+    closed: HashSet<ScenarioId>,
+    /// Set once, after `RunFinished` is written. Once `true`, nothing reaches
+    /// `inner` again, for any identity.
+    run_closed: bool,
+}
+
+/// Wraps the run's sink so a finalized scenario's late events never reach the
+/// record. An abandoned scenario's thread is detached and observes its
+/// cancellation token only at its next batch boundary (ADR-0007), so it can
+/// still try to emit after the sweep recorded its outcome — and after the run
+/// itself was finalized. The record's tail must be the tail.
+///
+/// One gate, two write paths, one lock: [`Self::scenario_sink`] hands each
+/// worker thread a sink pre-bound to its own scenario identity (so it filters
+/// without needing to inspect every event variant for `scenario`/`file`
+/// fields — not all of them carry both); [`Self::finish_scenario`] is called
+/// directly by the dispatcher thread, from both the normal completion path
+/// and `sweep_expired`, to emit a scenario's terminal event and mark it
+/// closed. Every read *and* write of [`GateState`] — including the emit
+/// itself — happens under the same `Mutex`, so "is this identity still open"
+/// and "write the event" are one atomic step rather than a check racing a
+/// concurrent close. [`Self::close_run`] is called only after `RunFinished`
+/// has already been written, per [`Self::emit_run_level`].
+#[derive(Clone)]
+struct RecordGate {
+    inner: EventSink,
+    state: Arc<Mutex<GateState>>,
+}
+
+impl RecordGate {
+    fn new(inner: EventSink) -> Self {
+        Self {
+            inner,
+            state: Arc::new(Mutex::new(GateState {
+                closed: HashSet::new(),
+                run_closed: false,
+            })),
+        }
+    }
+
+    /// A sink bound to one scenario's identity, handed to its worker thread.
+    /// Every event passed through it is dropped once the run is closed, or
+    /// once this scenario has been finalized via [`Self::finish_scenario`] —
+    /// including when that happened on the *dispatcher* thread (the watchdog
+    /// sweep), racing ahead of this scenario's own thread. The state lock is
+    /// held across the emit itself: a check-then-act (read the flag, drop
+    /// the lock, then emit) would leave a window for a worker to be
+    /// preempted right there and still write after the tail — the emit is
+    /// part of the same critical section as the check, not a step after it.
+    fn scenario_sink(&self, file: Arc<str>, scenario: Arc<str>) -> EventSink {
+        let inner = self.inner.clone();
+        let state = Arc::clone(&self.state);
+        let id: ScenarioId = (file, scenario);
+        EventSink::new(move |event| {
+            let guard = state.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.run_closed || guard.closed.contains(&id) {
+                return;
+            }
+            inner.emit(event);
+            // `guard` drops here, after the emit — not before it.
+        })
+    }
+
+    /// Emit a scenario's terminal `ScenarioFinished` and mark it closed under
+    /// one lock acquisition, so no [`Self::scenario_sink`] call for this
+    /// identity — nor a concurrent [`Self::close_run`] — can land between the
+    /// two: the terminal event and the closing of its identity are atomic.
+    /// Called from both the dispatcher's normal completion path and
+    /// `sweep_expired` — the two places a scenario is ever finalized.
+    fn finish_scenario(&self, event: &Event, file: &Arc<str>, scenario: &Arc<str>) {
+        let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !guard.run_closed {
+            self.inner.emit(event);
+        }
+        guard
+            .closed
+            .insert((Arc::clone(file), Arc::clone(scenario)));
+    }
+
+    /// Emit an event that carries no single-scenario identity (`RunStarted`,
+    /// `RunFinished`) — gated only by the run-level close.
+    fn emit_run_level(&self, event: &Event) {
+        let guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !guard.run_closed {
+            self.inner.emit(event);
+        }
+    }
+
+    /// Shut the gate for good. Call only after `RunFinished` has already
+    /// been written via [`Self::emit_run_level`] — the tail must be written
+    /// before the gate closes, never the other way around.
+    fn close_run(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .run_closed = true;
+    }
+}
+
 /// Execute `specs` and return the summary. Emits the full event stream on
 /// `events` (`RunStarted` … `RunFinished` — ADR-0008).
 // One cohesive listing of the dispatch/watchdog loop; splitting hides the order.
@@ -179,7 +286,12 @@ pub fn run(
     events: &EventSink,
     cancel: &CancellationToken,
 ) -> RunSummary {
-    events.emit(&Event::RunStarted {
+    // Every emission in this function goes through the gate, never `events`
+    // directly (one mechanism deciding what reaches the record — see
+    // `RecordGate`), so late writes from an abandoned scenario's detached
+    // thread can never slip past it.
+    let gate = RecordGate::new(events.clone());
+    gate.emit_run_level(&Event::RunStarted {
         schema: EVENT_SCHEMA_VERSION,
         run_id: Arc::clone(&config.run_id),
     });
@@ -209,13 +321,17 @@ pub fn run(
                 break;
             };
             if cancel.is_cancelled() {
-                events.emit(&Event::ScenarioFinished {
-                    scenario: Arc::clone(&spec.name),
-                    file: Arc::clone(&spec.file),
-                    status: Status::Skipped,
-                    timestamp_ms: None,
-                    worker: None,
-                });
+                gate.finish_scenario(
+                    &Event::ScenarioFinished {
+                        scenario: Arc::clone(&spec.name),
+                        file: Arc::clone(&spec.file),
+                        status: Status::Skipped,
+                        timestamp_ms: None,
+                        worker: None,
+                    },
+                    &spec.file,
+                    &spec.name,
+                );
                 outcomes.push(ScenarioOutcome {
                     file: spec.file,
                     name: spec.name,
@@ -230,13 +346,15 @@ pub fn run(
             let initial_deadline = Instant::now() + config.default_batch_budget + grace;
             let child = cancel.child_token();
             active.insert(index, (initial_deadline, child.clone()));
+            let scenario_events =
+                gate.scenario_sink(Arc::clone(&spec.file), Arc::clone(&spec.name));
             spawn_scenario(
                 index,
                 spec,
                 Arc::clone(engines),
                 Arc::clone(store),
                 config.clone(),
-                events.clone(),
+                scenario_events,
                 child,
                 tx.clone(),
             );
@@ -263,13 +381,17 @@ pub fn run(
             }
             Ok(Msg::Done { scenario, outcome }) => {
                 if active.remove(&scenario).is_some() {
-                    events.emit(&Event::ScenarioFinished {
-                        scenario: Arc::clone(&outcome.name),
-                        file: Arc::clone(&outcome.file),
-                        status: outcome.status,
-                        timestamp_ms: None,
-                        worker: None,
-                    });
+                    gate.finish_scenario(
+                        &Event::ScenarioFinished {
+                            scenario: Arc::clone(&outcome.name),
+                            file: Arc::clone(&outcome.file),
+                            status: outcome.status,
+                            timestamp_ms: None,
+                            worker: None,
+                        },
+                        &outcome.file,
+                        &outcome.name,
+                    );
                     outcomes.push(outcome);
                 }
                 // else: a previously-abandoned thread finished late — ignored.
@@ -280,7 +402,7 @@ pub fn run(
         // Sweep expired deadlines on *every* turn of the loop — a steady
         // stream of messages from healthy scenarios must not keep a hung
         // one alive past its budget.
-        sweep_expired(&mut active, &mut outcomes, events, &identities);
+        sweep_expired(&mut active, &mut outcomes, &gate, &identities);
     }
 
     let passed = outcomes
@@ -296,12 +418,16 @@ pub fn run(
         .filter(|o| o.status == Status::Skipped)
         .count();
     let cancelled = cancel.is_cancelled();
-    events.emit(&Event::RunFinished {
+    gate.emit_run_level(&Event::RunFinished {
         passed,
         failed,
         skipped,
         cancelled,
     });
+    // The tail is written — only now does the gate shut. Any scenario thread
+    // still detached out there (an abandoned one, cooperatively cancelled but
+    // not yet reaped, ADR-0007) can no longer reach the sink at all.
+    gate.close_run();
     RunSummary {
         outcomes,
         passed,
@@ -313,12 +439,15 @@ pub fn run(
 
 /// Abandon every scenario whose deadline has passed: cancel its child token,
 /// record a `System` fault, and detach the thread (ADR-0007 — the process
-/// reaps it at exit; the cancelled token is the thread's signal to stop
-/// appending to the record).
+/// reaps it at exit; the cancelled token is the thread's cooperative signal
+/// to stop). Cooperation is not guaranteed by every engine, so `gate` is the
+/// actual backstop: `finish_scenario` closes this scenario's identity right
+/// here, before the detached thread can notice its token and try to keep
+/// appending to the record.
 fn sweep_expired(
     active: &mut BTreeMap<usize, (Instant, CancellationToken)>,
     outcomes: &mut Vec<ScenarioOutcome>,
-    events: &EventSink,
+    gate: &RecordGate,
     identities: &[(Arc<str>, Arc<str>, usize)],
 ) {
     let now = Instant::now();
@@ -345,13 +474,17 @@ fn sweep_expired(
             )),
             artifact_slug: None,
         };
-        events.emit(&Event::ScenarioFinished {
-            scenario: Arc::clone(&outcome.name),
-            file: Arc::clone(&outcome.file),
-            status: Status::Failed,
-            timestamp_ms: None,
-            worker: None,
-        });
+        gate.finish_scenario(
+            &Event::ScenarioFinished {
+                scenario: Arc::clone(&outcome.name),
+                file: Arc::clone(&outcome.file),
+                status: Status::Failed,
+                timestamp_ms: None,
+                worker: None,
+            },
+            &outcome.file,
+            &outcome.name,
+        );
         outcomes.push(outcome);
     }
 }

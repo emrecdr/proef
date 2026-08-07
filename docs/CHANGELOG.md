@@ -6,6 +6,64 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`${fake:…}` values no longer repeat across a scenario's steps.** The
+  occurrence counter restarted on every step, so two steps each asking for a
+  fresh `${fake:email}` received the same address. Every independent
+  `${fake:…}` reference within a scenario — across steps, and within one
+  step's payload/`when:`/label — now gets its own value and never collides
+  with another, however many a single step ends up resolving. A step's
+  `name:` label (shown in artifact comments and events) is the deliberate
+  exception: it is not independent of its own payload, so it replays from
+  the start of the step's own occurrence window instead of minting new
+  ones, matched by position (the label's Nth `${fake:…}` reference reuses
+  the payload/`when:`'s Nth occurrence, regardless of generator kind) — so
+  it reproduces the payload's own value when the label's references mirror
+  the payload's in kind and order, and shows a different generator's output
+  when they don't. Even a label with *more* `${fake:…}` references than its
+  payload still reserves each extra one, so a later step can never be
+  handed a value the label already displayed. Values remain deterministic
+  for a given
+  `--run-id`, but suites using `${fake:…}` will see their emitted artifacts
+  change. **Known limitation, not fixed here:** the counter resets at the
+  start of every scenario, not the run, so two *different* scenarios that
+  each resolve `${fake:email}` at the same position in their own step order
+  still collide — that is a separate bug with its own snapshot-moving fix.
+- **`proef_core::resolve::resolve` changed signature** (public API break for
+  downstream `proef-core` consumers): it now takes an additional `&mut
+  usize` occurrence counter supplied by the caller, and `Resolution::fakes`
+  was removed — `resolve()` no longer owns the counter itself.
+
+### Fixed
+
+- **`.map.json` no longer lists captures that were never made.** The sidecar's
+  capture scan was fence-unaware — a literal `[Captures]` line inside a
+  fenced (```…```) body re-armed it — and it recognised only the stock HTTP
+  methods, so an entry opened by a custom method (`PROPFIND`, …) never ended
+  the previous scan. Both let capture names that don't exist in the emitted
+  entry land in `.map.json`, a normative artifact (ADR-0010). The scan is now
+  fence-aware and shares the lowering pass's method recogniser
+  (`is_method_line`) instead of carrying a second, weaker copy.
+- **`pack::empty_expect` now also catches a whitespace-only `hurl:` fragment.**
+  The diagnostic already existed for an `expect:` item with neither `status:`
+  nor `hurl:` at all; a `hurl:` key present but carrying no non-blank assert
+  line slipped past it, lowered to an empty asserts block. It also gains a
+  remediation hint and the seeded corpus case it was missing. **Scope:** this
+  check reads the *unresolved* pack text, so a fragment that is non-blank as
+  authored but resolves to nothing at lower time (e.g. `${vars:key}` naming a
+  `proef.toml` value that is `""` in the active environment, or an unset
+  `${global:key}` under `--dry-run`) still lowers to an empty asserts block —
+  see the sidecar-emitter entry below for how that residual case is handled.
+- **The sidecar emitter can no longer produce an inverted `.map.json` span.**
+  A `Then` step whose asserts all resolved to nothing — reachable even after
+  the `pack::empty_expect` widening above, since pack validation cannot see
+  what a fragment resolves to, only what it says — lowered to a zero-line
+  merged-asserts step, and the emitter's line-span arithmetic underflowed:
+  the start offset exceeded the end. Such a step now gets no sidecar row at
+  all instead of an inverted one — nothing was appended to the artifact, so
+  there is nothing to report a span for.
+
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 
 ### Added

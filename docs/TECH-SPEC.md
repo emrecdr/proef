@@ -235,8 +235,19 @@ Author-time (`${…}`, resolved in §4.4, recursive ≤ 8): `${param}` · `${env
 `${env:NAME:-default}` · `${url:key}` / `${vars:key}` (proef.toml `[url]`/`[vars]`, base +
 active `[env.<name>]` deep-merged; injected — ADR-0012) · `${run:id}` (uuid-v7-derived, injected) · `${global:key}`
 (World read at lower time of the scenario) · `${secret:NAME}` (encrypted store; emits
-`{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id; port
-deterministic NL generators) · `$${…}` literal escape. Run-time (`{{…}}`): hurl captures and
+`{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id and an
+occurrence index; the index is an incrementing counter scoped to one scenario — shared
+across every `${fake:…}` resolve in it, so independent references never collide regardless
+of how many a step resolves; a step's `name:` label resolves from a rewound copy of the
+counter so its Nth `${fake:…}` reference reuses the payload's/`when:`'s Nth occurrence by
+*position*, not generator kind — reproducing the payload's own value exactly when the
+label's references mirror the payload's in kind and order, otherwise surfacing that
+occurrence's own-kind value instead — then restores the real counter to the high-water
+mark the replay reached (never below it), so an extra fake the label alone introduces
+still reserves its slot and is never reissued;
+the counter resets to zero at the next scenario, so the same generator at the same position
+in two different scenarios currently coincides; port deterministic NL generators) · `$${…}`
+literal escape. Run-time (`{{…}}`): hurl captures and
 secret placeholders — resolved by the engine. Resolution order within a scope: step args
 > macro defaults.
 

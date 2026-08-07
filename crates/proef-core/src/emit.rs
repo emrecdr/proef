@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::lower::LoweredScenario;
+use crate::lower::{LoweredScenario, is_method_line};
 use crate::step::{StepPayload, StepRef};
 use crate::world::World;
 
@@ -204,13 +204,26 @@ fn merged_map_entries(
     let mut start = entry_end.saturating_sub(total) + 1;
     followers
         .iter()
-        .map(|&(batch, step, merged)| {
+        .filter_map(|&(batch, step, merged)| {
             let StepPayload::MergedAsserts { lines } = merged.payload else {
                 unreachable!("followers are delimited by the MergedAsserts match");
             };
+            // A `Then` whose fragment resolved to nothing (e.g. an
+            // env-conditional `${vars:key}` that is blank in this
+            // environment — pack validation sees only the unresolved,
+            // non-blank text, so it cannot catch this) appended zero lines
+            // to the entry: there is no hurl-text span for it to own. Any
+            // span we could invent here either inverts (`start > end`) or
+            // falsely claims a line another follower already owns, so the
+            // step gets no sidecar row at all — nothing was emitted, so
+            // nothing is reported. `start` is left untouched (`+= 0`), so
+            // this can never perturb a later follower's span.
+            if lines == 0 {
+                return None;
+            }
             let span = [start, start + lines - 1];
             start += lines;
-            MapEntry {
+            Some(MapEntry {
                 hurl_lines: span,
                 feature: FeatureAnchor {
                     file: merged.step.file.to_string(),
@@ -221,7 +234,7 @@ fn merged_map_entries(
                 captures: Vec::new(),
                 batch,
                 step,
-            }
+            })
         })
         .collect()
 }
@@ -246,17 +259,41 @@ fn trimmed_lines(payload: &str) -> Vec<&str> {
 
 /// Capture names declared in `[Captures]` sections (a textual scan over our
 /// own canonical text — the engine parses it for real).
+///
+/// Fence-aware: a fenced (```…```) body is opaque to the scan — a literal
+/// `[Captures]` line inside a docstring body must not re-arm it — and a
+/// custom-method entry line ends the previous entry via [`is_method_line`],
+/// the same recogniser the lowering pass uses. Otherwise phantom rows reach
+/// `.map.json`, a normative artifact (ADR-0010).
 fn capture_names(body: &[&str]) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_captures = false;
+    let mut in_fence = false;
     for line in body {
         let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            in_captures = false;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
         if trimmed == "[Captures]" {
             in_captures = true;
             continue;
         }
         if trimmed.starts_with('[') {
             in_captures = false;
+            continue;
+        }
+        // A capture-shaped line inside an open run is a capture, full stop —
+        // checked ahead of `starts_entry_line` because the generic recogniser
+        // cannot tell an uppercase capture name (hurl permits a space before
+        // its `:`) from a custom-method entry line, and must not be allowed
+        // to guess wrong on this scan's own territory.
+        if in_captures && let Some(name) = capture_name(trimmed) {
+            names.push(name.to_owned());
             continue;
         }
         // A new entry (method/status line or comment) ends the section — a
@@ -266,33 +303,40 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             continue;
         }
         // So does a body opener: nothing after it in this entry is a capture.
-        if trimmed.starts_with('{') || trimmed.starts_with('<') || trimmed.starts_with("```") {
+        if trimmed.starts_with('{') || trimmed.starts_with('<') {
             in_captures = false;
-            continue;
-        }
-        if in_captures && let Some((name, _)) = trimmed.split_once(':') {
-            let name = name.trim();
-            // Bare identifiers only — a JSON body line (`"status": "ok"`)
-            // must never read as the capture `"status"`.
-            if !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                names.push(name.to_owned());
-            }
         }
     }
     names
 }
 
-/// Does this canonical-emission line open a new request or response (ending
-/// any `[Captures]` run)?
+/// Is `trimmed` shaped like a capture definition (`name: query`)? Bare
+/// identifiers only — a JSON body line (`"status": "ok"`) must never read as
+/// the capture `"status"`, and an entry-opening line never has this shape (a
+/// method line's first token carries no colon; a response line has no colon
+/// at all).
+fn capture_name(trimmed: &str) -> Option<&str> {
+    let (name, _) = trimmed.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    .then_some(name)
+}
+
+/// Does this canonical-emission line open a new request, response, or
+/// comment (ending any `[Captures]` run)? Requests are recognised via
+/// [`is_method_line`] — the lowering pass's recogniser — so a custom method
+/// (`PROPFIND`, …) ends the scan exactly as it ends an entry there. The
+/// response check requires its own delimiter (`HTTP ` / `HTTP/`) rather than
+/// a bare prefix match — a capture merely *named* starting with `HTTP`
+/// (`HTTPStatus: …`) is not a response line, and must not be read as one.
 fn starts_entry_line(trimmed: &str) -> bool {
-    const STARTERS: &[&str] = &[
-        "GET ", "POST ", "PUT ", "DELETE ", "PATCH ", "HEAD ", "OPTIONS ", "HTTP ", "HTTP/",
-    ];
-    trimmed.starts_with('#') || STARTERS.iter().any(|s| trimmed.starts_with(s))
+    trimmed.starts_with('#')
+        || trimmed.starts_with("HTTP ")
+        || trimmed.starts_with("HTTP/")
+        || is_method_line(trimmed)
 }
 
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
@@ -453,6 +497,121 @@ mod tests {
             "HTTP 200",
         ];
         assert_eq!(capture_names(&body), vec!["id"]);
+    }
+
+    #[test]
+    fn capture_scan_ignores_fenced_lines_and_ends_at_custom_methods() {
+        // A fenced `[Captures]` must not re-arm the scan, and a custom method
+        // must end the previous entry — otherwise phantom rows reach the
+        // sidecar, which is a normative artifact (ADR-0010).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "real: jsonpath \"$.id\"",
+            "",
+            "PROPFIND http://x/b",
+            "```",
+            "[Captures]",
+            "phantom: jsonpath \"$.nope\"",
+            "```",
+            "HTTP 207",
+        ];
+        let names = capture_names(&body);
+        assert!(names.contains(&"real".to_owned()), "{names:?}");
+        assert!(
+            !names.contains(&"phantom".to_owned()),
+            "fenced capture leaked into the sidecar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn capture_names_keeps_a_capture_whose_name_starts_with_http() {
+        // End-to-end invariant: a capture merely *named* starting with
+        // "HTTP" (e.g. `HTTPStatus`) must survive the scan, or it — and
+        // every capture after it in the entry — is silently missing from
+        // the sidecar (ADR-0010: no legitimate row may be dropped). This
+        // goes green via the capture-shape guard in `capture_names`, which
+        // recognises `HTTPStatus: …` as a capture before `starts_entry_line`
+        // is ever consulted; `starts_entry_line_requires_a_delimiter_after_http`
+        // pins the response-line predicate itself.
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "HTTPStatus: jsonpath \"$.status\"",
+            "plain: jsonpath \"$.id\"",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec!["HTTPStatus".to_owned(), "plain".to_owned()]
+        );
+    }
+
+    #[test]
+    fn starts_entry_line_requires_a_delimiter_after_http() {
+        // Pins the predicate directly: the response check must require its
+        // own delimiter (`HTTP ` / `HTTP/`), not a bare prefix match, or it
+        // misreads a capture merely *named* starting with `HTTP` as a
+        // response line. Real response lines must still match.
+        assert!(!starts_entry_line("HTTPStatus: jsonpath \"$.status\""));
+        assert!(starts_entry_line("HTTP 200"));
+        assert!(starts_entry_line("HTTP/1.1 200"));
+        // And a custom-method entry line must be recognised too — this is
+        // what `is_method_line` (shared with the lowering pass) buys over a
+        // fixed prefix list of the stock HTTP verbs.
+        assert!(starts_entry_line("PROPFIND http://x/b"));
+    }
+
+    #[test]
+    fn capture_scan_ends_the_previous_entry_at_a_custom_method_line() {
+        // Direct (unfenced) reproduction of the phantom-row hazard: an open
+        // `[Captures]` run must not survive past a custom-method entry line.
+        // A blank line does not close the run on its own (only an
+        // entry-opening line, a body opener, or a new bracketed section
+        // does), so if `PROPFIND` were not recognised as one, `in_captures`
+        // would still be armed when the scan reaches `Depth: 1` — a plain
+        // request header of the *new* entry — and misread it as a capture
+        // named `Depth`. That phantom row would then reach `.map.json`, a
+        // normative artifact (ADR-0010). No fence is involved, so this is
+        // blind to whether fencing alone happens to save the day.
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "real: jsonpath \"$.id\"",
+            "PROPFIND http://x/b",
+            "Depth: 1",
+            "HTTP 207",
+        ];
+        let names = capture_names(&body);
+        assert_eq!(
+            names,
+            vec!["real".to_owned()],
+            "a custom-method entry line must end the previous entry's capture scan: {names:?}"
+        );
+    }
+
+    #[test]
+    fn capture_names_with_a_space_before_the_colon_are_not_mistaken_for_a_method_line() {
+        // hurl's own grammar permits whitespace between a capture's name and
+        // its `:` (space0/space1 in hurl_core's `capture()` parser), so an
+        // all-uppercase capture name written that way (`STATUS : …`) has
+        // exactly the shape `is_method_line` looks for (a ≥3-char uppercase
+        // word followed by another token) — it must still read as a capture,
+        // not as a new entry that ends the scan (ADR-0010: no legitimate row
+        // may be dropped from the sidecar).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "STATUS : jsonpath \"$.s\"",
+            "plain: jsonpath \"$.id\"",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec!["STATUS".to_owned(), "plain".to_owned()]
+        );
     }
 
     #[test]

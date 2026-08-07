@@ -66,8 +66,6 @@ pub struct Resolution {
     pub secrets: BTreeSet<String>,
     /// Global keys read via `${global:key}` (drives `.vars` emission, ADR-0010).
     pub globals: BTreeSet<String>,
-    /// `${fake:*}` values generated so far (occurrence indexing).
-    pub fakes: usize,
     /// Dry-run soft findings (e.g. a runtime-only global).
     pub warnings: Vec<String>,
 }
@@ -165,12 +163,23 @@ impl ResolveError {
 
 /// Resolve every `${…}` in `text` (recursively, ≤ [`MAX_DEPTH`] passes), leave
 /// `{{…}}` untouched, then apply `$${` escapes. Pure and total.
-pub fn resolve(text: &str, ctx: &ResolveCtx<'_>) -> Result<Resolution, ResolveError> {
+///
+/// `fakes` is the `${fake:*}` occurrence counter — owned by the caller and
+/// carried across every `resolve()` call in its scope (a scenario's steps,
+/// TECH-SPEC §8), so two references to the same generator never collide. It
+/// is read and incremented, never reset here; a fresh scope means a fresh
+/// `0`-initialized counter, which is what keeps values a pure function of
+/// `(run_id, generator, occurrence)` — still deterministic per `run_id`.
+pub fn resolve(
+    text: &str,
+    ctx: &ResolveCtx<'_>,
+    fakes: &mut usize,
+) -> Result<Resolution, ResolveError> {
     let mut resolution = Resolution::default();
     let mut current = text.to_owned();
 
     for _ in 0..MAX_DEPTH {
-        let (next, substituted) = resolve_pass(&current, ctx, &mut resolution)?;
+        let (next, substituted) = resolve_pass(&current, ctx, &mut resolution, fakes)?;
         current = next;
         if !substituted {
             resolution.text = unescape(&current);
@@ -194,6 +203,7 @@ fn resolve_pass(
     text: &str,
     ctx: &ResolveCtx<'_>,
     resolution: &mut Resolution,
+    fakes: &mut usize,
 ) -> Result<(String, bool), ResolveError> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -201,7 +211,7 @@ fn resolve_pass(
 
     while let Some((name, start, end)) = first_reference(rest) {
         out.push_str(&rest[..start]);
-        let value = lookup(name, ctx, resolution)?;
+        let value = lookup(name, ctx, resolution, fakes)?;
         out.push_str(&value);
         substituted = true;
         rest = &rest[end..];
@@ -242,6 +252,7 @@ fn lookup(
     name: &str,
     ctx: &ResolveCtx<'_>,
     resolution: &mut Resolution,
+    fakes: &mut usize,
 ) -> Result<String, ResolveError> {
     let name = name.trim();
     if name.is_empty() {
@@ -314,8 +325,8 @@ fn lookup(
                         .map(ToOwned::to_owned),
                     });
                 }
-                let occurrence = resolution.fakes;
-                resolution.fakes += 1;
+                let occurrence = *fakes;
+                *fakes += 1;
                 crate::fake::generate(ctx.run_id, occurrence, arg).ok_or_else(|| {
                     ResolveError::FakeUnknown {
                         kind: arg.to_owned(),
@@ -458,6 +469,7 @@ mod tests {
         let r = resolve(
             "GET ${url:base}/search?q=${recordRef}",
             &f.ctx(ResolveMode::Strict),
+            &mut 0,
         )
         .unwrap();
         assert_eq!(r.text, "GET https://api.example/search?q=r-run-0001");
@@ -469,6 +481,7 @@ mod tests {
         let r = resolve(
             "Authorization: Bearer {{token}}",
             &f.ctx(ResolveMode::Strict),
+            &mut 0,
         )
         .unwrap();
         assert_eq!(r.text, "Authorization: Bearer {{token}}");
@@ -477,7 +490,12 @@ mod tests {
     #[test]
     fn escape_round_trips() {
         let f = Fixture::new();
-        let r = resolve("literal $${notavar} stays", &f.ctx(ResolveMode::Strict)).unwrap();
+        let r = resolve(
+            "literal $${notavar} stays",
+            &f.ctx(ResolveMode::Strict),
+            &mut 0,
+        )
+        .unwrap();
         assert_eq!(r.text, "literal ${notavar} stays");
     }
 
@@ -485,19 +503,27 @@ mod tests {
     fn env_defaults_apply() {
         let f = Fixture::new();
         let ctx = f.ctx(ResolveMode::Strict);
-        assert_eq!(resolve("${env:HOME}", &ctx).unwrap().text, "/home/test");
         assert_eq!(
-            resolve("${env:NOPE:-fallback}", &ctx).unwrap().text,
+            resolve("${env:HOME}", &ctx, &mut 0).unwrap().text,
+            "/home/test"
+        );
+        assert_eq!(
+            resolve("${env:NOPE:-fallback}", &ctx, &mut 0).unwrap().text,
             "fallback"
         );
-        let err = resolve("${env:NOPE}", &ctx).unwrap_err();
+        let err = resolve("${env:NOPE}", &ctx, &mut 0).unwrap_err();
         assert_eq!(err.code(), "proef::resolve::missing_env");
     }
 
     #[test]
     fn secrets_become_runtime_placeholders_and_are_recorded() {
         let f = Fixture::new();
-        let r = resolve("Bearer ${secret:apiToken}", &f.ctx(ResolveMode::Strict)).unwrap();
+        let r = resolve(
+            "Bearer ${secret:apiToken}",
+            &f.ctx(ResolveMode::Strict),
+            &mut 0,
+        )
+        .unwrap();
         assert_eq!(r.text, "Bearer {{apiToken}}");
         assert!(r.secrets.contains("apiToken"));
     }
@@ -505,7 +531,7 @@ mod tests {
     #[test]
     fn globals_read_from_the_world() {
         let f = Fixture::new();
-        let r = resolve("id=${global:recordId}", &f.ctx(ResolveMode::Strict)).unwrap();
+        let r = resolve("id=${global:recordId}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap();
         assert_eq!(r.text, "id=r-42");
     }
 
@@ -515,6 +541,7 @@ mod tests {
         let r = resolve(
             "${url:base}/v/${vars:apiVersion}",
             &f.ctx(ResolveMode::Strict),
+            &mut 0,
         )
         .unwrap();
         assert_eq!(r.text, "https://api.example/v/v1");
@@ -523,19 +550,19 @@ mod tests {
     #[test]
     fn missing_config_var_errors_in_strict_and_dry_run_but_probes() {
         let f = Fixture::new();
-        let err = resolve("${url:admin}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${url:admin}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         assert_eq!(err.code(), "proef::resolve::missing_config_var");
         // Lower-time, not runtime: dry-run must also reject (unlike ${global:…}).
-        assert!(resolve("${vars:nope}", &f.ctx(ResolveMode::DryRun)).is_err());
+        assert!(resolve("${vars:nope}", &f.ctx(ResolveMode::DryRun), &mut 0).is_err());
         // Probe (pack-lint) tolerates it.
-        assert!(resolve("${url:admin}", &f.ctx(ResolveMode::Probe)).is_ok());
+        assert!(resolve("${url:admin}", &f.ctx(ResolveMode::Probe), &mut 0).is_ok());
     }
 
     #[test]
     fn missing_config_var_suggests_the_closest_key_in_the_same_namespace() {
         let f = Fixture::new();
         // The fixture defines `url:base`; `bse` is one edit away.
-        let err = resolve("${url:bse}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${url:bse}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         let message = err.to_string();
         assert!(
             message.contains("did you mean `base`"),
@@ -548,7 +575,7 @@ mod tests {
         // A `vars:` key that is edit-closer than any `url:` key must not be
         // offered for a `${url:…}` typo — candidates are namespace-scoped.
         let f = Fixture::new();
-        let err = resolve("${url:nearvar}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${url:nearvar}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         let message = err.to_string();
         // Strictly stronger than pinning just the specific candidate name: no
         // suggestion at all is correct here, since `url:` has no close match
@@ -563,10 +590,10 @@ mod tests {
     #[test]
     fn missing_global_is_strict_error_but_dry_run_warning() {
         let f = Fixture::new();
-        let err = resolve("${global:nope}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${global:nope}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         assert_eq!(err.code(), "proef::resolve::missing_global");
 
-        let r = resolve("${global:nope}", &f.ctx(ResolveMode::DryRun)).unwrap();
+        let r = resolve("${global:nope}", &f.ctx(ResolveMode::DryRun), &mut 0).unwrap();
         assert_eq!(r.text, "");
         assert_eq!(r.warnings.len(), 1);
     }
@@ -574,7 +601,7 @@ mod tests {
     #[test]
     fn unknown_variable_suggests_the_closest_name() {
         let f = Fixture::new();
-        let err = resolve("${recordRe}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${recordRe}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         let ResolveError::UnknownVariable { suggestion, .. } = &err else {
             panic!("wrong variant: {err:?}");
         };
@@ -585,7 +612,7 @@ mod tests {
     fn reference_cycles_hit_the_depth_cap() {
         let mut f = Fixture::new();
         f.args = map(&[("a", "${b}"), ("b", "${a}")]);
-        let err = resolve("${a}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${a}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         assert_eq!(err.code(), "proef::resolve::depth_exceeded");
     }
 
@@ -595,29 +622,66 @@ mod tests {
         let once = resolve(
             "${fake:firstName} ${fake:firstName}",
             &f.ctx(ResolveMode::Strict),
+            &mut 0,
         )
         .unwrap()
         .text;
         let twice = resolve(
             "${fake:firstName} ${fake:firstName}",
             &f.ctx(ResolveMode::Strict),
+            &mut 0,
         )
         .unwrap()
         .text;
         assert_eq!(once, twice, "deterministic per run id");
         assert!(!once.trim().is_empty());
 
-        let err = resolve("${fake:firstNam}", &f.ctx(ResolveMode::Strict)).unwrap_err();
+        let err = resolve("${fake:firstNam}", &f.ctx(ResolveMode::Strict), &mut 0).unwrap_err();
         assert_eq!(err.code(), "proef::resolve::fake_unknown");
         assert!(err.to_string().contains("firstName"), "{err}");
         // Typos are static: even Probe mode rejects them (pack lint).
-        assert!(resolve("${fake:firstNam}", &f.ctx(ResolveMode::Probe)).is_err());
+        assert!(resolve("${fake:firstNam}", &f.ctx(ResolveMode::Probe), &mut 0).is_err());
+    }
+
+    /// Resolves two steps under one scenario with a fixed run id, mirroring
+    /// how `lower.rs` threads one occurrence counter across a scenario's
+    /// steps (`Refs::fakes`) instead of resetting it per `resolve()` call.
+    fn resolve_two_steps(a: &str, b: &str) -> (String, String) {
+        let f = Fixture::new();
+        let ctx = f.ctx(ResolveMode::Strict);
+        let mut fakes = 0;
+        let first = resolve(a, &ctx, &mut fakes).unwrap().text;
+        let second = resolve(b, &ctx, &mut fakes).unwrap().text;
+        (first, second)
+    }
+
+    #[test]
+    fn fake_values_do_not_collide_across_steps_in_a_scenario() {
+        // Two steps, each with its own `${fake:email}`, must get distinct
+        // values — the counter belongs to the scenario, not to one resolve().
+        let (first, second) = resolve_two_steps("${fake:email}", "${fake:email}");
+        assert_ne!(
+            first, second,
+            "two steps' fake values collided: {first} == {second}"
+        );
+    }
+
+    #[test]
+    fn fake_values_are_reproducible_for_the_same_run_id() {
+        // Determinism is the property that makes artifacts a contract
+        // (ADR-0010): the same run id must reproduce the same bytes.
+        let first_run = resolve_two_steps("${fake:email}", "${fake:email}");
+        let second_run = resolve_two_steps("${fake:email}", "${fake:email}");
+        assert_eq!(
+            first_run, second_run,
+            "same run id produced different fakes"
+        );
     }
 
     #[test]
     fn unclosed_reference_is_literal() {
         let f = Fixture::new();
-        let r = resolve("half ${open and done", &f.ctx(ResolveMode::Strict)).unwrap();
+        let r = resolve("half ${open and done", &f.ctx(ResolveMode::Strict), &mut 0).unwrap();
         assert_eq!(r.text, "half ${open and done");
     }
 
@@ -639,7 +703,7 @@ mod tests {
             #[test]
             fn resolver_never_panics(text in ".{0,200}") {
                 let f = Fixture::new();
-                let _ = resolve(&text, &f.ctx(ResolveMode::DryRun));
+                let _ = resolve(&text, &f.ctx(ResolveMode::DryRun), &mut 0);
             }
 
             /// `$${…}` escape round-trip on arbitrary brace-free inner text.
@@ -647,7 +711,7 @@ mod tests {
             fn escape_round_trip(inner in "[^{}$]{0,40}") {
                 let f = empty_ctx_fixture();
                 let text = format!("$${{{inner}}}");
-                let resolved = resolve(&text, &f.ctx(ResolveMode::Strict)).unwrap();
+                let resolved = resolve(&text, &f.ctx(ResolveMode::Strict), &mut 0).unwrap();
                 prop_assert_eq!(resolved.text, format!("${{{inner}}}"));
             }
 
@@ -656,8 +720,8 @@ mod tests {
             fn idempotent_after_fixpoint(text in "[^$]{0,120}") {
                 let f = empty_ctx_fixture();
                 let ctx = f.ctx(ResolveMode::Strict);
-                let once = resolve(&text, &ctx).unwrap();
-                let twice = resolve(&once.text, &ctx).unwrap();
+                let once = resolve(&text, &ctx, &mut 0).unwrap();
+                let twice = resolve(&once.text, &ctx, &mut 0).unwrap();
                 prop_assert_eq!(&once.text, &twice.text);
             }
 
@@ -670,7 +734,7 @@ mod tests {
                 let mut f = empty_ctx_fixture();
                 // Self-referential scopes: worst case for the pass loop.
                 f.args = keys.iter().map(|k| (k.clone(), format!("${{{k}}}"))).collect();
-                let _ = resolve(&text, &f.ctx(ResolveMode::DryRun));
+                let _ = resolve(&text, &f.ctx(ResolveMode::DryRun), &mut 0);
             }
         }
     }

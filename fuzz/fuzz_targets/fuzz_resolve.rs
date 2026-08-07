@@ -24,6 +24,11 @@ fuzz_target!(|data: &[u8]| {
             world: &world,
             mode: ResolveMode::DryRun,
         };
-        let _ = resolve::resolve(text, &ctx);
+        // The occurrence counter is caller-owned and advances across calls, so
+        // resolve twice against one counter: the second pass exercises fake
+        // generation at non-zero occurrences, which a fresh counter never reaches.
+        let mut fakes = 0usize;
+        let _ = resolve::resolve(text, &ctx, &mut fakes);
+        let _ = resolve::resolve(text, &ctx, &mut fakes);
     }
 });

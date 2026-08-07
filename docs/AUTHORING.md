@@ -171,10 +171,35 @@ as `{{name}}`. `saveAs: { name: global }` additionally promotes the captured
 value into the persistent global store (`.proef-state.json`), where later
 scenarios and later runs read it at lowering time as `${global:name}`.
 
-**Fakes** are deterministic synthetic data seeded by the run id — stable
-within a run, fresh across runs: `firstName`, `lastName`, `name`, `fullName`,
-`email`, `username`, `phoneNL`, `postCode`, `city`, `street`, `int`, `number`,
-`digits4`, `digits8`, `bool`, `word`, `uuid` (unknown generators fail at load).
+**Fakes** are deterministic synthetic data: `firstName`, `lastName`, `name`,
+`fullName`, `email`, `username`, `phoneNL`, `postCode`, `city`, `street`,
+`int`, `number`, `digits4`, `digits8`, `bool`, `word`, `uuid` (unknown
+generators fail at load). Each `${fake:kind}` **reference** gets its own
+value — an occurrence counter advances every time a scenario resolves one, so
+independent `${fake:email}` references in the same scenario never collide,
+however many a step ends up resolving. A step's `name:` label is the one
+deliberate exception: it is not independent of its own payload, so it
+replays from the start of the step's own occurrence window instead of
+minting new ones — the label's Nth `${fake:…}` reference reuses whichever
+occurrence the payload's (and `when:`'s) Nth reference consumed, matched by
+*position*, not by generator kind. When the label's `${fake:…}` references
+mirror the payload's in kind and order — the common case, e.g. a label that
+names the same field the payload sends — this reproduces the payload's own
+value exactly. When they diverge in kind (say the label's first reference is
+`${fake:fullName}` but the payload's first reference is `${fake:email}`),
+the label instead shows whatever that occurrence generated for *its own*
+kind — a value the request did not send. That includes a label
+with *more* `${fake:…}` references than its payload: each extra one still
+reserves its own place in the sequence, so a later step can never be handed
+a value the label already displayed. That whole sequence is a pure function
+of `${run:id}`: the same `--run-id` reproduces the same fakes, byte for
+byte, across runs. The counter restarts at zero for every scenario —
+**known limitation:** two *different* scenarios that each resolve
+`${fake:email}` at the same position in their own step order (typically each
+scenario's first fake reference) get the same address, because both count
+from zero independently. If two scenarios must not collide, key the value
+yourself (fold in `${run:id}` or a captured id) rather than relying on
+`${fake:*}` alone.
 
 ## Secrets
 

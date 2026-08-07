@@ -2,7 +2,7 @@
 //! zero-core-diff prerequisite), write-set-only global merge-back, and
 //! cancellation semantics (a cancelled run must never exit 0).
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -13,7 +13,7 @@ use proef_core::engine::{
     DoctorCheck, EngineFactory, EngineId, EngineSession, HttpDefaults, ScenarioCtx, StepKindSpec,
 };
 use proef_core::error::{EngineError, ExitCode};
-use proef_core::event::EventSink;
+use proef_core::event::{Event, EventSink};
 use proef_core::runner::{Fault, Prepared, RunConfig, ScenarioSpec, run};
 use proef_core::step::{
     BatchResult, LoweredStep, Status, StepBatch, StepOutcome, StepPayload, StepRef,
@@ -589,4 +589,86 @@ fn cancelled_run_is_never_success() {
     assert_eq!(interrupted.steps.len(), 2);
     assert_eq!(interrupted.steps[1].status, Status::Skipped);
     assert_eq!(summary.exit_code(), ExitCode::TestFailure);
+}
+
+/// The record's tail must actually be the tail. A watchdog-abandoned
+/// scenario's thread is detached and notices its token only at its next batch
+/// boundary, so without a gate it keeps emitting after the run is finalized.
+///
+/// Two batches are required to observe this: `Misbehavior::Hang` polls its
+/// own cancellation token and returns (with an error) shortly after the
+/// watchdog abandons it, so with a single batch `processed` already equals
+/// `batches.len()` by the time it returns and `run_scenario`'s
+/// unreached-batches loop (the one that reports never-dispatched batches as
+/// `Skipped`) has nothing left to emit. With a second batch still
+/// unprocessed, that loop emits a `StepFinished{Skipped}` for it — and it
+/// does so *after* the dispatcher has already recorded the abandonment and
+/// emitted `RunFinished` (that sequence runs in microseconds; the hung
+/// thread needs a further ~20ms poll tick just to notice cancellation).
+#[test]
+fn abandoned_scenario_emits_nothing_after_run_finished() {
+    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::Hang))]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let mut config = config(1);
+    config.default_batch_budget = Duration::from_millis(50);
+
+    let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = {
+        let seen = Arc::clone(&seen);
+        EventSink::new(move |event| {
+            let label = match event {
+                Event::RunStarted { .. } => "run_started",
+                Event::RunFinished { .. } => "run_finished",
+                Event::ScenarioStarted { .. } => "scenario_started",
+                Event::ScenarioFinished { .. } => "scenario_finished",
+                Event::StepFinished { .. } => "step_finished",
+                _ => "other",
+            };
+            seen.lock().unwrap().push(label.to_owned());
+        })
+    };
+
+    let _summary = run(
+        vec![spec("hangs", &["misbehaving", "misbehaving"])],
+        &engines,
+        &store,
+        &config,
+        &sink,
+        &CancellationToken::new(),
+    );
+
+    // Give the abandoned thread time to reach its next boundary and try to
+    // emit. Without the gate it appends here; with it, nothing arrives.
+    std::thread::sleep(Duration::from_millis(500));
+
+    let events = seen.lock().unwrap().clone();
+    let tail = events
+        .iter()
+        .rposition(|e| e == "run_finished")
+        .expect("record must contain run_finished");
+    assert_eq!(
+        tail,
+        events.len() - 1,
+        "run_finished must be the LAST event; full sequence (0-based) was \
+         {events:#?}, with run_finished at index {tail} followed by {:?}",
+        &events[tail + 1..]
+    );
+
+    // Position alone doesn't rule out the gate over-suppressing — dropping
+    // the sweep's own `scenario_finished`, say — and slipping the assertion
+    // above by accident. The sequence here is deterministic (one scenario,
+    // one job, the hung batch never gets past `BatchStarted`), so pin the
+    // whole thing: exactly what a well-behaved abandonment produces, no more
+    // and no less.
+    assert_eq!(
+        events,
+        vec![
+            "run_started",
+            "scenario_started",
+            "other",             // BatchStarted for the hung first batch
+            "scenario_finished", // the sweep's own terminal event
+            "run_finished",
+        ],
+        "gate must drop only the late event, not real ones"
+    );
 }

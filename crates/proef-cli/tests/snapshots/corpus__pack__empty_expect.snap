@@ -1,0 +1,17 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+assertion_line: 405
+expression: stderr
+---
+proef::pack::empty_expect
+
+  × macro `empty` expect item 0 asserts nothing — give it `status:` and/or `hurl:` assert lines
+    ╭─[tests/errors/pack__empty_expect/packs/broken.yaml:11:9]
+ 10 │     expect:
+ 11 │       - hurl: |
+    ·         ───────
+ 12 │ 
+    ╰────
+  help: an `expect:` item must carry at least one assert line, from `status:` and/or non-blank `hurl:` content
+
+1 error(s)
