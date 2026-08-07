@@ -24,6 +24,10 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   or other failed stdout exited `0` with truncated output; it now exits `3`.
   A closed pipe (`proef … | head`) still exits cleanly.
 
+- `run.log` could gain duplicated fragments when the console accepted a
+  short write, because the tee re-wrote the full slice on every retry. It
+  now mirrors only the accepted bytes.
+
 ## [0.7.0] - 2026-08-07 (record & artifact integrity)
 
 ### Changed

@@ -945,10 +945,13 @@ struct Tee(Box<dyn Write + Send>, Option<std::fs::File>);
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // Console first: the mirror copies what the console accepted, so a
+        // short write cannot duplicate the tail into `run.log`.
+        let written = self.0.write(buf)?;
         if let Some(file) = &mut self.1 {
-            let _ = file.write_all(buf);
+            let _ = file.write_all(&buf[..written]);
         }
-        self.0.write(buf)
+        Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -1004,6 +1007,42 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Event::RunFinished { .. })),
             "a panicking drop must never emit RunFinished: {events:?}"
+        );
+    }
+
+    #[test]
+    fn the_tee_mirrors_only_the_bytes_the_console_accepted() {
+        use std::io::Write;
+
+        use super::Tee;
+
+        /// A console that accepts three bytes per call, like a pipe under
+        /// pressure — `write_all` then loops on the remainder.
+        struct ShortWriter(Vec<u8>);
+        impl Write for ShortWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let take = buf.len().min(3);
+                self.0.extend_from_slice(&buf[..take]);
+                Ok(take)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("run.log");
+        let file = std::fs::File::create(&path).expect("create");
+        let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file));
+
+        tee.write_all(b"abcdefghij").expect("write_all");
+        tee.flush().expect("flush");
+        drop(tee);
+
+        let mirrored = std::fs::read_to_string(&path).expect("read");
+        assert_eq!(
+            mirrored, "abcdefghij",
+            "the mirror must be a faithful copy of what the console received"
         );
     }
 }
