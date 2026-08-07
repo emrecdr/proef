@@ -16,7 +16,6 @@ fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
 fuzz/coverage/
-fuzz/Cargo.lock
 
 # macOS
 .DS_Store

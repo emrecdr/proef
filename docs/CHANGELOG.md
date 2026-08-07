@@ -37,6 +37,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`.map.json` no longer loses a request's captures when the pack comments
+  one of them.** A comment inside an open `[Captures]` run is the author's
+  note about a capture, not the start of the next entry, so it no longer
+  closes the scan — previously it dropped every capture after the comment.
+  The entry that follows opens with a method or response line, and that
+  closes the run on its own.
+
 - **`.map.json` no longer lists captures that were never made.** The sidecar's
   capture scan was fence-unaware — a literal `[Captures]` line inside a
   fenced (```…```) body re-armed it — and it recognised only the stock HTTP
