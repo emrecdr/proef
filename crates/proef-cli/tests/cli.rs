@@ -239,9 +239,16 @@ fn flows_does_not_report_a_system_error_on_a_closed_stdout_pipe() {
 // without needing one. Linux-only: macOS has no such device, and no
 // portable substitute forces a write failure (a read-only or closed stdout
 // both exit 0). The mechanism itself is pinned portably in render.rs.
+//
+// Uses std::process::Command, not assert_cmd::Command: assert_cmd's builder
+// has no stdio-redirection setter of its own (its `.stdout()` asserts
+// against an already-captured child's output, after the fact) and its
+// `.output()` fixes its own pipes, so neither lets a caller hand the child
+// a pre-opened handle like `/dev/full`.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_failed_stdout_write_is_a_system_error() {
+    use std::process::{Command, Stdio};
     // Absolute, like the PROEF_ENV test above: nextest's cwd for this binary
     // is the crate manifest dir, which has no `tests/features` of its own.
     let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
@@ -250,13 +257,27 @@ fn a_failed_stdout_write_is_a_system_error() {
         .write(true)
         .open("/dev/full")
         .expect("/dev/full is a standard Linux device");
-    Command::cargo_bin("proef")
-        .unwrap()
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let output = Command::new(&bin)
         .arg("flows")
         .arg(&features_dir)
         .stdout(devfull)
-        .assert()
-        .code(3);
+        .stderr(Stdio::piped())
+        .output()
+        .expect("proef must spawn and run to completion");
+    // A bare exit-3 check can't tell "the funnel upgraded 0 -> 3" apart from
+    // "flows failed on its own for an unrelated reason", so pin the funnel's
+    // own message too.
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a stdout write failure must be reported as the system-error exit"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot write to stdout"),
+        "expected the exit funnel's own diagnostic on stderr, got: {stderr}"
+    );
 }
 
 // A non-UTF-8 PROEF_ENV must not be silently treated as unset — running
