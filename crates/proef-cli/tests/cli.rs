@@ -192,6 +192,49 @@ fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
     );
 }
 
+// The stdout mirror of the stderr test above: `head -c0` reads nothing and
+// exits, closing the read end, so every later stdout write gets EPIPE.
+// `outln!`'s `BrokenPipe` guard must swallow it — `proef … | head` ends the
+// pipeline on purpose — so this must stay the command's ordinary success
+// exit, never the system-error exit a genuine stdout write failure now
+// produces.
+#[cfg(unix)]
+#[test]
+fn flows_does_not_report_a_system_error_on_a_closed_stdout_pipe() {
+    use std::process::{Command, Stdio};
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    // Absolute, like the PROEF_ENV test below: nextest's cwd for this binary
+    // is the crate manifest dir, which has no `tests/features` of its own.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+
+    let mut proef = Command::new(&bin)
+        .arg("flows")
+        .arg(&features_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Consume nothing then drop the reader to close the pipe early — `flows`
+    // over the reference corpus (tests/features) prints one line per
+    // scenario plus a summary line, enough bytes that the write reliably
+    // lands after the reader closes, rather than racing a single short line.
+    let mut head = Command::new("head")
+        .args(["-c", "0"])
+        .stdin(proef.stdout.take().unwrap())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _ = head.wait();
+    let status = proef.wait().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "expected the ordinary success exit for a closed stdout pipe, not a system error"
+    );
+}
+
 // /dev/full accepts opens and fails every write with ENOSPC — a full disk
 // without needing one. Linux-only: macOS has no such device, and no
 // portable substitute forces a write failure (a read-only or closed stdout
