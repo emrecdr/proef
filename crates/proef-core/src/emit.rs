@@ -513,12 +513,15 @@ mod tests {
     }
 
     #[test]
-    fn capture_names_starting_with_http_are_not_mistaken_for_a_response_line() {
-        // A capture merely *named* starting with "HTTP" (e.g. `HTTPStatus`) is
-        // not a response line — the response check needs its own delimiter
-        // (`HTTP ` / `HTTP/`), not a bare prefix match, or it swallows this
-        // capture and every capture after it in the entry (ADR-0010: no
-        // legitimate row may be dropped from the sidecar).
+    fn capture_names_keeps_a_capture_whose_name_starts_with_http() {
+        // End-to-end invariant: a capture merely *named* starting with
+        // "HTTP" (e.g. `HTTPStatus`) must survive the scan, or it — and
+        // every capture after it in the entry — is silently missing from
+        // the sidecar (ADR-0010: no legitimate row may be dropped). This
+        // goes green via the capture-shape guard in `capture_names`, which
+        // recognises `HTTPStatus: …` as a capture before `starts_entry_line`
+        // is ever consulted; `starts_entry_line_requires_a_delimiter_after_http`
+        // pins the response-line predicate itself.
         let body = [
             "GET http://x/a",
             "HTTP 200",
@@ -530,6 +533,17 @@ mod tests {
             capture_names(&body),
             vec!["HTTPStatus".to_owned(), "plain".to_owned()]
         );
+    }
+
+    #[test]
+    fn starts_entry_line_requires_a_delimiter_after_http() {
+        // Pins the predicate directly: the response check must require its
+        // own delimiter (`HTTP ` / `HTTP/`), not a bare prefix match, or it
+        // misreads a capture merely *named* starting with `HTTP` as a
+        // response line. Real response lines must still match.
+        assert!(!starts_entry_line("HTTPStatus: jsonpath \"$.status\""));
+        assert!(starts_entry_line("HTTP 200"));
+        assert!(starts_entry_line("HTTP/1.1 200"));
     }
 
     #[test]
