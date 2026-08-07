@@ -76,10 +76,14 @@ jobs:
 
       # fuzz/ is excluded from the root workspace, so none of the gates above
       # compile it — a changed proef-core signature breaks the fuzz targets
-      # while every gate stays green. Checking it here fails in seconds
-      # instead of minutes into the nightly-toolchain fuzz job.
+      # while every root-workspace gate stays green. fuzz-smoke does catch it,
+      # but only on floating nightly with sanitizers and a minute later; this
+      # proves they build on the pinned stable toolchain, on both gate
+      # platforms, and is the only job that compiles fuzz_tag_expr at all.
+      # --locked because fuzz/Cargo.lock is committed: a fresh upstream
+      # release must not redden this gate on an unchanged tree.
       - name: fuzz targets compile
-        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 
       - name: workflow static analysis (zizmor)
         env:

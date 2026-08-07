@@ -19,11 +19,15 @@ output never contains it (ADR-0005); World — snapshot/restore is an involution
 **Fuzz (cargo-fuzz, nightly job + PR smoke):** `fuzz_match_pattern` (pattern×text),
 `fuzz_resolve` (template strings), `fuzz_pack_load` (YAML bytes → loader must error,
 never panic). Parser-adjacent hand-written code is exactly where fuzzing pays.
+A fourth target, `fuzz_tag_expr`, is declared but listed in neither fuzz loop,
+so nothing fuzzes it today — only the compile check below builds it.
 `fuzz/` is its own workspace (the root `Cargo.toml` excludes it, since fuzzing
 needs nightly), so no root-workspace command compiles it: a changed
-`proef-core` signature breaks the targets while every other gate stays green.
-`cargo check --manifest-path fuzz/Cargo.toml --all-targets` runs on stable in
-seconds and is part of the gate set for that reason.
+`proef-core` signature breaks the targets while every *root-workspace* gate
+stays green, leaving the fuzz jobs as the only signal.
+`cargo check --manifest-path fuzz/Cargo.toml --all-targets` runs on the pinned
+stable toolchain in seconds, so the gates job carries it — earlier than the
+fuzz smoke, on both gate platforms, and covering the target no loop names.
 
 **Snapshot (insta):** emitter — golden corpus of (features + packs) → artifacts +
 sidecars, byte-stable (the canonical-format compatibility surface, ADR-0010);

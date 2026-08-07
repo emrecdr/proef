@@ -296,16 +296,8 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             names.push(name.to_owned());
             continue;
         }
-        // A comment inside an open run is the author's note about a capture,
-        // not the start of the next entry: an entry always opens with a method
-        // or response line, and that ends the run on its own, so a comment
-        // never has to. Ending it here would drop every capture after the
-        // comment.
-        if in_captures && trimmed.starts_with('#') {
-            continue;
-        }
-        // A new entry (method/status line or comment) ends the section — a
-        // stray `k: v`-shaped line after it must not read as a capture.
+        // A new entry (method or response line) ends the section — a stray
+        // `k: v`-shaped line after it must not read as a capture.
         if starts_entry_line(trimmed) {
             in_captures = false;
             continue;
@@ -333,18 +325,23 @@ fn capture_name(trimmed: &str) -> Option<&str> {
     .then_some(name)
 }
 
-/// Does this canonical-emission line open a new request, response, or
-/// comment (ending any `[Captures]` run)? Requests are recognised via
-/// [`is_method_line`] — the lowering pass's recogniser — so a custom method
-/// (`PROPFIND`, …) ends the scan exactly as it ends an entry there. The
-/// response check requires its own delimiter (`HTTP ` / `HTTP/`) rather than
-/// a bare prefix match — a capture merely *named* starting with `HTTP`
-/// (`HTTPStatus: …`) is not a response line, and must not be read as one.
+/// Does this canonical-emission line open a new request or response (ending
+/// any `[Captures]` run)? Requests are recognised via [`is_method_line`] —
+/// the lowering pass's recogniser — so a custom method (`PROPFIND`, …) ends
+/// the scan exactly as it ends an entry there. The response check requires
+/// its own delimiter (`HTTP ` / `HTTP/`) rather than a bare prefix match — a
+/// capture merely *named* starting with `HTTP` (`HTTPStatus: …`) is not a
+/// response line, and must not be read as one.
+///
+/// A comment is **not** an entry opener. Commenting a capture is ordinary
+/// authoring, and closing the run on `#` dropped every capture after the
+/// comment from `.map.json` (ADR-0010). Nothing needs it to close: the entry
+/// that follows opens with a method or response line, which closes the run
+/// itself. (One gap: [`is_method_line`] wants three characters, so a one- or
+/// two-letter method — legal hurl, unwritten in practice — opens an entry
+/// this scan does not see, and `#` no longer covers for it.)
 fn starts_entry_line(trimmed: &str) -> bool {
-    trimmed.starts_with('#')
-        || trimmed.starts_with("HTTP ")
-        || trimmed.starts_with("HTTP/")
-        || is_method_line(trimmed)
+    trimmed.starts_with("HTTP ") || trimmed.starts_with("HTTP/") || is_method_line(trimmed)
 }
 
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
