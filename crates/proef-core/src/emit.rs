@@ -544,6 +544,39 @@ mod tests {
         assert!(!starts_entry_line("HTTPStatus: jsonpath \"$.status\""));
         assert!(starts_entry_line("HTTP 200"));
         assert!(starts_entry_line("HTTP/1.1 200"));
+        // And a custom-method entry line must be recognised too — this is
+        // what `is_method_line` (shared with the lowering pass) buys over a
+        // fixed prefix list of the stock HTTP verbs.
+        assert!(starts_entry_line("PROPFIND http://x/b"));
+    }
+
+    #[test]
+    fn capture_scan_ends_the_previous_entry_at_a_custom_method_line() {
+        // Direct (unfenced) reproduction of the phantom-row hazard: an open
+        // `[Captures]` run must not survive past a custom-method entry line.
+        // A blank line does not close the run on its own (only an
+        // entry-opening line, a body opener, or a new bracketed section
+        // does), so if `PROPFIND` were not recognised as one, `in_captures`
+        // would still be armed when the scan reaches `Depth: 1` — a plain
+        // request header of the *new* entry — and misread it as a capture
+        // named `Depth`. That phantom row would then reach `.map.json`, a
+        // normative artifact (ADR-0010). No fence is involved, so this is
+        // blind to whether fencing alone happens to save the day.
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "real: jsonpath \"$.id\"",
+            "PROPFIND http://x/b",
+            "Depth: 1",
+            "HTTP 207",
+        ];
+        let names = capture_names(&body);
+        assert_eq!(
+            names,
+            vec!["real".to_owned()],
+            "a custom-method entry line must end the previous entry's capture scan: {names:?}"
+        );
     }
 
     #[test]
