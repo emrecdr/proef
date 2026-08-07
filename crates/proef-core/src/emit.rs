@@ -304,9 +304,15 @@ fn capture_names(body: &[&str]) -> Vec<String> {
 /// Does this canonical-emission line open a new request, response, or
 /// comment (ending any `[Captures]` run)? Requests are recognised via
 /// [`is_method_line`] — the lowering pass's recogniser — so a custom method
-/// (`PROPFIND`, …) ends the scan exactly as it ends an entry there.
+/// (`PROPFIND`, …) ends the scan exactly as it ends an entry there. The
+/// response check requires its own delimiter (`HTTP ` / `HTTP/`) rather than
+/// a bare prefix match — a capture merely *named* starting with `HTTP`
+/// (`HTTPStatus: …`) is not a response line, and must not be read as one.
 fn starts_entry_line(trimmed: &str) -> bool {
-    trimmed.starts_with('#') || trimmed.starts_with("HTTP") || is_method_line(trimmed)
+    trimmed.starts_with('#')
+        || trimmed.starts_with("HTTP ")
+        || trimmed.starts_with("HTTP/")
+        || is_method_line(trimmed)
 }
 
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
@@ -492,6 +498,26 @@ mod tests {
         assert!(
             !names.contains(&"phantom".to_owned()),
             "fenced capture leaked into the sidecar: {names:?}"
+        );
+    }
+
+    #[test]
+    fn capture_names_starting_with_http_are_not_mistaken_for_a_response_line() {
+        // A capture merely *named* starting with "HTTP" (e.g. `HTTPStatus`) is
+        // not a response line — the response check needs its own delimiter
+        // (`HTTP ` / `HTTP/`), not a bare prefix match, or it swallows this
+        // capture and every capture after it in the entry (ADR-0010: no
+        // legitimate row may be dropped from the sidecar).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "HTTPStatus: jsonpath \"$.status\"",
+            "plain: jsonpath \"$.id\"",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec!["HTTPStatus".to_owned(), "plain".to_owned()]
         );
     }
 
