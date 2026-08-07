@@ -8,6 +8,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`proef fmt` rewrites line endings wholesale, violating its hurl-blocks-only
+  promise.** `fmt` split pack files with `text.lines()` (which strips both `\n`
+  and `\r\n`) and rejoined with hardcoded `"\n"`, so CRLF files became LF. On an
+  `autocrlf` checkout (a supported way to clone this repo), `fmt --check` was
+  permanently failing through no fault of the author. `fmt` now detects the
+  file's dominant line ending and preserves it when rewriting.
+
 - **A set-but-unreadable environment variable is now a loud user error, never
   silence.** `std::env::var` collapses "unset" and "set to bytes that are not
   valid UTF-8" into the same `Err`; `.ok()` erased that distinction at five
