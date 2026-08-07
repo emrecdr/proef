@@ -65,6 +65,10 @@ From a clean, green `main` (all gates local + CI):
 #         publish; a stale pin no longer satisfies the bumped version and fails
 #         resolution, so these move in lockstep with the line above).
 cargo build --workspace                            # refreshes Cargo.lock versions
+# fuzz/ is a separate workspace with its own committed lock, and the gates job
+# checks it with --locked: refresh it too or that gate goes red on the release
+# commit.
+cargo check --manifest-path fuzz/Cargo.toml --all-targets
 # 3. Full gates:
 cargo nextest run && cargo test --doc
 cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all --check
@@ -133,3 +137,10 @@ before `proef`, which depends on it non-optionally) and is **not** automated.
   `run_started`/`run_finished` pair per record with suite-only totals,
   truncated-record banners in `report`/`explain`, a real worker slot index —
   breaking: a scenario with no steps is now an error
+- `v0.7.0` — record & artifact integrity: `run_finished` is the record's last
+  line again (a watchdog-abandoned scenario no longer appends past it),
+  `${fake:…}` values no longer repeat across a scenario's steps, `.map.json`
+  stops listing captures that were never made and stops dropping real ones,
+  and a whitespace-only `expect:` is rejected instead of emitting an inverted
+  span — breaking: `proef_core::resolve::resolve` takes a caller-owned
+  occurrence counter and `Resolution::fakes` is gone

@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-07 (record & artifact integrity)
+
 ### Changed
 
 - **`${fake:…}` values no longer repeat across a scenario's steps.** The
