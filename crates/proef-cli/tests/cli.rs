@@ -281,3 +281,85 @@ fn a_non_utf8_env_var_is_a_user_error() {
         .code(2)
         .stderr(contains("PROEF_ENV"));
 }
+
+// `fmt` promises to normalize hurl blocks only, never a file's line
+// endings. `normalize_pack` unit tests pin the string it returns, but the
+// user-visible contract is what `fmt --check` reports and what lands on
+// disk — a regression could keep those unit tests green while still
+// corrupting bytes the command actually writes. These two exercise the
+// command end to end.
+#[test]
+fn fmt_check_reports_a_canonical_crlf_pack_as_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_path = tmp.path().join("pack.yaml");
+    let canonical_crlf = "macros:\r\n  ping:\r\n    match: I ping\r\n    steps:\r\n      - hurl: |\r\n          GET http://x/a\r\n          HTTP 200\r\n";
+    std::fs::write(&pack_path, canonical_crlf).unwrap();
+
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(0)
+        .stdout(contains("all pack blocks already canonical"));
+    assert_eq!(
+        std::fs::read(&pack_path).unwrap(),
+        canonical_crlf.as_bytes(),
+        "--check must never rewrite the file"
+    );
+}
+
+#[test]
+fn fmt_rewrites_a_dirty_crlf_pack_preserving_crlf_throughout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_path = tmp.path().join("pack.yaml");
+    let dirty_crlf = "# comment stays\r\nmacros:\r\n  m:\r\n    steps:\r\n      - hurl: |\r\n          GET http://x   \r\n\r\n\r\n          HTTP 200\r\n\r\n    match: keep\r\n";
+    std::fs::write(&pack_path, dirty_crlf).unwrap();
+
+    // --check reports the dirty file and exits 1, without rewriting it.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(1)
+        .stdout(contains("needs formatting"));
+    assert_eq!(
+        std::fs::read(&pack_path).unwrap(),
+        dirty_crlf.as_bytes(),
+        "--check must never rewrite the file"
+    );
+
+    // Without --check, the file is rewritten in place.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .assert()
+        .code(0)
+        .stdout(contains("formatted:"));
+
+    // Byte-level, not `contains("\r\n")`: a half-converted file can still
+    // contain CRLF pairs while also containing a bare LF elsewhere.
+    let rewritten = std::fs::read(&pack_path).unwrap();
+    assert!(
+        rewritten.windows(2).any(|w| w == b"\r\n"),
+        "expected CRLF pairs to survive the rewrite: {rewritten:?}"
+    );
+    for (i, &byte) in rewritten.iter().enumerate() {
+        if byte == b'\n' {
+            assert!(
+                i > 0 && rewritten[i - 1] == b'\r',
+                "bare LF at byte {i}, not part of a CRLF pair: {rewritten:?}"
+            );
+        }
+    }
+
+    // The rewritten file re-checks clean.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(0)
+        .stdout(contains("all pack blocks already canonical"));
+}
