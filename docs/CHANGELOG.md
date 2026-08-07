@@ -20,6 +20,10 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   environment, including in `proef lsp`, where it meant analysing against the
   wrong config profile. All five now exit 2 (user error) naming the variable.
 
+- **A failed stdout write now reaches the exit code.** Writing to a full disk
+  or other failed stdout exited `0` with truncated output; it now exits `3`.
+  A closed pipe (`proef … | head`) still exits cleanly.
+
 ## [0.7.0] - 2026-08-07 (record & artifact integrity)
 
 ### Changed

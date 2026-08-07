@@ -454,5 +454,13 @@ fn main() -> std::process::ExitCode {
         Command::Fmt { path, check } => fmt::fmt(&path, check),
         Command::Lsp => lsp::run(),
     };
+    // Output proef could not deliver is an environment failure, whatever the
+    // command's own verdict was: a consumer parsing truncated stdout cannot
+    // trust the exit code's usual meaning either.
+    let code = if render::stdout_failed() {
+        proef_core::error::ExitCode::SystemError
+    } else {
+        code
+    };
     std::process::ExitCode::from(code.code())
 }

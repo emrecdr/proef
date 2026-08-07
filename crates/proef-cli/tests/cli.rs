@@ -192,6 +192,30 @@ fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
     );
 }
 
+// /dev/full accepts opens and fails every write with ENOSPC — a full disk
+// without needing one. Linux-only: macOS has no such device, and no
+// portable substitute forces a write failure (a read-only or closed stdout
+// both exit 0). The mechanism itself is pinned portably in render.rs.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_stdout_write_is_a_system_error() {
+    // Absolute, like the PROEF_ENV test above: nextest's cwd for this binary
+    // is the crate manifest dir, which has no `tests/features` of its own.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+    let devfull = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full is a standard Linux device");
+    Command::cargo_bin("proef")
+        .unwrap()
+        .arg("flows")
+        .arg(&features_dir)
+        .stdout(devfull)
+        .assert()
+        .code(3);
+}
+
 // A non-UTF-8 PROEF_ENV must not be silently treated as unset — running
 // against the wrong environment is exactly the "reports the wrong cause"
 // failure this contract exists to remove.
