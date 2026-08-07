@@ -30,6 +30,8 @@ pub const MAX_USE_DEPTH: usize = 32;
 /// Normalize one raw macro into a [`Macro`], emitting structural
 /// diagnostics (passes 1, 2, and the per-step shape rules) along the way.
 /// Returns `None` only when the macro is too malformed to keep.
+// One cohesive listing of the body-shape rules; splitting hides the order.
+#[allow(clippy::too_many_lines)]
 pub(crate) fn normalize_macro(
     name: &str,
     raw: &RawMacro,
@@ -91,7 +93,16 @@ pub(crate) fn normalize_macro(
             // items that carry the key produce one (assert-only macros have
             // no `steps:`, so every `hurl:` line in the block is an expect
             // item's), so the ordinal advances only when `item.hurl` is `Some`.
+            // The line scanner only recognises block-style `key:` lines
+            // (`locate::key_line_spans`), so a flow-style item (`- {hurl: …}`)
+            // parses to `Some` but contributes no line — exactly the hazard
+            // `analyze::index_use_refs` already guards for `use:` lines. Same
+            // fix: when the counts disagree the pairing can't be trusted, so
+            // every item in this macro falls back to the macro's own span
+            // instead of risking an ordinal-shifted wrong line.
             let hurl_spans = locate::expect_hurl_line_spans(&source.text, name);
+            let hurl_key_count = items.iter().filter(|item| item.hurl.is_some()).count();
+            let spans_reliable = hurl_spans.len() == hurl_key_count;
             let mut hurl_ordinal = 0usize;
             for (index, item) in items.iter().enumerate() {
                 let has_hurl_key = item.hurl.is_some();
@@ -104,12 +115,15 @@ pub(crate) fn normalize_macro(
                     .as_deref()
                     .is_none_or(|fragment| fragment.trim().is_empty());
                 if item.status.is_none() && fragment_is_blank {
+                    let fragment_span = (spans_reliable && has_hurl_key)
+                        .then(|| hurl_spans.get(hurl_ordinal).copied())
+                        .flatten();
                     diags.push(
                         at(Diag::error(
                             "proef::pack::empty_expect",
                             format!("macro `{name}` expect item {index} asserts nothing — give it `status:` and/or `hurl:` assert lines"),
                         ))
-                        .maybe_span(has_hurl_key.then(|| hurl_spans.get(hurl_ordinal).copied()).flatten())
+                        .maybe_span(fragment_span)
                         .with_help("an `expect:` item must carry at least one assert line, from `status:` and/or non-blank `hurl:` content"),
                     );
                     if has_hurl_key {
@@ -824,6 +838,57 @@ mod tests {
             &text[span.start..span.end],
             "hurl: |",
             "span should land on the empty fragment's `hurl:` line, not the whole macro"
+        );
+    }
+
+    /// A flow-style item (`- {status: …, hurl: …}`) parses `item.hurl` to
+    /// `Some`, but the block-style line scanner behind
+    /// `locate::expect_hurl_line_spans` cannot see it and contributes no
+    /// span — the same hazard `analyze::index_use_refs` already guards for
+    /// `use:` lines. Pin that the guard here falls back to the macro's own
+    /// span for the whole macro, rather than pairing a later blank item onto
+    /// a wrong, ordinal-shifted line.
+    #[test]
+    fn flow_style_hurl_key_falls_back_to_the_macro_span() {
+        let text: Arc<str> = Arc::from(concat!(
+            "macros:\n",
+            "  mixed:\n",
+            "    match: nothing binds this\n",
+            "    expect:\n",
+            "      - {status: \"200\", hurl: 'jsonpath \"$.a\" exists'}\n",
+            "      - hurl: |\n",
+            "\n",
+            "      - hurl: |\n",
+            "          jsonpath \"$.b\" exists\n",
+        ));
+        let source = PackSource {
+            name: "mixed.yaml".into(),
+            text: Arc::clone(&text),
+        };
+        let err = pack::load(&[source], KINDS).unwrap_err();
+        let FrontError::Diagnostics(diags) = err else {
+            panic!("diagnostics expected");
+        };
+        let empty_expect: Vec<_> = diags
+            .iter()
+            .filter(|d| d.code == "proef::pack::empty_expect")
+            .collect();
+        assert_eq!(
+            empty_expect.len(),
+            1,
+            "only the blank second item should be flagged: {diags:?}"
+        );
+        let diag = empty_expect[0];
+        assert!(
+            diag.message.contains("expect item 1"),
+            "the blank item is index 1: {diag:?}"
+        );
+        let macro_span =
+            crate::pack::locate::macro_span(&text, "mixed").unwrap_or_else(|| panic!("macro span"));
+        assert_eq!(
+            diag.span,
+            Some(macro_span),
+            "an unreliable line-scan pairing must anchor on the macro, not a later item's line"
         );
     }
 

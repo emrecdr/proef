@@ -40,9 +40,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   entry land in `.map.json`, a normative artifact (ADR-0010). The scan is now
   fence-aware and shares the lowering pass's method recogniser
   (`is_method_line`) instead of carrying a second, weaker copy.
-- An `expect:` fragment with no assert lines is now rejected at pack load. It
-  previously produced an empty asserts block and an inverted span in the
-  emitted sidecar, where the start offset exceeded the end.
+- **`pack::empty_expect` now also catches a whitespace-only `hurl:` fragment.**
+  The diagnostic already existed for an `expect:` item with neither `status:`
+  nor `hurl:` at all; a `hurl:` key present but carrying no non-blank assert
+  line slipped past it, lowered to an empty asserts block, and produced an
+  inverted span in the emitted sidecar, where the start offset exceeded the
+  end. It also gains a remediation hint and the seeded corpus case it was
+  missing.
 
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 
