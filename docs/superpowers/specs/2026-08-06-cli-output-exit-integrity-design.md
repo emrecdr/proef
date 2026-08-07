@@ -17,16 +17,23 @@ sound.
 
 ## Verified facts (do not re-derive)
 
+Citations were taken against v0.5.3 and **re-validated against `8e52f99`**;
+where a line moved, the current number is given. Every finding below still
+reproduces except D5, which is now partly fixed — see its decision. Treat the
+line numbers as a starting point regardless: `proef-cli` moves, and a plan
+built on them should re-locate each symbol with `rg` rather than trust an
+offset.
+
 | Fact | Citation |
 | --- | --- |
 | `std::env::var()` returns `Err(NotUnicode)` for non-UTF-8; `.ok()` / `if let Ok(…)` collapses that to "absent" | `crates/proef-cli/src/main.rs:267`, `secretstore.rs:116`, `:284`, `:403` |
 | The comment above `key_from_env` states a set-but-invalid key must always error | `crates/proef-cli/src/secretstore.rs:95-97` |
 | `outln!` reports a non-`BrokenPipe` stdout failure to stderr and returns; nothing reaches the exit code | `crates/proef-cli/src/render.rs:13-22` |
 | A "failure folds into the exit" precedent already exists | `crates/proef-cli/src/exec.rs:390`, `:405`, `:500` (`junit_failed`) |
-| Tee re-writes the full slice on every `write_all` retry | `crates/proef-cli/src/exec.rs:816-822` |
-| `proef fmt` rewrites CRLF wholesale, beyond its hurl-blocks-only promise | `crates/proef-cli/src/fmt.rs:79-130` |
-| `report -o` outside the run dir bakes a relative artifacts href | reproduced live |
-| `diff` flags a brand-new retried step as flaky via a `map_or(1, …)` default | reproduced live |
+| Tee re-writes the full slice on every `write_all` retry | `crates/proef-cli/src/exec.rs:947-951` (was `:816-822`) |
+| `proef fmt` rewrites CRLF wholesale, beyond its hurl-blocks-only promise | `crates/proef-cli/src/fmt.rs:79` (`text.lines()` strips both endings) |
+| `report -o` outside the run dir bakes a relative artifacts href | reproduced live; **now partly fixed** — `report.rs:64-74` splits the cases but the else-branch stays relative |
+| `diff` flags a brand-new retried step as flaky via a `map_or(1, …)` default | reproduced live; `crates/proef-cli/src/diff.rs:189` |
 
 ## Decisions
 
@@ -81,13 +88,23 @@ codifying a behavior nobody asked for that breaks a supported checkout style.
 
 ### D5 — `report -o` writes hrefs that resolve from the output file
 
-`-o /tmp/out/report.html` bakes `.proef-runs/<id>/artifacts/…`, which a browser
-resolves relative to the HTML's own directory. Nothing is there; every artifact
-link 404s while the command reports success.
+**Re-validated against `8e52f99`: partially fixed since this was written.**
+`report.rs` now has `artifacts_href(record_dir, out_path)`, which returns the
+bare `artifacts` when the report lands in the run dir and
+`record_dir.join("artifacts")` otherwise. The split is right; the else-branch
+is not. `runs_dir` defaults to `.proef-runs` — a **relative** path — and
+nothing canonicalizes it, so `-o /tmp/out/report.html` still bakes
+`.proef-runs/<id>/artifacts/…`, which the browser resolves against
+`/tmp/out/`. Every artifact link still 404s while the command reports success.
 
-Compute the href relative to the **output file's parent**. Keep the bare
-`artifacts` form for the common case where the report sits in the run dir —
-compare canonicalized paths so a `./` or symlink spelling does not defeat it.
+So the work is smaller than originally scoped and must not re-add a second
+mechanism: keep `artifacts_href` and make its else-branch absolute
+(`std::path::absolute` over the record dir), rather than computing a new href
+elsewhere. The equality test in the if-branch should compare canonicalized
+paths so a `./` or symlink spelling does not defeat it.
+
+Verify by probe, not by reading: emit a report with `-o` outside the run dir
+and confirm the href resolves from the output file's own directory.
 
 ### D6 — `diff` stops inventing flakiness; the ordinal caveat is documented
 
