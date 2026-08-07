@@ -113,8 +113,10 @@ fn decode_key_material(label: &str, text: &str) -> Result<[u8; 32], String> {
 /// the ciphertext store can be committed and the key supplied out of band),
 /// else the key file, creating a fresh random one on first use (`0600`).
 pub fn load_or_create_key() -> Result<[u8; 32], SecretError> {
-    if let Ok(value) = std::env::var("PROEF_KEY") {
-        return key_from_env(&value);
+    match crate::envvar::read("PROEF_KEY") {
+        Ok(Some(value)) => return key_from_env(&value),
+        Ok(None) => {}
+        Err(message) => return Err(SecretError::User(message)),
     }
     let path = key_path();
     match std::fs::read_to_string(&path) {
@@ -281,11 +283,12 @@ pub fn resolve_all(
     let mut secrets = BTreeMap::new();
     let mut from_store = Vec::new();
     for name in names {
-        match std::env::var(env_override(name)) {
-            Ok(value) => {
+        match crate::envvar::read(&env_override(name)) {
+            Ok(Some(value)) => {
                 secrets.insert(name.clone(), value);
             }
-            Err(_) => from_store.push(name),
+            Ok(None) => from_store.push(name),
+            Err(message) => return Err(vec![message]),
         }
     }
     if from_store.is_empty() {
@@ -400,41 +403,43 @@ pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, S
     use proef_core::engine::DoctorStatus as S;
     let mut checks = Vec::new();
 
-    if let Ok(value) = std::env::var("PROEF_KEY") {
-        match key_from_env(&value) {
+    match crate::envvar::read("PROEF_KEY") {
+        Ok(Some(value)) => match key_from_env(&value) {
             Ok(_) => checks.push((
                 S::Pass,
                 "secret key",
                 "PROEF_KEY env override (32 bytes)".to_owned(),
             )),
             Err(err) => checks.push((S::Fail, "secret key", err.message().to_owned())),
-        }
-    } else {
-        let path = key_path();
-        if path.is_file() {
-            let outcome = std::fs::read_to_string(&path)
-                .map_err(|err| {
-                    SecretError::System(format!("cannot read {}: {err}", path.display()))
-                })
-                .and_then(|text| decode_key(&path, &text));
-            match outcome {
-                Ok(_) => checks.push((
-                    permissive_mode_status(&path),
+        },
+        Ok(None) => {
+            let path = key_path();
+            if path.is_file() {
+                let outcome = std::fs::read_to_string(&path)
+                    .map_err(|err| {
+                        SecretError::System(format!("cannot read {}: {err}", path.display()))
+                    })
+                    .and_then(|text| decode_key(&path, &text));
+                match outcome {
+                    Ok(_) => checks.push((
+                        permissive_mode_status(&path),
+                        "secret key",
+                        format!("{} (32 bytes)", path.display()),
+                    )),
+                    Err(err) => checks.push((S::Fail, "secret key", err.message().to_owned())),
+                }
+            } else {
+                checks.push((
+                    S::Pass,
                     "secret key",
-                    format!("{} (32 bytes)", path.display()),
-                )),
-                Err(err) => checks.push((S::Fail, "secret key", err.message().to_owned())),
+                    format!(
+                        "absent — created on first `proef secret set` ({})",
+                        path.display()
+                    ),
+                ));
             }
-        } else {
-            checks.push((
-                S::Pass,
-                "secret key",
-                format!(
-                    "absent — created on first `proef secret set` ({})",
-                    path.display()
-                ),
-            ));
         }
+        Err(message) => checks.push((S::Fail, "secret key", message)),
     }
 
     match read_store() {

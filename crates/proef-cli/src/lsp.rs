@@ -42,7 +42,17 @@ pub fn run() -> ExitCode {
 
     // Load proef.toml once — it drives both the suite root and the ${url}/${vars} scope.
     let config = ProjectConfig::load().unwrap_or_default();
-    let active_env = std::env::var("PROEF_ENV").ok();
+    // A malformed PROEF_ENV must stop the server from starting rather than
+    // silently analyse against the wrong config profile — an editor showing
+    // diagnostics from the wrong environment is the "reports the wrong
+    // cause" failure this module exists to avoid.
+    let active_env = match crate::envvar::read("PROEF_ENV") {
+        Ok(value) => value,
+        Err(message) => {
+            crate::render::errln!("error: {message}");
+            return ExitCode::UserError;
+        }
+    };
 
     // Root at the configured suite ([run] suite, else the tests/ convention),
     // made absolute against cwd and left uncanonicalized so source names stay

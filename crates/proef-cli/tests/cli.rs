@@ -191,3 +191,26 @@ fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
         "expected the contracted user-error exit, not a panic or an early abort"
     );
 }
+
+// A non-UTF-8 PROEF_ENV must not be silently treated as unset — running
+// against the wrong environment is exactly the "reports the wrong cause"
+// failure this contract exists to remove.
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_env_var_is_a_user_error() {
+    use std::os::unix::ffi::OsStrExt as _;
+    // Absolute, like the EPIPE reproduction above: nextest's cwd for this
+    // binary is the crate manifest dir, which has no `tests/features` of its
+    // own, so a relative path would fail on path resolution instead of the
+    // env var — a different exit-2 cause and a vacuous test.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    proef()
+        .arg("flows")
+        .arg(&features_dir)
+        .env("PROEF_ENV", bad)
+        .assert()
+        .code(2)
+        .stderr(contains("PROEF_ENV"));
+}

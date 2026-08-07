@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A set-but-unreadable environment variable is now a loud user error, never
+  silence.** `std::env::var` collapses "unset" and "set to bytes that are not
+  valid UTF-8" into the same `Err`; `.ok()` erased that distinction at five
+  call sites, so a value proef could not read was indistinguishable from one
+  the user never set. A non-UTF-8 `PROEF_KEY` fell through to the key file and
+  decrypted with the wrong key, reporting tampering instead of the real cause
+  (and `doctor` reported the key source as the file instead of the override);
+  a non-UTF-8 `PROEF_SECRET_<NAME>` fell through to the store and reported a
+  missing secret; a non-UTF-8 `PROEF_ENV` ran silently against the wrong
+  environment, including in `proef lsp`, where it meant analysing against the
+  wrong config profile. All five now exit 2 (user error) naming the variable.
+
 ## [0.7.0] - 2026-08-07 (record & artifact integrity)
 
 ### Changed

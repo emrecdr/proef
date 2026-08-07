@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod diff;
 mod disk_provider;
+mod envvar;
 mod exec;
 mod explain;
 mod fmt;
@@ -263,8 +264,14 @@ fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
 }
 
 /// The active environment: the `--env` flag wins, else `PROEF_ENV`, else none.
-fn active_env(flag: Option<String>) -> Option<String> {
-    flag.or_else(|| std::env::var("PROEF_ENV").ok())
+fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error::ExitCode> {
+    if let Some(flag) = flag {
+        return Ok(Some(flag));
+    }
+    crate::envvar::read("PROEF_ENV").map_err(|message| {
+        crate::render::errln!("error: {message}");
+        proef_core::error::ExitCode::UserError
+    })
 }
 
 /// The shared preamble of every suite command (`test`/`flows`/`artifacts`):
@@ -275,7 +282,7 @@ fn prepare(
 ) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
     let config = load_config()?;
     let path = resolve_suite_path(path, &config)?;
-    Ok((config, path, active_env(env)))
+    Ok((config, path, active_env(env)?))
 }
 
 // One dispatch table over the CLI surface; splitting arms hides the routing.
