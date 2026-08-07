@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **A set-but-unreadable environment variable is now a loud user error, never
+  silence — breaking for a pipeline that relied on the old silent fallback.**
+  `std::env::var` collapses "unset" and "set to bytes that are not valid
+  UTF-8" into the same `Err`; `.ok()` erased that distinction at five call
+  sites, so a value proef could not read was indistinguishable from one the
+  user never set. A non-UTF-8 `PROEF_KEY` fell through to the key file and
+  decrypted with the wrong key, reporting tampering instead of the real cause
+  (and `doctor` reported the key source as the file instead of the override);
+  a non-UTF-8 `PROEF_SECRET_<NAME>` fell through to the store and reported a
+  missing secret; a non-UTF-8 `PROEF_ENV` ran silently against the wrong
+  environment, including in `proef lsp`, where it meant analysing against the
+  wrong config profile. Four of the five sites now exit 2 (user error) naming
+  the variable; `doctor` instead reports it as a failed check alongside its
+  other unready-environment findings and exits 3, the same as an unreadable
+  key file. A pipeline that today tolerates a mis-set `PROEF_ENV`, or a
+  non-UTF-8 key/secret, will start failing after this upgrade.
+- **A failed stdout write now reaches the exit code — breaking for a pipeline
+  that tolerated truncated output.** Writing to a full disk or other failed
+  stdout exited `0` with truncated output; it now exits `3`. A closed pipe
+  (`proef … | head`) still exits cleanly. A pipeline that captures proef's
+  stdout somewhere that can fail mid-write (a full disk, a device error)
+  previously reported success over truncated output; it now gets a nonzero
+  exit it can act on instead of trusting truncated bytes. Per
+  `docs/RELEASING.md`, any breaking change is MINOR — together with the
+  environment-variable change above, this forces the next release to be
+  0.8.0, not 0.7.1.
+
 ### Fixed
 
 - **`proef fmt` rewrites line endings wholesale, violating its hurl-blocks-only
@@ -14,22 +43,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `autocrlf` checkout (a supported way to clone this repo), `fmt --check` was
   permanently failing through no fault of the author. `fmt` now detects the
   file's dominant line ending and preserves it when rewriting.
-
-- **A set-but-unreadable environment variable is now a loud user error, never
-  silence.** `std::env::var` collapses "unset" and "set to bytes that are not
-  valid UTF-8" into the same `Err`; `.ok()` erased that distinction at five
-  call sites, so a value proef could not read was indistinguishable from one
-  the user never set. A non-UTF-8 `PROEF_KEY` fell through to the key file and
-  decrypted with the wrong key, reporting tampering instead of the real cause
-  (and `doctor` reported the key source as the file instead of the override);
-  a non-UTF-8 `PROEF_SECRET_<NAME>` fell through to the store and reported a
-  missing secret; a non-UTF-8 `PROEF_ENV` ran silently against the wrong
-  environment, including in `proef lsp`, where it meant analysing against the
-  wrong config profile. All five now exit 2 (user error) naming the variable.
-
-- **A failed stdout write now reaches the exit code.** Writing to a full disk
-  or other failed stdout exited `0` with truncated output; it now exits `3`.
-  A closed pipe (`proef … | head`) still exits cleanly.
 
 - `run.log` could gain duplicated fragments when the console accepted a
   short write, because the tee re-wrote the full slice on every retry. It
