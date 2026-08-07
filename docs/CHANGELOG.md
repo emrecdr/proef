@@ -10,15 +10,21 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 - **`${fake:…}` values no longer repeat across a scenario's steps.** The
   occurrence counter restarted on every step, so two steps each asking for a
-  fresh `${fake:email}` received the same address. A step's label (its
-  `name:`, shown in artifact comments and events) now always reports the
-  same value the step's own request used, instead of drifting to the next
-  occurrence. Values remain deterministic for a given `--run-id`, but suites
-  using `${fake:…}` will see their emitted artifacts change. **Known
-  limitation, not fixed here:** the counter resets at the start of every
-  scenario, not the run, so two *different* scenarios that each resolve
-  `${fake:email}` at the same position in their own step order still collide
-  — that is a separate bug with its own snapshot-moving fix.
+  fresh `${fake:email}` received the same address. Every independent
+  `${fake:…}` reference within a scenario — across steps, and within one
+  step's payload/`when:`/label — now gets its own value and never collides
+  with another, however many a single step ends up resolving. A step's
+  `name:` label (shown in artifact comments and events) is the deliberate
+  exception: it is not independent of its own payload, so it replays
+  whatever fakes the payload/`when:` already resolved instead of minting new
+  ones, and even a label with *more* `${fake:…}` references than its payload
+  still reserves each extra one, so a later step can never be handed a value
+  the label already displayed. Values remain deterministic for a given
+  `--run-id`, but suites using `${fake:…}` will see their emitted artifacts
+  change. **Known limitation, not fixed here:** the counter resets at the
+  start of every scenario, not the run, so two *different* scenarios that
+  each resolve `${fake:email}` at the same position in their own step order
+  still collide — that is a separate bug with its own snapshot-moving fix.
 - **`proef_core::resolve::resolve` changed signature** (public API break for
   downstream `proef-core` consumers): it now takes an additional `&mut
   usize` occurrence counter supplied by the caller, and `Resolution::fakes`

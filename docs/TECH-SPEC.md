@@ -237,9 +237,13 @@ active `[env.<name>]` deep-merged; injected — ADR-0012) · `${run:id}` (uuid-v
 (World read at lower time of the scenario) · `${secret:NAME}` (encrypted store; emits
 `{{secret_name}}` + `insert_secret`) · `${fake:kind}` (deterministic from run id and an
 occurrence index; the index is an incrementing counter scoped to one scenario — shared
-across every `${fake:…}` reference the scenario resolves, so repeated references diverge,
-and reset to zero at the next scenario, so the same generator at the same position in two
-different scenarios currently coincides; port deterministic NL generators) · `$${…}`
+across every `${fake:…}` resolve in it, so independent references never collide regardless
+of how many a step resolves; a step's `name:` label resolves from a rewound copy of the
+counter so it replays its own payload's/`when:`'s values instead of consuming fresh ones,
+then restores the real counter to the high-water mark the replay reached (never below it),
+so an extra fake the label alone introduces still reserves its slot and is never reissued;
+the counter resets to zero at the next scenario, so the same generator at the same position
+in two different scenarios currently coincides; port deterministic NL generators) · `$${…}`
 literal escape. Run-time (`{{…}}`): hurl captures and
 secret placeholders — resolved by the engine. Resolution order within a scope: step args
 > macro defaults.

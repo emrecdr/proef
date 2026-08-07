@@ -176,10 +176,18 @@ scenarios and later runs read it at lowering time as `${global:name}`.
 `int`, `number`, `digits4`, `digits8`, `bool`, `word`, `uuid` (unknown
 generators fail at load). Each `${fake:kind}` **reference** gets its own
 value — an occurrence counter advances every time a scenario resolves one, so
-two `${fake:email}` references in the same scenario diverge. That sequence is
-a pure function of `${run:id}`: the same `--run-id` reproduces the same
-fakes, byte for byte, across runs. The counter restarts at zero for every
-scenario — **known limitation:** two *different* scenarios that each resolve
+independent `${fake:email}` references in the same scenario never collide,
+however many a step ends up resolving. A step's `name:` label is the one
+deliberate exception: it is not independent of its own payload, so it
+replays whatever fakes the payload (and `when:`) already resolved instead of
+minting new ones — the artifact comment always names data the request
+actually sent, never a value nothing was sent with. That includes a label
+with *more* `${fake:…}` references than its payload: each extra one still
+reserves its own place in the sequence, so a later step can never be handed
+a value the label already displayed. That whole sequence is a pure function
+of `${run:id}`: the same `--run-id` reproduces the same fakes, byte for
+byte, across runs. The counter restarts at zero for every scenario —
+**known limitation:** two *different* scenarios that each resolve
 `${fake:email}` at the same position in their own step order (typically each
 scenario's first fake reference) get the same address, because both count
 from zero independently. If two scenarios must not collide, key the value
