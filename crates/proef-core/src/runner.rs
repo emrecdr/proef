@@ -13,7 +13,6 @@
 //! events (durations are engine-measured).
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -172,33 +171,47 @@ enum Msg {
 /// `identities`/`ScenarioOutcome` already use.
 type ScenarioId = (Arc<str>, Arc<str>);
 
+/// The gate's mutable state, behind one lock (see [`RecordGate`]).
+struct GateState {
+    /// Scenario identities that have been finalized — a worker's late event
+    /// for one of these is dropped rather than reaching `inner`.
+    closed: HashSet<ScenarioId>,
+    /// Set once, after `RunFinished` is written. Once `true`, nothing reaches
+    /// `inner` again, for any identity.
+    run_closed: bool,
+}
+
 /// Wraps the run's sink so a finalized scenario's late events never reach the
 /// record. An abandoned scenario's thread is detached and observes its
 /// cancellation token only at its next batch boundary (ADR-0007), so it can
 /// still try to emit after the sweep recorded its outcome — and after the run
 /// itself was finalized. The record's tail must be the tail.
 ///
-/// One gate, two write paths: [`Self::scenario_sink`] hands each worker
-/// thread a sink pre-bound to its own scenario identity (so it filters
+/// One gate, two write paths, one lock: [`Self::scenario_sink`] hands each
+/// worker thread a sink pre-bound to its own scenario identity (so it filters
 /// without needing to inspect every event variant for `scenario`/`file`
 /// fields — not all of them carry both); [`Self::finish_scenario`] is called
 /// directly by the dispatcher thread, from both the normal completion path
-/// and `sweep_expired`, to emit a scenario's terminal event and then close it
-/// in one atomic step. [`Self::close_run`] is called only after `RunFinished`
+/// and `sweep_expired`, to emit a scenario's terminal event and mark it
+/// closed. Every read *and* write of [`GateState`] — including the emit
+/// itself — happens under the same `Mutex`, so "is this identity still open"
+/// and "write the event" are one atomic step rather than a check racing a
+/// concurrent close. [`Self::close_run`] is called only after `RunFinished`
 /// has already been written, per [`Self::emit_run_level`].
 #[derive(Clone)]
 struct RecordGate {
     inner: EventSink,
-    closed: Arc<Mutex<HashSet<ScenarioId>>>,
-    run_closed: Arc<AtomicBool>,
+    state: Arc<Mutex<GateState>>,
 }
 
 impl RecordGate {
     fn new(inner: EventSink) -> Self {
         Self {
             inner,
-            closed: Arc::new(Mutex::new(HashSet::new())),
-            run_closed: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(Mutex::new(GateState {
+                closed: HashSet::new(),
+                run_closed: false,
+            })),
         }
     }
 
@@ -206,44 +219,46 @@ impl RecordGate {
     /// Every event passed through it is dropped once the run is closed, or
     /// once this scenario has been finalized via [`Self::finish_scenario`] —
     /// including when that happened on the *dispatcher* thread (the watchdog
-    /// sweep), racing ahead of this scenario's own thread.
+    /// sweep), racing ahead of this scenario's own thread. The state lock is
+    /// held across the emit itself: a check-then-act (read the flag, drop
+    /// the lock, then emit) would leave a window for a worker to be
+    /// preempted right there and still write after the tail — the emit is
+    /// part of the same critical section as the check, not a step after it.
     fn scenario_sink(&self, file: Arc<str>, scenario: Arc<str>) -> EventSink {
         let inner = self.inner.clone();
-        let closed = Arc::clone(&self.closed);
-        let run_closed = Arc::clone(&self.run_closed);
+        let state = Arc::clone(&self.state);
         let id: ScenarioId = (file, scenario);
         EventSink::new(move |event| {
-            if run_closed.load(Ordering::Acquire) {
-                return;
-            }
-            let already_closed = closed
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .contains(&id);
-            if already_closed {
+            let guard = state.lock().unwrap_or_else(PoisonError::into_inner);
+            if guard.run_closed || guard.closed.contains(&id) {
                 return;
             }
             inner.emit(event);
+            // `guard` drops here, after the emit — not before it.
         })
     }
 
-    /// Emit a scenario's terminal `ScenarioFinished`, then mark it closed.
-    /// The emit-then-close order matters: the terminal event itself must
-    /// reach the sink before later events from the same identity are
-    /// dropped. Called from both the dispatcher's normal completion path and
+    /// Emit a scenario's terminal `ScenarioFinished` and mark it closed under
+    /// one lock acquisition, so no [`Self::scenario_sink`] call for this
+    /// identity — nor a concurrent [`Self::close_run`] — can land between the
+    /// two: the terminal event and the closing of its identity are atomic.
+    /// Called from both the dispatcher's normal completion path and
     /// `sweep_expired` — the two places a scenario is ever finalized.
     fn finish_scenario(&self, event: &Event, file: &Arc<str>, scenario: &Arc<str>) {
-        self.emit_run_level(event);
-        self.closed
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        let mut guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !guard.run_closed {
+            self.inner.emit(event);
+        }
+        guard
+            .closed
             .insert((Arc::clone(file), Arc::clone(scenario)));
     }
 
     /// Emit an event that carries no single-scenario identity (`RunStarted`,
     /// `RunFinished`) — gated only by the run-level close.
     fn emit_run_level(&self, event: &Event) {
-        if !self.run_closed.load(Ordering::Acquire) {
+        let guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !guard.run_closed {
             self.inner.emit(event);
         }
     }
@@ -252,7 +267,10 @@ impl RecordGate {
     /// been written via [`Self::emit_run_level`] — the tail must be written
     /// before the gate closes, never the other way around.
     fn close_run(&self) {
-        self.run_closed.store(true, Ordering::Release);
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .run_closed = true;
     }
 }
 

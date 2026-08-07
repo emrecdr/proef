@@ -598,8 +598,9 @@ fn cancelled_run_is_never_success() {
 /// Two batches are required to observe this: `Misbehavior::Hang` polls its
 /// own cancellation token and returns (with an error) shortly after the
 /// watchdog abandons it, so with a single batch `processed` already equals
-/// `batches.len()` by the time it returns and the unreached-batch loop
-/// (`runner.rs:569-592`) has nothing left to emit. With a second batch still
+/// `batches.len()` by the time it returns and `run_scenario`'s
+/// unreached-batches loop (the one that reports never-dispatched batches as
+/// `Skipped`) has nothing left to emit. With a second batch still
 /// unprocessed, that loop emits a `StepFinished{Skipped}` for it — and it
 /// does so *after* the dispatcher has already recorded the abandonment and
 /// emitted `RunFinished` (that sequence runs in microseconds; the hung
@@ -651,5 +652,23 @@ fn abandoned_scenario_emits_nothing_after_run_finished() {
         "run_finished must be the LAST event; full sequence (0-based) was \
          {events:#?}, with run_finished at index {tail} followed by {:?}",
         &events[tail + 1..]
+    );
+
+    // Position alone doesn't rule out the gate over-suppressing — dropping
+    // the sweep's own `scenario_finished`, say — and slipping the assertion
+    // above by accident. The sequence here is deterministic (one scenario,
+    // one job, the hung batch never gets past `BatchStarted`), so pin the
+    // whole thing: exactly what a well-behaved abandonment produces, no more
+    // and no less.
+    assert_eq!(
+        events,
+        vec![
+            "run_started",
+            "scenario_started",
+            "other",             // BatchStarted for the hung first batch
+            "scenario_finished", // the sweep's own terminal event
+            "run_finished",
+        ],
+        "gate must drop only the late event, not real ones"
     );
 }
