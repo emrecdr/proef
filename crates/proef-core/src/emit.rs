@@ -296,6 +296,14 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             names.push(name.to_owned());
             continue;
         }
+        // A comment inside an open run is the author's note about a capture,
+        // not the start of the next entry: an entry always opens with a method
+        // or response line, and that ends the run on its own, so a comment
+        // never has to. Ending it here would drop every capture after the
+        // comment.
+        if in_captures && trimmed.starts_with('#') {
+            continue;
+        }
         // A new entry (method/status line or comment) ends the section — a
         // stray `k: v`-shaped line after it must not read as a capture.
         if starts_entry_line(trimmed) {
@@ -589,6 +597,30 @@ mod tests {
             names,
             vec!["real".to_owned()],
             "a custom-method entry line must end the previous entry's capture scan: {names:?}"
+        );
+    }
+
+    #[test]
+    fn a_comment_inside_a_captures_run_does_not_drop_the_captures_after_it() {
+        // Commenting a capture is ordinary authoring, and a comment carries no
+        // captures of its own, so it must not close the run: doing so drops
+        // every later capture in the entry from `.map.json`, a normative
+        // artifact (ADR-0010). Nothing is lost by letting it through — an
+        // entry always opens with a method or response line, and that ends the
+        // run on its own (`capture_scan_ends_the_previous_entry_at_a_custom_method_line`).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "# the id we reuse later",
+            "id: jsonpath \"$.id\"",
+            "other: jsonpath \"$.other\"",
+        ];
+        let names = capture_names(&body);
+        assert_eq!(
+            names,
+            vec!["id".to_owned(), "other".to_owned()],
+            "a comment inside the run dropped the captures following it: {names:?}"
         );
     }
 
