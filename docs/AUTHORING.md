@@ -179,9 +179,16 @@ value — an occurrence counter advances every time a scenario resolves one, so
 independent `${fake:email}` references in the same scenario never collide,
 however many a step ends up resolving. A step's `name:` label is the one
 deliberate exception: it is not independent of its own payload, so it
-replays whatever fakes the payload (and `when:`) already resolved instead of
-minting new ones — the artifact comment always names data the request
-actually sent, never a value nothing was sent with. That includes a label
+replays from the start of the step's own occurrence window instead of
+minting new ones — the label's Nth `${fake:…}` reference reuses whichever
+occurrence the payload's (and `when:`'s) Nth reference consumed, matched by
+*position*, not by generator kind. When the label's `${fake:…}` references
+mirror the payload's in kind and order — the common case, e.g. a label that
+names the same field the payload sends — this reproduces the payload's own
+value exactly. When they diverge in kind (say the label's first reference is
+`${fake:fullName}` but the payload's first reference is `${fake:email}`),
+the label instead shows whatever that occurrence generated for *its own*
+kind — a value the request did not send. That includes a label
 with *more* `${fake:…}` references than its payload: each extra one still
 reserves its own place in the sequence, so a later step can never be handed
 a value the label already displayed. That whole sequence is a pure function

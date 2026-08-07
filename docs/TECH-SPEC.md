@@ -239,9 +239,12 @@ active `[env.<name>]` deep-merged; injected — ADR-0012) · `${run:id}` (uuid-v
 occurrence index; the index is an incrementing counter scoped to one scenario — shared
 across every `${fake:…}` resolve in it, so independent references never collide regardless
 of how many a step resolves; a step's `name:` label resolves from a rewound copy of the
-counter so it replays its own payload's/`when:`'s values instead of consuming fresh ones,
-then restores the real counter to the high-water mark the replay reached (never below it),
-so an extra fake the label alone introduces still reserves its slot and is never reissued;
+counter so its Nth `${fake:…}` reference reuses the payload's/`when:`'s Nth occurrence by
+*position*, not generator kind — reproducing the payload's own value exactly when the
+label's references mirror the payload's in kind and order, otherwise surfacing that
+occurrence's own-kind value instead — then restores the real counter to the high-water
+mark the replay reached (never below it), so an extra fake the label alone introduces
+still reserves its slot and is never reissued;
 the counter resets to zero at the next scenario, so the same generator at the same position
 in two different scenarios currently coincides; port deterministic NL generators) · `$${…}`
 literal escape. Run-time (`{{…}}`): hurl captures and

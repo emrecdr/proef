@@ -15,11 +15,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   step's payload/`when:`/label — now gets its own value and never collides
   with another, however many a single step ends up resolving. A step's
   `name:` label (shown in artifact comments and events) is the deliberate
-  exception: it is not independent of its own payload, so it replays
-  whatever fakes the payload/`when:` already resolved instead of minting new
-  ones, and even a label with *more* `${fake:…}` references than its payload
-  still reserves each extra one, so a later step can never be handed a value
-  the label already displayed. Values remain deterministic for a given
+  exception: it is not independent of its own payload, so it replays from
+  the start of the step's own occurrence window instead of minting new
+  ones, matched by position (the label's Nth `${fake:…}` reference reuses
+  the payload/`when:`'s Nth occurrence, regardless of generator kind) — so
+  it reproduces the payload's own value when the label's references mirror
+  the payload's in kind and order, and shows a different generator's output
+  when they don't. Even a label with *more* `${fake:…}` references than its
+  payload still reserves each extra one, so a later step can never be
+  handed a value the label already displayed. Values remain deterministic
+  for a given
   `--run-id`, but suites using `${fake:…}` will see their emitted artifacts
   change. **Known limitation, not fixed here:** the counter resets at the
   start of every scenario, not the run, so two *different* scenarios that
