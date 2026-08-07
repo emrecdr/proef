@@ -1095,7 +1095,6 @@ impl core::marker::UnsafeUnpin for proef_core::resolve::ResolveMode
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveMode
 impl core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveMode
 pub struct proef_core::resolve::Resolution
-pub proef_core::resolve::Resolution::fakes: usize
 pub proef_core::resolve::Resolution::globals: alloc::collections::btree::set::BTreeSet<alloc::string::String>
 pub proef_core::resolve::Resolution::secrets: alloc::collections::btree::set::BTreeSet<alloc::string::String>
 pub proef_core::resolve::Resolution::text: alloc::string::String
@@ -1138,7 +1137,7 @@ impl<'a> core::marker::UnsafeUnpin for proef_core::resolve::ResolveCtx<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveCtx<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveCtx<'a>
 pub const proef_core::resolve::MAX_DEPTH: usize
-pub fn proef_core::resolve::resolve(&str, &proef_core::resolve::ResolveCtx<'_>) -> core::result::Result<proef_core::resolve::Resolution, proef_core::resolve::ResolveError>
+pub fn proef_core::resolve::resolve(&str, &proef_core::resolve::ResolveCtx<'_>, &mut usize) -> core::result::Result<proef_core::resolve::Resolution, proef_core::resolve::ResolveError>
 pub mod proef_core::runner
 pub enum proef_core::runner::Fault
 pub proef_core::runner::Fault::System(alloc::string::String)

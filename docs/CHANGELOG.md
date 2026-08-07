@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`${fake:…}` values no longer repeat across a scenario's steps.** The
+  occurrence counter restarted on every step, so two steps each asking for a
+  fresh `${fake:email}` received the same address. Values remain deterministic
+  for a given `--run-id`, but suites using `${fake:…}` will see their emitted
+  artifacts change.
+
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 
 ### Added

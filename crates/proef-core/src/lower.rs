@@ -69,6 +69,14 @@ const MAX_EXPANSION_DEPTH: usize = 32;
 struct Refs {
     secrets: BTreeSet<String>,
     globals: BTreeSet<String>,
+    /// `${fake:*}` occurrence counter, shared across every step in the
+    /// scenario (not reset per `resolve()` call) so two steps each asking
+    /// for a fresh `${fake:email}` get distinct values. Scoped to one
+    /// `lower()` call — i.e. one scenario — which keeps it a pure function
+    /// of `(run_id, the scenario's own step order)`: `lower()` runs
+    /// single-threaded per scenario (`runner.rs`: scenario-per-OS-thread),
+    /// so no cross-scenario or cross-thread ordering ever reaches it.
+    fakes: usize,
 }
 
 /// Lower one bound scenario into engine batches.
@@ -182,7 +190,7 @@ fn expand_macro(
             world: ctx.world,
             mode: ctx.mode,
         };
-        match resolve::resolve(text, &resolve_ctx) {
+        match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
             Ok(resolution) => {
                 refs.secrets.extend(resolution.secrets);
                 refs.globals.extend(resolution.globals);

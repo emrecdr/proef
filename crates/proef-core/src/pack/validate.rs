@@ -572,7 +572,10 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
             world: &world,
             mode: ResolveMode::Probe,
         };
-        let Resolution { text, .. } = resolve::resolve(text, &ctx)?;
+        // A fresh probe, not a scenario — the occurrence counter starts at 0
+        // for each placeholder candidate; this pass only checks grammar.
+        let mut fakes = 0;
+        let Resolution { text, .. } = resolve::resolve(text, &ctx, &mut fakes)?;
         candidates.push(text);
     }
     Ok(candidates)
