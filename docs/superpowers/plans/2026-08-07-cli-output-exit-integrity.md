@@ -58,6 +58,9 @@ cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
 - Create: `crates/proef-cli/src/envvar.rs`
 - Modify: `crates/proef-cli/src/main.rs` (add `mod envvar;` beside the other `mod` lines near `:8-29`; `active_env` at `:266-268`)
 - Modify: `crates/proef-cli/src/secretstore.rs` (`load_or_create_key` `:116`, `resolve_secrets` `:284`, `doctor_checks` `:403`)
+- Modify: `crates/proef-cli/src/lsp.rs` (`:45` — the **fifth** site, in the LSP's own startup path)
+
+**There are five sites, not four.** The spec names four; `lsp.rs:45` (`let active_env = std::env::var("PROEF_ENV").ok();`) is a separate code path with its own local, and the workspace-wide sweep that found it is `rg -n 'env::var\(' crates/ --type rust | rg -v 'env::var_os'`. Run that yourself before starting and confirm the list is still exactly these five — if a sixth has appeared, it is in scope, because the point of this task is that the rule is uniform.
 
 **Interfaces:**
 - Produces: `pub(crate) fn envvar::read(name: &str) -> Result<Option<String>, String>` — `Ok(None)` means genuinely unset; `Err(message)` means set-but-unreadable, with a user-facing message naming the variable. Later tasks do not consume this.
@@ -221,7 +224,9 @@ fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error:
 }
 ```
 
-Follow the compiler to every caller. If a caller cannot return a `Result`, report that rather than adding a second silent `.ok()`.
+The blast radius is one call: `active_env(env)` is called only from `prepare` at `main.rs:278`, which already returns `Result<…, ExitCode>` — so `?` is all that is needed there. The many other `active_env` matches in the codebase are *parameters and locals of that name*, not calls to this function; do not touch them. Verify with `rg -n 'active_env\(' crates/proef-cli/src/`.
+
+`lsp.rs:45` is the fifth site and needs its own treatment, because it is not in the CLI preamble — it runs as the language server starts, before the LSP protocol loop. Read the surrounding function to see what it can return. A malformed `PROEF_ENV` there should stop the server from starting with a message on stderr rather than silently analysing against the wrong environment — an editor showing diagnostics from the wrong config profile is precisely the "reports the wrong cause" failure this task exists to remove. If the function's signature makes that awkward, say so in the report and propose the shape rather than falling back to `.ok()`.
 
 - [ ] **Step 6: Add an end-to-end exit-code test**
 
@@ -261,6 +266,9 @@ Changelog entry under `### Fixed`: a set-but-non-UTF-8 `PROEF_KEY`, `PROEF_ENV`,
 **Files:**
 - Modify: `crates/proef-cli/src/render.rs` (the `outln!` macro at `:13-22`)
 - Modify: `crates/proef-cli/src/main.rs` (the exit funnel at `:450`)
+- Modify: `docs/TROUBLESHOOTING.md` (the exit-code table, row `3`, at `:17`)
+
+**Two paths deliberately bypass the funnel, and that is correct.** `watch.rs:61` and `exec.rs:190` call `std::process::exit(crate::INTERRUPT_EXIT_CODE)` on a second Ctrl-C. That constant is `130` and its doc comment at `main.rs:35-38` says it is *"deliberately outside the typed `ExitCode` taxonomy (ADR-0009 amendment) — not a graceful outcome, so it bypasses the enum entirely."* A stdout failure must **not** override it: the operator interrupted, and `128 + SIGINT` is the shell convention they expect. Leave both call sites alone, and say in the report that you checked them — this is the kind of gap a reviewer should see reasoned about rather than missed.
 
 **Interfaces:**
 - Produces: `pub(crate) fn render::note_stdout_failure()` and `pub(crate) fn render::stdout_failed() -> bool`.
@@ -375,11 +383,15 @@ At `crates/proef-cli/src/main.rs:450`, the single funnel:
 
 Run: `cargo nextest run -p proef` — the new test passes, and the existing closed-pipe tests still pass (a `BrokenPipe` must not set the flag). Name those tests in the report and confirm they were checked, since they are what pins the deliberate exception.
 
-- [ ] **Step 6: Run the full gate and commit**
+- [ ] **Step 6: Document the new cause of exit 3**
+
+Exit codes are a contract, and `docs/TROUBLESHOOTING.md:17` is the table a user reads to interpret one. Row `3` currently says *"the environment or proef is at fault: unreachable target, native libs, IO"* with the remedy *"check the target, `proef doctor`, disk"*. Add the new cause to that row in its existing voice — output proef could not write (a full disk, a failing device) now lands here rather than looking like success. Keep the table's column formatting; then run `cargo run -p xtask -- docs-check`.
+
+- [ ] **Step 7: Run the full gate and commit**
 
 ```bash
 git add crates/proef-cli/src/render.rs crates/proef-cli/src/main.rs \
-        crates/proef-cli/tests/cli.rs docs/CHANGELOG.md
+        crates/proef-cli/tests/cli.rs docs/TROUBLESHOOTING.md docs/CHANGELOG.md
 git commit -m "fix(cli): a failed stdout write reaches the exit code"
 ```
 
@@ -460,6 +472,8 @@ Replace the `write` body at `exec.rs:947-951`:
 ```
 
 Leave `flush` as it is.
+
+**A tradeoff to state in the report rather than discover in review.** Writing to the console first means that if the console write *errors*, `run.log` receives nothing — where the old order mirrored the full slice first and so kept bytes the console never displayed. That is the intended reading of "mirror": `run.log` is the console record, so bytes the console never accepted do not belong in it, and after Task 2 a failed console write reaches the exit code instead of passing silently. If you think the opposite trade is better — record everything attempted, on the grounds that a run record is most valuable exactly when output is failing — do not silently choose it; say so and let it be adjudicated.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -637,6 +651,8 @@ fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
 
 `std::path::absolute` is stable and does not touch the filesystem, so it stays usable when the run dir has already been rotated away.
 
+**A deliberate divergence from the spec.** D5's text also asks to "compare canonicalized paths so a `./` or symlink spelling does not defeat it" in the if-branch. This plan keeps the plain `==`, because the consequence of the comparison being wrong is now benign: a report that *is* in the run dir but spelled `./` takes the else-branch and gets an absolute href — longer than necessary, and still correct. Canonicalizing would add a filesystem call to a pure function and fail on a rotated-away run dir, trading a cosmetic gain for a real failure mode. If the reviewer disagrees, the fix is small and isolated; it is recorded here so the divergence is a decision rather than an oversight.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo nextest run -p proef artifacts_href`
@@ -680,7 +696,9 @@ Changelog entry under `### Fixed`: `proef report -o` outside the run dir wrote a
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `diff.rs`'s test module (locate with `rg -n 'mod tests' crates/proef-cli/src/diff.rs`; build `ScenarioRun` values the way the neighbouring tests do — read one first):
+`diff.rs` has **no test module** — create one at the end of the file, following the shape used elsewhere in the crate (`#[cfg(test)] mod tests { use super::*; … }`).
+
+Drive the assertion through the real entry point rather than reaching for the private method: `note_flaky` is `impl Report` (`:184`), and `Report` is built by `Report::compute(base, new)` (`:146-155`), which takes two `&BTreeMap<Key, ScenarioRun>`. There is no `Report::default()` — an earlier draft of this plan assumed one.
 
 ```rust
     #[test]
@@ -688,19 +706,18 @@ Add to `diff.rs`'s test module (locate with `rg -n 'mod tests' crates/proef-cli/
         // `map_or(1, …)` treated "absent from base" as "ran once", so any
         // retry on a brand-new step read as new flakiness. A step with no
         // baseline has no flakiness to report.
-        let base = scenario_run(&[("existing step", 1)]);
-        let new = scenario_run(&[("existing step", 1), ("brand new step", 3)]);
-        let mut diff = Diff::default();
-        diff.note_flaky(&key(), &base, &new);
+        let base = run_with(&[("existing step", 1)]);
+        let new = run_with(&[("existing step", 1), ("brand new step", 3)]);
+        let report = Report::compute(&base, &new);
         assert!(
-            diff.flaky.is_empty(),
+            report.flaky.is_empty(),
             "a step with no baseline must not be reported as flaky: {:?}",
-            diff.flaky
+            report.flaky
         );
     }
 ```
 
-Adapt the constructors (`scenario_run`, `key`, `Diff::default`) to whatever the module actually provides — the assertion is the contract, the scaffolding is local detail. If no helper exists, write the smallest one that builds the two `ScenarioRun` values.
+Write the smallest `run_with` helper that builds a `BTreeMap<Key, ScenarioRun>` with one scenario whose steps carry the given `(text, attempts)` — read the `Key`, `ScenarioRun`, and step types first and construct them literally. Keep both runs' scenario status identical so the only difference the report can find is the step, otherwise a `regressed`/`added` line could mask what you are testing.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -758,17 +775,32 @@ Changelog entry under `### Fixed`: `proef diff` reported a brand-new retried ste
 
 ## Sequencing
 
-Tasks 1–6 are independent — they touch disjoint code and can land in any order. Task 2 is the only one that changes behaviour observable from every other command, so run the full suite after it rather than only its own tests.
+Tasks 1–6 are independent in behaviour and can land in any order. Two notes:
 
-Tasks 1 and 2 are the two with a shared mechanism and the widest blast radius; 3–6 are local. If the reviewer's time is limited, spend it on 1 and 2.
+- **Tasks 1 and 2 both edit `main.rs`** (Task 1 adds `mod envvar;` and changes `active_env`; Task 2 changes the exit funnel). They are executed sequentially, so this is not a conflict — but do not run them as parallel implementers.
+- **Every task appends to `docs/CHANGELOG.md` `[Unreleased]`.** Same reasoning: sequential is fine, parallel would collide.
+
+Task 2 is the only one whose behaviour is observable from every other command, so run the full suite after it rather than only its own tests.
+
+Tasks 1 and 2 carry the shared mechanisms and the widest blast radius; 3–6 are local. If reviewer time is limited, spend it on 1 and 2.
 
 ## Self-review
 
 **Spec coverage:** D1 → Task 1, D2 → Task 2, D3 → Task 3, D4 → Task 4, D5 → Task 5, D6 → Task 6. The spec's "What is NOT in this branch" section is honoured: no `--dry-run` phase validation, no Ctrl-C teardown, no LSP rooting, no Tier 2/3.
 
 **Deviations from the spec, stated deliberately:**
+- **D1 covers five sites, not the four the spec lists.** `lsp.rs:45` reads `PROEF_ENV` in the language server's own startup path. The spec's enumeration was incomplete; the rule is uniform, so the fifth site is in scope.
 - D2's spec text says to fold a flag in "exactly as `junit_failed` already is". `junit_failed` is local to `execute()`; `outln!` spans eight modules. Task 2 keeps the *shape* (a flag folded into the exit) and moves the *storage* to a process-level latch read once at `main`'s funnel. Same one-mechanism property, correct scope.
+- **D2 does not override exit `130`.** Two interrupt paths hard-exit outside the taxonomy by design (ADR-0009 amendment); a stdout failure must not mask the operator's Ctrl-C.
 - D5's spec text was written before a partial fix landed. Task 5 completes `artifacts_href` rather than computing a new href, which the original wording would have invited.
+- **D5 keeps the plain `==` comparison** rather than the canonicalized one the spec asks for — the failure mode is now a cosmetically-long-but-correct href, and canonicalizing would add IO to a pure function and break on a rotated-away run dir.
+
+**Second review pass (after the first draft was committed).** Re-reading the draft against the tree found five defects in it, all now fixed above and each of a kind worth naming, because they are the kinds a plan reliably hides:
+1. **An incomplete enumeration** — Task 1 covered four of five env sites, because the spec listed four and I trusted it instead of sweeping.
+2. **A wrong platform assumption** — `/dev/full` does not exist on macOS, a gate platform.
+3. **A wrong type** — Task 6's test called `Diff::default()`; the type is `Report` and it has no `Default`.
+4. **An undiscovered bypass** — `process::exit(130)` in two places skips the funnel Task 2 relies on; correct here, but it had to be established rather than assumed.
+5. **A missing doc obligation** — exit codes are a contract with a user-facing table, and Task 2 adds a cause to it.
 
 **Placeholder scan:** every step carries the code to write or the exact command to run. Three tasks tell the implementer to read a neighbouring test first and match its scaffolding (`exec.rs` temp files, `diff.rs` `ScenarioRun` constructors, `report.rs` test module) — that is a deliberate instruction to match local convention, not a deferred decision; the assertion in each case is fully specified.
 
