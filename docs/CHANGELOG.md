@@ -40,6 +40,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the command reported success. The href is now absolute when the report
   is written elsewhere.
 
+- `proef diff` reported a brand-new retried step as newly flaky, because a
+  step absent from the base run was assumed to have run once. Steps with no
+  baseline are now skipped, and the ordinal-shift caveat inherent to
+  positional step keying is documented in TROUBLESHOOTING.
+
 ## [0.7.0] - 2026-08-07 (record & artifact integrity)
 
 ### Changed

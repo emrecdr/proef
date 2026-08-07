@@ -183,10 +183,13 @@ impl Report {
     /// shifts don't lie.
     fn note_flaky(&mut self, key: &Key, base: &ScenarioRun, new: &ScenarioRun) {
         for ((text, ord), new_step) in &new.steps {
-            let base_attempts = base
-                .steps
-                .get(&(text.clone(), *ord))
-                .map_or(1, |step| step.attempts);
+            // A step with no baseline has no flakiness to report — defaulting
+            // to "one attempt" turned every retry on a new step into invented
+            // flakiness.
+            let Some(base_step) = base.steps.get(&(text.clone(), *ord)) else {
+                continue;
+            };
+            let base_attempts = base_step.attempts;
             if new_step.attempts > base_attempts {
                 self.flaky.push(format!(
                     "    ⚠ {} — step \"{text}\" {base_attempts}→{} attempt(s)",
@@ -283,5 +286,50 @@ fn status_word(status: Status) -> &'static str {
         Status::Failed => "failed",
         Status::Skipped => "skipped",
         Status::Warned => "warned",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::record::StepRun;
+
+    /// One scenario (`f.feature :: S`, status `Passed`) whose steps carry the
+    /// given `(text, attempts)` pairs, each its own occurrence (ordinal 0).
+    fn run_with(steps: &[(&str, u32)]) -> BTreeMap<Key, ScenarioRun> {
+        let mut step_map = BTreeMap::new();
+        for (text, attempts) in steps {
+            step_map.insert(
+                ((*text).to_string(), 0),
+                StepRun {
+                    attempts: *attempts,
+                    duration_ms: 0,
+                },
+            );
+        }
+        let mut scenarios = BTreeMap::new();
+        scenarios.insert(
+            ("f.feature".to_string(), "S".to_string()),
+            ScenarioRun {
+                status: Status::Passed,
+                steps: step_map,
+            },
+        );
+        scenarios
+    }
+
+    #[test]
+    fn a_step_absent_from_the_base_run_is_not_flaky() {
+        // `map_or(1, …)` treated "absent from base" as "ran once", so any
+        // retry on a brand-new step read as new flakiness. A step with no
+        // baseline has no flakiness to report.
+        let base = run_with(&[("existing step", 1)]);
+        let new = run_with(&[("existing step", 1), ("brand new step", 3)]);
+        let report = Report::compute(&base, &new);
+        assert!(
+            report.flaky.is_empty(),
+            "a step with no baseline must not be reported as flaky: {:?}",
+            report.flaky
+        );
     }
 }
