@@ -274,6 +274,15 @@ fn capture_names(body: &[&str]) -> Vec<String> {
             in_captures = false;
             continue;
         }
+        // A capture-shaped line inside an open run is a capture, full stop —
+        // checked ahead of `starts_entry_line` because the generic recogniser
+        // cannot tell an uppercase capture name (hurl permits a space before
+        // its `:`) from a custom-method entry line, and must not be allowed
+        // to guess wrong on this scan's own territory.
+        if in_captures && let Some(name) = capture_name(trimmed) {
+            names.push(name.to_owned());
+            continue;
+        }
         // A new entry (method/status line or comment) ends the section — a
         // stray `k: v`-shaped line after it must not read as a capture.
         if starts_entry_line(trimmed) {
@@ -283,22 +292,24 @@ fn capture_names(body: &[&str]) -> Vec<String> {
         // So does a body opener: nothing after it in this entry is a capture.
         if trimmed.starts_with('{') || trimmed.starts_with('<') {
             in_captures = false;
-            continue;
-        }
-        if in_captures && let Some((name, _)) = trimmed.split_once(':') {
-            let name = name.trim();
-            // Bare identifiers only — a JSON body line (`"status": "ok"`)
-            // must never read as the capture `"status"`.
-            if !name.is_empty()
-                && name
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-            {
-                names.push(name.to_owned());
-            }
         }
     }
     names
+}
+
+/// Is `trimmed` shaped like a capture definition (`name: query`)? Bare
+/// identifiers only — a JSON body line (`"status": "ok"`) must never read as
+/// the capture `"status"`, and an entry-opening line never has this shape (a
+/// method line's first token carries no colon; a response line has no colon
+/// at all).
+fn capture_name(trimmed: &str) -> Option<&str> {
+    let (name, _) = trimmed.split_once(':')?;
+    let name = name.trim();
+    (!name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+    .then_some(name)
 }
 
 /// Does this canonical-emission line open a new request, response, or
@@ -518,6 +529,28 @@ mod tests {
         assert_eq!(
             capture_names(&body),
             vec!["HTTPStatus".to_owned(), "plain".to_owned()]
+        );
+    }
+
+    #[test]
+    fn capture_names_with_a_space_before_the_colon_are_not_mistaken_for_a_method_line() {
+        // hurl's own grammar permits whitespace between a capture's name and
+        // its `:` (space0/space1 in hurl_core's `capture()` parser), so an
+        // all-uppercase capture name written that way (`STATUS : …`) has
+        // exactly the shape `is_method_line` looks for (a ≥3-char uppercase
+        // word followed by another token) — it must still read as a capture,
+        // not as a new entry that ends the scan (ADR-0010: no legitimate row
+        // may be dropped from the sidecar).
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "STATUS : jsonpath \"$.s\"",
+            "plain: jsonpath \"$.id\"",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec!["STATUS".to_owned(), "plain".to_owned()]
         );
     }
 
