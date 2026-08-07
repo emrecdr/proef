@@ -128,3 +128,8 @@ before `proef`, which depends on it non-optionally) and is **not** automated.
   `proef-cli` routed through the EPIPE-safe guard (with a source-scanning
   drift test), and `proef-lsp`'s panic-recovery notice no longer kills the
   server it just rescued
+- `v0.6.0` — first-run UX & run-record correctness: `proef init`, a
+  did-you-mean for unset config variables, a next-command nudge; one
+  `run_started`/`run_finished` pair per record with suite-only totals,
+  truncated-record banners in `report`/`explain`, a real worker slot index —
+  breaking: a scenario with no steps is now an error

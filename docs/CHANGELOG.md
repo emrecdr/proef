@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
+
 ### Added
 
 - **`proef init` scaffolds a working suite.** It writes the files
