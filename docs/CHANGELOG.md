@@ -35,6 +35,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   short write, because the tee re-wrote the full slice on every retry. It
   now mirrors only the accepted bytes.
 
+- `proef report -o` outside the run dir wrote artifact links relative to
+  the run dir, so every link 404'd from the report's own location while
+  the command reported success. The href is now absolute when the report
+  is written elsewhere.
+
 ## [0.7.0] - 2026-08-07 (record & artifact integrity)
 
 ### Changed
