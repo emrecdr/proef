@@ -37,6 +37,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`run_finished` is once again the last line of a run record.** A scenario
+  the watchdog abandons keeps running on a detached thread and only notices
+  its cancellation token at the next batch boundary, so it went on appending
+  events after the sweep had recorded its outcome — and after the run itself
+  was finalized. `docs/EVENTS.md` has always said the last line is
+  `run_finished`; it was not, so anything reading a record as a stream (the
+  JSONL consumer, `report`, `explain`) could see events arrive after the
+  terminal one. Late events from a finalized scenario are now dropped at a
+  single gate rather than by asking every emitter to check. Abandonment
+  itself is unchanged and stays cooperative (ADR-0007) — only the record's
+  tail is affected.
+
 - **`.map.json` no longer loses a request's captures when the pack comments
   one of them.** A comment inside an open `[Captures]` run is the author's
   note about a capture, not the start of the next entry, so it no longer
