@@ -48,6 +48,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
 cargo deny check && cargo audit
+# fuzz/ is its own workspace (root `exclude`), so nothing above compiles it —
+# a changed proef-core signature breaks the fuzz targets with every gate green:
+cargo check --manifest-path fuzz/Cargo.toml --all-targets
 
 cargo run -p proef -- test tests/features --dry-run  # validate: bind + lower + emit + parse
 cargo run -p proef -- test tests/features --jobs 4   # execute (secrets: store via `proef secret set`, or PROEF_SECRET_<NAME> env)

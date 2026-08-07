@@ -74,6 +74,13 @@ jobs:
       - name: unused dependencies (machete)
         run: cargo machete
 
+      # fuzz/ is excluded from the root workspace, so none of the gates above
+      # compile it — a changed proef-core signature breaks the fuzz targets
+      # while every gate stays green. Checking it here fails in seconds
+      # instead of minutes into the nightly-toolchain fuzz job.
+      - name: fuzz targets compile
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets
+
       - name: workflow static analysis (zizmor)
         env:
           GH_TOKEN: ${{ github.token }}
