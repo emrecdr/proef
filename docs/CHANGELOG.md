@@ -43,10 +43,21 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **`pack::empty_expect` now also catches a whitespace-only `hurl:` fragment.**
   The diagnostic already existed for an `expect:` item with neither `status:`
   nor `hurl:` at all; a `hurl:` key present but carrying no non-blank assert
-  line slipped past it, lowered to an empty asserts block, and produced an
-  inverted span in the emitted sidecar, where the start offset exceeded the
-  end. It also gains a remediation hint and the seeded corpus case it was
-  missing.
+  line slipped past it, lowered to an empty asserts block. It also gains a
+  remediation hint and the seeded corpus case it was missing. **Scope:** this
+  check reads the *unresolved* pack text, so a fragment that is non-blank as
+  authored but resolves to nothing at lower time (e.g. `${vars:key}` naming a
+  `proef.toml` value that is `""` in the active environment, or an unset
+  `${global:key}` under `--dry-run`) still lowers to an empty asserts block —
+  see the sidecar-emitter entry below for how that residual case is handled.
+- **The sidecar emitter can no longer produce an inverted `.map.json` span.**
+  A `Then` step whose asserts all resolved to nothing — reachable even after
+  the `pack::empty_expect` widening above, since pack validation cannot see
+  what a fragment resolves to, only what it says — lowered to a zero-line
+  merged-asserts step, and the emitter's line-span arithmetic underflowed:
+  the start offset exceeded the end. Such a step now gets no sidecar row at
+  all instead of an inverted one — nothing was appended to the artifact, so
+  there is nothing to report a span for.
 
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 

@@ -894,6 +894,80 @@ mod tests {
         assert_eq!(errs[0].code, "proef::lower::then_before_when");
     }
 
+    /// Pack validation only sees the *unresolved* pack text (`item.hurl`),
+    /// which is non-blank here (`"${vars:blank}"`) — the emptiness only
+    /// appears once `${vars:key}` resolves against a `proef.toml` value that
+    /// happens to be `""` (a legitimate, env-conditional authoring pattern:
+    /// extra asserts present in some environments, none in others). That
+    /// still lowers to a zero-line `MergedAsserts` step, and the sidecar
+    /// emitter must never turn a zero-line step into an inverted
+    /// `.map.json` span (ADR-0010: emitted artifacts are the normative
+    /// contract).
+    #[test]
+    fn an_expect_fragment_that_resolves_empty_does_not_invert_the_merged_span() {
+        const PACK: &str = r#"macros:
+  ping:
+    match: the service is pinged
+    steps:
+      - hurl: |
+          GET ${url:base}/ping
+          HTTP 200
+  expectBlank:
+    match: nothing extra is asserted
+    expect:
+      - hurl: "${vars:blank}"
+"#;
+        let packs = pack::load(
+            &[PackSource {
+                name: "test.yaml".into(),
+                text: Arc::from(PACK),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    Given the service is pinged\n    Then nothing extra is asserted\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let config_vars = BTreeMap::from([
+            ("url:base".to_owned(), "http://fixture.local".to_owned()),
+            ("vars:blank".to_owned(), String::new()),
+        ]);
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(lowered.batches[0].steps.len(), 2);
+        let StepPayload::MergedAsserts { lines } = lowered.batches[0].steps[1].payload else {
+            panic!("expected a merged-asserts step for the Then line");
+        };
+        assert_eq!(lines, 0, "the fragment resolved to nothing");
+
+        let artifact = crate::emit::emit(&lowered, "t", &world).unwrap();
+        for entry in &artifact.map.entries {
+            let [start, end] = entry.hurl_lines;
+            assert!(
+                start <= end,
+                "inverted span for a zero-line merge: {start}..{end}"
+            );
+        }
+    }
+
     /// `${…}` resolves inside structured payload string values,
     /// recursively — keys stay literal (they are schema, not data).
     #[test]

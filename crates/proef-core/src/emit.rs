@@ -204,13 +204,26 @@ fn merged_map_entries(
     let mut start = entry_end.saturating_sub(total) + 1;
     followers
         .iter()
-        .map(|&(batch, step, merged)| {
+        .filter_map(|&(batch, step, merged)| {
             let StepPayload::MergedAsserts { lines } = merged.payload else {
                 unreachable!("followers are delimited by the MergedAsserts match");
             };
+            // A `Then` whose fragment resolved to nothing (e.g. an
+            // env-conditional `${vars:key}` that is blank in this
+            // environment — pack validation sees only the unresolved,
+            // non-blank text, so it cannot catch this) appended zero lines
+            // to the entry: there is no hurl-text span for it to own. Any
+            // span we could invent here either inverts (`start > end`) or
+            // falsely claims a line another follower already owns, so the
+            // step gets no sidecar row at all — nothing was emitted, so
+            // nothing is reported. `start` is left untouched (`+= 0`), so
+            // this can never perturb a later follower's span.
+            if lines == 0 {
+                return None;
+            }
             let span = [start, start + lines - 1];
             start += lines;
-            MapEntry {
+            Some(MapEntry {
                 hurl_lines: span,
                 feature: FeatureAnchor {
                     file: merged.step.file.to_string(),
@@ -221,7 +234,7 @@ fn merged_map_entries(
                 captures: Vec::new(),
                 batch,
                 step,
-            }
+            })
         })
         .collect()
 }
