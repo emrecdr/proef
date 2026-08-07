@@ -307,6 +307,13 @@ fn expand_step(
             );
         }
         MacroStepKind::Payload { kind, payload } => {
+            // The label annotates *this* step for humans (artifact comments,
+            // events) — it must report the fake values the step actually
+            // used, not mint fresh ones of its own. Remember where the
+            // occurrence counter stood before the functional resolves
+            // (payload, then guard) so the label can replay from the same
+            // base afterward.
+            let label_fakes_start = refs.fakes;
             let payload = match payload {
                 PayloadForm::Raw(text) => {
                     let Some(resolved) = resolve_in(text, refs, warnings, diags) else {
@@ -349,11 +356,26 @@ fn expand_step(
             };
             // Labels resolve like payloads (same scope, same strictness) —
             // otherwise raw `${…}` leaks into artifact comments and events.
+            // But a label is a *replay*, not a new use: it shares whatever
+            // `${…}` text the payload/guard already resolved (typically the
+            // same captured arg, e.g. `name: search ${term}` next to
+            // `q: ${term}`), so it resolves from a scratch copy of the
+            // counter rewound to `label_fakes_start` — reproducing the
+            // payload's own fake values instead of consuming fresh
+            // occurrences that would then shift every later step's fakes by
+            // one. The real counter is restored immediately after, so the
+            // replay leaves no trace for subsequent steps.
+            let functional_fakes_end = refs.fakes;
             let label = match &macro_step.name {
-                Some(name) => match resolve_in(name, refs, warnings, diags) {
-                    Some(resolved) => Some(resolved),
-                    None => return,
-                },
+                Some(name) => {
+                    refs.fakes = label_fakes_start;
+                    let resolved = resolve_in(name, refs, warnings, diags);
+                    refs.fakes = functional_fakes_end;
+                    match resolved {
+                        Some(resolved) => Some(resolved),
+                        None => return,
+                    }
+                }
                 None => None,
             };
             out.push(LoweredStep {
@@ -1038,5 +1060,91 @@ mod tests {
         // Scenario-wide ordinals — the sidecar `batch` key engines filter by.
         let indexes: Vec<usize> = batches.iter().map(|b| b.index).collect();
         assert_eq!(indexes, vec![0, 1, 2]);
+    }
+
+    /// A step's label replays the payload's `${fake:…}` values (the same
+    /// occurrence) instead of minting a fresh one — so the artifact comment
+    /// never names data the request didn't actually send — and that replay
+    /// must leave no trace on the running counter: a later step's own fake
+    /// still lands on the very next occurrence, not one the label
+    /// incidentally borrowed.
+    #[test]
+    fn label_mirrors_the_payloads_fake_values_without_shifting_later_steps() {
+        const FAKE_PACK: &str = r#"macros:
+  searchFor:
+    params: [term]
+    match: "the operator searches for {term}"
+    steps:
+      - name: "search for ${term}"
+        hurl: |
+          GET ${url:base}/search
+          [Query]
+          q: ${term}
+          HTTP 200
+  pingFake:
+    match: a fresh fake is requested
+    steps:
+      - hurl: |
+          GET ${url:base}/ping
+          [Query]
+          v: ${fake:lastName}
+          HTTP 200
+"#;
+        let packs = pack::load(
+            &[PackSource {
+                name: "fakes.yaml".into(),
+                text: Arc::from(FAKE_PACK),
+            }],
+            KINDS,
+        )
+        .unwrap();
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    When the operator searches for ${fake:lastName}\n    Then a fresh fake is requested\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine: BTreeMap<String, String> =
+            [("hurl".to_owned(), "hurl".to_owned())].into();
+        let env = BTreeMap::new();
+        let config_vars =
+            BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
+        let world = World::default();
+        let lowered = lower(
+            &scenario,
+            &ctx(
+                &feature,
+                &packs,
+                &kind_to_engine,
+                &env,
+                &config_vars,
+                &world,
+            ),
+        )
+        .unwrap();
+
+        // Both steps share one hurl batch (no optional/engine boundary).
+        assert_eq!(lowered.batches[0].steps.len(), 2);
+        let StepPayload::HurlEntries(search) = &lowered.batches[0].steps[0].payload else {
+            panic!("expected hurl entries");
+        };
+        let label = lowered.batches[0].steps[0].label.as_deref().unwrap();
+
+        // The payload's request resolves the scenario's first ${fake:…} —
+        // occurrence 0 — and the label mirrors that exact value.
+        let occurrence_0 = crate::fake::generate("run-0001", 0, "lastName").unwrap();
+        assert!(
+            search.contains(&format!("q: {occurrence_0}")),
+            "payload: {search}"
+        );
+        assert!(label.contains(&occurrence_0), "label: {label}");
+
+        // The second step's own fake continues from occurrence 1 — proof
+        // the label's replay above did not silently consume it.
+        let StepPayload::HurlEntries(ping) = &lowered.batches[0].steps[1].payload else {
+            panic!("expected hurl entries");
+        };
+        let occurrence_1 = crate::fake::generate("run-0001", 1, "lastName").unwrap();
+        assert!(ping.contains(&format!("v: {occurrence_1}")), "ping: {ping}");
     }
 }

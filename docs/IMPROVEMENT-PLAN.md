@@ -119,7 +119,7 @@ M ~days · L ~weeks.
 | 3a | "passed on attempt N" badge (JUnit/summary) | ✅ | proef-cli `ci_reports.rs` | S | `attempts:u32` already on `StepFinished` (`event.rs:72`) + `StepOutcome`; JUnit ignores it today (`ci_reports.rs:43`). |
 | 9 | Stub-gen for unbound steps | ⚠️ | proef-core `bind.rs` | S | Augment the existing did-you-mean help (`bind.rs:89`), zero-match arm only — **not** a new command. Derive `{param}` from quoted tokens (matcher already sheds quotes, `matcher.rs:85`). |
 | 10 | SARIF export of `--dry-run` diagnostics | ✅ | proef-cli new `sarif.rs` | S–M | `Diag` (`diag.rs:56`) → SARIF result ~1:1: `code`→ruleId, byte `span`→`region.byteOffset`. Pre-populate `rules[]` from the closed diagnostic-code set. A parallel serializer to `render.rs`. |
-| 14 | `--seed` (reproducible fakes) | ⚠️ | proef-cli `main.rs`/`exec.rs` | S | Thread into `front::run`'s existing `run_id` param (`artifacts` already exposes `--run-id`, `main.rs:101`). Caveats: arbitrary seed breaks JUnit's UUID parse (`ci_reports.rs:22`); occurrence is **per-block, not per-run** (`resolve.rs:70`) — identical `${fake:X}` in two steps = same value. |
+| 14 | `--seed` (reproducible fakes) | ⚠️ | proef-cli `main.rs`/`exec.rs` | S | Thread into `front::run`'s existing `run_id` param (`artifacts` already exposes `--run-id`, `main.rs:101`). Caveats: arbitrary seed breaks JUnit's UUID parse (`ci_reports.rs:22`); occurrence is **per-scenario, not per-run** (`lower.rs:86`, `Refs::default()` resets on every `lower()` call) — identical `${fake:X}` at the same position in two *different* scenarios = same value. |
 | 7 | Dead-macro / usage report | ✅ | proef-cli new `macros --usage` | S–M | `BoundStep.macro_name` (`bind.rs:20`) vs `packs.macros`. Count `use:`-only macros (`pattern:None`, `pack/mod.rs:165`) as reachable via the `use:` graph. Report the whole corpus, not a `--tags` subset. |
 | 6 | Self-contained HTML report | ✅ | core `render_html(&[Event])` + cli write | M | Post-hoc `proef report --html <run-id>` replaying `events.jsonl` like `explain` (`explain.rs:12`). Bodies live in `artifacts/` — deep-link, don't inline. Derived view, never a second record (ADR-0008). |
 | 12 | `proef diff` between two runs | ⚠️ | proef-cli `diff.rs` | M | Identity `(file,scenario)` (why ADR-0008 added `file`, `event.rs:86`); key step diffs on **`text` not `line`** (lines shift on edit). `attempts`+`duration_ms` → free flakiness/perf-regression detector. Pre-`file` records replay `file=""`. |
@@ -203,9 +203,13 @@ maps ~1:1 to a SARIF result; the closed code set (one per `tests/errors/` dir) p
 (`fake.rs:12` SplitMix64/FNV, seeded `fnv1a(run_id) ^ …`), seed already recorded in
 `RunStarted{run_id}` (`event.rs:26`). *Design fork:* alias `run_id` (zero core change, but
 must stay uuid-parseable for JUnit) **vs** a dedicated recorded `seed` field (cleaner, but
-a second knob — resolve per one-canonical-way). *Known limit:* `resolution.fakes` resets
-per `resolve()` call (`resolve.rs:70,314`) → occurrence is per-block; cross-step uniqueness
-does not hold. Document before advertising "unique fakes".
+a second knob — resolve per one-canonical-way). *Known limit:* the occurrence counter is
+scoped per scenario (`lower.rs:69-86`, `Refs::fakes`, threaded through `resolve()`'s
+`fakes: &mut usize` parameter, not reset per call) → cross-step uniqueness *within* a
+scenario now holds, but cross-*scenario* uniqueness still does not: two different scenarios
+each resolving `${fake:X}` at the same position in their own step order get the same value.
+Document before advertising "unique fakes" — it means per-scenario, not per-run or
+per-entity.
 
 **#7 Dead-macro report** — *from Cucumber's `usage` formatter marking `UNUSED`.* Binding
 records `BoundStep.macro_name` (`bind.rs:192`); iterate

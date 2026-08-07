@@ -171,10 +171,20 @@ as `{{name}}`. `saveAs: { name: global }` additionally promotes the captured
 value into the persistent global store (`.proef-state.json`), where later
 scenarios and later runs read it at lowering time as `${global:name}`.
 
-**Fakes** are deterministic synthetic data seeded by the run id — stable
-within a run, fresh across runs: `firstName`, `lastName`, `name`, `fullName`,
-`email`, `username`, `phoneNL`, `postCode`, `city`, `street`, `int`, `number`,
-`digits4`, `digits8`, `bool`, `word`, `uuid` (unknown generators fail at load).
+**Fakes** are deterministic synthetic data: `firstName`, `lastName`, `name`,
+`fullName`, `email`, `username`, `phoneNL`, `postCode`, `city`, `street`,
+`int`, `number`, `digits4`, `digits8`, `bool`, `word`, `uuid` (unknown
+generators fail at load). Each `${fake:kind}` **reference** gets its own
+value — an occurrence counter advances every time a scenario resolves one, so
+two `${fake:email}` references in the same scenario diverge. That sequence is
+a pure function of `${run:id}`: the same `--run-id` reproduces the same
+fakes, byte for byte, across runs. The counter restarts at zero for every
+scenario — **known limitation:** two *different* scenarios that each resolve
+`${fake:email}` at the same position in their own step order (typically each
+scenario's first fake reference) get the same address, because both count
+from zero independently. If two scenarios must not collide, key the value
+yourself (fold in `${run:id}` or a captured id) rather than relying on
+`${fake:*}` alone.
 
 ## Secrets
 

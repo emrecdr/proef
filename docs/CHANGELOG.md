@@ -10,9 +10,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 - **`${fake:…}` values no longer repeat across a scenario's steps.** The
   occurrence counter restarted on every step, so two steps each asking for a
-  fresh `${fake:email}` received the same address. Values remain deterministic
-  for a given `--run-id`, but suites using `${fake:…}` will see their emitted
-  artifacts change.
+  fresh `${fake:email}` received the same address. A step's label (its
+  `name:`, shown in artifact comments and events) now always reports the
+  same value the step's own request used, instead of drifting to the next
+  occurrence. Values remain deterministic for a given `--run-id`, but suites
+  using `${fake:…}` will see their emitted artifacts change. **Known
+  limitation, not fixed here:** the counter resets at the start of every
+  scenario, not the run, so two *different* scenarios that each resolve
+  `${fake:email}` at the same position in their own step order still collide
+  — that is a separate bug with its own snapshot-moving fix.
+- **`proef_core::resolve::resolve` changed signature** (public API break for
+  downstream `proef-core` consumers): it now takes an additional `&mut
+  usize` occurrence counter supplied by the caller, and `Resolution::fakes`
+  was removed — `resolve()` no longer owns the counter itself.
 
 ## [0.6.0] - 2026-08-07 (first-run UX & run-record correctness)
 
