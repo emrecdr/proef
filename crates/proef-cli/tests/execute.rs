@@ -1335,6 +1335,41 @@ fn explain_summarizes_the_latest_run() {
     assert!(stdout.contains("case.feature:4"), "{stdout}");
 }
 
+/// A `PROEF_HARNESS_SUITE` the harness cannot read must surface as a loud
+/// failing trial, never as an empty trial list — "never run zero tests green"
+/// is the harness's own stated invariant, and a test runner that silently
+/// tests nothing is the worst way to report success.
+#[cfg(unix)]
+#[test]
+fn harness_fails_loudly_on_an_unreadable_suite_variable() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    let out = std::process::Command::new("cargo")
+        .current_dir(workspace_root())
+        .args([
+            "test",
+            "-q",
+            "-p",
+            "proef-harness",
+            "--test",
+            "scenarios",
+            "--",
+            "--list",
+            "--format",
+            "terse",
+        ])
+        .env("PROEF_HARNESS_SUITE", bad)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let listing = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        listing.contains("proef::config"),
+        "an unreadable suite variable must expose a loud config trial, not an \
+         empty list; got: {listing}"
+    );
+}
+
 /// US-12: the libtest-mimic harness lists one Trial per scenario and runs an
 /// exact selection — the nextest/IDE contract (`--list`, `--exact`).
 #[test]
