@@ -1335,17 +1335,12 @@ fn explain_summarizes_the_latest_run() {
     assert!(stdout.contains("case.feature:4"), "{stdout}");
 }
 
-/// A `PROEF_HARNESS_SUITE` the harness cannot read must surface as a loud
-/// failing trial, never as an empty trial list — "never run zero tests green"
-/// is the harness's own stated invariant, and a test runner that silently
-/// tests nothing is the worst way to report success.
+/// List the harness's trials with `extra_env` applied, so a test can poison
+/// one variable and see what the harness exposes.
 #[cfg(unix)]
-#[test]
-fn harness_fails_loudly_on_an_unreadable_suite_variable() {
-    use std::os::unix::ffi::OsStrExt as _;
-    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
-    let out = std::process::Command::new("cargo")
-        .current_dir(workspace_root())
+fn list_harness_trials(extra_env: &[(&str, &std::ffi::OsStr)]) -> String {
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.current_dir(workspace_root())
         .args([
             "test",
             "-q",
@@ -1358,15 +1353,47 @@ fn harness_fails_loudly_on_an_unreadable_suite_variable() {
             "--format",
             "terse",
         ])
-        .env("PROEF_HARNESS_SUITE", bad)
-        .env("NO_COLOR", "1")
-        .output()
-        .unwrap();
-    let listing = String::from_utf8_lossy(&out.stdout).into_owned();
+        .env("NO_COLOR", "1");
+    for (name, value) in extra_env {
+        cmd.env(name, value);
+    }
+    String::from_utf8_lossy(&cmd.output().unwrap().stdout).into_owned()
+}
+
+/// A variable the harness cannot read must surface as a loud failing trial,
+/// never as an empty trial list — "never run zero tests green" is the
+/// harness's own stated invariant, and a test runner that silently tests
+/// nothing is the worst way to report success. Unset stays meaningful: it
+/// deliberately exposes nothing so a plain `cargo test` stays green.
+#[cfg(unix)]
+#[test]
+fn harness_fails_loudly_on_an_unreadable_suite_variable() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    let listing = list_harness_trials(&[("PROEF_HARNESS_SUITE", bad)]);
     assert!(
         listing.contains("proef::config"),
         "an unreadable suite variable must expose a loud config trial, not an \
          empty list; got: {listing}"
+    );
+}
+
+/// The same rule for the binary path: falling back to `proef` on PATH would
+/// silently test a different binary than the caller named.
+#[cfg(unix)]
+#[test]
+fn harness_fails_loudly_on_an_unreadable_binary_variable() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    let suite = workspace_root().join("tests/features");
+    let listing = list_harness_trials(&[
+        ("PROEF_HARNESS_SUITE", suite.as_os_str()),
+        ("PROEF_BIN", bad),
+    ]);
+    assert!(
+        listing.contains("proef::config"),
+        "an unreadable binary path must expose a loud config trial rather than \
+         falling back to PATH; got: {listing}"
     );
 }
 
