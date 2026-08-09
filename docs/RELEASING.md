@@ -144,3 +144,10 @@ before `proef`, which depends on it non-optionally) and is **not** automated.
   and a whitespace-only `expect:` is rejected instead of emitting an inverted
   span — breaking: `proef_core::resolve::resolve` takes a caller-owned
   occurrence counter and `Resolution::fakes` is gone
+- `v0.8.0` — CLI output & exit integrity: an unreadable `PROEF_KEY`/`PROEF_ENV`/
+  `PROEF_SECRET_<NAME>` is a loud user error instead of reading as unset, the
+  `run.log` tee no longer duplicates bytes on a short write, `proef fmt` keeps a
+  file's own line endings, `report -o` writes artifact links that resolve, and
+  `diff` stops inventing flakiness for a step with no baseline — breaking: a
+  failed stdout write now exits 3 where it exited 0, and a malformed environment
+  variable exits 2 where it was silently ignored

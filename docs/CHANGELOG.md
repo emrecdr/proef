@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-09 (CLI output & exit integrity)
+
 ### Changed
 
 - **A set-but-unreadable environment variable is now a loud user error, never
