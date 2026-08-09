@@ -14,15 +14,34 @@ fn main() {
     libtest_mimic::run(&args, discover()).exit();
 }
 
-fn proef_bin() -> String {
-    std::env::var("PROEF_BIN").unwrap_or_else(|_| "proef".to_owned())
+fn proef_bin() -> Result<String, String> {
+    // A set-but-unreadable PROEF_BIN must not fall back to `proef` on PATH:
+    // that silently runs a different binary than the one the caller named.
+    Ok(proef_harness::env_var("PROEF_BIN")?.unwrap_or_else(|| "proef".to_owned()))
+}
+
+/// A configuration fault surfaces as one loud failing trial, the same shape the
+/// flows-contract guard below uses — never as an empty trial list, which would
+/// report green having run nothing.
+fn config_error(message: String) -> Trial {
+    Trial::test("proef::config", move || Err(Failed::from(message.clone())))
 }
 
 fn discover() -> Vec<Trial> {
-    let Ok(suite) = std::env::var("PROEF_HARNESS_SUITE") else {
-        return Vec::new(); // unset: expose nothing (plain `cargo test` stays green)
+    // Unset means "expose nothing" on purpose — it keeps plain workspace test
+    // runs green without a fixture. Set-but-unreadable is the opposite: the
+    // caller asked for a suite and we cannot read which, so exposing nothing
+    // would report green having tested nothing at all.
+    let suite = match proef_harness::env_var("PROEF_HARNESS_SUITE") {
+        Ok(Some(suite)) => suite,
+        Ok(None) => return Vec::new(),
+        Err(message) => return vec![config_error(message)],
     };
-    let output = match Command::new(proef_bin())
+    let bin = match proef_bin() {
+        Ok(bin) => bin,
+        Err(message) => return vec![config_error(message)],
+    };
+    let output = match Command::new(&bin)
         .args(["flows", &suite, "--output", "json"])
         .output()
     {
@@ -78,7 +97,7 @@ fn run_scenario(suite: &str, file: &str, scenario: &str) -> Result<(), Failed> {
     // The suite stays the `test` path (pack discovery is suite-rooted);
     // `--scenario-file` pins the name filter to this trial's feature file so
     // same-named scenarios in other files never ride along.
-    let output = Command::new(proef_bin())
+    let output = Command::new(proef_bin().map_err(Failed::from)?)
         .args([
             "test",
             suite,

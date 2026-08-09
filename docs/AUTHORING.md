@@ -252,6 +252,12 @@ Set `PROEF_BIN=/path/to/proef` when the binary is not on `PATH`. With
 `cargo test` stays green. Each scenario appears as a separate test in the
 IDE's runner — click-to-run one scenario without touching the terminal.
 
+Unset is not the same as unreadable. A variable set to bytes that are not
+valid UTF-8 means you asked for something the harness cannot read, so it
+exposes a single failing `proef::config` trial naming the variable — it will
+not fall back to `proef` on `PATH`, and it will not report green having
+listed no tests.
+
 ### Secrets in CI
 
 Two working setups:
@@ -272,11 +278,22 @@ persists (`proef doctor` also reports store/key health).
 
 | Variable | Read by | Purpose |
 |---|---|---|
+| `PROEF_ENV` | `proef test`/`flows`/`macros`/`artifacts`/`lsp` | Active environment profile — the `--env` flag wins over it |
 | `PROEF_SECRET_<NAME>` | `proef test` | Secret value override (beats the encrypted store) |
 | `PROEF_KEY` | `proef test`/`secret` | Base64 project key override — decrypt a committed store without the key file |
 | `PROEF_CONFIG_DIR` | `proef secret` | Key-file location (default: XDG config dir) |
 | `PROEF_HARNESS_SUITE` | nextest harness | Suite directory the harness lists and runs |
 | `PROEF_BIN` | nextest harness | Path to the `proef` binary the harness invokes |
+
+**Set-but-unreadable is an error, never silence.** A variable whose value is
+not valid UTF-8 is something you asked for and proef cannot read, so it is
+reported rather than treated as unset: the commands above exit 2 naming the
+variable (`proef doctor` reports it as a failed check and exits 3, with its
+other environment findings), and the harness exposes a failing `proef::config`
+trial. Reading a malformed `PROEF_KEY` as absent used to mean decrypting with
+the wrong key and reporting *tampering*; a malformed `PROEF_ENV` meant running
+against the wrong environment. `PROEF_CONFIG_DIR` is a path and is read as raw
+bytes, so it has no such failure mode.
 
 Suite-defined env vars (like `PROEF_BASE_URL` in the guides) are a convention
 of `${env:…}` references in `proef.toml`, not built-ins — name yours freely.

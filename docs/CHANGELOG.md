@@ -6,6 +6,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The nextest harness no longer reports green having listed no tests.** A
+  `PROEF_HARNESS_SUITE` set to bytes that are not valid UTF-8 read as *unset*,
+  which the harness treats as "expose nothing" on purpose — so `cargo test`
+  passed having run zero scenarios. A `PROEF_BIN` it could not read fell back
+  to `proef` on `PATH`, silently invoking a different binary than the one
+  named. Both now surface as a failing `proef::config` trial, the same loud
+  shape the harness already used for flows-contract drift, whose comment
+  states the invariant this violated: never run zero tests green.
+
 ## [0.8.0] - 2026-08-09 (CLI output & exit integrity)
 
 ### Changed
