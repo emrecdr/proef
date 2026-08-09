@@ -62,13 +62,53 @@ fn banner_incomplete(html: &str) -> String {
 }
 
 /// The href prefix for artifact deep-links: a bare `artifacts` when the report
-/// sits in the run dir (the common case), else the run dir's `artifacts` path so
-/// the links still resolve from wherever `-o` put the file.
+/// sits in the run dir (the common case), else an absolute run-dir `artifacts`
+/// path so the links still resolve from wherever `-o` put the file.
 fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
     let out_dir = crate::fsutil::parent_dir(out_path);
     if out_dir == record_dir {
         "artifacts".to_owned()
     } else {
-        record_dir.join("artifacts").display().to_string()
+        // A browser resolves a relative href against the HTML file's own
+        // directory, and `runs-dir` defaults to a relative `.proef-runs`,
+        // so the link has to be absolute to survive `-o` pointing anywhere
+        // outside the run dir. `std::path::absolute` is purely lexical (no
+        // filesystem access), so it stays usable even after the run dir has
+        // been rotated away.
+        std::path::absolute(record_dir.join("artifacts"))
+            .unwrap_or_else(|_| record_dir.join("artifacts"))
+            .display()
+            .to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_out_of_run_dir_report_gets_an_absolute_artifacts_href() {
+        // `runs-dir` defaults to a relative `.proef-runs`, and a browser
+        // resolves a relative href against the HTML file's own directory —
+        // so a report written elsewhere needs an absolute path or every
+        // artifact link 404s while the command reports success.
+        let record_dir = Path::new(".proef-runs/01ABC");
+        let out_path = Path::new("/tmp/elsewhere/report.html");
+        let href = artifacts_href(record_dir, out_path);
+        assert!(
+            Path::new(&href).is_absolute(),
+            "href must not be relative to the output file: {href}"
+        );
+        assert!(
+            href.ends_with("artifacts"),
+            "href must point at the artifacts dir: {href}"
+        );
+    }
+
+    #[test]
+    fn a_report_in_the_run_dir_keeps_the_bare_href() {
+        let record_dir = Path::new("/runs/01ABC");
+        let out_path = Path::new("/runs/01ABC/report.html");
+        assert_eq!(artifacts_href(record_dir, out_path), "artifacts");
     }
 }

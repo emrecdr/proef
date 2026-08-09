@@ -7,15 +7,32 @@
 use miette::{Diagnostic, LabeledSpan, Severity};
 use proef_core::diag::Diag;
 
+/// Set when a write to stdout failed for any reason other than a closed
+/// pipe. Read once, at `main`'s exit funnel: output proef could not deliver
+/// must not look like success. A closed pipe is not a failure — `proef … |
+/// head` ends the pipeline on purpose.
+static STDOUT_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn note_stdout_failure() {
+    STDOUT_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn stdout_failed() -> bool {
+    STDOUT_FAILED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Print a line to stdout, tolerating a closed pipe: `proef … | head` must
 /// end the pipeline quietly (exit contract, never a 101 panic), so
-/// `BrokenPipe` is swallowed; any other stdout failure surfaces on stderr.
+/// `BrokenPipe` is swallowed; any other stdout failure surfaces on stderr
+/// and latches [`STDOUT_FAILED`] so the exit funnel can turn it into a
+/// system error instead of whatever the command's own verdict was.
 macro_rules! outln {
     ($($arg:tt)*) => {{
         use ::std::io::Write as _;
         if let Err(err) = writeln!(::std::io::stdout(), $($arg)*)
             && err.kind() != ::std::io::ErrorKind::BrokenPipe
         {
+            crate::render::note_stdout_failure();
             crate::render::errln!("error: cannot write to stdout: {err}");
         }
     }};
@@ -128,5 +145,24 @@ impl Diagnostic for Rendered {
             Box::new(std::iter::once(LabeledSpan::new_with_span(None, span)))
                 as Box<dyn Iterator<Item = LabeledSpan>>
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The latch is process-global and one-way; `main` reads it once at the
+    // exit funnel. This pins the mechanism on every platform, including the
+    // ones where a real write failure cannot be forced (macOS has no
+    // `/dev/full`). It must be the only test in this binary that reads the
+    // latch: nextest runs each test in its own process, so cross-test
+    // pollution of `STDOUT_FAILED` is not observable — but a second reader
+    // here, in the same process, would be.
+    #[test]
+    fn a_recorded_stdout_failure_is_visible_to_the_exit_funnel() {
+        assert!(!stdout_failed(), "the latch starts clear");
+        note_stdout_failure();
+        assert!(stdout_failed(), "a recorded failure must be visible");
     }
 }

@@ -14,7 +14,7 @@ located diagnostics, no network). Every diagnostic code is indexed in
 | `0` | everything passed (warnings allowed) | — |
 | `1` | tests ran; at least one assertion failed (or the run was cancelled) | fix the system under test — or the expectation |
 | `2` | your input is at fault: packs, features, flags, filters, secrets, bad `{{var}}`/JSONPath | the diagnostic names the file and line |
-| `3` | the environment or proef is at fault: unreachable target, native libs, IO | check the target, `proef doctor`, disk |
+| `3` | the environment or proef is at fault: unreachable target, native libs, IO, output proef could not write (full disk, failing device) | check the target, `proef doctor`, disk |
 
 **Step glyphs:**
 
@@ -106,3 +106,11 @@ nonzero `skipped` count already says what didn't get to run. `proef diff
 regressions" against a cancelled run, since a regression could be hiding among
 the scenarios it never reached. The three commands' differing treatment of
 `cancelled` is a deliberate choice, not an inconsistency.
+
+`proef diff` keys steps by `(text, ordinal)` so that line shifts don't lie and
+repeated steps stay distinct. The trade-off is positional: if a scenario loses
+an earlier duplicate of a step, every later instance shifts down one ordinal,
+and the comparison lines up two different runs' steps. Timing and attempt
+counts for the shifted steps can then be attributed to the wrong one. Renaming
+or reordering steps between the two runs being compared is worth a second look
+at the numbers; adding or removing steps at the end is not affected.

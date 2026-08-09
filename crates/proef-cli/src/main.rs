@@ -11,6 +11,7 @@ mod commands;
 mod config;
 mod diff;
 mod disk_provider;
+mod envvar;
 mod exec;
 mod explain;
 mod fmt;
@@ -263,8 +264,14 @@ fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
 }
 
 /// The active environment: the `--env` flag wins, else `PROEF_ENV`, else none.
-fn active_env(flag: Option<String>) -> Option<String> {
-    flag.or_else(|| std::env::var("PROEF_ENV").ok())
+fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error::ExitCode> {
+    if let Some(flag) = flag {
+        return Ok(Some(flag));
+    }
+    crate::envvar::read("PROEF_ENV").map_err(|message| {
+        crate::render::errln!("error: {message}");
+        proef_core::error::ExitCode::UserError
+    })
 }
 
 /// The shared preamble of every suite command (`test`/`flows`/`artifacts`):
@@ -275,7 +282,24 @@ fn prepare(
 ) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
     let config = load_config()?;
     let path = resolve_suite_path(path, &config)?;
-    Ok((config, path, active_env(env)))
+    Ok((config, path, active_env(env)?))
+}
+
+/// Output proef could not deliver is an environment failure, whatever the
+/// command's own verdict was: a consumer parsing truncated stdout cannot
+/// trust the exit code's usual meaning either — a `TestFailure` whose JSON
+/// body got cut off mid-write is no more trustworthy than a `Success` that
+/// never printed its summary. A stdout failure therefore always wins, never
+/// only when the command's own code happened to be `Success`.
+fn final_exit(
+    code: proef_core::error::ExitCode,
+    stdout_failed: bool,
+) -> proef_core::error::ExitCode {
+    if stdout_failed {
+        proef_core::error::ExitCode::SystemError
+    } else {
+        code
+    }
 }
 
 // One dispatch table over the CLI surface; splitting arms hides the routing.
@@ -447,5 +471,45 @@ fn main() -> std::process::ExitCode {
         Command::Fmt { path, check } => fmt::fmt(&path, check),
         Command::Lsp => lsp::run(),
     };
+    let code = final_exit(code, render::stdout_failed());
     std::process::ExitCode::from(code.code())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proef_core::error::ExitCode;
+
+    // The decision the exit funnel makes, pinned on every platform — the
+    // e2e reproduction of the whole path (a real `/dev/full` write failure)
+    // only runs on Linux (tests/cli.rs), so this is what keeps the decision
+    // itself covered on macOS and Windows too.
+    #[test]
+    fn a_stdout_failure_upgrades_success_to_system_error() {
+        assert_eq!(final_exit(ExitCode::Success, true), ExitCode::SystemError);
+    }
+
+    #[test]
+    fn a_stdout_failure_upgrades_test_failure_to_system_error() {
+        // The command's own verdict is exactly what a stdout failure makes
+        // untrustworthy — a JSON body that embeds the verdict and got cut
+        // off mid-write is corrupted whether the verdict was pass or fail.
+        assert_eq!(
+            final_exit(ExitCode::TestFailure, true),
+            ExitCode::SystemError
+        );
+    }
+
+    #[test]
+    fn no_stdout_failure_passes_success_through_unchanged() {
+        assert_eq!(final_exit(ExitCode::Success, false), ExitCode::Success);
+    }
+
+    #[test]
+    fn no_stdout_failure_passes_test_failure_through_unchanged() {
+        assert_eq!(
+            final_exit(ExitCode::TestFailure, false),
+            ExitCode::TestFailure
+        );
+    }
 }

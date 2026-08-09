@@ -73,6 +73,16 @@ fn discover(path: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// The line ending to write back: whichever the file already uses. `fmt`
+/// normalizes hurl blocks, not line endings — rewriting a CRLF checkout
+/// wholesale would leave `fmt --check` permanently dirty for an author who
+/// changed nothing.
+fn dominant_ending(text: &str) -> &'static str {
+    let crlf = text.matches("\r\n").count();
+    let lf = text.matches('\n').count() - crlf;
+    if crlf > lf { "\r\n" } else { "\n" }
+}
+
 /// Normalize every `hurl:` block-scalar body in the pack text.
 fn normalize_pack(text: &str) -> String {
     let mut out: Vec<String> = Vec::new();
@@ -125,8 +135,9 @@ fn normalize_pack(text: &str) -> String {
         }
         out.extend(canonical);
     }
-    let mut result = out.join("\n");
-    result.push('\n');
+    let ending = dominant_ending(text);
+    let mut result = out.join(ending);
+    result.push_str(ending);
     result
 }
 
@@ -149,5 +160,32 @@ mod tests {
         // bytes the test sends — fmt must not touch them.
         let input = "macros:\n  m:\n    steps:\n      - hurl: |\n          POST http://x\n          ```\n          line1  \n\n\n          line4\n          ```\n          HTTP 200\n";
         assert_eq!(normalize_pack(input), input);
+    }
+
+    #[test]
+    fn normalizing_preserves_a_crlf_file_s_line_endings() {
+        // `fmt` normalizes hurl blocks, not line endings: rewriting them
+        // would make `fmt --check` permanently dirty on an autocrlf
+        // checkout, which is a supported way to clone this repo.
+        let pack = "macros:\r\n  ping:\r\n    match: I ping\r\n    steps:\r\n      - hurl: |\r\n          GET http://x/a\r\n          HTTP 200\r\n";
+        let formatted = normalize_pack(pack);
+        assert!(
+            formatted.contains("\r\n"),
+            "CRLF input must stay CRLF: {formatted:?}"
+        );
+        assert!(
+            !formatted.replace("\r\n", "").contains('\n'),
+            "no bare LF may survive in a CRLF file: {formatted:?}"
+        );
+    }
+
+    #[test]
+    fn normalizing_leaves_an_lf_file_on_lf() {
+        let pack = "macros:\n  ping:\n    match: I ping\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n";
+        let formatted = normalize_pack(pack);
+        assert!(
+            !formatted.contains('\r'),
+            "LF input must stay LF: {formatted:?}"
+        );
     }
 }

@@ -191,3 +191,196 @@ fn diagnostics_do_not_panic_on_a_closed_stderr_pipe() {
         "expected the contracted user-error exit, not a panic or an early abort"
     );
 }
+
+// The stdout mirror of the stderr test above: `head -c0` reads nothing and
+// exits, closing the read end, so every later stdout write gets EPIPE.
+// `outln!`'s `BrokenPipe` guard must swallow it — `proef … | head` ends the
+// pipeline on purpose — so this must stay the command's ordinary success
+// exit, never the system-error exit a genuine stdout write failure now
+// produces.
+#[cfg(unix)]
+#[test]
+fn flows_does_not_report_a_system_error_on_a_closed_stdout_pipe() {
+    use std::process::{Command, Stdio};
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    // Absolute, like the PROEF_ENV test below: nextest's cwd for this binary
+    // is the crate manifest dir, which has no `tests/features` of its own.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+
+    let mut proef = Command::new(&bin)
+        .arg("flows")
+        .arg(&features_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Consume nothing then drop the reader to close the pipe early — `flows`
+    // over the reference corpus (tests/features) prints one line per
+    // scenario plus a summary line, enough bytes that the write reliably
+    // lands after the reader closes, rather than racing a single short line.
+    let mut head = Command::new("head")
+        .args(["-c", "0"])
+        .stdin(proef.stdout.take().unwrap())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _ = head.wait();
+    let status = proef.wait().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "expected the ordinary success exit for a closed stdout pipe, not a system error"
+    );
+}
+
+// /dev/full accepts opens and fails every write with ENOSPC — a full disk
+// without needing one. Linux-only: macOS has no such device, and no
+// portable substitute forces a write failure (a read-only or closed stdout
+// both exit 0). The mechanism itself is pinned portably in render.rs.
+//
+// Uses std::process::Command, not assert_cmd::Command: assert_cmd's builder
+// has no stdio-redirection setter of its own (its `.stdout()` asserts
+// against an already-captured child's output, after the fact) and its
+// `.output()` fixes its own pipes, so neither lets a caller hand the child
+// a pre-opened handle like `/dev/full`.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_stdout_write_is_a_system_error() {
+    use std::process::{Command, Stdio};
+    // Absolute, like the PROEF_ENV test above: nextest's cwd for this binary
+    // is the crate manifest dir, which has no `tests/features` of its own.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+    let devfull = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full is a standard Linux device");
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let output = Command::new(&bin)
+        .arg("flows")
+        .arg(&features_dir)
+        .stdout(devfull)
+        .stderr(Stdio::piped())
+        .output()
+        .expect("proef must spawn and run to completion");
+    // A bare exit-3 check can't tell "the funnel upgraded 0 -> 3" apart from
+    // "flows failed on its own for an unrelated reason", so pin the funnel's
+    // own message too.
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a stdout write failure must be reported as the system-error exit"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot write to stdout"),
+        "expected the exit funnel's own diagnostic on stderr, got: {stderr}"
+    );
+}
+
+// A non-UTF-8 PROEF_ENV must not be silently treated as unset — running
+// against the wrong environment is exactly the "reports the wrong cause"
+// failure this contract exists to remove.
+#[cfg(unix)]
+#[test]
+fn a_non_utf8_env_var_is_a_user_error() {
+    use std::os::unix::ffi::OsStrExt as _;
+    // Absolute, like the EPIPE reproduction above: nextest's cwd for this
+    // binary is the crate manifest dir, which has no `tests/features` of its
+    // own, so a relative path would fail on path resolution instead of the
+    // env var — a different exit-2 cause and a vacuous test.
+    let repo_root = env!("CARGO_MANIFEST_DIR"); // crates/proef-cli
+    let features_dir = std::path::Path::new(repo_root).join("../../tests/features");
+    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    proef()
+        .arg("flows")
+        .arg(&features_dir)
+        .env("PROEF_ENV", bad)
+        .assert()
+        .code(2)
+        .stderr(contains("PROEF_ENV"));
+}
+
+// `fmt` promises to normalize hurl blocks only, never a file's line
+// endings. `normalize_pack` unit tests pin the string it returns, but the
+// user-visible contract is what `fmt --check` reports and what lands on
+// disk — a regression could keep those unit tests green while still
+// corrupting bytes the command actually writes. These two exercise the
+// command end to end.
+#[test]
+fn fmt_check_reports_a_canonical_crlf_pack_as_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_path = tmp.path().join("pack.yaml");
+    let canonical_crlf = "macros:\r\n  ping:\r\n    match: I ping\r\n    steps:\r\n      - hurl: |\r\n          GET http://x/a\r\n          HTTP 200\r\n";
+    std::fs::write(&pack_path, canonical_crlf).unwrap();
+
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(0)
+        .stdout(contains("all pack blocks already canonical"));
+    assert_eq!(
+        std::fs::read(&pack_path).unwrap(),
+        canonical_crlf.as_bytes(),
+        "--check must never rewrite the file"
+    );
+}
+
+#[test]
+fn fmt_rewrites_a_dirty_crlf_pack_preserving_crlf_throughout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_path = tmp.path().join("pack.yaml");
+    let dirty_crlf = "# comment stays\r\nmacros:\r\n  m:\r\n    steps:\r\n      - hurl: |\r\n          GET http://x   \r\n\r\n\r\n          HTTP 200\r\n\r\n    match: keep\r\n";
+    std::fs::write(&pack_path, dirty_crlf).unwrap();
+
+    // --check reports the dirty file and exits 1, without rewriting it.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(1)
+        .stdout(contains("needs formatting"));
+    assert_eq!(
+        std::fs::read(&pack_path).unwrap(),
+        dirty_crlf.as_bytes(),
+        "--check must never rewrite the file"
+    );
+
+    // Without --check, the file is rewritten in place.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .assert()
+        .code(0)
+        .stdout(contains("formatted:"));
+
+    // Byte-level, not `contains("\r\n")`: a half-converted file can still
+    // contain CRLF pairs while also containing a bare LF elsewhere.
+    let rewritten = std::fs::read(&pack_path).unwrap();
+    assert!(
+        rewritten.windows(2).any(|w| w == b"\r\n"),
+        "expected CRLF pairs to survive the rewrite: {rewritten:?}"
+    );
+    for (i, &byte) in rewritten.iter().enumerate() {
+        if byte == b'\n' {
+            assert!(
+                i > 0 && rewritten[i - 1] == b'\r',
+                "bare LF at byte {i}, not part of a CRLF pair: {rewritten:?}"
+            );
+        }
+    }
+
+    // The rewritten file re-checks clean.
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(0)
+        .stdout(contains("all pack blocks already canonical"));
+}
