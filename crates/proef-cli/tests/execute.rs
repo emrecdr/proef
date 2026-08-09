@@ -1335,10 +1335,10 @@ fn explain_summarizes_the_latest_run() {
     assert!(stdout.contains("case.feature:4"), "{stdout}");
 }
 
-/// List the harness's trials with `extra_env` applied, so a test can poison
-/// one variable and see what the harness exposes.
-#[cfg(unix)]
-fn list_harness_trials(extra_env: &[(&str, &std::ffi::OsStr)]) -> String {
+/// The `cargo test` invocation that drives the harness's own test target — one
+/// place that knows the crate and target names, so a rename is not something to
+/// find twice.
+fn harness_command() -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(workspace_root())
         .args([
@@ -1349,11 +1349,22 @@ fn list_harness_trials(extra_env: &[(&str, &std::ffi::OsStr)]) -> String {
             "--test",
             "scenarios",
             "--",
-            "--list",
-            "--format",
-            "terse",
         ])
         .env("NO_COLOR", "1");
+    cmd
+}
+
+/// Three bytes that are not valid UTF-8 in any position — what a variable looks
+/// like when the harness can tell it is set but not what it says.
+#[cfg(unix)]
+const NOT_UTF8: &[u8] = &[0x66, 0xff, 0x6f];
+
+/// List the harness's trials with `extra_env` applied, so a test can poison
+/// one variable and see what the harness exposes.
+#[cfg(unix)]
+fn list_harness_trials(extra_env: &[(&str, &std::ffi::OsStr)]) -> String {
+    let mut cmd = harness_command();
+    cmd.args(["--list", "--format", "terse"]);
     for (name, value) in extra_env {
         cmd.env(name, value);
     }
@@ -1369,7 +1380,7 @@ fn list_harness_trials(extra_env: &[(&str, &std::ffi::OsStr)]) -> String {
 #[test]
 fn harness_fails_loudly_on_an_unreadable_suite_variable() {
     use std::os::unix::ffi::OsStrExt as _;
-    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    let bad = std::ffi::OsStr::from_bytes(NOT_UTF8);
     let listing = list_harness_trials(&[("PROEF_HARNESS_SUITE", bad)]);
     assert!(
         listing.contains("proef::config"),
@@ -1384,7 +1395,7 @@ fn harness_fails_loudly_on_an_unreadable_suite_variable() {
 #[test]
 fn harness_fails_loudly_on_an_unreadable_binary_variable() {
     use std::os::unix::ffi::OsStrExt as _;
-    let bad = std::ffi::OsStr::from_bytes(&[0x66, 0xff, 0x6f]);
+    let bad = std::ffi::OsStr::from_bytes(NOT_UTF8);
     let suite = workspace_root().join("tests/features");
     let listing = list_harness_trials(&[
         ("PROEF_HARNESS_SUITE", suite.as_os_str()),
@@ -1406,23 +1417,12 @@ fn harness_lists_and_runs_scenarios() {
     let proef_bin = assert_cmd::cargo::cargo_bin("proef");
 
     let run_harness = |extra: &[&str]| {
-        let mut cmd = std::process::Command::new("cargo");
-        cmd.current_dir(workspace_root())
-            .args([
-                "test",
-                "-q",
-                "-p",
-                "proef-harness",
-                "--test",
-                "scenarios",
-                "--",
-            ])
-            .args(extra)
+        let mut cmd = harness_command();
+        cmd.args(extra)
             .env("PROEF_HARNESS_SUITE", suite.display().to_string())
             .env("PROEF_BIN", &proef_bin)
             .env("PROEF_BASE_URL", &fixture.base_url)
-            .env("PROEF_SECRET_APITOKEN", API_TOKEN)
-            .env("NO_COLOR", "1");
+            .env("PROEF_SECRET_APITOKEN", API_TOKEN);
         cmd.output().unwrap()
     };
 
