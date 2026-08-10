@@ -19,6 +19,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **ADR-0014 now records the question it was silent on.** It is specific about a
+  failing setup and a failing teardown, so a reader reasonably infers the
+  *cancellation* case was considered — it was not. What teardown does on Ctrl-C
+  is unspecified, and today it silently skips: the phase runs with the
+  already-cancelled token, every scenario resolves `Skipped`, and `phase_failed`
+  ignores a phase that only skipped, so cleanup never runs and nothing says so.
+  The ADR now states the gap and the two defensible answers, since an
+  implementer working on teardown reads the ADR, not the findings list.
+
 - **The open-findings list is now in the repo, not on one machine.** A v0.5.3
   review was validated claim-by-claim (40 claims, 38 confirmed) and the record
   lived only in a gitignored scratch directory, so ~26 still-open defects — the
