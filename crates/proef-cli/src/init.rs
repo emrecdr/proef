@@ -120,6 +120,16 @@ pub fn init(dir: &Path) -> ExitCode {
             return schema_exit;
         }
         created += 1;
+    } else if crate::fsutil::parent_dir(&pack_path)
+        .join("proef-pack.schema.json")
+        .exists()
+    {
+        // Naming the install command when the schema is already installed sends
+        // the reader to do work that is already done.
+        crate::render::outln!(
+            "  {} already exists — editor completion is already installed beside it",
+            pack_path.display()
+        );
     } else {
         crate::render::outln!(
             "  {} already exists — run `proef schema --add-to {}` to install editor completion",

@@ -61,6 +61,28 @@ fn a_failing_scaffold_run_says_it_is_still_the_scaffold() {
         .stderr(contains("still the `proef init` scaffold"));
 }
 
+/// A re-run names the install command only when there is something to install.
+/// Sending a reader to run `schema --add-to` against a schema already sitting
+/// beside the pack is work that is already done.
+#[test]
+fn init_rerun_only_suggests_the_schema_install_when_it_is_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef(tmp.path()).arg("init").assert().code(0);
+
+    proef(tmp.path())
+        .arg("init")
+        .assert()
+        .code(0)
+        .stdout(contains("editor completion is already installed"));
+
+    std::fs::remove_file(tmp.path().join("suite/packs/proef-pack.schema.json")).unwrap();
+    proef(tmp.path())
+        .arg("init")
+        .assert()
+        .code(0)
+        .stdout(contains("run `proef schema --add-to"));
+}
+
 /// Running init twice creates nothing the second time.
 #[test]
 fn init_is_idempotent() {

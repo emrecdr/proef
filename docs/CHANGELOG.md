@@ -50,6 +50,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   reads, not reconciling, with the unannounced file being the one that powers
   editor completion.
 
+- **`proef init` no longer sends you to install editor completion that is
+  already installed.** A re-run named `proef schema --add-to` unconditionally,
+  even with the schema sitting beside the pack. It now says which of the two
+  situations you are in.
+
 - **The nextest harness no longer reports green having listed no tests.** A
   `PROEF_HARNESS_SUITE` set to bytes that are not valid UTF-8 read as *unset*,
   which the harness treats as "expose nothing" on purpose — so `cargo test`

@@ -314,7 +314,8 @@ pub fn macros(
             }
         }
     }
-    render_macros(&front.packs, Some(&calls), output_json)
+    render_macros(&front.packs, Some(&calls), output_json);
+    ExitCode::Success
 }
 
 /// Render the macro listing.
@@ -328,7 +329,7 @@ fn render_macros(
     packs: &proef_core::pack::PackSet,
     calls: Option<&BTreeMap<&str, usize>>,
     output_json: bool,
-) -> ExitCode {
+) {
     // Grouped by pack then name (the map is keyed by name, so the sort is what
     // groups by pack); `n` is a macro's step-bind count.
     let mut rows: Vec<_> = packs.macros.values().collect();
@@ -358,7 +359,7 @@ fn render_macros(
             });
             crate::render::outln!("{json}");
         }
-        return ExitCode::Success;
+        return;
     }
 
     let mut unused = 0usize;
@@ -412,7 +413,6 @@ fn render_macros(
         None => String::new(),
     };
     crate::render::outln!("\n{} macro(s){unused_note}{near_note}", rows.len());
-    ExitCode::Success
 }
 
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`
