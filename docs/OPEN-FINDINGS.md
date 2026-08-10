@@ -16,6 +16,7 @@ tree and then retired into it:
 | v0.5.3 external (2026-08-06) | 40 claims → 38 confirmed, 1 partial, 1 already fixed | the A/B/P/Q items below |
 | first-run UX (0.5.3, engineer's first 30 min) | F1–F4 | **R1–R2** |
 | non-technical UX (0.8.0, PRD §4 P1 calibration) | N1–N5 | **R3** |
+| round-7 pre-merge review of PR #13 | 4 defects + residue | **§2.1–§2.4 below**; three shipped in #31 |
 
 The review documents themselves were removed once their open items landed here; their
 full text, transcripts and citations are in git history (`git log --diff-filter=D
@@ -56,6 +57,11 @@ re-reported after it is fixed.
 | Q4 | `--dry-run` validated neither `[run] setup` nor `[run] teardown` | #26 |
 | R2 | `doctor` did not report a missing pack schema (FIRST-RUN F4b's second half) | #29 |
 | B7 | `secret set --value` put the secret in argv, and the error text steered to it | #29 |
+| §2.2 | `init` destroyed an authored `proef-pack.schema.json` (round 7) | #30 |
+| §2.3 | a mixed suite+phase failure lost the phase label exactly when it disambiguated | #31 |
+| §2.4 | `--rerun` after a phase-only failure blamed filters never passed | #31 |
+| §2.1 | pre-0.6.0 records reported the wrong verdict with confidence | #31 |
+| — | `diff` counted a failing teardown as a test regression | #31 |
 | — | `init` destroyed an authored `proef-pack.schema.json` (round-7 §2.2) | #30 |
 | Q7 | `fuzz_tag_expr` compiled but was in neither fuzz loop | #30 |
 | B3 | `windows.yml` built and tested without `--locked` | #30 |
@@ -66,6 +72,19 @@ re-reported after it is fixed.
 compile gate.
 
 ---
+
+## Open — round-7 residue (ingested 2026-08-10)
+
+The round-7 pre-merge review of PR #13 never entered any worklist; a round-8
+revalidation re-reproduced its findings against v0.8.0. §2.2, §2.3, §2.4 and the
+`diff` item shipped in #30/#31. What remains, carried on that report's evidence
+rather than re-reproduced here:
+
+- **The early-error record** writes `Completed 0/0/0` and a `summary:` line after
+  the error.
+- **The dry-run nudge** drops `--env`/`--tags` from the command it echoes, so the
+  printed command is not the one that was run.
+- **`Warned` scenarios** are dropped from truncated-record fallback totals.
 
 ## Open — residue of the two UX reviews
 

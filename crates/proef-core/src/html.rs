@@ -82,6 +82,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                 file,
                 timestamp_ms,
                 worker,
+                ..
             } => {
                 let at = block_index(&mut blocks, &mut index, file, scenario);
                 blocks[at].start_ms = *timestamp_ms;
@@ -93,6 +94,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                 status,
                 timestamp_ms,
                 worker,
+                ..
             } => {
                 let at = block_index(&mut blocks, &mut index, file, scenario);
                 blocks[at].status = Some(*status);

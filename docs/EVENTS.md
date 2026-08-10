@@ -57,6 +57,14 @@ records that predate the field) · `status` · `timestamp_ms` (u64, run-relative
 end ms — **only present** with injected timing; carries no `worker`, since it is
 emitted from the main dispatcher thread, not the scenario's worker — ADR-0015).
 
+**`phase`** — on `scenario_started`/`scenario_finished`, optional. `"setup"` or
+`"teardown"` when the scenario belongs to a `[run]` lifecycle phase, absent for
+an ordinary suite scenario. Consumers should use it rather than inferring phase
+membership from the feature path: `run_finished`'s totals exclude phases
+(ADR-0014), so a consumer that counts every `scenario_finished` will not match
+them. Added additively — records without it have no phases, which is what they
+had.
+
 **`run_finished`** — tail. `passed` · `failed` · `skipped` — the **main-suite
 verdict**: scenario counts for the primary suite only (ADR-0014). `[run]
 setup`/`teardown` scenarios still appear as their own `scenario_started`/

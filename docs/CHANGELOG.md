@@ -6,6 +6,48 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The run record says which scenarios were lifecycle phases.** `phase`
+  (`"setup"`/`"teardown"`) is now on `scenario_started`/`scenario_finished` —
+  additive and optional (ADR-0008), so older records read as "no phases", which
+  is what they had. Without it a teardown scenario was indistinguishable from a
+  suite one except by feature path, so every consumer re-derived phase
+  membership from `proef.toml` and three of them got it wrong in different
+  ways. Fixing them off one signal is what the three entries below have in
+  common.
+
+### Fixed
+
+- **A mixed suite+phase failure kept the phase label.** `explain` chose the
+  label from the whole report (`failed == 0`), so it appeared only while *every*
+  failure was a phase failure — and vanished the moment a suite failure joined
+  one, leaving `1 failed` above two indistinguishable blocks. The
+  disambiguation disappeared exactly where it was needed. Labelled per block
+  now, from the record.
+
+- **`--rerun` after a phase-only failure says there is nothing to rerun.** It
+  returned the failed teardown, which `build_specs` cannot match because the
+  phase is excluded from the pool — producing a run that matched nothing and
+  reported "no scenarios matched the filters (check --tags/--scenario)", naming
+  flags the operator never passed. Phases are invisible to `--rerun`
+  (ADR-0014); it now exits 0 saying so.
+
+- **`diff` no longer counts a failing teardown as a test regression.** A cleanup
+  fault makes `test` exit 3, not 1, so blending phases into the regression
+  buckets made `diff --fail-on-regression` contradict the run it was diffing.
+  Phase scenarios are excluded from the verdict and the exclusion is reported.
+
+- **Records written before 0.6.0 no longer report the wrong verdict with
+  confidence.** They carry one `run_finished` per phase and their totals counted
+  every phase; read under today's suite-only meaning, a genuine suite failure
+  was reported as `1 passed · 0 failed` and labelled setup/teardown. The
+  `schema` field cannot distinguish them — that change was semantic and never
+  bumped it — but the structure can. `explain` now detects the multiple pairs,
+  recomputes the totals from the scenarios present, and says the record predates
+  0.6.0. A reader must be able to consume a record *or* detect that it cannot;
+  quietly doing neither was the one unacceptable option.
+
 > **Contains breaking changes — the next release is a MINOR bump, not a patch**
 > (`docs/RELEASING.md`): `proef secret set --value` was removed in favour of
 > `--stdin`, and `proef macros --output json`'s `pattern` field changed from a

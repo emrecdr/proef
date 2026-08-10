@@ -48,6 +48,7 @@ fn finished(scenario: &str, file: &str, status: Status) -> Event {
         status,
         timestamp_ms: None,
         worker: None,
+        phase: None,
     }
 }
 
@@ -111,6 +112,7 @@ fn timeline_renders_from_injected_timing() {
         file: Arc::from(file),
         timestamp_ms: Some(ts),
         worker: Some(worker),
+        phase: None,
     };
     let done = |scenario: &str, file: &str, status: Status, ts: u64, worker: u64| {
         Event::ScenarioFinished {
@@ -119,6 +121,7 @@ fn timeline_renders_from_injected_timing() {
             status,
             timestamp_ms: Some(ts),
             worker: Some(worker),
+            phase: None,
         }
     };
     let events = vec![
