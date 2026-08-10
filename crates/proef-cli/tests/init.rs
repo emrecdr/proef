@@ -272,3 +272,48 @@ fn dry_run_with_an_explicit_path_echoes_it_in_the_next_command() {
         .assert()
         .code(0);
 }
+
+/// `init` never overwrites an authored `proef-pack.schema.json`.
+///
+/// The never-overwrite loop walks a fixed four-entry array; the schema is not
+/// in it, and is written afterwards by the shared `schema` installer. So the
+/// one unguarded path was pack-absent + schema-present: `init` scaffolds the
+/// pack, then the installer replaces a file the user wrote — reported as
+/// `created 5 file(s), skipped 0` while the README promises the opposite.
+///
+/// Named for the **schema**, deliberately. The neighbouring
+/// `init_never_rewrites_an_existing_pack_via_schema_install` guards the *pack*
+/// on the same code path, and its passing is what made this look covered.
+#[test]
+fn init_never_overwrites_an_authored_pack_schema() {
+    let tmp = tempfile::tempdir().unwrap();
+    let schema = tmp.path().join("suite/packs/proef-pack.schema.json");
+    std::fs::create_dir_all(schema.parent().unwrap()).unwrap();
+    let authored = r#"{"mine":"do not destroy"}"#;
+    std::fs::write(&schema, authored).unwrap();
+
+    proef(tmp.path())
+        .arg("init")
+        .assert()
+        .code(0)
+        .stdout(contains("skipped"))
+        .stdout(contains("proef-pack.schema.json"));
+
+    assert_eq!(
+        std::fs::read_to_string(&schema).unwrap(),
+        authored,
+        "init must not replace a schema the user wrote"
+    );
+
+    // `schema --add-to` is the explicit install and still refreshes — that is
+    // how the schema is updated after a proef upgrade.
+    proef(tmp.path())
+        .args(["schema", "--add-to", "suite/packs/api.yaml"])
+        .assert()
+        .code(0);
+    assert_ne!(
+        std::fs::read_to_string(&schema).unwrap(),
+        authored,
+        "an explicit `schema --add-to` must still install the current schema"
+    );
+}

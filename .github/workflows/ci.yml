@@ -79,7 +79,7 @@ jobs:
       # while every root-workspace gate stays green. fuzz-smoke does catch it,
       # but only on floating nightly with sanitizers and a minute later; this
       # proves they build on the pinned stable toolchain, on both gate
-      # platforms, and is the only job that compiles fuzz_tag_expr at all.
+      # platforms. (The fuzz loop below now runs fuzz_tag_expr too.)
       # --locked because fuzz/Cargo.lock is committed: a fresh upstream
       # release must not redden this gate on an unchanged tree.
       - name: fuzz targets compile
@@ -124,7 +124,7 @@ jobs:
         # musl build target, and sanitizers reject statically linked libc.
         run: |
           host=$(rustc +nightly -vV | sed -n 's/^host: //p')
-          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load; do
+          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load fuzz_tag_expr; do
             cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=30
           done
 

@@ -188,7 +188,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | Command | Purpose |
 |---|---|
 | `proef init [dir]` | scaffold a minimal working suite — `proef.toml`, one feature, one pack, schema wired up; never overwrites an existing file |
-| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
+| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--run-id`, `--rerun`, `--sarif`, `--output json|tap`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
 | `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--output json`) |
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
@@ -254,7 +254,7 @@ Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
 [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md), and — for CI consumers of the
 run record — [`docs/EVENTS.md`](docs/EVENTS.md).
 The maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
-(ADR-0001…0011), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
+(ADR-0001…0017), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.
 
 ## Releases

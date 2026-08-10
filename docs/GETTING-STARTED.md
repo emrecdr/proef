@@ -17,11 +17,12 @@ engine `hurl`:
 
 ```console
 $ proef init
-  created proef.toml
-  created suite/case.feature
-  created suite/packs/api.yaml
-  created .gitignore
-  ok suite/packs/api.yaml (modeline added)
+  created ./proef.toml
+  created ./suite/case.feature
+  created ./suite/packs/api.yaml
+  created ./.gitignore
+  created ./suite/packs/proef-pack.schema.json
+  ok ./suite/packs/api.yaml (modeline added)
 
 created 5 file(s), skipped 0
 next: proef test --dry-run  (then point ${url:base} at your API — the scaffold's routes are placeholders)

@@ -81,7 +81,7 @@ jobs:
         # Explicit host triple: see the CI fuzz-smoke note.
         run: |
           host=$(rustc +nightly -vV | sed -n 's/^host: //p')
-          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load; do
+          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load fuzz_tag_expr; do
             cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=600
           done
 

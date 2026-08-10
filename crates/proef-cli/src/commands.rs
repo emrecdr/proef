@@ -580,7 +580,7 @@ pub fn artifacts(
 
 /// `proef schema` — print (or install) the pack JSON Schema, including the
 /// step-kind fragments contributed by registered engines.
-pub fn schema(add_to: &[PathBuf]) -> ExitCode {
+pub fn schema(add_to: &[PathBuf], overwrite_existing: bool) -> ExitCode {
     const MODELINE: &str = "# yaml-language-server: $schema=./proef-pack.schema.json";
 
     let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
@@ -608,6 +608,18 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
     for pack_path in add_to {
         let dir = crate::fsutil::parent_dir(pack_path);
         if !schema_dirs.contains(&dir) {
+            // `schema --add-to` is an explicit "install/refresh this" and may
+            // replace an older copy — that is how you update after upgrading
+            // proef. `init` promises the opposite in as many words, so it asks
+            // for the preserving mode and an authored file survives.
+            if !overwrite_existing && dir.join(SCHEMA_FILE).exists() {
+                crate::render::outln!(
+                    "  skipped {} (already exists)",
+                    dir.join(SCHEMA_FILE).display()
+                );
+                schema_dirs.push(dir);
+                continue;
+            }
             if let Err(err) = crate::fsutil::write_atomic(&dir.join(SCHEMA_FILE), &rendered) {
                 crate::render::errln!(
                     "error: cannot write {}: {err}",

@@ -25,6 +25,8 @@ gates:
     RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
     cargo deny check
     cargo machete
+    cargo run -p xtask -- public-api
+    cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
     cargo run -p xtask -- docs-check
 
 audit:

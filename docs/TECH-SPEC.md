@@ -59,7 +59,8 @@ and is the only miette user (ADR-0009). Engines sit behind cargo features in cli
 scheduled). Only `proef-engine-hurl`
 carries native build prereqs; `proef-core` is pure Rust. Lints/conventions: a strict
 workspace lints table verbatim (clippy all=warn + curated pedantic slice), `publish =
-false` initially (reserve names with 0.0.0 placeholders), MIT OR Apache-2.0.
+false` at the workspace root — overridden to `true` by the four crates that publish
+(`proef`, `proef-core`, `proef-engine-hurl`, `proef-lsp`), MIT OR Apache-2.0.
 
 ## 3. Core domain types (sketches; signatures normative, field lists indicative)
 
@@ -295,7 +296,8 @@ no engine sessions, no network.
 ## 11. State & files
 
 `.proef-runs/<run-id>/` → `events.jsonl` (the record, ADR-0008), `run.log` (console tee),
-`artifacts/*.hurl|.map.json|.vars`, `report.junit.xml` (when requested); 200-run
+`artifacts/*.hurl|.map.json|.vars`, `report.html`, `report.junit.xml` (when requested);
+200-run
 rotation (only uuid-named run records rotate; the in-flight run never does).
 `.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
 runner settings (`[run]` jobs/runs-dir/suite, `[http]` timeouts) + suite variables

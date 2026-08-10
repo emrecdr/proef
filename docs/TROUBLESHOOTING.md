@@ -15,6 +15,7 @@ located diagnostics, no network). Every diagnostic code is indexed in
 | `1` | tests ran; at least one assertion failed (or the run was cancelled) | fix the system under test — or the expectation |
 | `2` | your input is at fault: packs, features, flags, filters, secrets, bad `{{var}}`/JSONPath | the diagnostic names the file and line |
 | `3` | the environment or proef is at fault: unreachable target, native libs, IO, output proef could not write (full disk, failing device) | check the target, `proef doctor`, disk |
+| `130` | interrupted twice — the second Ctrl-C is a hard exit (128 + SIGINT), so cleanup and the record's tail are skipped | the run record will read as *incomplete*; a single Ctrl-C cancels gracefully and still runs `[run] teardown` |
 
 **Step glyphs:**
 

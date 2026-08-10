@@ -56,7 +56,7 @@ jobs:
       - name: Build and test
         shell: pwsh
         run: |
-          cargo build --workspace --all-targets
+          cargo build --workspace --all-targets --locked
           if ($LASTEXITCODE) { Throw }
-          cargo nextest run --profile ci
+          cargo nextest run --profile ci --locked
           if ($LASTEXITCODE) { Throw }

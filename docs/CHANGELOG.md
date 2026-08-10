@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+> **Contains breaking changes — the next release is a MINOR bump, not a patch**
+> (`docs/RELEASING.md`): `proef secret set --value` was removed in favour of
+> `--stdin`, and `proef macros --output json`'s `pattern` field changed from a
+> boolean to `string|null`.
+
+### Fixed
+
+- **`proef init` no longer destroys a `proef-pack.schema.json` you wrote.** The
+  never-overwrite loop walks a fixed four-entry array; the schema is not in it,
+  and is written afterwards by the shared installer. So the one unguarded path
+  was pack-absent + schema-present: `init` scaffolded the pack, then the
+  installer replaced an authored file — reported as `created 5 file(s), skipped
+  0`, while the README promised the opposite in as many words. `init` now asks
+  the installer to preserve what is already there and reports it as skipped;
+  `proef schema --add-to` still refreshes, since that is an explicit install and
+  how the schema is updated after upgrading proef.
+
 ### Changed
 
 - **`proef secret set --value` is gone; use `--stdin`. Breaking.** A secret in

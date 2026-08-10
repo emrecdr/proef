@@ -56,11 +56,14 @@ re-reported after it is fixed.
 | Q4 | `--dry-run` validated neither `[run] setup` nor `[run] teardown` | #26 |
 | R2 | `doctor` did not report a missing pack schema (FIRST-RUN F4b's second half) | #29 |
 | B7 | `secret set --value` put the secret in argv, and the error text steered to it | #29 |
+| — | `init` destroyed an authored `proef-pack.schema.json` (round-7 §2.2) | #30 |
+| Q7 | `fuzz_tag_expr` compiled but was in neither fuzz loop | #30 |
+| B3 | `windows.yml` built and tested without `--locked` | #30 |
+| B13 | `justfile` gate list omitted `public-api` (and the fuzz gate) | #30 |
+| B5 | `explain`/`diff`/`report` each inlined `ProjectConfig::load()` | #30 |
 
-**Q7 partially addressed** (#16): `fuzz_tag_expr` is now compiled by the gates job and
-its status is documented in [TESTING-STRATEGY](TESTING-STRATEGY.md) — but it is still
-listed in neither fuzz loop (`ci.yml:127`, `nightly.yml:84` both name three targets), so
-nothing fuzzes it. Verified 2026-08-10.
+**Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
+compile gate.
 
 ---
 
@@ -207,10 +210,7 @@ All confirmed 2026-08-06; **A5, A4, A6 re-verified still open on 2026-08-10.**
 
 | ID | Finding |
 |---|---|
-| B3 | `windows.yml` builds and tests without `--locked` |
-| B5 | `explain`/`diff`/`report` each inline `ProjectConfig::load()` instead of the shared `load_config()` — three copies |
 | B10 | The canary would chase a hurl **prerelease** (no semver filter) |
-| B13 | The `justfile` gate list omits `public-api`, which CONTRIBUTING requires |
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
 | P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
 | Q1 | `EngineLowering` seam: structured payloads are **unreachable** today (pack validation rejects them first) — design debt, zero live misbehaviour |
