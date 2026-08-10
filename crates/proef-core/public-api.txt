@@ -583,12 +583,14 @@ pub proef_core::event::Event::RunStarted::run_id: alloc::sync::Arc<str>
 pub proef_core::event::Event::RunStarted::schema: u32
 pub proef_core::event::Event::ScenarioFinished
 pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioFinished::phase: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
 pub proef_core::event::Event::ScenarioFinished::timestamp_ms: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioFinished::worker: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioStarted
 pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
+pub proef_core::event::Event::ScenarioStarted::phase: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioStarted::timestamp_ms: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioStarted::worker: core::option::Option<u64>
