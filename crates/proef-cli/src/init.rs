@@ -121,7 +121,7 @@ pub fn init(dir: &Path) -> ExitCode {
         }
         created += 1;
     } else if crate::fsutil::parent_dir(&pack_path)
-        .join("proef-pack.schema.json")
+        .join(crate::commands::SCHEMA_FILE)
         .exists()
     {
         // Naming the install command when the schema is already installed sends

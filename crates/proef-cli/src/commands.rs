@@ -277,6 +277,11 @@ fn is_dead_macro(pack: &str, calls: usize, has_pattern: bool) -> bool {
     has_pattern && calls == 0 && !pack.starts_with("builtin:")
 }
 
+/// The pack JSON Schema's filename, written beside every pack `schema --add-to`
+/// touches and probed by `init` to tell "not installed" from "already there".
+/// One literal — two callers in different modules would otherwise drift.
+pub(crate) const SCHEMA_FILE: &str = "proef-pack.schema.json";
+
 /// `proef macros` — every loaded macro with its call count across the corpus,
 /// flagging pattern macros that no scenario binds (dead prose bindings).
 /// `use:`-only helpers compose during lowering (never a bound step), so they are
@@ -337,6 +342,10 @@ fn render_macros(
         (a.pack.as_str(), a.name.as_str()).cmp(&(b.pack.as_str(), b.name.as_str()))
     });
 
+    // One lookup, both renderers: `None` propagates "not counted" rather than
+    // collapsing to a measured zero.
+    let call_count = |name: &str| calls.map(|c| c.get(name).copied().unwrap_or(0));
+
     // Advisory authoring-hygiene lint: pattern macros differing only in their
     // captures (same literal skeleton) are confusable. Reported, never gated.
     let near_dups = proef_core::matcher::near_duplicate_macros(rows.iter().filter_map(|m| {
@@ -348,7 +357,7 @@ fn render_macros(
     if output_json {
         for m in &rows {
             // `null`, not `0`/`false`: absent knowledge, not a measured zero.
-            let n = calls.map(|c| c.get(m.name.as_str()).copied().unwrap_or(0));
+            let n = call_count(m.name.as_str());
             let json = serde_json::json!({
                 "name": m.name,
                 "pack": m.pack,
@@ -370,7 +379,7 @@ fn render_macros(
             crate::render::outln!("{}", m.pack);
             current_pack = m.pack.as_str();
         }
-        let n = calls.map(|c| c.get(m.name.as_str()).copied().unwrap_or(0));
+        let n = call_count(m.name.as_str());
         let marker = if m.pattern.is_none() {
             "  (use:-only helper)"
         } else if n.is_some_and(|n| is_dead_macro(m.pack.as_str(), n, true)) {
@@ -494,7 +503,6 @@ pub fn artifacts(
 /// `proef schema` — print (or install) the pack JSON Schema, including the
 /// step-kind fragments contributed by registered engines.
 pub fn schema(add_to: &[PathBuf]) -> ExitCode {
-    const SCHEMA_FILE: &str = "proef-pack.schema.json";
     const MODELINE: &str = "# yaml-language-server: $schema=./proef-pack.schema.json";
 
     let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()

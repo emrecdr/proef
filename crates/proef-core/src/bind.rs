@@ -257,12 +257,16 @@ fn macro_stub(step_text: &str) -> String {
     }
     // Two readers, two different actions. A scenario author writes prose
     // against a vocabulary somebody else maintains, so their move is to say
-    // something the packs already bind — `proef macros` lists those sentences,
-    // and lists them even while this error stands. A pack maintainer's move is
-    // the stub below. The author's action leads because they cannot perform the
+    // something the packs already bind. A pack maintainer's move is the stub
+    // below. The author's action leads because they cannot perform the
     // maintainer's; the stub stays because the maintainer needs it verbatim.
+    //
+    // Names no tool: this text reaches an editor's diagnostics pane verbatim
+    // through the LSP as well as the terminal, and each front end already has
+    // its own way to show the vocabulary (completion there, `macros` there).
+    // Core does not know which one is reading.
     format!(
-        "say a sentence the packs already bind (`proef macros` lists them), or \
+        "match a sentence the suite's packs already bind, or \
          add a macro to a pack:\n\nmacros:\n  \
          newMacro:\n    match: {pattern}\n    steps:\n      - hurl: |\n          \
          GET ${{url:base}}/PATH\n          HTTP 200"

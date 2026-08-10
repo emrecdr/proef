@@ -90,9 +90,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **`bind::unbound_step` leads with the action its reader can take.** The help
   opened on "add a macro to a pack" — the pack maintainer's move, which a
   scenario author cannot make — and buried theirs in a parenthetical. It now
-  opens with saying a sentence the packs already bind, and names `proef macros`
-  as the way to find one. The YAML stub is unchanged: it is load-bearing for
-  the maintainer and stays verbatim.
+  opens with matching a sentence the suite's packs already bind. It names no
+  tool: `Diag.help` reaches an editor's diagnostics pane verbatim through the
+  LSP as well as the terminal, and each front end already has its own way to
+  show the vocabulary (completion in the editor, `proef macros` in a shell) —
+  `proef-core` does not know which one is reading. The YAML stub is unchanged:
+  it is load-bearing for the maintainer and stays verbatim.
 
 - **ADR-0014 now records the question it was silent on.** It is specific about a
   failing setup and a failing teardown, so a reader reasonably infers the

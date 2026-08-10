@@ -44,17 +44,19 @@ const QUARANTINE_TAG: &str = "quarantine";
 /// The exit code is deliberately untouched. Whether an unreachable target is a
 /// user fault or a system one is a taxonomy question (ADR-0009) decided in the
 /// engine, and the operator's actual problem here is vocabulary, not exit code.
-fn is_untouched_scaffold(config: &ProjectConfig, base_url_overridden: bool) -> bool {
+fn is_untouched_scaffold(
+    config_vars: &BTreeMap<String, String>,
+    base_url_overridden: bool,
+) -> bool {
     !base_url_overridden
-        && config
-            .url
-            .get("base")
+        && config_vars
+            .get("url:base")
             .is_some_and(|base| base == crate::init::SCAFFOLD_BASE)
 }
 
-fn note_untouched_scaffold(config: &ProjectConfig) {
+fn note_untouched_scaffold(config_vars: &BTreeMap<String, String>) {
     let overridden = matches!(crate::envvar::read("PROEF_BASE_URL"), Ok(Some(_)));
-    if is_untouched_scaffold(config, overridden) {
+    if is_untouched_scaffold(config_vars, overridden) {
         crate::render::errln!(
             "note: this suite is still the `proef init` scaffold — its target and its \
              routes are placeholders, so it cannot pass yet.\n      \
@@ -513,7 +515,7 @@ pub fn execute(
     // never refers back to it — leaving a first-time reader with `system error`
     // (or a bare 404) and no way to know the tool is working as intended.
     if exit != ExitCode::Success {
-        note_untouched_scaffold(config);
+        note_untouched_scaffold(&config_vars);
     }
 
     match output {
@@ -1009,7 +1011,9 @@ mod tests {
     use std::panic::AssertUnwindSafe;
     use std::sync::{Arc, Mutex};
 
-    use super::{ProjectConfig, RunRecord};
+    use std::collections::BTreeMap;
+
+    use super::RunRecord;
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
 
@@ -1091,25 +1095,31 @@ mod tests {
     /// name a target, so their failure is about their API, not the scaffold.
     #[test]
     fn scaffold_note_fires_only_on_the_untouched_conjunction() {
-        let mut scaffold = ProjectConfig::default();
-        scaffold
-            .url
-            .insert("base".to_owned(), crate::init::SCAFFOLD_BASE.to_owned());
+        let vars = |base: Option<&str>| {
+            base.map(|b| BTreeMap::from([("url:base".to_owned(), b.to_owned())]))
+                .unwrap_or_default()
+        };
+        let scaffold = vars(Some(crate::init::SCAFFOLD_BASE));
 
         assert!(super::is_untouched_scaffold(&scaffold, false));
         // PROEF_BASE_URL set — they configured a target.
         assert!(!super::is_untouched_scaffold(&scaffold, true));
 
         // `[url] base` edited — likewise configured, even byte-for-byte close.
-        let mut edited = ProjectConfig::default();
-        edited
-            .url
-            .insert("base".to_owned(), "https://api.example.com".to_owned());
-        assert!(!super::is_untouched_scaffold(&edited, false));
+        assert!(!super::is_untouched_scaffold(
+            &vars(Some("https://api.example.com")),
+            false
+        ));
 
         // No `[url] base` at all (a suite of absolute URLs) is not a scaffold.
+        assert!(!super::is_untouched_scaffold(&vars(None), false));
+
+        // The resolved, `--env`-aware scope is what is consulted: an
+        // `[env.<name>.url] base` override lands here as the merged value, so a
+        // profile that points at a real API is not reported as the scaffold
+        // merely because the base `[url]` table still holds the default.
         assert!(!super::is_untouched_scaffold(
-            &ProjectConfig::default(),
+            &vars(Some("https://staging.internal")),
             false
         ));
     }
