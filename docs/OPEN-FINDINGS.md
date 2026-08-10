@@ -54,6 +54,8 @@ re-reported after it is fixed.
 | §8 | `init` announced four files and reported five | #24 |
 | Q5 | Ctrl-C skipped teardown silently — cleanup never ran, nothing said so | #26 |
 | Q4 | `--dry-run` validated neither `[run] setup` nor `[run] teardown` | #26 |
+| R2 | `doctor` did not report a missing pack schema (FIRST-RUN F4b's second half) | #29 |
+| B7 | `secret set --value` put the secret in argv, and the error text steered to it | #29 |
 
 **Q7 partially addressed** (#16): `fuzz_tag_expr` is now compiled by the gates job and
 its status is documented in [TESTING-STRATEGY](TESTING-STRATEGY.md) — but it is still
@@ -89,14 +91,6 @@ not suggest from the injected environment snapshot (it would surface unrelated
 environment variable names in diagnostics, against the secret-masking posture), and
 `resolve::unknown_namespace` already enumerates all seven valid namespaces. Sibling
 codes share a *shape*, not a *candidate set*.
-
-### R2 — `doctor` does not report a missing pack schema
-
-Schema-backed completion is the largest authoring aid for YAML, and PRD §4 names "schema
-autocomplete" as a P2 need. `init` installing it automatically shipped in 0.6.0; the
-other half — `doctor` reporting it as *missing* — did not. Reproduced 2026-08-10:
-`proef doctor` checks hurl, the parser, libcurl, the secret key and the secret store,
-and says nothing about editor completion. Small, and it closes the finding.
 
 ### R3 — the scaffold default is still the dev fixture's port
 
@@ -189,15 +183,6 @@ Only `byteOffset`/`byteLength`, which defeats inline GitHub annotations. Repro'd
 A macro name containing either produces a malformed snippet.
 
 ### B9 — GitHub annotation `file=` unescaped; `|` unescaped in the job-summary table
-
----
-
-## Open — security-adjacent
-
-### B7 — `secret set --value` is argv-visible
-
-The value appears in the process list, and the error text steers users toward it rather
-than stdin.
 
 ---
 

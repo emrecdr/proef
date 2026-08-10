@@ -78,7 +78,8 @@ fn secret_lifecycle_set_list_rm() {
             .args(args);
         cmd
     };
-    run(&["set", "apiToken", "--value", "hunter2"])
+    run(&["set", "apiToken", "--stdin"])
+        .write_stdin("hunter2")
         .assert()
         .code(0);
     run(&["list"]).assert().code(0).stdout(contains("apiToken"));
@@ -101,7 +102,8 @@ fn proef_key_env_override_replaces_the_key_file() {
         .current_dir(tmp.path())
         .env("PROEF_CONFIG_DIR", &cfg)
         .env("PROEF_KEY", key_b64)
-        .args(["secret", "set", "tok", "--value", "v"])
+        .args(["secret", "set", "tok", "--stdin"])
+        .write_stdin("v")
         .assert()
         .code(0);
     assert!(
@@ -113,7 +115,8 @@ fn proef_key_env_override_replaces_the_key_file() {
         .current_dir(tmp.path())
         .env("PROEF_CONFIG_DIR", &cfg)
         .env("PROEF_KEY", "not-base64!!")
-        .args(["secret", "set", "tok2", "--value", "v"])
+        .args(["secret", "set", "tok2", "--stdin"])
+        .write_stdin("v")
         .assert()
         .code(2)
         .stderr(contains("PROEF_KEY"));
@@ -136,7 +139,8 @@ fn corrupt_store_is_recovered_by_set_and_flagged_by_doctor() {
         .code(3)
         .stdout(contains("corrupt"));
     // …and `secret set` moves the wreck aside and proceeds.
-    run(&["secret", "set", "tok", "--value", "v"])
+    run(&["secret", "set", "tok", "--stdin"])
+        .write_stdin("v")
         .assert()
         .code(0)
         .stderr(contains("moved to .proef-secrets.json.corrupt"));
@@ -383,4 +387,75 @@ fn fmt_rewrites_a_dirty_crlf_pack_preserving_crlf_throughout() {
         .assert()
         .code(0)
         .stdout(contains("all pack blocks already canonical"));
+}
+
+/// `doctor` reports a missing pack schema. `init` installs it automatically,
+/// but the other half of that finding — noticing when it is absent — never
+/// shipped, so a suite whose editor completion was silently off had nothing
+/// telling it so. A `Warn`, not a `Fail`: it costs autocomplete, not a run.
+#[test]
+fn doctor_reports_a_missing_pack_schema_and_notices_when_it_returns() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef().current_dir(tmp.path()).arg("init").assert().code(0);
+
+    // Freshly scaffolded: `init` installed it.
+    proef()
+        .current_dir(tmp.path())
+        .arg("doctor")
+        .assert()
+        .code(0)
+        .stdout(contains("pack schema"))
+        .stdout(contains("proef-pack.schema.json present"));
+
+    std::fs::remove_file(tmp.path().join("suite/packs/proef-pack.schema.json")).unwrap();
+    proef()
+        .current_dir(tmp.path())
+        .arg("doctor")
+        .assert()
+        .code(0) // a warning never gates the environment verdict
+        .stdout(contains("missing"))
+        .stdout(contains("proef schema --add-to"));
+}
+
+/// `doctor` runs outside a project: no config and no suite is not a finding.
+#[test]
+fn doctor_outside_a_project_reports_no_suite_rather_than_failing() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef()
+        .current_dir(tmp.path())
+        .arg("doctor")
+        .assert()
+        .code(0)
+        .stdout(contains("no suite configured"));
+}
+
+/// A secret must never be passable in argv, where `ps` exposes it. `--value` is
+/// gone rather than deprecated, and the flag that replaces it reads stdin.
+#[test]
+fn secret_set_takes_no_value_on_the_command_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef()
+        .current_dir(tmp.path())
+        .env("PROEF_CONFIG_DIR", tmp.path().join("cfg"))
+        .args(["secret", "set", "tok", "--value", "hunter2"])
+        .assert()
+        .failure()
+        .stderr(contains("--value"));
+
+    // The supported script path, and the stored value must not keep the
+    // newline the pipe added.
+    proef()
+        .current_dir(tmp.path())
+        .env("PROEF_CONFIG_DIR", tmp.path().join("cfg"))
+        .args(["secret", "set", "tok", "--stdin"])
+        .write_stdin("hunter2\n")
+        .assert()
+        .code(0);
+    proef()
+        .current_dir(tmp.path())
+        .env("PROEF_CONFIG_DIR", tmp.path().join("cfg"))
+        .args(["secret", "list"])
+        .assert()
+        .code(0)
+        .stdout(contains("tok"));
 }

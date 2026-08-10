@@ -47,11 +47,53 @@ fn load_front(
     .map_err(|err| report_front_error(&err))
 }
 
+/// Is the editor-completion schema installed beside every project pack?
+///
+/// A `Warn`, never a `Fail`: a missing schema costs autocomplete and load-time
+/// validation in the editor, it does not stop a run — and `doctor`'s exit is the
+/// environment verdict, not an authoring one. Uses the same "is it there"
+/// predicate `init` uses to decide between "installed" and "run `schema
+/// --add-to`", so the two cannot disagree about what installed means.
+fn schema_check(suite: Option<&Path>) -> (DoctorStatus, String) {
+    // No project, or no suite in it, is not a finding — `doctor` runs anywhere.
+    let Some(suite) = suite else {
+        return (DoctorStatus::Pass, "no suite configured".to_owned());
+    };
+    let packs = crate::front::pack_files(suite).unwrap_or_default();
+    if packs.is_empty() {
+        return (
+            DoctorStatus::Pass,
+            format!("no packs under {}", suite.display()),
+        );
+    }
+    let mut missing: Vec<PathBuf> = packs
+        .iter()
+        .map(|pack| crate::fsutil::parent_dir(pack))
+        .filter(|dir| !dir.join(SCHEMA_FILE).exists())
+        .collect();
+    missing.sort();
+    missing.dedup();
+    if missing.is_empty() {
+        return (
+            DoctorStatus::Pass,
+            format!("{SCHEMA_FILE} present beside {} pack(s)", packs.len()),
+        );
+    }
+    let dirs: Vec<String> = missing.iter().map(|d| d.display().to_string()).collect();
+    (
+        DoctorStatus::Warn,
+        format!(
+            "{SCHEMA_FILE} missing in {} — editor completion is off; run `proef schema --add-to <pack>`",
+            dirs.join(", ")
+        ),
+    )
+}
+
 /// `proef doctor` — run every engine-contributed environment check and report.
 ///
 /// Exit code: `0` when nothing failed (warnings allowed), `3` when any check
 /// failed — a broken environment is a system fault (ADR-0009).
-pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
+pub fn doctor(engines: &[Box<dyn EngineFactory>], suite: Option<&Path>) -> ExitCode {
     fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
         let glyph = match status {
             DoctorStatus::Pass => "ok  ",
@@ -77,8 +119,12 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
         }
     }
 
-    // CLI-owned checks: the secret machinery is not engine-contributed but
-    // its health gates runs just the same (corrupt store, unreadable key).
+    // CLI-owned checks: neither the pack schema nor the secret machinery is
+    // engine-contributed, but both gate authoring and runs just the same.
+    crate::render::outln!("\nauthoring:");
+    let (status, detail) = schema_check(suite);
+    row(&mut worst, "pack schema", status, &detail);
+
     crate::render::outln!("\nsecrets:");
     for (status, name, detail) in crate::secretstore::doctor_checks() {
         row(&mut worst, name, status, &detail);
@@ -600,6 +646,16 @@ pub(crate) fn report_front_error(err: &proef_core::diag::FrontError) -> ExitCode
     match err {
         proef_core::diag::FrontError::Diagnostics(diags) => {
             render::print_all(diags);
+            // `bind::unbound_step` tells the author to say a sentence the packs
+            // already bind, without naming how to find one — deliberately, since
+            // that text also renders in an editor's diagnostics pane through the
+            // LSP, where the affordance is completion rather than a command.
+            // Here we know we are the terminal, so we can say which command:
+            // `macros` lists the vocabulary and, since #24, answers even while
+            // this very error stands.
+            if diags.iter().any(|d| d.code == "proef::bind::unbound_step") {
+                crate::render::errln!("note: `proef macros` lists every sentence the packs bind");
+            }
             let errors = diags
                 .iter()
                 .filter(|d| d.severity == proef_core::diag::Severity::Error)

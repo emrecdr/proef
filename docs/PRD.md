@@ -127,7 +127,8 @@ lifecycle features, ADR-0014; `[http]`/`[sla]`) + suite variables
 (`[url]`/`[vars]`, referenced `${url:key}`/`${vars:key}`) + per-environment overrides
 (`[env.<name>]`); precedence defaults < base tables < active `[env.<name>]` (via
 `--env`/`PROEF_ENV`) < flags. Secrets via `PROEF_SECRET_<NAME>` env override → the
-encrypted store (`proef secret set [--value]`), never in `proef.toml`.
+encrypted store (`proef secret set` — hidden prompt, or `--stdin` for
+scripts), never in `proef.toml`.
 
 ## 7. Non-functional requirements
 

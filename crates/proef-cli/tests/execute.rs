@@ -1194,7 +1194,8 @@ fn encrypted_secret_store_drives_a_run() {
     let mut set = Command::cargo_bin("proef").unwrap();
     set.current_dir(cwd.path())
         .env("PROEF_CONFIG_DIR", &config_dir)
-        .args(["secret", "set", "apiToken", "--value", API_TOKEN])
+        .args(["secret", "set", "apiToken", "--stdin"])
+        .write_stdin(API_TOKEN)
         .assert()
         .code(0);
     let mut list = Command::cargo_bin("proef").unwrap();
