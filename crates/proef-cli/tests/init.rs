@@ -26,6 +26,41 @@ fn scaffold_dry_runs_green() {
         .stdout(contains("dry-run OK"));
 }
 
+/// Every file `init` reports in its trailing count is also named on its own
+/// line. The schema JSON was written silently, so the first output a new user
+/// reads listed four files and then claimed five.
+#[test]
+fn init_announces_every_file_it_counts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let assert = proef(tmp.path()).arg("init").assert().code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let announced = stdout.lines().filter(|l| l.contains("created ./")).count();
+    assert!(
+        stdout.contains(&format!("created {announced} file(s)")),
+        "announced {announced} file(s) but the count line disagrees:\n{stdout}"
+    );
+    assert!(stdout.contains("proef-pack.schema.json"), "{stdout}");
+}
+
+/// The scaffold cannot pass — its target and its routes are both placeholders —
+/// so the run must say so rather than leave a first-time reader with a bare
+/// connection error. Environment-independent: with nothing on the scaffold's
+/// port the run fails to connect, with the dev fixture up it 404s on the
+/// placeholder route; the note is owed either way.
+///
+/// This is the wiring test. `exec::tests` covers the predicate; a correct
+/// predicate that nothing calls would still ship the bug.
+#[test]
+fn a_failing_scaffold_run_says_it_is_still_the_scaffold() {
+    let tmp = tempfile::tempdir().unwrap();
+    proef(tmp.path()).arg("init").assert().code(0);
+    proef(tmp.path())
+        .env_remove("PROEF_BASE_URL")
+        .arg("test")
+        .assert()
+        .stderr(contains("still the `proef init` scaffold"));
+}
+
 /// Running init twice creates nothing the second time.
 #[test]
 fn init_is_idempotent() {

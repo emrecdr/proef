@@ -31,6 +31,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   refuses: its contract is to list *every* scenario, and a partial list that
   silently omits the unparsed feature is the wrong answer, not a degraded one.
 
+- **A failed run says when the suite is still the untouched scaffold.** A
+  freshly scaffolded project cannot pass — its target and its routes are both
+  placeholders — and `init` says so once, two commands earlier, in a
+  parenthetical the failure never referred back to. The run now names the
+  situation and the remedy. It fires only on the conjunction (`[url] base`
+  still byte-identical to what `init` wrote **and** no `PROEF_BASE_URL`): an
+  operator who set the override *did* name a target, so their failure is about
+  their API and is not second-guessed. Exit codes are untouched — whether an
+  unreachable target is a user or a system fault is a taxonomy question decided
+  in the engine (ADR-0009), and the reader's actual problem is vocabulary.
+
 ### Fixed
 
 - **`proef schema --add-to` and `proef init` now announce the schema file they

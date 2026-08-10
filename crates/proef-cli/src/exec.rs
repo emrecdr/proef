@@ -32,6 +32,38 @@ const RUN_RETENTION: usize = 200;
 /// not gate the exit code (`RunSummary::exit_code_excluding`).
 const QUARANTINE_TAG: &str = "quarantine";
 
+/// Tell a first-time reader that a failed run is the scaffold, not a fault.
+///
+/// Fires only on the conjunction, because either half alone is wrong: the raw
+/// `[url] base` still byte-identical to what `init` wrote **and** no
+/// `PROEF_BASE_URL` override. An operator who set the override *did* configure a
+/// target, so their failure is about their API and must not be second-guessed;
+/// keying on the resolved value instead would mis-fire on anyone legitimately
+/// targeting the dev fixture's port.
+///
+/// The exit code is deliberately untouched. Whether an unreachable target is a
+/// user fault or a system one is a taxonomy question (ADR-0009) decided in the
+/// engine, and the operator's actual problem here is vocabulary, not exit code.
+fn is_untouched_scaffold(config: &ProjectConfig, base_url_overridden: bool) -> bool {
+    !base_url_overridden
+        && config
+            .url
+            .get("base")
+            .is_some_and(|base| base == crate::init::SCAFFOLD_BASE)
+}
+
+fn note_untouched_scaffold(config: &ProjectConfig) {
+    let overridden = matches!(crate::envvar::read("PROEF_BASE_URL"), Ok(Some(_)));
+    if is_untouched_scaffold(config, overridden) {
+        crate::render::errln!(
+            "note: this suite is still the `proef init` scaffold — its target and its \
+             routes are placeholders, so it cannot pass yet.\n      \
+             set `[url] base` in proef.toml to your API (or export PROEF_BASE_URL), \
+             then edit suite/packs/ to name your API's real routes."
+        );
+    }
+}
+
 /// Run the suite. Exit codes: 0 ok · 1 test failure · 2 user error · 3 system
 /// error (ADR-0009, worst-wins across scenarios).
 // One cohesive listing of the run lifecycle; splitting hides the order. The
@@ -475,6 +507,14 @@ pub fn execute(
     } else {
         exit
     };
+
+    // A freshly scaffolded suite cannot pass: its target and its routes are both
+    // placeholders. `init` says so once, two commands earlier, and the failure
+    // never refers back to it — leaving a first-time reader with `system error`
+    // (or a bare 404) and no way to know the tool is working as intended.
+    if exit != ExitCode::Success {
+        note_untouched_scaffold(config);
+    }
 
     match output {
         Some(OutputFormat::Json) => {
@@ -969,7 +1009,7 @@ mod tests {
     use std::panic::AssertUnwindSafe;
     use std::sync::{Arc, Mutex};
 
-    use super::RunRecord;
+    use super::{ProjectConfig, RunRecord};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
 
@@ -1044,5 +1084,33 @@ mod tests {
             mirrored, "abcdefghij",
             "the mirror must be a faithful copy of what the console received"
         );
+    }
+
+    /// The note must fire on the untouched scaffold and stay silent the moment
+    /// the operator has configured anything — an override means they *did*
+    /// name a target, so their failure is about their API, not the scaffold.
+    #[test]
+    fn scaffold_note_fires_only_on_the_untouched_conjunction() {
+        let mut scaffold = ProjectConfig::default();
+        scaffold
+            .url
+            .insert("base".to_owned(), crate::init::SCAFFOLD_BASE.to_owned());
+
+        assert!(super::is_untouched_scaffold(&scaffold, false));
+        // PROEF_BASE_URL set — they configured a target.
+        assert!(!super::is_untouched_scaffold(&scaffold, true));
+
+        // `[url] base` edited — likewise configured, even byte-for-byte close.
+        let mut edited = ProjectConfig::default();
+        edited
+            .url
+            .insert("base".to_owned(), "https://api.example.com".to_owned());
+        assert!(!super::is_untouched_scaffold(&edited, false));
+
+        // No `[url] base` at all (a suite of absolute URLs) is not a scaffold.
+        assert!(!super::is_untouched_scaffold(
+            &ProjectConfig::default(),
+            false
+        ));
     }
 }
