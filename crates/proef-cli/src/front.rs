@@ -65,6 +65,24 @@ pub struct FrontEnd {
     pub warnings: Vec<Diag>,
 }
 
+/// Load just the macro packs for `path` — the vocabulary, without binding any
+/// feature to it.
+///
+/// [`run`] does this as its first stage and then throws the result away if a
+/// later stage fails, so a caller that only needs the vocabulary (`macros`
+/// listing a suite whose steps do not bind) would otherwise get nothing. The
+/// packs are complete whenever this returns: pack loading precedes binding and
+/// does not depend on it.
+pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
+    let kinds: Vec<proef_core::engine::StepKindSpec> = registry::engines()
+        .iter()
+        .flat_map(|e| e.step_kinds().iter().copied())
+        .collect();
+    let mut sources = pack::builtin_sources();
+    sources.extend(project_packs(path)?);
+    pack::load(&sources, &kinds)
+}
+
 /// Run the front end over `path` (a `.feature` file or a directory tree).
 /// `run_id` overrides the generated uuid-v7 (deterministic artifact hand-off).
 // One cohesive listing of the pipeline; splitting hides the stage order.

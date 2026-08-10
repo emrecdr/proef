@@ -289,7 +289,20 @@ pub fn macros(
 ) -> ExitCode {
     let front = match load_front(path, active_env, None, config) {
         Ok(front) => front,
-        Err(code) => return code,
+        // The suite does not bind — which is exactly when an author needs to
+        // read the vocabulary. `load_front` has already rendered the
+        // diagnostics; list what the packs offer beneath them and keep the
+        // failing exit code, so scripts see no change.
+        Err(code) => {
+            let Ok(packs) = front::load_packs(path) else {
+                return code;
+            };
+            crate::render::errln!(
+                "note: listing the vocabulary only — call counts need a suite that binds"
+            );
+            render_macros(&packs, None, output_json);
+            return code;
+        }
     };
 
     // Which pattern macro each bound scenario step invoked.
@@ -301,10 +314,24 @@ pub fn macros(
             }
         }
     }
+    render_macros(&front.packs, Some(&calls), output_json)
+}
 
+/// Render the macro listing.
+///
+/// `calls` is `None` when the suite failed to bind. Every count-derived verdict
+/// is then withheld rather than guessed: a feature that did not bind
+/// contributes no calls, so a macro used only by that feature would otherwise
+/// be reported `UNUSED` — a confident wrong answer in precisely the state this
+/// path exists to serve.
+fn render_macros(
+    packs: &proef_core::pack::PackSet,
+    calls: Option<&BTreeMap<&str, usize>>,
+    output_json: bool,
+) -> ExitCode {
     // Grouped by pack then name (the map is keyed by name, so the sort is what
     // groups by pack); `n` is a macro's step-bind count.
-    let mut rows: Vec<_> = front.packs.macros.values().collect();
+    let mut rows: Vec<_> = packs.macros.values().collect();
     rows.sort_unstable_by(|a, b| {
         (a.pack.as_str(), a.name.as_str()).cmp(&(b.pack.as_str(), b.name.as_str()))
     });
@@ -319,13 +346,14 @@ pub fn macros(
 
     if output_json {
         for m in &rows {
-            let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+            // `null`, not `0`/`false`: absent knowledge, not a measured zero.
+            let n = calls.map(|c| c.get(m.name.as_str()).copied().unwrap_or(0));
             let json = serde_json::json!({
                 "name": m.name,
                 "pack": m.pack,
-                "pattern": m.pattern.is_some(),
+                "pattern": m.pattern,
                 "calls": n,
-                "unused": is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()),
+                "unused": n.map(|n| is_dead_macro(m.pack.as_str(), n, m.pattern.is_some())),
                 "nearDuplicateOf": near_dups.get(m.name.as_str()).cloned().unwrap_or_default(),
             });
             crate::render::outln!("{json}");
@@ -341,16 +369,21 @@ pub fn macros(
             crate::render::outln!("{}", m.pack);
             current_pack = m.pack.as_str();
         }
-        let n = calls.get(m.name.as_str()).copied().unwrap_or(0);
+        let n = calls.map(|c| c.get(m.name.as_str()).copied().unwrap_or(0));
         let marker = if m.pattern.is_none() {
             "  (use:-only helper)"
-        } else if is_dead_macro(m.pack.as_str(), n, m.pattern.is_some()) {
+        } else if n.is_some_and(|n| is_dead_macro(m.pack.as_str(), n, true)) {
             unused += 1;
             "  UNUSED — no scenario binds it"
-        } else if n == 0 {
+        } else if n == Some(0) {
             "  (builtin, unused here)"
         } else {
             ""
+        };
+        // `12×` when counted, a bare `—` when the suite did not bind.
+        let count = match n {
+            Some(n) => format!("{n}×"),
+            None => "—".to_owned(),
         };
         let near = match near_dups.get(m.name.as_str()) {
             Some(siblings) => {
@@ -359,14 +392,26 @@ pub fn macros(
             }
             None => String::new(),
         };
-        crate::render::outln!("  {:<28} {n}×{marker}{near}", m.name);
+        // The `match:` prose, not just the identifier: a test author writes
+        // sentences, so the sentence is what this listing exists to show.
+        let prose = match &m.pattern {
+            Some(pattern) => format!("  {pattern}"),
+            None => String::new(),
+        };
+        crate::render::outln!("  {:<28} {count}{prose}{marker}{near}", m.name);
     }
     let near_note = if near_dup_count > 0 {
         format!(" · {near_dup_count} near-duplicate")
     } else {
         String::new()
     };
-    crate::render::outln!("\n{} macro(s) · {unused} unused{near_note}", rows.len());
+    // "0 unused" from an unbound suite would read as "nothing is dead" when
+    // the truth is "not counted" — withhold the tally with the verdicts.
+    let unused_note = match calls {
+        Some(_) => format!(" · {unused} unused"),
+        None => String::new(),
+    };
+    crate::render::outln!("\n{} macro(s){unused_note}{near_note}", rows.len());
     ExitCode::Success
 }
 
@@ -484,6 +529,10 @@ pub fn schema(add_to: &[PathBuf]) -> ExitCode {
                 );
                 return ExitCode::SystemError;
             }
+            // Announced, not silent: this file is written by both `schema
+            // --add-to` and `init`, and an unannounced write leaves `init`'s
+            // trailing count naming more files than it listed.
+            crate::render::outln!("  created {}", dir.join(SCHEMA_FILE).display());
             schema_dirs.push(dir);
         }
         let text = match std::fs::read_to_string(pack_path) {

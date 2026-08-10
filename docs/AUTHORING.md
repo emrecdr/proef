@@ -43,13 +43,19 @@ macros:
   declared params; adjacent captures (`{a} {b}` with nothing between) are
   rejected.
 - A macro without `match:` is composition-only (reachable via `use:`).
-- `proef macros` reports each macro's call count across the corpus and flags
-  pattern macros no scenario binds (dead prose bindings); `use:`-only helpers
-  and unused builtins are listed but not flagged. It also flags **near-duplicate**
-  pattern macros — two that differ only in their `{capture}` names (the same
-  literal skeleton), which are confusable to authors. Both are advisory only:
-  they never change the exit code, and `--output json` carries `unused` and
+- `proef macros` lists every macro with its `match:` prose — the sentence a
+  feature file may say — and its call count across the corpus, flagging pattern
+  macros no scenario binds (dead prose bindings); `use:`-only helpers and unused
+  builtins are listed but not flagged. It also flags **near-duplicate** pattern
+  macros — two that differ only in their `{capture}` names (the same literal
+  skeleton), which are confusable to authors. Both are advisory only: they never
+  change the exit code, and `--output json` carries `pattern`, `unused` and
   `nearDuplicateOf` fields for a CI hygiene gate.
+- When a step does not bind, `macros` still lists the vocabulary (that is when
+  you most need it) and keeps exit 2. Counts are **withheld**, not zeroed:
+  `calls`/`unused` render as `—`/`null`, because an unbound feature contributes
+  no calls and would make its own macros look dead. `proef flows` still refuses
+  — it promises *every* scenario, and a silently partial list is a wrong answer.
 
 ## Steps
 
