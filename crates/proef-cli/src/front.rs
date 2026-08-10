@@ -78,9 +78,24 @@ pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
         .iter()
         .flat_map(|e| e.step_kinds().iter().copied())
         .collect();
+    Ok(load_pack_set(path, &kinds)?.1)
+}
+
+/// Discover and load a suite's packs — the single place that knows how a
+/// suite's vocabulary is assembled. Returns the source count alongside the set,
+/// since `run` reports it.
+///
+/// Both [`load_packs`] and [`run`] go through here: a change to pack discovery
+/// (a new source, a caching step) must not be something you can remember in one
+/// path and forget in the other.
+fn load_pack_set(
+    path: &Path,
+    kinds: &[proef_core::engine::StepKindSpec],
+) -> Result<(usize, PackSet), FrontError> {
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
-    pack::load(&sources, &kinds)
+    let packs_loaded = sources.len();
+    Ok((packs_loaded, pack::load(&sources, kinds)?))
 }
 
 /// Run the front end over `path` (a `.feature` file or a directory tree).
@@ -122,10 +137,8 @@ pub fn run(
     );
     let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
 
-    let mut sources = pack::builtin_sources();
-    sources.extend(project_packs(path)?);
-    let packs_loaded = sources.len();
-    let packs: Arc<PackSet> = Arc::new(pack::load(&sources, &kinds)?);
+    let (packs_loaded, loaded) = load_pack_set(path, &kinds)?;
+    let packs: Arc<PackSet> = Arc::new(loaded);
     let kind_to_engine = Arc::new(kind_to_engine);
 
     let mut diags: Vec<Diag> = Vec::new();

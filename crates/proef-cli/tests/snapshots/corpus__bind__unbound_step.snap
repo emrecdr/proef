@@ -10,7 +10,7 @@ proef::bind::unbound_step
  3 │     When I serch for Jansen
    ·     ───────────────────────
    ╰────
-  help: say a sentence the packs already bind (`proef macros` lists them), or add a macro to a pack:
+  help: match a sentence the suite's packs already bind, or add a macro to a pack:
         
         macros:
           newMacro:

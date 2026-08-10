@@ -66,6 +66,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **One worklist instead of four documents to cross-read.** Four files read like
+  backlogs and only one was: `OPEN-FINDINGS` now carries every open item, including the
+  residue of both UX reviews (R1–R3) and the decisions taken against them, each entry
+  self-contained. The two review documents were **removed** once their open items landed
+  there — their transcripts and citations remain in git history, and a retired review
+  left on disk is exactly the thing that reads as a backlog. `IMPROVEMENT-PLAN` stays a separate file — five
+  ADRs cite it by section number — but its master table gained a **Status** column,
+  because its ✅/⚠️ glyphs mean "fits the architecture", never "done", and **13 of its
+  16 items had already shipped** while the table gave no way to tell. Item 14's cited
+  mechanism (`Refs::default()` resetting per `lower()` call) was corrected: 0.6.0
+  replaced it, and only the cross-scenario half of that caveat still holds.
+
 - **A page for the persona the product is named after.** PRD §4's first persona
   writes prose against a vocabulary somebody else maintains — and every
   document labelled "test authors" taught pack authoring, so that reader had no
@@ -78,9 +90,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **`bind::unbound_step` leads with the action its reader can take.** The help
   opened on "add a macro to a pack" — the pack maintainer's move, which a
   scenario author cannot make — and buried theirs in a parenthetical. It now
-  opens with saying a sentence the packs already bind, and names `proef macros`
-  as the way to find one. The YAML stub is unchanged: it is load-bearing for
-  the maintainer and stays verbatim.
+  opens with matching a sentence the suite's packs already bind. It names no
+  tool: `Diag.help` reaches an editor's diagnostics pane verbatim through the
+  LSP as well as the terminal, and each front end already has its own way to
+  show the vocabulary (completion in the editor, `proef macros` in a shell) —
+  `proef-core` does not know which one is reading. The YAML stub is unchanged:
+  it is load-bearing for the maintainer and stays verbatim.
 
 - **ADR-0014 now records the question it was silent on.** It is specific about a
   failing setup and a failing teardown, so a reader reasonably infers the

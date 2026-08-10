@@ -1,13 +1,26 @@
 # proef — open findings
 
-**Provenance:** an external review of v0.5.3, validated claim-by-claim against the tree
-on **2026-08-06** (40 claims → 38 confirmed, 1 partial, 1 already fixed). Every item
-below was reproduced live or verified in code at that time. The shipped/open split was
-re-checked against `main` on **2026-08-10**.
+**This is the worklist.** Every open defect and gap lives here, whichever review found
+it. Each entry is self-contained: the evidence, the reasoning, and — where something was
+declined — why.
 
-**Companion docs:** [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) is the *feature* roadmap
-(competitive analysis, N-items) — a different list with different numbering. This file
-is the *defect* list. [CHANGELOG](CHANGELOG.md) records what shipped.
+**Companion:** [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) is the *feature* roadmap (own
+numbering, 13 of 16 shipped) and stays separate because five ADRs cite it by section
+number. [CHANGELOG](CHANGELOG.md) records what shipped, per release.
+
+**Provenance.** Three reviews fed this list, each validated claim-by-claim against the
+tree and then retired into it:
+
+| Review | Scope | Contributed |
+|---|---|---|
+| v0.5.3 external (2026-08-06) | 40 claims → 38 confirmed, 1 partial, 1 already fixed | the A/B/P/Q items below |
+| first-run UX (0.5.3, engineer's first 30 min) | F1–F4 | **R1–R2** |
+| non-technical UX (0.8.0, PRD §4 P1 calibration) | N1–N5 | **R3** |
+
+The review documents themselves were removed once their open items landed here; their
+full text, transcripts and citations are in git history (`git log --diff-filter=D
+-- docs/FIRST-RUN-UX-REVIEW.md docs/NON-TECHNICAL-UX-REVIEW.md`). The shipped/open split
+was re-checked against `main` on **2026-08-10**.
 
 **Read the citations as "start reading here", not as addresses.** They were accurate on
 2026-08-06 and files have moved since; locate symbols with `rg`, not line numbers.
@@ -33,11 +46,88 @@ re-reported after it is fixed.
 | Q3 | `report -o` outside the run dir shipped dead relative artifact hrefs | #18 |
 | B8 | `diff` flagged a brand-new retried step as flaky | #18 |
 | A3 | `CLAUDE.md` status stopped at post-M5 | #21 |
+| N1 | First run reported `system error` with no explanation (NON-TECHNICAL) | #24 |
+| N2 | `proef macros` printed identifiers, never the `match:` sentence | #24 |
+| N3 | `macros` refused to list when any step failed to bind | #24 |
+| N4 | `unbound_step`'s help led with the pack maintainer's action | #24 |
+| N5 | No document described the scenario author's workflow | #24 |
+| §8 | `init` announced four files and reported five | #24 |
 
 **Q7 partially addressed** (#16): `fuzz_tag_expr` is now compiled by the gates job and
 its status is documented in [TESTING-STRATEGY](TESTING-STRATEGY.md) — but it is still
 listed in neither fuzz loop (`ci.yml:127`, `nightly.yml:84` both name three targets), so
 nothing fuzzes it. Verified 2026-08-10.
+
+---
+
+## Open — residue of the two UX reviews
+
+Verified against `main` on 2026-08-10. Everything else those reviews raised has shipped
+(first-run: F1, F3, F4a and F2's did-you-mean in 0.6.0 · non-technical: N1–N5 and the
+`init` count in #24).
+
+### R1 — `missing_config_var`'s span points at the sentence, not the pack line
+
+The diagnostic reports at the *feature* step that used the variable, e.g.
+`suite/case.feature:3:5`, rather than the pack line where `${url:bse}` actually appears —
+so the reader goes hunting. The did-you-mean half shipped in 0.6.0; this half did not,
+**deliberately**.
+
+*Why it was deferred, in full — this is the whole reasoning, do not re-derive it:*
+`ResolveError` carries no position, and `resolve()` is documented "pure and total".
+The comparable diagnostic that *does* land on a pack line (`pack::invalid_hurl`) gets
+its position from hurl's own parser reporting a line/column, which feeds
+`locate::payload_line_span(…, rel_line)`; nothing computes a `rel_line` for a resolve
+failure. Supplying one means threading an offset out of a deliberately position-free
+pure function and carrying pack identity to the diagnostic site. That is a design
+change, not a fix — it wants its own spec.
+
+Two sibling extensions were **declined** at the same time: `resolve::missing_env` must
+not suggest from the injected environment snapshot (it would surface unrelated
+environment variable names in diagnostics, against the secret-masking posture), and
+`resolve::unknown_namespace` already enumerates all seven valid namespaces. Sibling
+codes share a *shape*, not a *candidate set*.
+
+### R2 — `doctor` does not report a missing pack schema
+
+Schema-backed completion is the largest authoring aid for YAML, and PRD §4 names "schema
+autocomplete" as a P2 need. `init` installing it automatically shipped in 0.6.0; the
+other half — `doctor` reporting it as *missing* — did not. Reproduced 2026-08-10:
+`proef doctor` checks hurl, the parser, libcurl, the secret key and the secret store,
+and says nothing about editor completion. Small, and it closes the finding.
+
+### R3 — the scaffold default is still the dev fixture's port
+
+`init.rs` writes `base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`, and 8787 is
+proef's own dev fixture port (`xtask fixture`, ADR-0011 amendment) — so to anyone who
+installed a binary and has no fixture, the value *looks* configured and is not. A
+failing run now says the suite is still the untouched scaffold (#24), which covers
+**recovery**; an obvious placeholder such as `https://api.example.com` would cover
+**prevention**. The cost is not the literal but its documentation blast radius:
+`GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2, and the documented dev loop.
+
+### Decided against — do not re-raise
+
+Recorded as decisions, so they are not rediscovered as fresh ideas.
+
+- **Re-classify the unconfigured-scaffold failure from exit 3 to exit 2.** Not a
+  CLI-edge change: the verdict is set in `proef-engine-hurl` (`classify_error`'s
+  `_ => Infra` arm), `Fault::System(String)` carries no kind to match on, and the exit
+  derives in `proef-core` (`RunSummary::exit_code_excluding`). Both routes — string-
+  matching the engine's opaque message, or adding a structured kind to core's public
+  surface — cost more than the value, which is *vocabulary*. The note delivers that, and
+  fires on the exit-1 placeholder-route path a re-classification would have missed.
+- **Degrade `proef flows` the way `macros` degrades.** `flows` promises *every*
+  scenario; a list silently omitting the feature that failed to parse is a wrong answer,
+  not a degraded one. `macros` degrades safely only because pack loading precedes
+  binding and does not depend on it.
+- **Ship `proef-fixture` in the binary so the scaffold's first run passes.** Needs a new
+  ADR (it is dev-only today), enlarges the binary and the security posture of a test
+  runner with a listening server — and R3 plus #24's note remove the need.
+- **A GUI, web UI, or "no-terminal" mode.** PRD §3 forecloses dashboard/server mode. The
+  P1 gap was always about *vocabulary and error text*, never a second interface.
+- **Importing or round-tripping hand-written hurl**, and **anything OpenAPI-shaped as a
+  recurring oracle.** PRD §3 and ADR-0016 permanent non-goals.
 
 ---
 
