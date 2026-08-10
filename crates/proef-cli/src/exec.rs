@@ -242,7 +242,7 @@ pub fn execute(
     // the single pair for the whole run — opened below and closed by an
     // explicit `drop` after teardown, with `Drop` as the backstop for every
     // early return in between (see `RunRecord`).
-    let phase_sink = suppress_run_head_tail(sink.clone());
+    let pool_sink = suppress_run_head_tail(sink.clone());
 
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
@@ -294,7 +294,7 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &phase_sink,
+            &phase_sink("setup", sink.clone()),
             &cancel,
             &artifacts_dir,
         ) {
@@ -366,7 +366,7 @@ pub fn execute(
         secrets,
         http: http_defaults,
     };
-    let summary = runner::run(specs, &engines, &store, &run_config, &phase_sink, &cancel);
+    let summary = runner::run(specs, &engines, &store, &run_config, &pool_sink, &cancel);
     record.add(&summary);
 
     // Suite-level teardown: runs after the pool (setup succeeded, or there was
@@ -398,7 +398,7 @@ pub fn execute(
             &http_defaults,
             &store,
             &engines,
-            &phase_sink,
+            &phase_sink("teardown", sink.clone()),
             &teardown_cancel,
             &artifacts_dir,
         ) {
@@ -660,11 +660,17 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
             map.remove(&(scenario.to_owned(), file.to_owned()));
         };
         match event {
-            Event::ScenarioStarted { scenario, file, .. } => inner.emit(&Event::ScenarioStarted {
+            Event::ScenarioStarted {
+                scenario,
+                file,
+                phase,
+                ..
+            } => inner.emit(&Event::ScenarioStarted {
                 scenario: scenario.clone(),
                 file: file.clone(),
                 timestamp_ms: Some(now_ms()),
                 worker: Some(acquire_slot(scenario, file)),
+                phase: phase.clone(),
             }),
             // `ScenarioFinished` is emitted from the main dispatcher thread, not
             // the worker that ran the scenario, so it carries only the end
@@ -678,6 +684,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                 scenario,
                 file,
                 status,
+                phase,
                 ..
             } => {
                 release_slot(scenario, file);
@@ -687,6 +694,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                     status: *status,
                     timestamp_ms: Some(now_ms()),
                     worker: None,
+                    phase: phase.clone(),
                 });
             }
             other => inner.emit(other),
@@ -698,9 +706,57 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
 /// through. Each phase calls `runner::run`, which brackets its own work with
 /// that pair; a record must carry exactly one pair overall (ADR-0008), so the
 /// phases run against this wrapper and `RunRecord` emits the single pair.
+/// Drop a nested runner's own head/tail: `RunRecord` owns the record's single
+/// `RunStarted`/`RunFinished` pair (ADR-0008), and setup, the pool and teardown
+/// each run their own `runner::run`.
 fn suppress_run_head_tail(inner: EventSink) -> EventSink {
     EventSink::new(move |event| match event {
         Event::RunStarted { .. } | Event::RunFinished { .. } => {}
+        other => inner.emit(other),
+    })
+}
+
+/// The sink a `[run] setup`/`teardown` phase emits through: it drops the
+/// phase's own head/tail (the record owns exactly one pair, ADR-0008) and
+/// **stamps `phase` onto the phase's scenario events**.
+///
+/// Stamping happens here because this is the only place that knows a scenario
+/// is part of a phase. Without it the record cannot tell a teardown scenario
+/// from a suite one except by feature path, so every consumer re-derived phase
+/// membership from `proef.toml` — and `explain`, `--rerun` and `diff` each got
+/// it wrong in a different way. One signal, written once, read everywhere.
+fn phase_sink(label: &str, inner: EventSink) -> EventSink {
+    let label: Arc<str> = Arc::from(label);
+    EventSink::new(move |event| match event {
+        Event::RunStarted { .. } | Event::RunFinished { .. } => {}
+        Event::ScenarioStarted {
+            scenario,
+            file,
+            timestamp_ms,
+            worker,
+            ..
+        } => inner.emit(&Event::ScenarioStarted {
+            scenario: scenario.clone(),
+            file: file.clone(),
+            timestamp_ms: *timestamp_ms,
+            worker: *worker,
+            phase: Some(Arc::clone(&label)),
+        }),
+        Event::ScenarioFinished {
+            scenario,
+            file,
+            status,
+            timestamp_ms,
+            worker,
+            ..
+        } => inner.emit(&Event::ScenarioFinished {
+            scenario: scenario.clone(),
+            file: file.clone(),
+            status: *status,
+            timestamp_ms: *timestamp_ms,
+            worker: *worker,
+            phase: Some(Arc::clone(&label)),
+        }),
         other => inner.emit(other),
     })
 }

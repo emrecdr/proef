@@ -55,7 +55,28 @@ pub fn diff(
     incomplete_banner("base", &base_dir, base_rec.completion);
     incomplete_banner("new", &new_dir, new_rec.completion);
 
-    let report = Report::compute(&base_rec.scenarios, &new_rec.scenarios);
+    // Suite scenarios only. A `[run] setup`/`teardown` failure is a cleanup
+    // fault (`test` exits 3), not a test regression (exit 1) — blending them
+    // made `diff --fail-on-regression` contradict the run it is diffing. They
+    // are still visible in the record and in `explain`, which labels them.
+    let suite_only = |runs: &BTreeMap<Key, ScenarioRun>| -> BTreeMap<Key, ScenarioRun> {
+        runs.iter()
+            .filter(|(_, run)| run.phase.is_none())
+            .map(|(key, run)| (key.clone(), run.clone()))
+            .collect()
+    };
+    let (base_suite, new_suite) = (
+        suite_only(&base_rec.scenarios),
+        suite_only(&new_rec.scenarios),
+    );
+    let phases_skipped = new_rec.scenarios.len() - new_suite.len();
+    if phases_skipped > 0 {
+        crate::render::outln!(
+            "note: {phases_skipped} setup/teardown scenario(s) excluded — a cleanup fault is not a test regression"
+        );
+    }
+
+    let report = Report::compute(&base_suite, &new_suite);
     report.render(&base_dir, &new_dir);
 
     if fail_on_regression {
@@ -313,6 +334,7 @@ mod tests {
             ScenarioRun {
                 status: Status::Passed,
                 steps: step_map,
+                phase: None,
             },
         );
         scenarios

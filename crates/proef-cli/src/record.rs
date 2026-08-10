@@ -54,6 +54,11 @@ pub struct ScenarioRun {
     pub status: Status,
     /// Steps keyed by `(authored text, 0-based occurrence ordinal within the scenario)`.
     pub steps: BTreeMap<(String, usize), StepRun>,
+    /// `[run]` lifecycle phase (`"setup"`/`"teardown"`), `None` for a suite
+    /// scenario. Read straight off the record instead of re-derived from
+    /// `proef.toml`, which is what let `explain`, `--rerun` and `diff` each
+    /// disagree about which scenarios were phases.
+    pub phase: Option<String>,
 }
 
 /// One step's diffable metrics: the `attempts`/`duration_ms` that make a diff a
@@ -104,6 +109,16 @@ pub struct Record {
     /// The tail `RunFinished`'s own totals — `None` exactly when `completion
     /// == RunCompletion::Incomplete` (no tail event to read them from).
     pub totals: Option<RunTotals>,
+    /// The record carries more than one `RunFinished`, so it predates 0.6.0.
+    ///
+    /// Before 0.6.0 each phase emitted its own head/tail pair and the totals
+    /// counted every phase; since 0.6.0 there is exactly one pair and the
+    /// totals are the suite verdict (ADR-0014). The `schema` field cannot tell
+    /// them apart — that change was semantic and never bumped it — but the
+    /// structure can, unambiguously. Read it and say so rather than reporting
+    /// the old numbers under the new meaning: a reader must be able to consume
+    /// a record *or* detect that it cannot, never quietly do neither.
+    pub legacy_multi_pair: bool,
 }
 
 /// Fold already-parsed events into a full run record: the `(file, scenario)
@@ -127,6 +142,7 @@ pub fn parse_record(events: &[Event]) -> Record {
     let mut record: BTreeMap<(String, String), ScenarioRun> = BTreeMap::new();
     let mut completion = RunCompletion::Incomplete;
     let mut totals: Option<RunTotals> = None;
+    let mut legacy_multi_pair = false;
     for event in events {
         match event {
             Event::StepFinished {
@@ -164,6 +180,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                 scenario,
                 file,
                 status,
+                phase,
                 ..
             } => {
                 let key = (file.to_string(), scenario.to_string());
@@ -172,6 +189,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                     key,
                     ScenarioRun {
                         status: *status,
+                        phase: phase.as_ref().map(ToString::to_string),
                         steps,
                     },
                 );
@@ -182,6 +200,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                 skipped,
                 cancelled,
             } => {
+                legacy_multi_pair = totals.is_some();
                 completion = if *cancelled {
                     RunCompletion::Cancelled
                 } else {
@@ -199,6 +218,7 @@ pub fn parse_record(events: &[Event]) -> Record {
     Record {
         scenarios: record,
         completion,
+        legacy_multi_pair,
         totals,
     }
 }
@@ -226,7 +246,11 @@ pub fn failed_scenarios(record_dir: &Path) -> Result<Vec<(String, String)>, Stri
     Ok(read_record(record_dir)?
         .scenarios
         .into_iter()
-        .filter(|(_, run)| run.status == Status::Failed)
+        // Phases are invisible to `--rerun` (ADR-0014), and they are not in the
+        // pool `build_specs` filters, so returning one produced a run that
+        // matched nothing and blamed `--tags`/`--scenario` the user never
+        // passed. A phase re-runs by re-running the suite.
+        .filter(|(_, run)| run.status == Status::Failed && run.phase.is_none())
         .map(|(key, _)| key)
         .collect())
 }
@@ -278,6 +302,7 @@ mod tests {
             status,
             timestamp_ms: None,
             worker: None,
+            phase: None,
         }
     }
 
@@ -342,6 +367,41 @@ mod tests {
         assert!(
             b.steps.contains_key(&("GET /x".to_string(), 0)),
             "b.feature single-occurrence step must be ord 0, not contaminated by a.feature"
+        );
+    }
+
+    /// A pre-0.6.0 record carries one `run_finished` per phase. Its totals
+    /// counted every phase, not the suite, so reading them under today's
+    /// meaning reports the wrong verdict with full confidence. The structure
+    /// says so unambiguously even though `schema` does not — that change was
+    /// semantic and never bumped it.
+    #[test]
+    fn a_multi_pair_record_is_detected_as_predating_0_6_0() {
+        let one_pair = parse_record(&[Event::RunFinished {
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: false,
+        }]);
+        assert!(!one_pair.legacy_multi_pair);
+
+        let legacy = parse_record(&[
+            Event::RunFinished {
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+                cancelled: false,
+            },
+            Event::RunFinished {
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+                cancelled: false,
+            },
+        ]);
+        assert!(
+            legacy.legacy_multi_pair,
+            "more than one run_finished means the record predates 0.6.0"
         );
     }
 }

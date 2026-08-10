@@ -328,6 +328,7 @@ pub fn run(
                         status: Status::Skipped,
                         timestamp_ms: None,
                         worker: None,
+                        phase: None,
                     },
                     &spec.file,
                     &spec.name,
@@ -388,6 +389,7 @@ pub fn run(
                             status: outcome.status,
                             timestamp_ms: None,
                             worker: None,
+                            phase: None,
                         },
                         &outcome.file,
                         &outcome.name,
@@ -481,6 +483,7 @@ fn sweep_expired(
                 status: Status::Failed,
                 timestamp_ms: None,
                 worker: None,
+                phase: None,
             },
             &outcome.file,
             &outcome.name,
@@ -574,6 +577,7 @@ fn run_scenario(
         file: Arc::clone(&spec.file),
         timestamp_ms: None,
         worker: None,
+        phase: None,
     });
 
     // Prepare against a snapshot of the shared globals (lower-time reads).

@@ -1576,6 +1576,7 @@ fn diff_scenario_finished() -> proef_core::event::Event {
         status: proef_core::step::Status::Passed,
         timestamp_ms: None,
         worker: None,
+        phase: None,
     }
 }
 
@@ -2044,6 +2045,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             file: Arc::from("case.feature"),
             timestamp_ms: None,
             worker: None,
+            phase: None,
         },
         Event::StepFinished {
             scenario: Arc::from("second"),
@@ -2378,4 +2380,78 @@ fn teardown_runs_after_the_pool_is_interrupted() {
         errors.contains("cleaning up"),
         "the operator must be told cleanup is running:\n{errors}"
     );
+}
+
+/// A mixed suite+phase failure must label the phase block. The label was
+/// derived from the whole report (`failed == 0`), so it appeared only while
+/// *every* failure was a phase failure — and vanished the moment a suite
+/// failure joined one, leaving `1 failed` above two indistinguishable blocks.
+/// The record now carries `phase` per scenario and the label is per block.
+#[test]
+fn explain_labels_the_phase_block_even_beside_a_suite_failure() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: S\n  Scenario: suite fails\n    When the suite expects a teapot\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("teardown.feature"),
+        "Feature: T\n  Scenario: cleanup fails\n    When teardown expects a teapot\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteTeapot:\n    match: the suite expects a teapot\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 418\n  \
+         teardownTeapot:\n    match: teardown expects a teapot\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 418\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3); // teardown's cleanup fault outranks the suite's test failure
+    let assert = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    assert!(stdout.contains("failed: suite fails"), "{stdout}");
+    assert!(
+        stdout.contains("failed (teardown — excluded from the totals above): cleanup fails"),
+        "the phase block must stay labelled beside a suite failure:\n{stdout}"
+    );
+}
+
+/// `--rerun` after a phase-only failure has nothing to rerun. Phases are
+/// invisible to `--rerun` (ADR-0014) and are not in the pool `build_specs`
+/// filters, so returning one produced a run that matched nothing and blamed
+/// `--tags`/`--scenario` — flags the operator never passed.
+#[test]
+fn rerun_after_a_phase_only_failure_says_there_is_nothing_to_rerun() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    write_teardown_only_suite(cwd.path());
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(3); // a cleanup fault, not a test failure
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(0)
+        .stdout(predicate::str::contains("nothing to rerun"))
+        .stderr(predicate::str::contains("no scenarios matched the filters").not());
 }

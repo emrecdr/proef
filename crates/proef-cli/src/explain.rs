@@ -40,21 +40,26 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     // gate, and the exit code. A *truncated* record has no `RunFinished` to
     // read (`rec.totals` is `None`), so fall back to counting the scenarios
     // the record actually holds — the only totals a dead run can offer.
-    let (passed, failed, skipped) = if let Some(totals) = rec.totals {
-        (totals.passed, totals.failed, totals.skipped)
-    } else {
-        let count = |want: Status| {
-            rec.scenarios
-                .values()
-                .filter(|run| run.status == want)
-                .count()
+    // A pre-0.6.0 record's `run_finished` totals counted every phase, not the
+    // suite — so reading them under today's meaning reports the wrong verdict
+    // with full confidence. Fall back to counting the scenarios present, the
+    // same path a truncated record already takes.
+    let (passed, failed, skipped) =
+        if let Some(totals) = rec.totals.filter(|_| !rec.legacy_multi_pair) {
+            (totals.passed, totals.failed, totals.skipped)
+        } else {
+            let count = |want: Status| {
+                rec.scenarios
+                    .values()
+                    .filter(|run| run.status == want)
+                    .count()
+            };
+            (
+                count(Status::Passed),
+                count(Status::Failed),
+                count(Status::Skipped),
+            )
         };
-        (
-            count(Status::Passed),
-            count(Status::Failed),
-            count(Status::Skipped),
-        )
-    };
     // Step/attempt totals are unrelated to the suite-only scenario counts
     // above — they count every step in the stream, `[run] setup`/`teardown`
     // included, straight from the raw events rather than `rec.scenarios`: a
@@ -95,6 +100,12 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
     // nothing broke — it means nothing in the *suite* broke (ADR-0014). A
     // post-mortem tool that goes silent on a phase failure is the exact bug
     // this branch exists to eliminate.
+    if rec.legacy_multi_pair {
+        crate::render::errln!(
+            "warning: this record predates 0.6.0 — it carries one `run_finished` per phase, and\n                      those totals counted every phase rather than the suite alone. The counts below are\n                      recomputed from the scenarios present; phase labelling is not available for it."
+        );
+    }
+
     if rec
         .scenarios
         .values()
@@ -104,18 +115,18 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         // record's `StepRun` (attempts/duration only), so it comes from the
         // same raw events already in hand.
         let failures = failure_detail(&events);
-        // Whenever the headline itself reads `0 failed`, every failure listed
-        // below is necessarily one the headline excludes on purpose — a
-        // setup/teardown fault, never a suite failure the headline forgot
-        // (a counted suite failure would have made `failed` nonzero). Label
-        // it so the two lines read as consistent, not contradictory.
-        let label = if failed == 0 {
-            "failed (setup/teardown — excluded from the totals above)"
-        } else {
-            "failed"
-        };
+        // Labelled per block, from the record's own `phase` field — not per
+        // report. Deriving it from `failed == 0` was right only while *every*
+        // failure was a phase failure; the moment a suite failure joined one,
+        // both labels vanished and the reader saw `1 failed` above two
+        // indistinguishable blocks. The disambiguation disappeared exactly
+        // where it was needed.
         for (key, run) in &rec.scenarios {
             if run.status == Status::Failed {
+                let label = match run.phase.as_deref() {
+                    Some(phase) => format!("failed ({phase} — excluded from the totals above)"),
+                    None => "failed".to_owned(),
+                };
                 crate::render::outln!("\n{label}: {}", key.1);
                 for line in failures.get(key).into_iter().flatten() {
                     crate::render::outln!("{line}");

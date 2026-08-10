@@ -43,6 +43,17 @@ pub enum Event {
         /// 0-based worker index this scenario ran on — injected at the sink.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         worker: Option<u64>,
+        /// The `[run]` lifecycle phase this scenario belongs to (`"setup"` /
+        /// `"teardown"`), absent for an ordinary suite scenario.
+        ///
+        /// Without it a phase scenario is indistinguishable from a suite one
+        /// except by feature path, so every consumer had to re-derive phase
+        /// membership from `proef.toml` — and `explain`, `--rerun` and `diff`
+        /// each got it wrong in a different way. The record says so itself now.
+        /// Additive and optional (ADR-0008): records that predate the field
+        /// read as "no phase", which is what they were.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<Arc<str>>,
     },
     /// A batch of contiguous same-engine steps was dispatched.
     BatchStarted {
@@ -113,6 +124,17 @@ pub enum Event {
         /// 0-based worker index this scenario ran on — injected at the sink.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         worker: Option<u64>,
+        /// The `[run]` lifecycle phase this scenario belongs to (`"setup"` /
+        /// `"teardown"`), absent for an ordinary suite scenario.
+        ///
+        /// Without it a phase scenario is indistinguishable from a suite one
+        /// except by feature path, so every consumer had to re-derive phase
+        /// membership from `proef.toml` — and `explain`, `--rerun` and `diff`
+        /// each got it wrong in a different way. The record says so itself now.
+        /// Additive and optional (ADR-0008): records that predate the field
+        /// read as "no phase", which is what they were.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<Arc<str>>,
     },
     /// The run finished. Tail of every stream.
     RunFinished {
