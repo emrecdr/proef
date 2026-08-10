@@ -19,6 +19,15 @@ use std::path::{Path, PathBuf};
 
 use proef_core::error::ExitCode;
 
+/// The `[url] base` value the scaffold writes, verbatim.
+///
+/// Exported so the run can recognise a config nobody has edited yet and say so
+/// (`exec::note_untouched_scaffold`) instead of leaving a first-time reader with
+/// a bare connection error. `scaffold_base_matches_the_config_template` keeps
+/// this and [`CONFIG`] from drifting apart — `concat!` cannot build one from the
+/// other, so a test carries the invariant.
+pub(crate) const SCAFFOLD_BASE: &str = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}";
+
 const CONFIG: &str = r#"# proef.toml — project configuration.
 # Variables live here, never in .feature files: packs read them as ${url:…} / ${vars:…}.
 [run]
@@ -111,6 +120,16 @@ pub fn init(dir: &Path) -> ExitCode {
             return schema_exit;
         }
         created += 1;
+    } else if crate::fsutil::parent_dir(&pack_path)
+        .join("proef-pack.schema.json")
+        .exists()
+    {
+        // Naming the install command when the schema is already installed sends
+        // the reader to do work that is already done.
+        crate::render::outln!(
+            "  {} already exists — editor completion is already installed beside it",
+            pack_path.display()
+        );
     } else {
         crate::render::outln!(
             "  {} already exists — run `proef schema --add-to {}` to install editor completion",
@@ -139,4 +158,22 @@ pub fn init(dir: &Path) -> ExitCode {
         "next: {next_test}  (then point ${{url:base}} at your API — the scaffold's routes are placeholders)"
     );
     ExitCode::Success
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CONFIG, SCAFFOLD_BASE};
+
+    /// The sentinel and the template it describes are two literals; nothing in
+    /// the type system keeps them equal. If the scaffold's `base` changes and
+    /// this constant does not, the "still the scaffold" note silently stops
+    /// firing — the failure mode is a message that never appears, which no
+    /// other test would notice.
+    #[test]
+    fn scaffold_base_matches_the_config_template() {
+        assert!(
+            CONFIG.contains(&format!("base = \"{SCAFFOLD_BASE}\"")),
+            "SCAFFOLD_BASE drifted from CONFIG's `[url] base` line:\n{CONFIG}"
+        );
+    }
 }

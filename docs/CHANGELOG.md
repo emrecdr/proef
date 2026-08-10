@@ -6,7 +6,54 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`proef macros` prints the sentence, not just the identifier.** A test author
+  writes prose that binds to a vocabulary somebody else maintains — and the one
+  command that lists that vocabulary showed `health` where the author needs
+  `the service is healthy`. The `match:` pattern was already loaded and already
+  linted; both renderers discarded it on the way out. It now appears in the text
+  listing, and `--output json`'s `pattern` field carries the string itself
+  (`null` when a macro is `use:`-only) instead of a bare boolean.
+
+### Added
+
+- **`proef macros` answers when the suite does not bind.** Listing the
+  vocabulary previously required every scenario to bind — so the command
+  refused in exactly the situation that sends an author looking for it: a step
+  that matched no macro. It now prints the diagnostics, then the vocabulary the
+  packs offer, and keeps its exit code unchanged (2), so scripts see no
+  difference. Pack loading precedes binding and does not depend on it, so the
+  listed vocabulary is complete. **Every count-derived verdict is withheld in
+  that mode** — `calls`/`unused` render as `—`/`null` rather than `0`/`false`,
+  because a feature that failed to bind contributes no calls and would
+  otherwise make its own macros look dead. `proef flows` deliberately still
+  refuses: its contract is to list *every* scenario, and a partial list that
+  silently omits the unparsed feature is the wrong answer, not a degraded one.
+
+- **A failed run says when the suite is still the untouched scaffold.** A
+  freshly scaffolded project cannot pass — its target and its routes are both
+  placeholders — and `init` says so once, two commands earlier, in a
+  parenthetical the failure never referred back to. The run now names the
+  situation and the remedy. It fires only on the conjunction (`[url] base`
+  still byte-identical to what `init` wrote **and** no `PROEF_BASE_URL`): an
+  operator who set the override *did* name a target, so their failure is about
+  their API and is not second-guessed. Exit codes are untouched — whether an
+  unreachable target is a user or a system fault is a taxonomy question decided
+  in the engine (ADR-0009), and the reader's actual problem is vocabulary.
+
 ### Fixed
+
+- **`proef schema --add-to` and `proef init` now announce the schema file they
+  write.** Both wrote `proef-pack.schema.json` silently, so `init` listed four
+  files and then reported "created 5 file(s)" — the first output a new user
+  reads, not reconciling, with the unannounced file being the one that powers
+  editor completion.
+
+- **`proef init` no longer sends you to install editor completion that is
+  already installed.** A re-run named `proef schema --add-to` unconditionally,
+  even with the schema sitting beside the pack. It now says which of the two
+  situations you are in.
 
 - **The nextest harness no longer reports green having listed no tests.** A
   `PROEF_HARNESS_SUITE` set to bytes that are not valid UTF-8 read as *unset*,
@@ -18,6 +65,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   states the invariant this violated: never run zero tests green.
 
 ### Documentation
+
+- **A page for the persona the product is named after.** PRD §4's first persona
+  writes prose against a vocabulary somebody else maintains — and every
+  document labelled "test authors" taught pack authoring, so that reader had no
+  route through the tool. `docs/WRITING-SCENARIOS.md` covers only their loop:
+  what a sentence is, how to list the ones available, the dry-run cycle, and
+  the two diagnostics they will actually hit. The index now labels each
+  author-facing page with the persona it serves instead of calling six P2
+  documents "test authors".
+
+- **`bind::unbound_step` leads with the action its reader can take.** The help
+  opened on "add a macro to a pack" — the pack maintainer's move, which a
+  scenario author cannot make — and buried theirs in a parenthetical. It now
+  opens with saying a sentence the packs already bind, and names `proef macros`
+  as the way to find one. The YAML stub is unchanged: it is load-bearing for
+  the maintainer and stays verbatim.
 
 - **ADR-0014 now records the question it was silent on.** It is specific about a
   failing setup and a failing teardown, so a reader reasonably infers the

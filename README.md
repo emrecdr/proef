@@ -178,8 +178,10 @@ proef test suite --dry-run
 proef test suite --jobs 4
 ```
 
-Ten-minute walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) ·
-full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
+Writing scenarios against a vocabulary somebody else maintains:
+[`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md) · ten-minute
+walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) · full
+authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 ## CLI
 
@@ -188,7 +190,7 @@ full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef init [dir]` | scaffold a minimal working suite — `proef.toml`, one feature, one pack, schema wired up; never overwrites an existing file |
 | `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
-| `proef macros [path]` | list every macro with its call count, flagging pattern macros no scenario binds (`--env`, `--output json`) |
+| `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--output json`) |
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
@@ -244,7 +246,8 @@ cargo run -p xtask -- fixture   # local fixture API server on :8787
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 
-Author-facing guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md),
+Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
+(scenario authors), [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md),
 [`docs/AUTHORING.md`](docs/AUTHORING.md),
 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md),
 [`docs/CONFIG.md`](docs/CONFIG.md),

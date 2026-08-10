@@ -144,6 +144,90 @@ fn macros_flags_unused_pattern_macros_and_labels_helpers() {
         "{stdout}"
     );
     assert!(stdout.contains("1 unused"), "{stdout}");
+    // The prose is the product: an author writes sentences, not identifiers.
+    assert!(stdout.contains("the thing is done"), "{stdout}");
+}
+
+/// `proef macros` when a step does not bind: the vocabulary still lists, so the
+/// command answers "what may I say?" in the one state that raises the question.
+/// Every count-derived verdict is withheld — a macro whose only caller is the
+/// feature that failed to bind must not be reported UNUSED.
+#[test]
+fn macros_degrades_to_a_vocabulary_listing_when_a_step_does_not_bind() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    // The only caller of `boundMacro` is this feature, and it does not bind.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When the thing is done\n    Then nothing matches this\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  boundMacro:\n    match: the thing is done\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/x\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite"])
+        .assert()
+        .code(2); // the exit contract is unchanged — only the output degrades
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("boundMacro"), "{stdout}");
+    assert!(stdout.contains("the thing is done"), "{stdout}");
+    // The wrong answer this path could produce, and must not.
+    assert!(!stdout.contains("UNUSED"), "{stdout}");
+    assert!(!stdout.contains("unused"), "{stdout}");
+}
+
+/// The degraded JSON withholds counts as `null` — absent knowledge, never a
+/// measured `0`/`false` a CI hygiene gate would act on.
+#[test]
+fn macros_json_reports_null_counts_when_the_suite_does_not_bind() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"http://x\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: S\n    When nothing matches this\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  someMacro:\n    match: the thing is done\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/x\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .args(["macros", "suite", "--output", "json"])
+        .assert()
+        .code(2);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let row = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|row| row["name"] == "someMacro")
+        .expect("someMacro is listed");
+    assert_eq!(row["pattern"], "the thing is done", "{stdout}");
+    assert!(row["calls"].is_null(), "{stdout}");
+    assert!(row["unused"].is_null(), "{stdout}");
 }
 
 /// `proef macros`: two pattern macros that differ only in their capture name
