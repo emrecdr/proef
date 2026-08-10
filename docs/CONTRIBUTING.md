@@ -30,6 +30,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
 cargo deny check
 cargo run -p xtask -- docs-check      # indexes ↔ reality
 cargo run -p xtask -- public-api      # proef-core API surface (nightly rustdoc)
+cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked   # fuzz/ is its own workspace
+cargo machete                         # unused dependencies
 ```
 
 `just` carries aliases for the common ones. CI additionally runs

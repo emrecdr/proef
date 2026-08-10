@@ -11,6 +11,20 @@ always `run_started` and declares `schema` (currently `1`); the last is
 optional fields may appear, existing fields never change meaning or vanish.
 Consumers must ignore unknown variants and unknown fields.
 
+**Truncated records.** A record whose last line is *not* `run_finished` is a
+run that did not finish — a hard interrupt (second Ctrl-C, exit 130), a kill,
+or a crash. Treat it as **partial**: the scenarios present did happen, but the
+totals were never written and no verdict was reached. `explain`, `report` and
+`diff` classify these and say "run incomplete" rather than reporting a total
+they cannot know. Consumers should do the same rather than inferring zero.
+
+**One exception to "fields never change meaning", recorded rather than hidden.**
+`run_finished`'s `passed`/`failed`/`skipped` counted *every* phase before
+0.6.0; from 0.6.0 they are the **main-suite verdict** and exclude
+`[run] setup`/`teardown` (ADR-0014), so those totals agree with the exit code
+and every report. A pre-0.6.0 record read by a current consumer reports the
+older meaning.
+
 ## Variants
 
 **`run_started`** — head of every stream.

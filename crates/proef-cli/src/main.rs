@@ -412,7 +412,7 @@ fn main() -> std::process::ExitCode {
                 commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
             }
         },
-        Command::Schema { add_to } => commands::schema(&add_to),
+        Command::Schema { add_to } => commands::schema(&add_to, true),
         Command::Init { dir } => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
         Command::Doctor => {
             // Lenient, like `proef lsp`: `doctor` reports on the environment and
@@ -444,39 +444,31 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Command::Explain { run_id } => {
-            // Same loud failure as `test` (exec.rs): a malformed proef.toml
-            // silently defaulting `runs-dir` would misdiagnose "no runs".
-            match config::ProjectConfig::load() {
-                Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
-                Err(message) => {
-                    crate::render::errln!("error: {message}");
-                    proef_core::error::ExitCode::UserError
-                }
-            }
-        }
+        // The three record-reading commands all go through `load_config`,
+        // which owns the one spelling of "a malformed proef.toml is a user
+        // error" — they each carried their own copy of that rendering. Loud,
+        // not lenient: a config that silently defaulted `runs-dir` would
+        // misdiagnose "no runs" (same reasoning as `test`, exec.rs).
+        Command::Explain { run_id } => match load_config() {
+            Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
+            Err(code) => code,
+        },
         Command::Diff {
             base,
             new,
             fail_on_regression,
-        } => match config::ProjectConfig::load() {
+        } => match load_config() {
             Ok(config) => diff::diff(
                 config.runs_dir(),
                 base.as_deref(),
                 new.as_deref(),
                 fail_on_regression,
             ),
-            Err(message) => {
-                crate::render::errln!("error: {message}");
-                proef_core::error::ExitCode::UserError
-            }
+            Err(code) => code,
         },
-        Command::Report { run_id, output } => match config::ProjectConfig::load() {
+        Command::Report { run_id, output } => match load_config() {
             Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
-            Err(message) => {
-                crate::render::errln!("error: {message}");
-                proef_core::error::ExitCode::UserError
-            }
+            Err(code) => code,
         },
         Command::Fmt { path, check } => fmt::fmt(&path, check),
         Command::Lsp => lsp::run(),

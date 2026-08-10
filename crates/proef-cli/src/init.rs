@@ -112,14 +112,21 @@ pub fn init(dir: &Path) -> ExitCode {
     // guarantee above.
     if pack_created {
         // The same install path `proef schema --add-to` runs — one implementation
-        // of "write the schema and the modeline", not two. It always writes the
-        // schema JSON file alongside the pack, so that's one more file created
-        // than the loop above counted.
-        let schema_exit = crate::commands::schema(std::slice::from_ref(&pack_path));
+        // of "write the schema and the modeline", not two — but in preserving
+        // mode: `init` never overwrites, and the schema is a file a user may
+        // legitimately have hand-written. It is NOT in the `files` array above,
+        // so the never-overwrite loop never saw it; the guard has to be here.
+        let schema_path = crate::fsutil::parent_dir(&pack_path).join(crate::commands::SCHEMA_FILE);
+        let schema_existed = schema_path.exists();
+        let schema_exit = crate::commands::schema(std::slice::from_ref(&pack_path), false);
         if schema_exit != ExitCode::Success {
             return schema_exit;
         }
-        created += 1;
+        if schema_existed {
+            skipped += 1;
+        } else {
+            created += 1;
+        }
     } else if crate::fsutil::parent_dir(&pack_path)
         .join(crate::commands::SCHEMA_FILE)
         .exists()
