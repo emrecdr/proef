@@ -34,7 +34,14 @@ fn init_announces_every_file_it_counts() {
     let tmp = tempfile::tempdir().unwrap();
     let assert = proef(tmp.path()).arg("init").assert().code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    let announced = stdout.lines().filter(|l| l.contains("created ./")).count();
+    // Match the indented per-file marker, never a path fragment: Windows
+    // renders these as `.\proef.toml`, so a separator-bearing needle counts
+    // zero there and the assertion passes vacuously. The two-space indent is
+    // what distinguishes a per-file line from the flush-left summary.
+    let announced = stdout
+        .lines()
+        .filter(|l| l.starts_with("  created "))
+        .count();
     assert!(
         stdout.contains(&format!("created {announced} file(s)")),
         "announced {announced} file(s) but the count line disagrees:\n{stdout}"
