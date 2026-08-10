@@ -19,6 +19,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **The open-findings list is now in the repo, not on one machine.** A v0.5.3
+  review was validated claim-by-claim (40 claims, 38 confirmed) and the record
+  lived only in a gitignored scratch directory, so ~26 still-open defects — the
+  Ctrl-C teardown gap, LSP rooting, `--sarif` line numbers, several docs drifts
+  — existed nowhere durable. `docs/OPEN-FINDINGS.md` carries them, plus what
+  shipped against them, so a fixed finding is not re-reported and an open one is
+  not lost.
+
 - **`proef init` is now in the command tables it was missing from.** It shipped
   in 0.6.0 and was documented in `GETTING-STARTED.md` and in the README's prose,
   but not in the README's CLI table or `TECH-SPEC.md`'s command surface — so the
