@@ -52,6 +52,8 @@ re-reported after it is fixed.
 | N4 | `unbound_step`'s help led with the pack maintainer's action | #24 |
 | N5 | No document described the scenario author's workflow | #24 |
 | §8 | `init` announced four files and reported five | #24 |
+| Q5 | Ctrl-C skipped teardown silently — cleanup never ran, nothing said so | #26 |
+| Q4 | `--dry-run` validated neither `[run] setup` nor `[run] teardown` | #26 |
 
 **Q7 partially addressed** (#16): `fuzz_tag_expr` is now compiled by the gates job and
 its status is documented in [TESTING-STRATEGY](TESTING-STRATEGY.md) — but it is still
@@ -133,25 +135,7 @@ Recorded as decisions, so they are not rediscovered as fresh ideas.
 
 ## Open — correctness
 
-Two of these are the remaining Tier 1 branches. They are the highest-value work left.
-
-### Q5 — Ctrl-C skips teardown silently *(blocked: needs an ADR-0014 decision)*
-
-On SIGINT the teardown phase runs with the **already-cancelled** token, so every teardown
-scenario resolves `Skipped`, and `phase_failed` ignores that — the operator gets **zero
-message** and cleanup never ran. Live SIGINT repro.
-
-This is a policy question before it is a code change: ADR-0014 says cleanup is reliable.
-Either teardown gets a fresh child token so cleanup happens on cancel, or it stays
-skipped-but-announced. **The ADR needs amending either way** — it is silent on
-cancellation, so today's behaviour is unspecified rather than wrong-by-the-spec.
-
-### Q4 — `--dry-run` validates neither phase
-
-`--dry-run` validates neither `[run] setup` nor `[run] teardown`, contradicting ADR-0014
-verbatim ("validated like any other feature but never executed"). Worse asymmetry: a bad
-*teardown* path runs the whole suite first and then exits 3, where a bad *setup* path
-fails in 0.03s. Live, both halves. Pairs naturally with Q5 as one branch.
+Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26.
 
 ### Q2 — LSP roots at process cwd *(Tier 1, unspecced)*
 

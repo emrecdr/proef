@@ -100,6 +100,32 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>]) -> ExitCode {
     }
 }
 
+/// Validate `[run] setup` / `[run] teardown` and return how many scenarios they
+/// hold, for `--dry-run`.
+///
+/// ADR-0014 promises the phase features are "validated like any other feature
+/// but never executed" under `--dry-run`. Nothing validated them: `--dry-run`
+/// never read the keys at all, so a broken `[run] teardown` surfaced only after
+/// a full suite had executed. Counted apart from the suite so the suite's own
+/// totals keep meaning what they say.
+fn validate_phase_features(
+    config: &ProjectConfig,
+    config_vars: &Arc<BTreeMap<String, String>>,
+) -> Result<usize, ExitCode> {
+    let mut scenarios = 0usize;
+    for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
+        let Some(path) = path else { continue };
+        let front = crate::exec::load_phase_feature(label, Path::new(path), None, config_vars)?;
+        render::print_all(&front.warnings);
+        scenarios += front
+            .features
+            .iter()
+            .map(|feature| feature.scenarios.len())
+            .sum::<usize>();
+    }
+    Ok(scenarios)
+}
+
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
@@ -128,7 +154,7 @@ pub fn dry_run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
-        config_vars,
+        Arc::clone(&config_vars),
     );
 
     // SARIF export (shift-left gate): serialize the validation findings —
@@ -194,13 +220,19 @@ pub fn dry_run(
     if (tags.is_some() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
         return front::no_scenarios_matched();
     }
+
+    let phase_note = match validate_phase_features(config, &config_vars) {
+        Ok(0) => String::new(),
+        Ok(n) => format!(" · {n} setup/teardown scenario(s) validated"),
+        Err(code) => return code,
+    };
     let selected_note = if tags.is_none() && scenario.is_none() && scenario_file.is_none() {
         String::new()
     } else {
         format!(" ({} selected by the filters)", totals.1)
     };
     crate::render::outln!(
-        "\ndry-run OK: {} feature(s), {} scenario(s){selected_note}, {} step(s), {} batch(es), {} artifact(s) parse-validated, {} warning(s)",
+        "\ndry-run OK: {} feature(s), {} scenario(s){selected_note}, {} step(s), {} batch(es), {} artifact(s) parse-validated, {} warning(s){phase_note}",
         front.features.len(),
         totals.0,
         totals.2,

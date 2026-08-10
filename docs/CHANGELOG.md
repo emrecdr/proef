@@ -6,6 +6,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Ctrl-C no longer skips cleanup in silence.** Teardown shared the run's
+  cancellation token, so an interrupt left every teardown scenario `Skipped` —
+  and because a skipped phase carries no fault, the worst-wins fold passed it
+  without a word. Whatever setup created stayed created and nothing said so,
+  against this ADR's own premise that suite cleanup is reliable. Teardown now
+  runs on its **own, independent** token (not `child_token()`, which cancels
+  with its parent and would have re-implemented the bug): the pool stops at its
+  batch boundary, the operator is told cleanup is running, and it completes. A
+  second Ctrl-C still hard-exits (130) — the escape hatch ADR-0007 relies on —
+  and the announcement says so. Amends ADR-0014.
+
+- **A phase that only *skipped* is now a failure, not a pass.** That silence was
+  the shape that hid cancelled cleanup. A setup completing no scenario aborts
+  the run rather than letting the suite execute against state setup never
+  created — which is also what keeps teardown gated on setup-success, since the
+  abort is the gate; a teardown completing no scenario is reported and fails.
+
+- **`--dry-run` validates `[run] setup` and `[run] teardown`** — which ADR-0014
+  always claimed ("validated like any other feature but never executed") and
+  nothing did: `--dry-run` never read the keys. A broken teardown therefore
+  surfaced only after a full suite had run — real requests, a run directory,
+  artifacts — while the identical mistake in `setup` failed in milliseconds.
+  Both are now validated by one loader shared with `proef test`, which also
+  pre-flights teardown **before** the pool. A bad phase path is a user error
+  (exit 2) rather than a blanket system fault (exit 3), and creates no run
+  record.
+
 ### Changed
 
 - **`proef macros` prints the sentence, not just the identifier.** A test author
