@@ -61,6 +61,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **A page for the persona the product is named after.** PRD §4's first persona
+  writes prose against a vocabulary somebody else maintains — and every
+  document labelled "test authors" taught pack authoring, so that reader had no
+  route through the tool. `docs/WRITING-SCENARIOS.md` covers only their loop:
+  what a sentence is, how to list the ones available, the dry-run cycle, and
+  the two diagnostics they will actually hit. The index now labels each
+  author-facing page with the persona it serves instead of calling six P2
+  documents "test authors".
+
+- **`bind::unbound_step` leads with the action its reader can take.** The help
+  opened on "add a macro to a pack" — the pack maintainer's move, which a
+  scenario author cannot make — and buried theirs in a parenthetical. It now
+  opens with saying a sentence the packs already bind, and names `proef macros`
+  as the way to find one. The YAML stub is unchanged: it is load-bearing for
+  the maintainer and stays verbatim.
+
 - **ADR-0014 now records the question it was silent on.** It is specific about a
   failing setup and a failing teardown, so a reader reasonably infers the
   *cancellation* case was considered — it was not. What teardown does on Ctrl-C

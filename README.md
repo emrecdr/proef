@@ -178,8 +178,10 @@ proef test suite --dry-run
 proef test suite --jobs 4
 ```
 
-Ten-minute walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) ·
-full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
+Writing scenarios against a vocabulary somebody else maintains:
+[`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md) · ten-minute
+walkthrough: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md) · full
+authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 ## CLI
 
@@ -244,7 +246,8 @@ cargo run -p xtask -- fixture   # local fixture API server on :8787
 cargo run -p xtask -- canary    # build+test against the next hurl release
 ```
 
-Author-facing guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md),
+Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
+(scenario authors), [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md),
 [`docs/AUTHORING.md`](docs/AUTHORING.md),
 [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md),
 [`docs/CONFIG.md`](docs/CONFIG.md),

@@ -16,12 +16,13 @@ repo-root `CLAUDE.md` carry the live status.
 
 | # | Document | What it answers | Audience |
 |---|---|---|---|
-| 0 | [GETTING-STARTED.md](GETTING-STARTED.md) | Your first suite in ten minutes | test authors |
-| 0 | [AUTHORING.md](AUTHORING.md) | The pack/feature reference from the author's seat | test authors |
-| 0 | [EDITORS.md](EDITORS.md) | Wiring `proef lsp` into Neovim/Helix/Emacs for live diagnostics, jump-to-macro, completion | test authors |
-| 0 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Exit codes, glyphs, frequent failures, digging into runs | test authors |
-| 0 | [CONFIG.md](CONFIG.md) | Every `proef.toml` key with defaults | test authors |
-| 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | test authors |
+| 0 | [WRITING-SCENARIOS.md](WRITING-SCENARIOS.md) | Write prose against a vocabulary somebody else maintains: see the sentences, the dry-run loop, the two errors you will hit | **P1** test authors |
+| 0 | [GETTING-STARTED.md](GETTING-STARTED.md) | Your first suite in ten minutes — including the packs behind it | P2 pack maintainers |
+| 0 | [AUTHORING.md](AUTHORING.md) | The pack/feature reference from the author's seat | P2 pack maintainers |
+| 0 | [EDITORS.md](EDITORS.md) | Wiring `proef lsp` into Neovim/Helix/Emacs for live diagnostics, jump-to-macro, completion | P1/P2, whoever sets up the editor |
+| 0 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Exit codes, glyphs, frequent failures, digging into runs | everyone |
+| 0 | [CONFIG.md](CONFIG.md) | Every `proef.toml` key with defaults | P2 pack maintainers |
+| 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | P2 pack maintainers |
 | 0 | [EVENTS.md](EVENTS.md) | The `events.jsonl` wire schema for CI consumers | CI engineers |
 | 1 | [PRD.md](PRD.md) | What are we building, for whom, and how do we know it works? | everyone |
 | 2 | [adr/](adr/) — ADR-0001 onward | Why is it built this way? Each decision, alternatives, consequences | engineers |
@@ -31,6 +32,7 @@ repo-root `CLAUDE.md` carry the live status.
 | — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: architecture-validated candidate improvements (proposed, not committed) | maintainers |
 | — | [OPEN-FINDINGS.md](OPEN-FINDINGS.md) | Validated defects still open, and what shipped against them — the defect list to IMPROVEMENT-PLAN's feature list | maintainers |
 | — | [FIRST-RUN-UX-REVIEW.md](FIRST-RUN-UX-REVIEW.md) | External first-use review of 0.5.3 with maintainer validation notes: what the first thirty minutes cost, and which findings were acted on | maintainers |
+| — | [NON-TECHNICAL-UX-REVIEW.md](NON-TECHNICAL-UX-REVIEW.md) | Persona-calibration review of 0.8.0: does the shipped surface serve PRD §4's **P1** (test author, not necessarily a programmer)? | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
 | — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |

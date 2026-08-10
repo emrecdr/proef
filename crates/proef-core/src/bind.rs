@@ -255,8 +255,15 @@ fn macro_stub(step_text: &str) -> String {
             pattern.push(c);
         }
     }
+    // Two readers, two different actions. A scenario author writes prose
+    // against a vocabulary somebody else maintains, so their move is to say
+    // something the packs already bind — `proef macros` lists those sentences,
+    // and lists them even while this error stands. A pack maintainer's move is
+    // the stub below. The author's action leads because they cannot perform the
+    // maintainer's; the stub stays because the maintainer needs it verbatim.
     format!(
-        "add a macro to a pack (or fix the step text), e.g.:\n\nmacros:\n  \
+        "say a sentence the packs already bind (`proef macros` lists them), or \
+         add a macro to a pack:\n\nmacros:\n  \
          newMacro:\n    match: {pattern}\n    steps:\n      - hurl: |\n          \
          GET ${{url:base}}/PATH\n          HTTP 200"
     )
