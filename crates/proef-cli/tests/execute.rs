@@ -2194,3 +2194,187 @@ fn worker_is_a_slot_index_not_a_scenario_ordinal() {
         );
     }
 }
+
+/// A `[run] teardown` path that does not exist must fail like `[run] setup`
+/// does — before the pool, as a user error. It used to run the entire suite
+/// first (real requests, a run dir, artifacts) and then report exit 3, so the
+/// same typo cost wildly different amounts depending on which key held it.
+#[test]
+fn a_nonexistent_teardown_path_fails_before_the_suite_runs() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/absent.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2) // a bad path is the operator's typo, not a system fault
+        .stderr(predicate::str::contains("absent.feature"));
+
+    // The proof it failed *early*: nothing ran, so no run record exists.
+    assert!(
+        !cwd.path().join(".proef-runs").exists(),
+        "a config error must not create a run record"
+    );
+}
+
+/// `--dry-run` validates the phase features, which ADR-0014 has always claimed
+/// ("validated like any other feature but never executed") and nothing did.
+#[test]
+fn dry_run_validates_the_setup_and_teardown_features() {
+    let fixture = Fixture::start().unwrap();
+
+    for key in ["setup", "teardown"] {
+        let cwd = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+        std::fs::write(
+            cwd.path().join("proef.toml"),
+            format!(
+                "[url]\nbase = \"${{env:PROEF_BASE_URL}}\"\n[run]\n{key} = \"phase.feature\"\n"
+            ),
+        )
+        .unwrap();
+        // The phase feature says something no pack binds.
+        std::fs::write(
+            cwd.path().join("phase.feature"),
+            "Feature: P\n  Scenario: S\n    When nothing binds this sentence\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.path().join("suite/case.feature"),
+            "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
+        )
+        .unwrap();
+        std::fs::write(
+            cwd.path().join("suite/packs/p.yaml"),
+            "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+             - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+        )
+        .unwrap();
+
+        proef_in(cwd.path(), &fixture)
+            .args(["test", "suite", "--dry-run"])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(key));
+    }
+}
+
+/// Cleanup outlives the interrupt (ADR-0014: cleanup is reliable).
+///
+/// The pool used to share its token with teardown, so Ctrl-C left every
+/// teardown scenario `Skipped` — and because a skipped phase carries no fault,
+/// `phase_failed` waved it through in silence. Whatever setup created stayed
+/// created, and nothing said so.
+///
+/// Unix-only because it sends a real SIGINT: the whole point is the operator's
+/// interrupt, and simulating it through the internal token seam would not prove
+/// the signal path. Compiles and runs on the ubuntu and macos gates.
+#[cfg(unix)]
+#[test]
+fn teardown_runs_after_the_pool_is_interrupted() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: slow one\n    When the slow thing happens\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("teardown.feature"),
+        "Feature: T\n  Scenario: cleanup runs\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  slow:\n    match: the slow thing happens\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/slow\n          HTTP 200\n  \
+         teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Drain stderr on its own thread: the interrupt notice and the cleanup
+    // announcement are `errln!`, and a pipe nobody reads can wedge the child.
+    let mut stderr = child.stderr.take().unwrap();
+    let errors = std::thread::spawn(move || {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut stderr, &mut buf).ok();
+        buf
+    });
+
+    // Interrupt once the run is demonstrably underway — read for the banner
+    // rather than sleeping, so the test does not race a slow machine.
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut seen = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            reader.read_line(&mut line).unwrap() > 0,
+            "process ended before the run started:\n{seen}"
+        );
+        seen.push_str(&line);
+        if line.contains("running 1 scenario(s)") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let mut rest = String::new();
+    while reader.read_line(&mut rest).unwrap() > 0 {}
+    seen.push_str(&rest);
+    child.wait().unwrap();
+    let errors = errors.join().unwrap();
+
+    assert!(
+        seen.contains("cancelled"),
+        "the interrupt must have landed, or this proves nothing:\n{seen}"
+    );
+    assert!(
+        seen.contains("cleanup runs"),
+        "teardown must run after an interrupt, not vanish:\n{seen}"
+    );
+    assert!(
+        errors.contains("cleaning up"),
+        "the operator must be told cleanup is running:\n{errors}"
+    );
+}

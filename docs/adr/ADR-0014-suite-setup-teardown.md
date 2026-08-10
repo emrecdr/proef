@@ -70,33 +70,49 @@ constraints:
   scope** for this ADR: the global store carries only non-secret setup state (seeded ids,
   fixture config). Recorded so the boundary is explicit rather than discovered later.
 
-## Open question — teardown under cancellation
+## Amendment — 2026-08-10 (cancellation, and what `--dry-run` validates)
 
-**This ADR does not say what teardown does when the operator interrupts the run**, and
-that silence is load-bearing rather than incidental: the failure semantics above are
-specific about a *failing* setup and a *failing* teardown, so a reader reasonably infers
-the cancellation case was considered. It was not.
+This ADR was specific about a *failing* setup and a *failing* teardown, and silent on the
+operator interrupting the run. That silence read as considered when it was not, and the
+behaviour it left was the opposite of this ADR's premise: on Ctrl-C the teardown phase ran
+with the **already-cancelled** token, so every teardown scenario resolved `Skipped`,
+`phase_failed` ignored a phase that only skipped, and cleanup silently never happened.
 
-What happens today (reproduced live, 2026-08-06): on Ctrl-C the teardown phase runs with
-the **already-cancelled** token, so every teardown scenario resolves `Skipped`, and
-`phase_failed` ignores a phase that only skipped. The operator gets **no message at all**
-and cleanup never ran — which sits awkwardly beside this ADR's premise that suite cleanup
-is reliable.
+**Decision — cleanup outlives the interrupt.** Teardown runs on its **own, independent**
+token, never the run's. On Ctrl-C the pool stops at its batch boundary, the operator is
+told cleanup is running, and teardown completes — so an interrupted run does not strand
+whatever setup created.
 
-The two defensible answers:
+Note the word: **independent**, not "child". A child token cancels when its parent does,
+which is precisely the behaviour being fixed; `child_token()` would have re-implemented
+the bug.
 
-1. **Teardown gets a fresh child token**, so cleanup runs even on cancel. Matches the
-   "cleanup is reliable" reading, and matches what `globalTeardown` does elsewhere — but
-   it means Ctrl-C no longer stops everything immediately, which ADR-0007 (cooperative
-   cancellation) deliberately made the interrupt contract.
-2. **Teardown stays skipped, but says so.** Cheaper and keeps ADR-0007 intact; the
-   operator is told cleanup did not run and can act. Weakens "reliable" to
-   "reliable unless you interrupt".
+ADR-0007's responsive interrupt is preserved by the escape hatch that already existed: a
+**second Ctrl-C hard-exits (130)** out of teardown as out of anything else, and the
+announcement says so. A hung teardown is bounded by the same batch budgets and watchdog as
+any other phase, so this needs no timeout of its own.
 
-Either answer amends this ADR. Until one is chosen the current behaviour is *unspecified*,
-not wrong-by-the-spec — recorded here so an implementer working on teardown finds the
-question at the place they would look for the answer. Evidence and the neighbouring
-`--dry-run` gap are in [OPEN-FINDINGS.md](../OPEN-FINDINGS.md) (Q5, Q4).
+This is the standard graceful-shutdown shape — first signal begins bounded cleanup, second
+forces exit — rather than the test-runner norm, which is worse: Jest does not call
+`globalTeardown` on Ctrl-C ([#6029](https://github.com/jestjs/jest/issues/6029)) and Go
+does not run `t.Cleanup` on SIGINT ([#41891](https://github.com/golang/go/issues/41891)),
+both long-standing complaints rather than settled design.
+
+**Corollary — a phase that only *skipped* is a failure.** A skipped phase carries no fault,
+so the worst-wins fold passed it silently; that is the shape that hid cancelled cleanup. A
+setup that completes no scenario now aborts the run (the suite would otherwise execute
+against state setup never created), and a teardown that completes no scenario is reported
+and fails the run. The setup abort is also what keeps **teardown gated on setup-success**
+as this ADR requires: the early return is the gate, so teardown never dismantles what was
+never built.
+
+**`--dry-run` now does what this ADR already claimed.** The Decision above says the phase
+features are "validated like any other feature but never executed". They were validated by
+nothing — `--dry-run` never read the keys — so a broken `[run] teardown` surfaced only
+after a full suite had run, while the identical mistake in `[run] setup` failed in
+milliseconds. Both phases are now validated by one loader shared with `execute`, which also
+pre-flights teardown **before** the pool, so the same mistake costs the same either way and
+a bad path is a user error (2) rather than a blanket system fault (3).
 
 ## Best-practice basis
 

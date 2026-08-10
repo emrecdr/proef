@@ -112,6 +112,18 @@ pub fn execute(
     };
     render::print_all(&front.warnings);
 
+    // Teardown is validated here, beside the suite and before any run directory
+    // or record exists. Otherwise a typo'd `[run] teardown` costs a full suite
+    // execution — real requests, artifacts, a run record — before failing,
+    // while the identical mistake in `[run] setup` failed in milliseconds. Same
+    // mistake, same class, so it costs the same. Suite first, so a suite error
+    // is not masked by a phase error.
+    if let Some(teardown) = config.teardown()
+        && let Err(code) = load_phase_feature("teardown", Path::new(teardown), None, &config_vars)
+    {
+        return code;
+    }
+
     let secret_names: BTreeSet<String> = front
         .features
         .iter()
@@ -277,6 +289,23 @@ pub fn execute(
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
                     return code;
                 }
+                // A setup that only skipped (interrupted, or watchdog-abandoned)
+                // carries no fault, so `phase_failed` waves it through — and the
+                // suite would then run against state setup never created. Abort
+                // for the same reason a failure aborts. This is also what keeps
+                // teardown gated on setup-success (ADR-0014): the early return is
+                // the gate, and teardown must not dismantle what was never built.
+                if !summary.outcomes.is_empty()
+                    && summary
+                        .outcomes
+                        .iter()
+                        .all(|o| o.status == proef_core::step::Status::Skipped)
+                {
+                    crate::render::errln!(
+                        "error: setup ran no scenario to completion — aborting before the suite runs"
+                    );
+                    return ExitCode::SystemError;
+                }
             }
         }
     }
@@ -325,6 +354,22 @@ pub fn execute(
     // silently-green suite — the suite's own verdict still stands.
     let mut teardown_exit = ExitCode::Success;
     if let Some(teardown) = &teardown_path {
+        // Cleanup outlives the interrupt. Teardown runs on its OWN token, never
+        // the run's and never `cancel.child_token()` — a child cancels with its
+        // parent, which is exactly the behaviour being fixed. On Ctrl-C the pool
+        // stops and cleanup still happens, so an interrupted run does not strand
+        // whatever setup created (ADR-0014: cleanup is reliable).
+        //
+        // ADR-0007's responsive interrupt is preserved by the escape hatch that
+        // already exists: a second Ctrl-C hard-exits (130) out of teardown too.
+        // A hung teardown is bounded by the same batch budgets and watchdog as
+        // any other phase, so this needs no timeout of its own.
+        let teardown_cancel = CancellationToken::new();
+        if cancel.is_cancelled() {
+            crate::render::errln!(
+                "cleaning up — running teardown after the interrupt (Ctrl-C again to skip)"
+            );
+        }
         match run_phase(
             "teardown",
             teardown,
@@ -334,10 +379,13 @@ pub fn execute(
             &store,
             &engines,
             &phase_sink,
-            &cancel,
+            &teardown_cancel,
             &artifacts_dir,
         ) {
-            Err(_) => teardown_exit = ExitCode::SystemError,
+            // The phase's own exit code, not a blanket 3: a teardown path that
+            // does not exist is a user error like any other, and flattening it
+            // told the operator "system fault" for their own typo.
+            Err(code) => teardown_exit = code,
             Ok(summary) => {
                 // Excluded from `record`'s totals for the same reason setup is
                 // (above): teardown's own scenario events still land in the
@@ -347,6 +395,22 @@ pub fn execute(
                 if phase_failed(&summary, ExitCode::SystemError).is_some() {
                     crate::render::errln!(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
+                    );
+                    teardown_exit = ExitCode::SystemError;
+                } else if !summary.outcomes.is_empty()
+                    && summary
+                        .outcomes
+                        .iter()
+                        .all(|o| o.status == proef_core::step::Status::Skipped)
+                {
+                    // A phase that only skipped carries no fault and no failure,
+                    // so `phase_failed` returns `None` and the whole thing passes
+                    // in silence — the shape that let cancelled cleanup vanish.
+                    // Whatever the cause (an interrupt that reached this token, a
+                    // watchdog abandonment), cleanup did not run and saying so is
+                    // the point of having a teardown phase at all.
+                    crate::render::errln!(
+                        "error: teardown ran no scenario to completion — cleanup did not run"
                     );
                     teardown_exit = ExitCode::SystemError;
                 }
@@ -688,6 +752,38 @@ impl Drop for RunRecord<'_> {
     }
 }
 
+/// Validate one phase feature through the front end — the single definition of
+/// "is this `[run] setup`/`teardown` usable", shared by `--dry-run`, the
+/// pre-flight in [`execute`], and [`run_phase`] itself.
+///
+/// ADR-0014 says the phase features are "validated like any other feature but
+/// never executed" under `--dry-run`. That was true of nothing: `--dry-run` did
+/// not look at them at all, and `execute` only discovered a broken teardown
+/// after the whole suite had run. One loader, called everywhere, is what makes
+/// the sentence true.
+pub(crate) fn load_phase_feature(
+    label: &str,
+    path: &Path,
+    run_id: Option<String>,
+    config_vars: &Arc<BTreeMap<String, String>>,
+) -> Result<FrontEnd, ExitCode> {
+    // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
+    // directory would run every feature under it as the phase AND leave them
+    // in the pool (exclude_phase_features matches a single file path), running
+    // each scenario twice. Reject it loudly instead of silently double-running.
+    if path.is_dir() {
+        crate::render::errln!(
+            "error: [run] {label} must be a feature file, not a directory ({})",
+            path.display()
+        );
+        return Err(ExitCode::UserError);
+    }
+    front::run(path, ResolveMode::DryRun, run_id, Arc::clone(config_vars)).map_err(|err| {
+        crate::render::errln!("error: {label} feature failed to validate:");
+        crate::commands::report_front_error(&err)
+    })
+}
+
 /// Run a suite-level setup/teardown feature once, sequentially, against the
 /// shared store/engines/sink (ADR-0014). `saveAs: global` promotions merge into
 /// the shared store (so setup's state reaches the pool); the phase resolves its
@@ -710,24 +806,7 @@ fn run_phase(
     // directory would run every feature under it as the phase AND leave them
     // in the pool (exclude_phase_features matches a single file path), running
     // each scenario twice. Reject it loudly instead of silently double-running.
-    if path.is_dir() {
-        crate::render::errln!(
-            "error: [run] {label} must be a feature file, not a directory ({})",
-            path.display()
-        );
-        return Err(ExitCode::UserError);
-    }
-
-    let front = front::run(
-        path,
-        ResolveMode::DryRun,
-        Some(run_id.to_string()),
-        Arc::clone(config_vars),
-    )
-    .map_err(|err| {
-        crate::render::errln!("error: {label} feature failed to validate:");
-        crate::commands::report_front_error(&err)
-    })?;
+    let front = load_phase_feature(label, path, Some(run_id.to_string()), config_vars)?;
     render::print_all(&front.warnings);
 
     let names: BTreeSet<String> = front
