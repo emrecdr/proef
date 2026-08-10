@@ -6,6 +6,36 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`proef secret set --value` is gone; use `--stdin`. Breaking.** A secret in
+  argv is visible to anyone who can run `ps`, and the failure path *steered
+  people to it* — the hidden prompt's error said "pass `--value` in scripts",
+  which fires exactly in the non-TTY/CI case where the exposure matters. There
+  is now no flag that takes a value: `--stdin` reads it from a pipe (same shape
+  as `docker login --password-stdin`), stripping the trailing newline the pipe
+  added, and the prompt stays the default. Scripts using `--value` must pipe
+  instead: `printf %s "$TOKEN" | proef secret set NAME --stdin`.
+
+### Added
+
+- **`proef doctor` reports a missing pack schema.** `init` installs it
+  automatically, but noticing when it is *absent* never shipped — so a suite
+  whose editor completion had been silently off had nothing telling it so.
+  Reported as a warning, never a failure: it costs autocomplete and load-time
+  validation in the editor, not a run, and `doctor`'s exit is the environment
+  verdict. Uses the same predicate `init` uses, so the two cannot disagree about
+  what "installed" means. Runs outside a project too — no config or no suite is
+  reported, not failed.
+
+- **`bind::unbound_step` names `proef macros` again, from the CLI.** The pointer
+  was removed from the diagnostic in #25 for a correct reason — that text also
+  renders in an editor's diagnostics pane through the LSP, where the affordance
+  is completion, not a command — but nothing put it back on the terminal side,
+  so a terminal reader saw it zero times. It is now added by the CLI's own
+  renderer, which legitimately knows it is the CLI. The core diagnostic still
+  names no tool.
+
 ### Fixed
 
 - **The first-run note no longer fires on real suites.** It keyed on `[url] base`

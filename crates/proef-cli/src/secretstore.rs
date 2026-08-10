@@ -346,17 +346,26 @@ pub fn resolve_all(
     }
 }
 
-/// `proef secret set NAME [--value V]` — value via hidden prompt when absent.
-pub fn set(name: &str, value: Option<&str>) -> Result<(), SecretError> {
-    let value = match value {
-        Some(value) => value.to_owned(),
-        None => {
-            rpassword::prompt_password(format!("value for `{name}` (hidden): ")).map_err(|err| {
-                SecretError::User(format!(
-                    "cannot read value: {err} (pass --value in scripts)"
-                ))
-            })?
-        }
+/// `proef secret set NAME [--stdin]` — hidden prompt, or stdin for scripts.
+///
+/// There is deliberately no flag that takes the value itself: a secret in argv
+/// is visible to anyone who can run `ps`, and for the same reason the failure
+/// path below points at `--stdin` rather than offering one. Same shape as
+/// `docker login --password-stdin`.
+pub fn set(name: &str, from_stdin: bool) -> Result<(), SecretError> {
+    let value = if from_stdin {
+        let mut value = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)
+            .map_err(|err| SecretError::User(format!("cannot read value from stdin: {err}")))?;
+        // A trailing newline is an artifact of how the value was piped
+        // (`echo`, a heredoc, a file), never part of the secret.
+        value.trim_end_matches(['\n', '\r']).to_owned()
+    } else {
+        rpassword::prompt_password(format!("value for `{name}` (hidden): ")).map_err(|err| {
+            SecretError::User(format!(
+                "cannot read value: {err} (in scripts, pipe it: `… | proef secret set {name} --stdin`)"
+            ))
+        })?
     };
     let key = load_or_create_key()?;
     // The whole read-modify-write is one critical section: concurrent

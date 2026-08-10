@@ -216,13 +216,15 @@ enum Command {
 
 #[derive(Subcommand)]
 enum SecretAction {
-    /// Store an encrypted value (prompted hidden unless --value is given)
+    /// Store an encrypted value (hidden prompt, or --stdin for scripts)
     Set {
         /// Secret name (referenced as ${secret:NAME} in packs)
         name: String,
-        /// Value (plumbing for scripts; prefer the hidden prompt)
+        /// Read the value from stdin instead of prompting, for scripts and CI.
+        /// A command-line value would be visible to anyone who can run `ps`,
+        /// so there is deliberately no flag that takes one.
         #[arg(long)]
-        value: Option<String>,
+        stdin: bool,
     },
     /// List stored secret names (never values)
     List,
@@ -412,10 +414,18 @@ fn main() -> std::process::ExitCode {
         },
         Command::Schema { add_to } => commands::schema(&add_to),
         Command::Init { dir } => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
-        Command::Doctor => commands::doctor(&registry::engines()),
+        Command::Doctor => {
+            // Lenient, like `proef lsp`: `doctor` reports on the environment and
+            // must run anywhere, including outside a project. No config or no
+            // suite simply means there are no packs to check.
+            let suite = load_config()
+                .ok()
+                .and_then(|config| config.default_suite_path());
+            commands::doctor(&registry::engines(), suite.as_deref())
+        }
         Command::Secret { action } => {
             let result = match action {
-                SecretAction::Set { name, value } => secretstore::set(&name, value.as_deref()),
+                SecretAction::Set { name, stdin } => secretstore::set(&name, stdin),
                 SecretAction::List => secretstore::list(),
                 SecretAction::Rm { name } => secretstore::rm(&name),
             };

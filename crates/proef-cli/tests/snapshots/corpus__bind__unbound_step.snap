@@ -20,4 +20,5 @@ proef::bind::unbound_step
                   GET ${url:base}/PATH
                   HTTP 200
 
+note: `proef macros` lists every sentence the packs bind
 1 error(s)

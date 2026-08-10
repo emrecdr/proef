@@ -211,7 +211,8 @@ yourself (fold in `${run:id}` or a captured id) rather than relying on
 
 Reference with `${secret:NAME}`. Values come from `PROEF_SECRET_<NAME>`
 environment variables first, then the encrypted store (`proef secret set NAME`,
-or `proef secret set NAME --value V` for scripts; `proef secret list` names,
+or `… | proef secret set NAME --stdin` for scripts (never argv — `ps` shows
+it); `proef secret list` names,
 `proef secret rm NAME` removes
 — XChaCha20-Poly1305, key auto-created `0600` under `~/.config/proef/`).
 Values never appear in artifacts, events, logs, or reports; events carry
