@@ -264,6 +264,7 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ## 10. CLI reference (v1)
 
 ```
+proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
 proef flows [file|dir] [--env NAME] [--output json]
