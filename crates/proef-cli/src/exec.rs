@@ -32,36 +32,56 @@ const RUN_RETENTION: usize = 200;
 /// not gate the exit code (`RunSummary::exit_code_excluding`).
 const QUARANTINE_TAG: &str = "quarantine";
 
-/// Tell a first-time reader that a failed run is the scaffold, not a fault.
+/// Tell a first-time reader that a failed run never reached a target, rather
+/// than leaving them with a bare connection error.
 ///
-/// Fires only on the conjunction, because either half alone is wrong: the raw
-/// `[url] base` still byte-identical to what `init` wrote **and** no
-/// `PROEF_BASE_URL` override. An operator who set the override *did* configure a
-/// target, so their failure is about their API and must not be second-guessed;
-/// keying on the resolved value instead would mis-fire on anyone legitimately
-/// targeting the dev fixture's port.
+/// **The config literal alone proves nothing.** `[url] base` still equal to what
+/// `init` writes looks init-specific and is not: `GETTING-STARTED` teaches that
+/// exact line to people building a suite by hand, and proef's own `proef.toml`
+/// uses it. Keyed on that alone, this note fired on a hand-built suite whose
+/// server was up and whose assertion genuinely failed — every clause of it
+/// false, moments after the suite reached a real verdict.
+///
+/// So the deciding evidence is the run itself: it fires only when **nothing was
+/// reachable** — no scenario passed and every outcome carries a system fault,
+/// which is what a connection failure produces. A suite that got an HTTP
+/// response, even a 404, has a target; whether its *routes* are placeholders is
+/// then a guess, and this said it as fact.
+///
+/// The remaining two conjuncts still matter as necessary conditions: an operator
+/// who set `PROEF_BASE_URL`, or edited `[url] base`, did name a target and must
+/// not be second-guessed.
 ///
 /// The exit code is deliberately untouched. Whether an unreachable target is a
 /// user fault or a system one is a taxonomy question (ADR-0009) decided in the
-/// engine, and the operator's actual problem here is vocabulary, not exit code.
-fn is_untouched_scaffold(
+/// engine, and the reader's actual problem here is vocabulary, not exit code.
+fn is_unconfigured_target(
     config_vars: &BTreeMap<String, String>,
     base_url_overridden: bool,
+    summary: &runner::RunSummary,
 ) -> bool {
-    !base_url_overridden
+    let nothing_reachable = summary.passed == 0
+        && !summary.outcomes.is_empty()
+        && summary
+            .outcomes
+            .iter()
+            .all(|o| matches!(o.fault, Some(runner::Fault::System(_))));
+
+    nothing_reachable
+        && !base_url_overridden
         && config_vars
             .get("url:base")
             .is_some_and(|base| base == crate::init::SCAFFOLD_BASE)
 }
 
-fn note_untouched_scaffold(config_vars: &BTreeMap<String, String>) {
+fn note_unconfigured_target(config_vars: &BTreeMap<String, String>, summary: &runner::RunSummary) {
     let overridden = matches!(crate::envvar::read("PROEF_BASE_URL"), Ok(Some(_)));
-    if is_untouched_scaffold(config_vars, overridden) {
+    if is_unconfigured_target(config_vars, overridden, summary) {
         crate::render::errln!(
-            "note: this suite is still the `proef init` scaffold — its target and its \
-             routes are placeholders, so it cannot pass yet.\n      \
-             set `[url] base` in proef.toml to your API (or export PROEF_BASE_URL), \
-             then edit suite/packs/ to name your API's real routes."
+            "note: nothing answered at the default target, and `[url] base` is still \
+             the starter value.\n      \
+             point it at your API in proef.toml (or export PROEF_BASE_URL). If this \
+             is a fresh `proef init` scaffold, its routes are placeholders too."
         );
     }
 }
@@ -575,11 +595,11 @@ pub fn execute(
     };
 
     // A freshly scaffolded suite cannot pass: its target and its routes are both
-    // placeholders. `init` says so once, two commands earlier, and the failure
-    // never refers back to it — leaving a first-time reader with `system error`
-    // (or a bare 404) and no way to know the tool is working as intended.
+    // A run that never reached its target leaves a first-time reader with a bare
+    // `system error` and no way to know the tool is working as intended. The
+    // run's own outcomes decide, not the config alone — see the predicate.
     if exit != ExitCode::Success {
-        note_untouched_scaffold(&config_vars);
+        note_unconfigured_target(&config_vars, &summary);
     }
 
     match output {
@@ -1092,7 +1112,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::RunRecord;
+    use super::{RunRecord, runner};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
 
@@ -1173,33 +1193,66 @@ mod tests {
     /// the operator has configured anything — an override means they *did*
     /// name a target, so their failure is about their API, not the scaffold.
     #[test]
-    fn scaffold_note_fires_only_on_the_untouched_conjunction() {
+    fn the_unconfigured_target_note_needs_an_unreachable_run() {
+        use proef_core::step::Status;
+
         let vars = |base: Option<&str>| {
             base.map(|b| BTreeMap::from([("url:base".to_owned(), b.to_owned())]))
                 .unwrap_or_default()
         };
         let scaffold = vars(Some(crate::init::SCAFFOLD_BASE));
 
-        assert!(super::is_untouched_scaffold(&scaffold, false));
-        // PROEF_BASE_URL set — they configured a target.
-        assert!(!super::is_untouched_scaffold(&scaffold, true));
+        let outcome = |fault: Option<runner::Fault>| runner::ScenarioOutcome {
+            file: "f.feature".into(),
+            name: "s".into(),
+            line: 1,
+            status: Status::Failed,
+            steps: Vec::new(),
+            fault,
+            artifact_slug: None,
+        };
+        let unreachable = runner::RunSummary {
+            outcomes: vec![outcome(Some(runner::Fault::System("connect".to_owned())))],
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        };
 
-        // `[url] base` edited — likewise configured, even byte-for-byte close.
-        assert!(!super::is_untouched_scaffold(
+        assert!(super::is_unconfigured_target(
+            &scaffold,
+            false,
+            &unreachable
+        ));
+        // PROEF_BASE_URL set — they named a target.
+        assert!(!super::is_unconfigured_target(
+            &scaffold,
+            true,
+            &unreachable
+        ));
+        // `[url] base` edited — likewise.
+        assert!(!super::is_unconfigured_target(
             &vars(Some("https://api.example.com")),
-            false
+            false,
+            &unreachable
         ));
 
-        // No `[url] base` at all (a suite of absolute URLs) is not a scaffold.
-        assert!(!super::is_untouched_scaffold(&vars(None), false));
-
-        // The resolved, `--env`-aware scope is what is consulted: an
-        // `[env.<name>.url] base` override lands here as the merged value, so a
-        // profile that points at a real API is not reported as the scaffold
-        // merely because the base `[url]` table still holds the default.
-        assert!(!super::is_untouched_scaffold(
-            &vars(Some("https://staging.internal")),
-            false
+        // The regression this predicate exists to prevent: `GETTING-STARTED`
+        // teaches the starter literal verbatim and proef's own proef.toml uses
+        // it, so the config alone cannot mean "scaffold". A hand-built suite
+        // whose server answered and whose assertion genuinely failed must not
+        // be told its target and routes are placeholders.
+        let real_assertion_failure = runner::RunSummary {
+            outcomes: vec![outcome(None)],
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        };
+        assert!(!super::is_unconfigured_target(
+            &scaffold,
+            false,
+            &real_assertion_failure
         ));
     }
 }

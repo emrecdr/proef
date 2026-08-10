@@ -5,7 +5,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use predicates::str::contains;
+use proef_fixture::Fixture;
 
 fn proef(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("proef").unwrap();
@@ -49,45 +51,54 @@ fn init_announces_every_file_it_counts() {
     assert!(stdout.contains("proef-pack.schema.json"), "{stdout}");
 }
 
-/// The scaffold cannot pass — its target and its routes are both placeholders —
-/// so the run must say so rather than leave a first-time reader with a bare
-/// connection error. Environment-independent: with nothing on the scaffold's
-/// port the run fails to connect, with the dev fixture up it 404s on the
-/// placeholder route; the note is owed either way.
+/// The note must not appear on a suite that reached a real verdict.
 ///
-/// This is the wiring test. `exec::tests` covers the predicate; a correct
-/// predicate that nothing calls would still ship the bug.
+/// **What this pins, precisely:** the `PROEF_BASE_URL`-override conjunct, end
+/// to end through the binary — an operator who named a target is never told
+/// their target is a placeholder.
+///
+/// **What it deliberately does not pin:** the reachability conjunct. Faithfully
+/// reproducing that regression needs the starter port *closed* while the config
+/// still holds the starter literal, and no test can guarantee a port is closed.
+/// `exec::tests::the_unconfigured_target_note_needs_an_unreachable_run` covers
+/// it on the predicate directly — verified RED. Said plainly here because this
+/// test passes with the fix reverted, and a reader could otherwise mistake it
+/// for cover it does not give.
 #[test]
-fn a_failing_scaffold_run_says_it_is_still_the_scaffold() {
-    let tmp = tempfile::tempdir().unwrap();
-    proef(tmp.path()).arg("init").assert().code(0);
-    proef(tmp.path())
-        .env_remove("PROEF_BASE_URL")
-        .arg("test")
-        .assert()
-        .stderr(contains("still the `proef init` scaffold"));
-}
+fn the_unconfigured_target_note_stays_quiet_when_the_target_answered() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    // Verbatim the line GETTING-STARTED teaches — no `init` involved.
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL:-http://127.0.0.1:8787}\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: Mine\n  Scenario: teapot\n    When the service answers 418\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  teapot:\n    match: the service answers 418\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 418\n",
+    )
+    .unwrap();
 
-/// A re-run names the install command only when there is something to install.
-/// Sending a reader to run `schema --add-to` against a schema already sitting
-/// beside the pack is work that is already done.
-#[test]
-fn init_rerun_only_suggests_the_schema_install_when_it_is_missing() {
-    let tmp = tempfile::tempdir().unwrap();
-    proef(tmp.path()).arg("init").assert().code(0);
-
-    proef(tmp.path())
-        .arg("init")
+    // PROEF_BASE_URL points at the live fixture, so the run reaches a real
+    // assertion and fails on the status — a genuine verdict, not a placeholder.
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
         .assert()
-        .code(0)
-        .stdout(contains("editor completion is already installed"));
-
-    std::fs::remove_file(tmp.path().join("suite/packs/proef-pack.schema.json")).unwrap();
-    proef(tmp.path())
-        .arg("init")
-        .assert()
-        .code(0)
-        .stdout(contains("run `proef schema --add-to"));
+        .code(1)
+        .stderr(predicate::str::contains("scaffold").not())
+        .stderr(predicate::str::contains("starter value").not());
 }
 
 /// Running init twice creates nothing the second time.
