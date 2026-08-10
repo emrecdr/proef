@@ -8,6 +8,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **The first-run note no longer fires on real suites.** It keyed on `[url] base`
+  still equalling the value `proef init` writes — which looks init-specific and
+  is not: `GETTING-STARTED` teaches that exact line to people building a suite
+  by hand, and proef's own `proef.toml` uses it. So a hand-built suite whose
+  server was up and whose assertion genuinely failed was told "this suite is
+  still the `proef init` scaffold — its target and its routes are placeholders,
+  so it cannot pass yet": every clause false, moments after the suite reached a
+  real verdict. The deciding evidence is now the run itself — the note appears
+  only when **nothing was reachable** (no scenario passed and every outcome is a
+  system fault). A suite that got an HTTP response, even a 404, has a target;
+  whether its routes are placeholders was a guess, and the note stated it as
+  fact. Wording softened accordingly.
+
 - **Suite discovery no longer walks build output, and one unreadable directory
   no longer empties the suite.** The walk had no exclusions, no depth bound, and
   a `canonicalize()` per directory — and it re-runs on every language-server
