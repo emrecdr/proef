@@ -173,6 +173,19 @@ counts and normalized event order, never wall-clock or raw interleaving.
 - [x] M4 — upstream tracking: real canary, thin-fork rehearsal, upstream PR #1, JUnit/GH summary
 - [x] M5 — breadth: bodies (multipart/form/docstring), watch, explain, secrets CLI, fakes, libtest-mimic harness, `proef fmt`
 - [x] post-M5 — external config & environments (`proef.toml` `[url]`/`[vars]`/`[env.<name>]`, `${url:}`/`${vars:}`, `--env`/`PROEF_ENV`, ADR-0012); default suite path (`[run] suite`); pack root key `templates:` → `macros:` (ADR-0004 amendment); dev fixture binds default port 8787 + versioned `/health` (ADR-0011 amendment)
+- [x] correctness series (v0.6.0–v0.8.0) — three releases closing one bug class:
+      *proef reported success while producing wrong, incomplete, or
+      silently-ignored output*. `run_finished` is a record's last line again;
+      `${fake:…}` no longer repeats across a scenario's steps; `.map.json`
+      stops both inventing capture rows and dropping real ones; a
+      whitespace-only `expect:` is rejected rather than emitting an inverted
+      span; an unreadable `PROEF_*` variable is a loud error instead of
+      reading as unset; a failed stdout write reaches the exit code; `fmt`
+      keeps a file's line endings; `report -o` writes links that resolve;
+      `diff` stops inventing flakiness. Breaking along the way:
+      `proef_core::resolve::resolve` takes a caller-owned occurrence counter,
+      a scenario with no steps is an error, and exit codes moved (stdout
+      failure → 3, malformed env var → 2)
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

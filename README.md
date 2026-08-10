@@ -185,6 +185,7 @@ full authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 | Command | Purpose |
 |---|---|
+| `proef init [dir]` | scaffold a minimal working suite — `proef.toml`, one feature, one pack, schema wired up; never overwrites an existing file |
 | `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--output json`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
 | `proef macros [path]` | list every macro with its call count, flagging pattern macros no scenario binds (`--env`, `--output json`) |

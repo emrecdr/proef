@@ -17,6 +17,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   shape the harness already used for flows-contract drift, whose comment
   states the invariant this violated: never run zero tests green.
 
+### Documentation
+
+- **`proef init` is now in the command tables it was missing from.** It shipped
+  in 0.6.0 and was documented in `GETTING-STARTED.md` and in the README's prose,
+  but not in the README's CLI table or `TECH-SPEC.md`'s command surface — so the
+  two places a reader scans for "what can this tool do" both omitted the command
+  that starts a first run.
+- `CLAUDE.md`'s status list now records the v0.6.0–v0.8.0 correctness series
+  rather than ending at post-M5, so the three releases that closed the
+  reports-success-on-wrong-output bug class are visible to anyone picking the
+  project up.
+
 ## [0.8.0] - 2026-08-09 (CLI output & exit integrity)
 
 ### Changed
