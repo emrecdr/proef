@@ -70,6 +70,34 @@ constraints:
   scope** for this ADR: the global store carries only non-secret setup state (seeded ids,
   fixture config). Recorded so the boundary is explicit rather than discovered later.
 
+## Open question — teardown under cancellation
+
+**This ADR does not say what teardown does when the operator interrupts the run**, and
+that silence is load-bearing rather than incidental: the failure semantics above are
+specific about a *failing* setup and a *failing* teardown, so a reader reasonably infers
+the cancellation case was considered. It was not.
+
+What happens today (reproduced live, 2026-08-06): on Ctrl-C the teardown phase runs with
+the **already-cancelled** token, so every teardown scenario resolves `Skipped`, and
+`phase_failed` ignores a phase that only skipped. The operator gets **no message at all**
+and cleanup never ran — which sits awkwardly beside this ADR's premise that suite cleanup
+is reliable.
+
+The two defensible answers:
+
+1. **Teardown gets a fresh child token**, so cleanup runs even on cancel. Matches the
+   "cleanup is reliable" reading, and matches what `globalTeardown` does elsewhere — but
+   it means Ctrl-C no longer stops everything immediately, which ADR-0007 (cooperative
+   cancellation) deliberately made the interrupt contract.
+2. **Teardown stays skipped, but says so.** Cheaper and keeps ADR-0007 intact; the
+   operator is told cleanup did not run and can act. Weakens "reliable" to
+   "reliable unless you interrupt".
+
+Either answer amends this ADR. Until one is chosen the current behaviour is *unspecified*,
+not wrong-by-the-spec — recorded here so an implementer working on teardown finds the
+question at the place they would look for the answer. Evidence and the neighbouring
+`--dry-run` gap are in [OPEN-FINDINGS.md](../OPEN-FINDINGS.md) (Q5, Q4).
+
 ## Best-practice basis
 
 Config-key-names-a-file is the dominant model (Playwright `globalSetup`/`globalTeardown`,
