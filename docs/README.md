@@ -31,8 +31,6 @@ repo-root `CLAUDE.md` carry the live status.
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
 | — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: the *feature* roadmap, each item carrying a Status column (13 of 16 shipped) | maintainers |
 | — | [OPEN-FINDINGS.md](OPEN-FINDINGS.md) | **The worklist.** Every open defect and gap, whichever review found it, plus what shipped against each | maintainers |
-| — | [FIRST-RUN-UX-REVIEW.md](FIRST-RUN-UX-REVIEW.md) | *Evidence, not a worklist.* External first-use review of 0.5.3 with maintainer validation notes; open residue is OPEN-FINDINGS R1–R2 | maintainers |
-| — | [NON-TECHNICAL-UX-REVIEW.md](NON-TECHNICAL-UX-REVIEW.md) | *Evidence, not a worklist.* Persona-calibration review of 0.8.0 against PRD §4's **P1**; findings shipped in #24, open residue is OPEN-FINDINGS R3 | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
 | — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |

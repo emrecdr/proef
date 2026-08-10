@@ -1,22 +1,26 @@
 # proef — open findings
 
 **This is the worklist.** Every open defect and gap lives here, whichever review found
-it. The reviews themselves stay on disk as dated evidence — reproduction transcripts,
-source citations, the reasoning behind each call — but none of them is a to-do list, and
-none should be read as one.
+it. Each entry is self-contained: the evidence, the reasoning, and — where something was
+declined — why.
 
-| Source | Role | Where its open items are |
+**Companion:** [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) is the *feature* roadmap (own
+numbering, 13 of 16 shipped) and stays separate because five ADRs cite it by section
+number. [CHANGELOG](CHANGELOG.md) records what shipped, per release.
+
+**Provenance.** Three reviews fed this list, each validated claim-by-claim against the
+tree and then retired into it:
+
+| Review | Scope | Contributed |
 |---|---|---|
-| [FIRST-RUN-UX-REVIEW](FIRST-RUN-UX-REVIEW.md) | evidence, 0.5.3, engineer's first 30 min | here, as **R1–R2** |
-| [NON-TECHNICAL-UX-REVIEW](NON-TECHNICAL-UX-REVIEW.md) | evidence, 0.8.0, PRD §4 P1 calibration | here, as **R3** |
-| [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) | *feature* roadmap, own numbering, **13 of 16 shipped** | stays separate — 5 ADRs cite it by section |
-| [CHANGELOG](CHANGELOG.md) | what shipped, per release | — |
+| v0.5.3 external (2026-08-06) | 40 claims → 38 confirmed, 1 partial, 1 already fixed | the A/B/P/Q items below |
+| first-run UX (0.5.3, engineer's first 30 min) | F1–F4 | **R1–R2** |
+| non-technical UX (0.8.0, PRD §4 P1 calibration) | N1–N5 | **R3** |
 
-**Provenance:** an external review of v0.5.3, validated claim-by-claim against the tree
-on **2026-08-06** (40 claims → 38 confirmed, 1 partial, 1 already fixed). Every item
-below was reproduced live or verified in code at that time. The shipped/open split was
-re-checked against `main` on **2026-08-10**, when the two UX reviews' residue was folded
-in.
+The review documents themselves were removed once their open items landed here; their
+full text, transcripts and citations are in git history (`git log --diff-filter=D
+-- docs/FIRST-RUN-UX-REVIEW.md docs/NON-TECHNICAL-UX-REVIEW.md`). The shipped/open split
+was re-checked against `main` on **2026-08-10**.
 
 **Read the citations as "start reading here", not as addresses.** They were accurate on
 2026-08-06 and files have moved since; locate symbols with `rg`, not line numbers.
@@ -56,48 +60,74 @@ nothing fuzzes it. Verified 2026-08-10.
 
 ---
 
-## Open — folded in from the UX reviews
+## Open — residue of the two UX reviews
 
-Verified against `main` on 2026-08-10. Everything else those two reviews raised has
-shipped; see their own status sections for the closed items.
+Verified against `main` on 2026-08-10. Everything else those reviews raised has shipped
+(first-run: F1, F3, F4a and F2's did-you-mean in 0.6.0 · non-technical: N1–N5 and the
+`init` count in #24).
 
 ### R1 — `missing_config_var`'s span points at the sentence, not the pack line
 
-FIRST-RUN F2, second half. The did-you-mean shipped; retargeting the span did not, and
-**deliberately** — `ResolveError` carries no position and `resolve()` is documented
-"pure and total", so supplying one means threading an offset out of a deliberately
-position-free function and carrying pack identity to the diagnostic site. The reasoning
-is written up in that review's validation notes. *Deferred to its own spec, not
-forgotten.*
+The diagnostic reports at the *feature* step that used the variable, e.g.
+`suite/case.feature:3:5`, rather than the pack line where `${url:bse}` actually appears —
+so the reader goes hunting. The did-you-mean half shipped in 0.6.0; this half did not,
+**deliberately**.
+
+*Why it was deferred, in full — this is the whole reasoning, do not re-derive it:*
+`ResolveError` carries no position, and `resolve()` is documented "pure and total".
+The comparable diagnostic that *does* land on a pack line (`pack::invalid_hurl`) gets
+its position from hurl's own parser reporting a line/column, which feeds
+`locate::payload_line_span(…, rel_line)`; nothing computes a `rel_line` for a resolve
+failure. Supplying one means threading an offset out of a deliberately position-free
+pure function and carrying pack identity to the diagnostic site. That is a design
+change, not a fix — it wants its own spec.
+
+Two sibling extensions were **declined** at the same time: `resolve::missing_env` must
+not suggest from the injected environment snapshot (it would surface unrelated
+environment variable names in diagnostics, against the secret-masking posture), and
+`resolve::unknown_namespace` already enumerates all seven valid namespaces. Sibling
+codes share a *shape*, not a *candidate set*.
 
 ### R2 — `doctor` does not report a missing pack schema
 
-FIRST-RUN F4b, second half. `init` installing the schema automatically shipped; the
-other half of that finding — `doctor` reporting it as missing — did not. Reproduced
-2026-08-10: `proef doctor` checks hurl, the parser, libcurl, the secret key and the
-secret store, and says nothing about editor completion. Small, and it closes the
-finding.
+Schema-backed completion is the largest authoring aid for YAML, and PRD §4 names "schema
+autocomplete" as a P2 need. `init` installing it automatically shipped in 0.6.0; the
+other half — `doctor` reporting it as *missing* — did not. Reproduced 2026-08-10:
+`proef doctor` checks hurl, the parser, libcurl, the secret key and the secret store,
+and says nothing about editor completion. Small, and it closes the finding.
 
 ### R3 — the scaffold default is still the dev fixture's port
 
-NON-TECHNICAL N1, the "also in scope" half. `init.rs` writes
-`base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`; 8787 is proef's own dev fixture
-port, so the value *looks* configured to someone who has no fixture. A failing run now
-says the suite is still the untouched scaffold, which covers the recovery case — this
-would cover the prevention case. Cost is not the literal but its documentation blast
-radius: `GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2, and the documented dev
-loop.
+`init.rs` writes `base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`, and 8787 is
+proef's own dev fixture port (`xtask fixture`, ADR-0011 amendment) — so to anyone who
+installed a binary and has no fixture, the value *looks* configured and is not. A
+failing run now says the suite is still the untouched scaffold (#24), which covers
+**recovery**; an obvious placeholder such as `https://api.example.com` would cover
+**prevention**. The cost is not the literal but its documentation blast radius:
+`GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2, and the documented dev loop.
 
-**Two proposals from that review were considered and declined**, with reasons recorded
-in its §1a — they are decisions, not backlog:
+### Decided against — do not re-raise
 
-- **Re-classifying the unconfigured-scaffold failure to exit 2.** The verdict is set in
-  `proef-engine-hurl`, `Fault::System(String)` carries no kind, and the exit derives in
-  `proef-core`; the note delivers the user value and covers the exit-1 path a
-  re-classification would have missed.
-- **Degrading `proef flows` the way `macros` degrades.** `flows` promises *every*
-  scenario; a list silently omitting an unparsed feature is a wrong answer, not a
-  degraded one.
+Recorded as decisions, so they are not rediscovered as fresh ideas.
+
+- **Re-classify the unconfigured-scaffold failure from exit 3 to exit 2.** Not a
+  CLI-edge change: the verdict is set in `proef-engine-hurl` (`classify_error`'s
+  `_ => Infra` arm), `Fault::System(String)` carries no kind to match on, and the exit
+  derives in `proef-core` (`RunSummary::exit_code_excluding`). Both routes — string-
+  matching the engine's opaque message, or adding a structured kind to core's public
+  surface — cost more than the value, which is *vocabulary*. The note delivers that, and
+  fires on the exit-1 placeholder-route path a re-classification would have missed.
+- **Degrade `proef flows` the way `macros` degrades.** `flows` promises *every*
+  scenario; a list silently omitting the feature that failed to parse is a wrong answer,
+  not a degraded one. `macros` degrades safely only because pack loading precedes
+  binding and does not depend on it.
+- **Ship `proef-fixture` in the binary so the scaffold's first run passes.** Needs a new
+  ADR (it is dev-only today), enlarges the binary and the security posture of a test
+  runner with a listening server — and R3 plus #24's note remove the need.
+- **A GUI, web UI, or "no-terminal" mode.** PRD §3 forecloses dashboard/server mode. The
+  P1 gap was always about *vocabulary and error text*, never a second interface.
+- **Importing or round-tripping hand-written hurl**, and **anything OpenAPI-shaped as a
+  recurring oracle.** PRD §3 and ADR-0016 permanent non-goals.
 
 ---
 

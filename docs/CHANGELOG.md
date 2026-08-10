@@ -68,8 +68,10 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 - **One worklist instead of four documents to cross-read.** Four files read like
   backlogs and only one was: `OPEN-FINDINGS` now carries every open item, including the
-  residue of both UX reviews (R1–R3), and the reviews themselves carry a banner saying
-  they are evidence, not a to-do list. `IMPROVEMENT-PLAN` stays a separate file — five
+  residue of both UX reviews (R1–R3) and the decisions taken against them, each entry
+  self-contained. The two review documents were **removed** once their open items landed
+  there — their transcripts and citations remain in git history, and a retired review
+  left on disk is exactly the thing that reads as a backlog. `IMPROVEMENT-PLAN` stays a separate file — five
   ADRs cite it by section number — but its master table gained a **Status** column,
   because its ✅/⚠️ glyphs mean "fits the architecture", never "done", and **13 of its
   16 items had already shipped** while the table gave no way to tell. Item 14's cited
