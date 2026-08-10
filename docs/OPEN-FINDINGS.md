@@ -137,12 +137,31 @@ Recorded as decisions, so they are not rediscovered as fresh ideas.
 
 Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26.
 
-### Q2 — LSP roots at process cwd *(Tier 1, unspecced)*
+### Q2 — LSP ignores the client's workspace root *(partly shipped)*
 
-`proef lsp` ignores `initialize`/`rootUri` and roots at the process working directory;
-`walk_dir` has no `target/`/`.git` excludes and the code comment admits a full walk per
-request. So `nvim ~/proj/x.feature` launched from `$HOME` roots at `$HOME` and crawls the
-home tree on every request. Live JSON-RPC repro. *Wrong answer + resource consumption.*
+**This entry was written stale and is corrected here.** "Roots at the process working
+directory" stopped being true in `3e90f5a` (v0.5.1, root-at-suite): the order is
+`[run] suite` → the `tests/` convention → *then* cwd (`proef-cli/src/lsp.rs`). The
+`$HOME` repro still works, but only with **no `proef.toml` in any ancestor and no
+`$HOME/tests/`** — not for anyone with a project config above cwd.
+
+**Shipped in #27:** the walk no longer descends `target/`, `node_modules/`, `vendor/` or
+any dot-directory, has a depth bound, and no longer aborts on one unreadable subdirectory
+— that abort was swallowed by `unwrap_or_default()` in `analyze.rs`, so a single
+permission-denied directory silently emptied the whole analysis.
+
+**Still open, both verified 2026-08-10:**
+
+- **The `initialize` params are discarded** (`proef-lsp/src/server.rs`, bound to
+  `_init_params`), so `workspaceFolders`/`rootUri` are never read and the narrow
+  cwd-fallback case above stands. Per LSP 3.16+ the order should be `workspaceFolders`
+  → `rootUri` → the existing config resolution → cwd. `lsp-types` 0.97 is already a
+  dependency and `documents.rs` already has the `Uri`→path bridge, so this needs no new
+  crate — what it needs is a seam: root is resolved in the CLI *before* `proef_lsp::run`,
+  and the client's root only arrives during the handshake inside it.
+- **Two full walks per request** — `analyze.rs` discovers packs and features
+  independently, and completion requests are not debounced. The excludes cut what each
+  walk costs; they do not stop it happening twice.
 
 ### B2 — templated `retry:`/`delay:` under-count the batch budget
 
