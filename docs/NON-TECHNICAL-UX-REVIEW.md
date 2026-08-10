@@ -43,6 +43,40 @@ Three consequences, all reproduced below:
 None of this is a defect in the sense OPEN-FINDINGS uses — the tool does what it says.
 It is a **calibration** gap: excellent ergonomics, aimed one persona to the right.
 
+## 1a. What shipped against this review (2026-08-10)
+
+Findings below are kept as written — the evidence is the record. This section
+says what was acted on, so a reader does not re-report a closed item.
+
+| Finding | Status |
+|---|---|
+| N1 — first run reports `system error` | **shipped, adapted** — a failing run now says the suite is still the untouched scaffold, and names the remedy |
+| N2 — vocabulary not printable | **shipped** — `proef macros` prints each `match:` sentence; `--output json`'s `pattern` carries the string |
+| N3 — `macros` refuses when a step is unbound | **shipped for `macros`** — it lists the vocabulary beneath the diagnostics, exit 2 unchanged. Not for `flows` |
+| N4 — diagnostic addressed to the wrong reader | **shipped** — `unbound_step` leads with the author's action and names `proef macros` |
+| N5 — no document for P1 | **shipped** — [WRITING-SCENARIOS.md](WRITING-SCENARIOS.md); the index now labels each page by persona |
+| §8 — `init` announces 4, reports 5 | **shipped** — `schema --add-to` announces the file it writes, fixing both callers |
+| Package D — shippable fixture | not done, per this document's own recommendation |
+
+**Three deliberate divergences from §9, with reasons:**
+
+1. **The exit code is untouched; Package A proposed 2.** The re-classification
+   is not a CLI-edge change (§9's table): the verdict is set in
+   `proef-engine-hurl`, `Fault::System(String)` carries no kind, and the exit is
+   derived in `proef-core`. Both routes cost more than the user value — which is
+   *vocabulary*, and which the note delivers in full. The note also fires on the
+   **exit-1** placeholder-route path that a re-classification would have missed
+   entirely, so it covers strictly more of §3's table than the original proposal.
+2. **`flows` still refuses; Package B proposed degrading both.** `flows`
+   promises *every* scenario. A list that silently omits the feature that failed
+   to parse is a wrong answer, not a degraded one — the same hazard that forced
+   `macros` to withhold its counts. `macros` degrades safely only because pack
+   loading precedes binding and does not depend on it.
+3. **The scaffold default stays at `8787`.** With the note in place the value is
+   explained at the moment it matters. Changing the literal touches five
+   documentation sites (`GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2) and
+   the documented dev loop; it remains a reasonable follow-up, not a blocker.
+
 ## 2. Method — reproducible, and what it confirms already shipped
 
 ```console
