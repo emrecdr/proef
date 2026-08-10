@@ -1,13 +1,22 @@
 # proef — open findings
 
+**This is the worklist.** Every open defect and gap lives here, whichever review found
+it. The reviews themselves stay on disk as dated evidence — reproduction transcripts,
+source citations, the reasoning behind each call — but none of them is a to-do list, and
+none should be read as one.
+
+| Source | Role | Where its open items are |
+|---|---|---|
+| [FIRST-RUN-UX-REVIEW](FIRST-RUN-UX-REVIEW.md) | evidence, 0.5.3, engineer's first 30 min | here, as **R1–R2** |
+| [NON-TECHNICAL-UX-REVIEW](NON-TECHNICAL-UX-REVIEW.md) | evidence, 0.8.0, PRD §4 P1 calibration | here, as **R3** |
+| [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) | *feature* roadmap, own numbering, **13 of 16 shipped** | stays separate — 5 ADRs cite it by section |
+| [CHANGELOG](CHANGELOG.md) | what shipped, per release | — |
+
 **Provenance:** an external review of v0.5.3, validated claim-by-claim against the tree
 on **2026-08-06** (40 claims → 38 confirmed, 1 partial, 1 already fixed). Every item
 below was reproduced live or verified in code at that time. The shipped/open split was
-re-checked against `main` on **2026-08-10**.
-
-**Companion docs:** [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) is the *feature* roadmap
-(competitive analysis, N-items) — a different list with different numbering. This file
-is the *defect* list. [CHANGELOG](CHANGELOG.md) records what shipped.
+re-checked against `main` on **2026-08-10**, when the two UX reviews' residue was folded
+in.
 
 **Read the citations as "start reading here", not as addresses.** They were accurate on
 2026-08-06 and files have moved since; locate symbols with `rg`, not line numbers.
@@ -33,11 +42,62 @@ re-reported after it is fixed.
 | Q3 | `report -o` outside the run dir shipped dead relative artifact hrefs | #18 |
 | B8 | `diff` flagged a brand-new retried step as flaky | #18 |
 | A3 | `CLAUDE.md` status stopped at post-M5 | #21 |
+| N1 | First run reported `system error` with no explanation (NON-TECHNICAL) | #24 |
+| N2 | `proef macros` printed identifiers, never the `match:` sentence | #24 |
+| N3 | `macros` refused to list when any step failed to bind | #24 |
+| N4 | `unbound_step`'s help led with the pack maintainer's action | #24 |
+| N5 | No document described the scenario author's workflow | #24 |
+| §8 | `init` announced four files and reported five | #24 |
 
 **Q7 partially addressed** (#16): `fuzz_tag_expr` is now compiled by the gates job and
 its status is documented in [TESTING-STRATEGY](TESTING-STRATEGY.md) — but it is still
 listed in neither fuzz loop (`ci.yml:127`, `nightly.yml:84` both name three targets), so
 nothing fuzzes it. Verified 2026-08-10.
+
+---
+
+## Open — folded in from the UX reviews
+
+Verified against `main` on 2026-08-10. Everything else those two reviews raised has
+shipped; see their own status sections for the closed items.
+
+### R1 — `missing_config_var`'s span points at the sentence, not the pack line
+
+FIRST-RUN F2, second half. The did-you-mean shipped; retargeting the span did not, and
+**deliberately** — `ResolveError` carries no position and `resolve()` is documented
+"pure and total", so supplying one means threading an offset out of a deliberately
+position-free function and carrying pack identity to the diagnostic site. The reasoning
+is written up in that review's validation notes. *Deferred to its own spec, not
+forgotten.*
+
+### R2 — `doctor` does not report a missing pack schema
+
+FIRST-RUN F4b, second half. `init` installing the schema automatically shipped; the
+other half of that finding — `doctor` reporting it as missing — did not. Reproduced
+2026-08-10: `proef doctor` checks hurl, the parser, libcurl, the secret key and the
+secret store, and says nothing about editor completion. Small, and it closes the
+finding.
+
+### R3 — the scaffold default is still the dev fixture's port
+
+NON-TECHNICAL N1, the "also in scope" half. `init.rs` writes
+`base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`; 8787 is proef's own dev fixture
+port, so the value *looks* configured to someone who has no fixture. A failing run now
+says the suite is still the untouched scaffold, which covers the recovery case — this
+would cover the prevention case. Cost is not the literal but its documentation blast
+radius: `GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2, and the documented dev
+loop.
+
+**Two proposals from that review were considered and declined**, with reasons recorded
+in its §1a — they are decisions, not backlog:
+
+- **Re-classifying the unconfigured-scaffold failure to exit 2.** The verdict is set in
+  `proef-engine-hurl`, `Fault::System(String)` carries no kind, and the exit derives in
+  `proef-core`; the note delivers the user value and covers the exit-1 path a
+  re-classification would have missed.
+- **Degrading `proef flows` the way `macros` degrades.** `flows` promises *every*
+  scenario; a list silently omitting an unparsed feature is a wrong answer, not a
+  degraded one.
 
 ---
 

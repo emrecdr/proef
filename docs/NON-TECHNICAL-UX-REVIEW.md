@@ -1,5 +1,11 @@
 # proef — non-technical adoption review (P1 calibration, 2026-08-10)
 
+> **Evidence, not a worklist.** Findings below are preserved as written — the
+> transcripts and citations are the record. Whatever remains open from this
+> review is tracked in **[OPEN-FINDINGS.md](OPEN-FINDINGS.md)**, which is the
+> single list of work still to do.
+
+
 **Question asked:** is proef easy enough for a first-time, *non-technical* user to adopt?
 **Version reviewed:** 0.8.0 (Homebrew, `/opt/homebrew/bin/proef`) · **Platform:** macOS arm64
 
@@ -12,7 +18,8 @@ else maintains.**
 
 It is deliberately *not* a capability review ([IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md)), a
 defect list ([OPEN-FINDINGS](OPEN-FINDINGS.md)), or a repeat of the 0.5.3 first-run review
-([FIRST-RUN-UX-REVIEW](FIRST-RUN-UX-REVIEW.md)) — whose backlog is **closed**, verified in §2.
+([FIRST-RUN-UX-REVIEW](FIRST-RUN-UX-REVIEW.md)) — whose findings are **almost all
+shipped**, verified in §2; the two halves that remain are OPEN-FINDINGS R1 and R2.
 
 **Stated limitation, so the confidence here is not over-read:** no non-technical person was
 observed using the tool. This is a charter-versus-behavior audit — every claim is a
@@ -89,7 +96,8 @@ $ PROEF_BASE_URL=http://127.0.0.1:9099 proef test    # unused port = clean machi
 
 `PROEF_BASE_URL` is pointed at a closed port deliberately — see the blind spot in §3.
 
-**Prior review verified closed.** Every item in FIRST-RUN-UX-REVIEW.md now ships:
+**Prior review, verified.** Every item below now ships. (This table is not the whole
+review: F2's span retarget and F4b's `doctor` check remain open — OPEN-FINDINGS R1, R2.)
 
 | Item | Status | Evidence |
 |---|---|---|

@@ -29,10 +29,10 @@ repo-root `CLAUDE.md` carry the live status.
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
-| — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: architecture-validated candidate improvements (proposed, not committed) | maintainers |
-| — | [OPEN-FINDINGS.md](OPEN-FINDINGS.md) | Validated defects still open, and what shipped against them — the defect list to IMPROVEMENT-PLAN's feature list | maintainers |
-| — | [FIRST-RUN-UX-REVIEW.md](FIRST-RUN-UX-REVIEW.md) | External first-use review of 0.5.3 with maintainer validation notes: what the first thirty minutes cost, and which findings were acted on | maintainers |
-| — | [NON-TECHNICAL-UX-REVIEW.md](NON-TECHNICAL-UX-REVIEW.md) | Persona-calibration review of 0.8.0: does the shipped surface serve PRD §4's **P1** (test author, not necessarily a programmer)? | maintainers |
+| — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: the *feature* roadmap, each item carrying a Status column (13 of 16 shipped) | maintainers |
+| — | [OPEN-FINDINGS.md](OPEN-FINDINGS.md) | **The worklist.** Every open defect and gap, whichever review found it, plus what shipped against each | maintainers |
+| — | [FIRST-RUN-UX-REVIEW.md](FIRST-RUN-UX-REVIEW.md) | *Evidence, not a worklist.* External first-use review of 0.5.3 with maintainer validation notes; open residue is OPEN-FINDINGS R1–R2 | maintainers |
+| — | [NON-TECHNICAL-UX-REVIEW.md](NON-TECHNICAL-UX-REVIEW.md) | *Evidence, not a worklist.* Persona-calibration review of 0.8.0 against PRD §4's **P1**; findings shipped in #24, open residue is OPEN-FINDINGS R3 | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
 | — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |

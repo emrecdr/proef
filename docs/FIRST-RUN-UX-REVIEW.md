@@ -1,5 +1,11 @@
 # proef — first-run UX review (external, 2026-08-06)
 
+> **Evidence, not a worklist.** Findings below are preserved as written — the
+> transcripts and citations are the record. Whatever remains open from this
+> review is tracked in **[OPEN-FINDINGS.md](OPEN-FINDINGS.md)**, which is the
+> single list of work still to do.
+
+
 **Reviewer:** an experienced engineer meeting proef for the first time, evaluating it for
 adoption by a real service (a FastAPI/Postgres task service with an existing 14-file,
 844-line hurl E2E suite). **Version reviewed:** 0.5.3 (Homebrew).
@@ -181,6 +187,14 @@ failure rather than a parse error. For an adopting team weighing a 0.5.x depende
 escape hatch is the single most reassuring property proef has, and it is under-sold.
 
 ---
+
+## Status (2026-08-10)
+
+F1, F3 and F4a shipped in 0.6.0; F2's did-you-mean half shipped with them. **Two halves
+remain open**, both tracked in [OPEN-FINDINGS.md](OPEN-FINDINGS.md): F2's span retarget
+(**R1** — deferred with the written reason in the validation notes below) and F4b's
+`doctor` check for a missing pack schema (**R2**). Two further proposals were declined
+with reasons, also below.
 
 ## Validation notes (2026-08-06, maintainer)
 

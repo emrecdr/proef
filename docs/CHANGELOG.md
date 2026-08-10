@@ -66,6 +66,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **One worklist instead of four documents to cross-read.** Four files read like
+  backlogs and only one was: `OPEN-FINDINGS` now carries every open item, including the
+  residue of both UX reviews (R1–R3), and the reviews themselves carry a banner saying
+  they are evidence, not a to-do list. `IMPROVEMENT-PLAN` stays a separate file — five
+  ADRs cite it by section number — but its master table gained a **Status** column,
+  because its ✅/⚠️ glyphs mean "fits the architecture", never "done", and **13 of its
+  16 items had already shipped** while the table gave no way to tell. Item 14's cited
+  mechanism (`Refs::default()` resetting per `lower()` call) was corrected: 0.6.0
+  replaced it, and only the cross-scenario half of that caveat still holds.
+
 - **A page for the persona the product is named after.** PRD §4's first persona
   writes prose against a vocabulary somebody else maintains — and every
   document labelled "test authors" taught pack authoring, so that reader had no
