@@ -20,11 +20,11 @@ fn proef_bin() -> Result<String, String> {
     Ok(proef_harness::env_var("PROEF_BIN")?.unwrap_or_else(|| "proef".to_owned()))
 }
 
-/// A configuration fault surfaces as one loud failing trial, the same shape the
-/// flows-contract guard below uses — never as an empty trial list, which would
-/// report green having run nothing.
-fn config_error(message: String) -> Trial {
-    Trial::test("proef::config", move || Err(Failed::from(message.clone())))
+/// A fault that stops the harness listing real trials surfaces as one named
+/// failing trial — never as an empty list, which would report green having run
+/// nothing. The name says which fault, so CI output stays greppable by cause.
+fn failing_trial(name: &'static str, message: String) -> Trial {
+    Trial::test(name, move || Err(Failed::from(message)))
 }
 
 fn discover() -> Vec<Trial> {
@@ -35,11 +35,11 @@ fn discover() -> Vec<Trial> {
     let suite = match proef_harness::env_var("PROEF_HARNESS_SUITE") {
         Ok(Some(suite)) => suite,
         Ok(None) => return Vec::new(),
-        Err(message) => return vec![config_error(message)],
+        Err(message) => return vec![failing_trial("proef::config", message)],
     };
     let bin = match proef_bin() {
         Ok(bin) => bin,
-        Err(message) => return vec![config_error(message)],
+        Err(message) => return vec![failing_trial("proef::config", message)],
     };
     let output = match Command::new(&bin)
         .args(["flows", &suite, "--output", "json"])
@@ -48,15 +48,14 @@ fn discover() -> Vec<Trial> {
         Ok(output) if output.status.success() => output,
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            return vec![Trial::test("proef::flows", move || {
-                Err(Failed::from(format!("cannot list scenarios:\n{stderr}")))
-            })];
+            return vec![failing_trial(
+                "proef::flows",
+                format!("cannot list scenarios:\n{stderr}"),
+            )];
         }
         Err(err) => {
             let message = format!("cannot invoke proef (set PROEF_BIN): {err}");
-            return vec![Trial::test("proef::flows", move || {
-                Err(Failed::from(message.clone()))
-            })];
+            return vec![failing_trial("proef::flows", message)];
         }
     };
 
@@ -83,12 +82,12 @@ fn discover() -> Vec<Trial> {
         // Flows succeeded and printed rows, yet none parsed into a trial —
         // contract drift between `proef flows --output json` and this harness
         // must fail CI loudly, never run zero tests green.
-        return vec![Trial::test("proef::flows-contract", move || {
-            Err(Failed::from(
-                "flows printed output but no line parsed into a trial (file/name fields \
-                 missing?) — the flows JSON contract and this harness disagree",
-            ))
-        })];
+        return vec![failing_trial(
+            "proef::flows-contract",
+            "flows printed output but no line parsed into a trial (file/name fields \
+             missing?) — the flows JSON contract and this harness disagree"
+                .to_owned(),
+        )];
     }
     trials
 }
