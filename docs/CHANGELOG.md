@@ -8,6 +8,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **Suite discovery no longer walks build output, and one unreadable directory
+  no longer empties the suite.** The walk had no exclusions, no depth bound, and
+  a `canonicalize()` per directory — and it re-runs on every language-server
+  request, so entering `target/` cost that price over and over for a subtree
+  that cannot contain a suite. It now skips `target/`, `node_modules/`,
+  `vendor/` and dot-directories (tested on children only: a suite may
+  legitimately be rooted *at* such a name), and refuses beyond 32 levels rather
+  than recursing until the stack runs out. A `Permission denied` on one
+  descendant used to abort the entire walk, and `proef lsp` swallowed that error
+  into an empty analysis — so a single unreadable subdirectory silently emptied
+  the suite. Unreadable descendants are now skipped, the way `find` and ripgrep
+  do; an unreadable *root* is still a loud error, because that path is the
+  caller's own.
+
 - **Ctrl-C no longer skips cleanup in silence.** Teardown shared the run's
   cancellation token, so an interrupt left every teardown scenario `Skipped` —
   and because a skipped phase carries no fault, the worst-wins fold passed it

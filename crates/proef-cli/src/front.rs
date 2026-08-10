@@ -269,31 +269,88 @@ pub fn discover_features(path: &Path) -> Result<Vec<PathBuf>, FrontError> {
 /// symlink-cycle guarded (each cycle copy would become a same-named scenario
 /// issuing real traffic). `on_file` receives the containing directory and
 /// the file path and applies the caller's predicate.
+/// Directories a suite never lives in, skipped before they are descended.
+///
+/// The walk is unindexed and runs per LSP request, so the cost of entering one
+/// of these is paid over and over for a subtree that cannot contain a `.feature`
+/// or a `packs/` worth finding. `target/` alone can hold hundreds of thousands
+/// of files.
+const SKIPPED_DIRS: &[&str] = &["target", "node_modules", "vendor"];
+
+/// How deep the walk will recurse before refusing.
+///
+/// Matches the `use:` nesting bound (ADR-0004) rather than inventing a second
+/// number. A suite nested deeper than this is pathological, and without a bound
+/// a symlink arrangement the `visited` guard cannot see — or simply a very deep
+/// tree — recurses until the stack runs out.
+const MAX_WALK_DEPTH: usize = 32;
+
 fn walk_dir(
     dir: &Path,
     visited: &mut std::collections::BTreeSet<PathBuf>,
     on_file: &mut impl FnMut(&Path, PathBuf),
 ) -> Result<(), FrontError> {
+    walk_dir_inner(dir, visited, on_file, 0)
+}
+
+fn walk_dir_inner(
+    dir: &Path,
+    visited: &mut std::collections::BTreeSet<PathBuf>,
+    on_file: &mut impl FnMut(&Path, PathBuf),
+    depth: usize,
+) -> Result<(), FrontError> {
+    if depth > MAX_WALK_DEPTH {
+        return Err(FrontError::Core(CoreError::user(format!(
+            "directory nesting deeper than {MAX_WALK_DEPTH} under {} — \
+             narrow the suite path or flatten the tree",
+            dir.display()
+        ))));
+    }
     if let Ok(real) = dir.canonicalize()
         && !visited.insert(real)
     {
         return Ok(());
     }
-    let entries = std::fs::read_dir(dir).map_err(|err| {
-        FrontError::Core(CoreError::system_with(
-            format!("cannot read directory {}", dir.display()),
-            err,
-        ))
-    })?;
+    // An unreadable *root* is the caller's own path and must be loud. An
+    // unreadable descendant is somebody else's directory that happens to sit
+    // under it — one `Permission denied` deep in a tree used to abort the whole
+    // walk, and the LSP then swallowed that error into an empty analysis, so a
+    // single unreadable subdirectory silently emptied the suite. Skip it and
+    // keep going, the way `find` and ripgrep do.
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) if depth > 0 => return Ok(()),
+        Err(err) => {
+            return Err(FrontError::Core(CoreError::system_with(
+                format!("cannot read directory {}", dir.display()),
+                err,
+            )));
+        }
+    };
     for entry in entries.flatten() {
         let entry_path = entry.path();
         if entry_path.is_dir() {
-            walk_dir(&entry_path, visited, on_file)?;
+            // Tested on the child, never the root: a suite may legitimately be
+            // rooted *at* a hidden directory, and refusing to walk the path the
+            // caller explicitly named would be the tool second-guessing them.
+            if skipped_dir(&entry_path) {
+                continue;
+            }
+            walk_dir_inner(&entry_path, visited, on_file, depth + 1)?;
         } else {
             on_file(dir, entry_path);
         }
     }
     Ok(())
+}
+
+/// Whether a *child* directory should not be descended: build output, vendored
+/// dependencies, and dot-directories (`.git`, `.proef-runs`, `.venv`, …).
+fn skipped_dir(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        let name = name.to_string_lossy();
+        name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref())
+    })
 }
 
 fn walk_features(
@@ -361,4 +418,75 @@ pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
 /// omitted) selects everything; otherwise the boolean expression decides.
 pub fn tag_selected(tags: &[String], filter: Option<&proef_core::tags::TagExpr>) -> bool {
     filter.is_none_or(|expr| expr.eval(tags))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::{discover_features, pack_files};
+
+    /// Build output, vendored trees and dot-directories are never descended.
+    /// The walk is unindexed and re-runs per LSP request, so entering `target/`
+    /// costs that price repeatedly for a subtree that cannot hold a suite.
+    #[test]
+    fn the_walk_skips_build_output_and_dot_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let root = root.path();
+        for dir in ["suite", "target/debug", "node_modules/pkg", ".git/objects"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::write(root.join("suite/real.feature"), "Feature: F\n").unwrap();
+        for buried in [
+            "target/debug/x.feature",
+            "node_modules/pkg/y.feature",
+            ".git/objects/z.feature",
+        ] {
+            std::fs::write(root.join(buried), "Feature: F\n").unwrap();
+        }
+
+        let found = discover_features(root).unwrap();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].ends_with("real.feature"), "{found:?}");
+    }
+
+    /// A suite may legitimately be rooted *at* an excluded name — the exclusion
+    /// is about what lies beneath a root, not about refusing the path the
+    /// caller explicitly named.
+    #[test]
+    fn a_root_that_is_itself_an_excluded_name_is_still_walked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join(".hidden-suite");
+        std::fs::create_dir_all(root.join("packs")).unwrap();
+        std::fs::write(root.join("case.feature"), "Feature: F\n").unwrap();
+        std::fs::write(root.join("packs/p.yaml"), "macros: {}\n").unwrap();
+
+        assert_eq!(discover_features(&root).unwrap().len(), 1);
+        assert_eq!(pack_files(&root).unwrap().len(), 1);
+    }
+
+    /// One unreadable directory deep in a tree used to abort the entire walk —
+    /// and the LSP swallowed that error into an empty analysis, so a single
+    /// permission-denied subdirectory silently emptied the suite.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subdirectory_does_not_empty_the_suite() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("readable")).unwrap();
+        std::fs::create_dir_all(root.join("locked")).unwrap();
+        std::fs::write(root.join("readable/real.feature"), "Feature: F\n").unwrap();
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+
+        let found = discover_features(root);
+        // Restore before asserting, so a failure cannot leave an undeletable dir.
+        std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+
+        let found = found.expect("an unreadable subdirectory must not fail the walk");
+        assert_eq!(found.len(), 1, "{found:?}");
+    }
 }
