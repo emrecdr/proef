@@ -62,6 +62,9 @@ re-reported after it is fixed.
 | §2.4 | `--rerun` after a phase-only failure blamed filters never passed | #31 |
 | §2.1 | pre-0.6.0 records reported the wrong verdict with confidence | #31 |
 | — | `diff` counted a failing teardown as a test regression | #31 |
+| P4 | `fmt` homogenized mixed-endings files beyond its hurl-blocks-only promise | #33 |
+| P4 | `proef --help` described `macros` with pre-prose wording | #33 |
+| P4 | `WRITING-SCENARIOS`' two sample outputs drifted from the binary | #33 |
 | — | `init` destroyed an authored `proef-pack.schema.json` (round-7 §2.2) | #30 |
 | Q7 | `fuzz_tag_expr` compiled but was in neither fuzz loop | #30 |
 | B3 | `windows.yml` built and tested without `--locked` | #30 |
@@ -250,8 +253,9 @@ Found while fixing the above; each was validated and consciously left out of sco
 - **No corpus tier for engineered robustness fixtures.** `tests/` has zero custom-method
   entries and zero fenced blocks, so that bug class is pinned only by unit tests on
   private functions.
-- **`fmt`'s tie-break** (equal CRLF/LF → LF) is correct but undocumented and unpinned;
-  lone-`\r` files are unhandled by the `.lines()`-based design (pre-existing).
+- **`fmt`'s tie-break** (equal CRLF/LF → LF) now applies only to the trailing newline
+  of a file that lacked one — per-line endings are preserved (#33). Lone-`\r` files are
+  still unhandled: the splitter keys on `\n`, so a classic-Mac file is one long line.
 - **The stdout latch's single-reader test isolation** is safe under the mandated nextest
   (one process per test) but is a convention, not an enforced invariant.
 - **A disk filling mid-run** still truncates the human console report without reaching the

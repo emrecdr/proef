@@ -135,7 +135,7 @@ enum Command {
         #[arg(long)]
         env: Option<String>,
     },
-    /// List every macro with its call count, flagging pattern macros nothing binds
+    /// List every macro with the sentence it binds and its call count, flagging pattern macros nothing binds
     Macros {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
         path: Option<PathBuf>,
