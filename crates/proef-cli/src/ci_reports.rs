@@ -114,9 +114,9 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
         let _ = writeln!(
             body,
             "| `{}:{}` {} | {:?} | {} |",
-            outcome.file,
+            enc_cell(&outcome.file),
             outcome.line,
-            outcome.name,
+            enc_cell(&outcome.name),
             outcome.status,
             outcome.steps.len()
         );
@@ -185,7 +185,7 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                 let _ = writeln!(
                     out,
                     "::error file={},line={},title={}::{}",
-                    step.step.file,
+                    enc_prop(&step.step.file),
                     step.step.line,
                     enc_prop(&format!("{}: {}", outcome.name, step.step.text)),
                     enc_msg(&redactions.apply(detail)),
@@ -200,7 +200,7 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
             let _ = writeln!(
                 out,
                 "::error file={},line={},title={}::{}",
-                outcome.file,
+                enc_prop(&outcome.file),
                 outcome.line,
                 enc_prop(&outcome.name),
                 enc_msg(&redactions.apply(message)),
@@ -218,6 +218,15 @@ fn enc_msg(s: &str) -> String {
 }
 
 /// Property values (`title`) additionally escape `:` and `,`.
+/// A value going into a Markdown table cell.
+///
+/// `|` ends a cell, so an unescaped one in a scenario name or a path silently
+/// splits the row and shifts every column after it. A newline ends the row
+/// outright. Neither is exotic: a scenario name is free prose.
+fn enc_cell(s: &str) -> String {
+    s.replace('|', "\\|").replace(['\r', '\n'], " ")
+}
+
 fn enc_prop(s: &str) -> String {
     enc_msg(s).replace(':', "%3A").replace(',', "%2C")
 }
@@ -233,5 +242,55 @@ mod tests {
         // Property values additionally escape `:` and `,` so a title cannot break
         // the `key=value,key=value` parse.
         assert_eq!(enc_prop("Scenario: a, b"), "Scenario%3A a%2C b");
+    }
+}
+
+#[cfg(test)]
+mod escaping_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{enc_cell, github_annotations};
+    use proef_core::report::Redactions;
+    use proef_core::runner::{Fault, RunSummary, ScenarioOutcome};
+    use proef_core::step::Status;
+
+    /// `file=` is a workflow-command *property*, parsed out of a
+    /// `key=value,key=value` list terminated by `::`. It was the one argument
+    /// in its own `writeln!` passed raw while `title=` and the message beside
+    /// it were encoded — so a path carrying `,` or `:` (every Windows path
+    /// carries a `:`) broke the annotation into nonsense.
+    #[test]
+    fn the_annotation_encodes_its_file_property() {
+        let summary = RunSummary {
+            outcomes: vec![ScenarioOutcome {
+                file: "C:\\proj,odd\\x.feature".into(),
+                name: "s".into(),
+                line: 3,
+                status: Status::Failed,
+                steps: Vec::new(),
+                fault: Some(Fault::System("boom".to_owned())),
+                artifact_slug: None,
+            }],
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        };
+        let out = github_annotations(&summary, &Redactions::new(std::iter::empty()));
+        assert!(
+            out.contains("file=C%3A\\proj%2Codd\\x.feature"),
+            "the file property must be encoded like every other one:\n{out}"
+        );
+    }
+
+    /// A scenario name is free prose and a path is arbitrary, so both can carry
+    /// `|` — which ends a Markdown cell and shifts every column after it. The
+    /// row still renders, just wrongly, which is why nobody notices.
+    #[test]
+    fn table_cells_escape_the_pipe_that_would_split_the_row() {
+        assert_eq!(enc_cell("a | b"), r"a \| b");
+        assert_eq!(enc_cell("plain"), "plain");
+        // A newline ends the row outright.
+        assert_eq!(enc_cell("two\nlines"), "two lines");
     }
 }

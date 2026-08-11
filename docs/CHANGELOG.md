@@ -8,6 +8,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **Three places interpolated a value into a format without escaping it.** Same
+  shape each time, so they are fixed together:
+  - **LSP completion snippets.** `$`, `}` and `\` are LSP snippet syntax, and a
+    `match:` pattern is prose — prose carries `$`. `the price is $5` made the
+    client read `$5` as tabstop 5 and drop the text, so accepting the completion
+    inserted something the author never wrote. Literal characters are escaped
+    now; the tabstops the generator writes stay syntax.
+  - **GitHub annotations.** `file=` was passed raw while `title=` and the
+    message beside it in the same `writeln!` were encoded. A path carrying `,`
+    or `:` — every Windows path carries a `:` — broke the
+    `key=value,key=value` parse.
+  - **The GitHub job-summary table.** The scenario name and file went into
+    Markdown cells unescaped; a `|` in either ends the cell and shifts every
+    column after it, and the row still renders, which is why it goes unnoticed.
+
+### Fixed
+
 - **A templated `retry:`/`delay:`/`repeat:`/`max-time:` no longer under-counts
   the batch budget.** The estimator matched literal values only, so a
   `{{var}}`-driven option fell through and read as *no retries* — the budget was

@@ -12,8 +12,22 @@ use crate::analysis::Analysis;
 use crate::convert::{LineIndex, normalize};
 use crate::documents::url_to_name;
 
+/// Escape one literal character for LSP snippet syntax.
+///
+/// `$`, `}` and `\` are the syntax's own metacharacters, so a pattern that
+/// merely *contains* one changes the snippet's shape: prose like
+/// `the price is $5` makes the client read `$5` as tabstop 5 and drop the text.
+/// Ordinary sentences carry `$`, which is exactly what these patterns are.
+fn push_escaped(out: &mut String, c: char) {
+    if matches!(c, '$' | '}' | '\\') {
+        out.push('\\');
+    }
+    out.push(c);
+}
+
 /// Turn a `match:` pattern into an LSP snippet: each `{capture}` becomes a
-/// numbered tabstop `${n:capture}`.
+/// numbered tabstop `${n:capture}`. Everything else is literal text and is
+/// escaped as such — only the tabstops this function writes are syntax.
 fn pattern_to_snippet(pattern: &str) -> String {
     let mut out = String::new();
     let mut tab = 1;
@@ -25,13 +39,13 @@ fn pattern_to_snippet(pattern: &str) -> String {
                 if c2 == '}' {
                     break;
                 }
-                name.push(c2);
+                push_escaped(&mut name, c2);
             }
             // `write!` to a `String` is infallible; nothing to propagate.
             let _ = write!(out, "${{{tab}:{name}}}");
             tab += 1;
         } else {
-            out.push(c);
+            push_escaped(&mut out, c);
         }
     }
     out
@@ -100,4 +114,34 @@ fn current_step_prefix(raw: &str, position: Position) -> String {
         }
     }
     line.to_owned()
+}
+
+#[cfg(test)]
+mod snippet_tests {
+    use super::pattern_to_snippet;
+
+    /// A pattern is prose, and prose carries `$`. Unescaped, the client reads
+    /// `$5` as tabstop 5 and drops the text — the completion silently inserts
+    /// something the author never wrote.
+    #[test]
+    fn snippet_metacharacters_in_prose_are_escaped() {
+        assert_eq!(
+            pattern_to_snippet("the price is $5"),
+            "the price is \\$5",
+            "a literal `$` must not open a tabstop"
+        );
+        assert_eq!(pattern_to_snippet(r"a back\slash"), r"a back\\slash");
+
+        // The tabstops this function writes are syntax and stay unescaped.
+        assert_eq!(
+            pattern_to_snippet("the operator searches for {term}"),
+            "the operator searches for ${1:term}"
+        );
+        // Both at once. `${amount}` is a literal `$` followed by the capture
+        // `{amount}`, so the `$` escapes and the tabstop it precedes does not.
+        assert_eq!(
+            pattern_to_snippet("pay ${amount} now"),
+            "pay \\$${1:amount} now"
+        );
+    }
 }
