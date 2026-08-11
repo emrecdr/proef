@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A step that set `retry:` twice ran the value it did not name.** A pack could
+  declare `retry:` (or `delay:`) as a step key *and* again inside the block's own
+  `[Options]`. Lowering extends an author's existing section rather than opening a
+  second one, so proef's baked line landed *above* the author's; hurl resolves a
+  duplicated option last-wins, and the raw value therefore won every time. The pack
+  said `retry: 10`, the run did `retry: 3`, and nothing anywhere said so — the
+  finite-retry lint only ever looked for `-1` and over-cap counts, so a plausible
+  finite value passed untouched. Declaring an option in both places is now
+  `proef::pack::option_declared_twice`, refused at load with the span on the raw
+  line that used to take effect.
+
+  The scan is deliberately scoped to `[Options]` sections rather than matching any
+  `retry:`-shaped line: `retry` is a legal request-header name, and a header is
+  `name: value` like an option is, so a line-shaped match would have turned an
+  ordinary header into a hard error. Pinned by a test that a header named `retry`
+  on a step carrying a typed `retry:` still loads.
+
 ## [0.9.0] - 2026-08-11 (tool-surface integrity & authoring guidance)
 
 > **Breaking:** `proef secret set --value` was removed in favour of `--stdin`,

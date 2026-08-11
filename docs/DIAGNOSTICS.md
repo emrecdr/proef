@@ -38,6 +38,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::bad_reference` | A `${…}` reference in the payload cannot resolve at probe time | |
 | `pack::retry_not_finite` | `retry`/`repeat` is `-1`, `0`, or above the 10000 cap | ✓ |
 | `pack::delay_unbounded` | `delay` exceeds the 1-hour cap | |
+| `pack::option_declared_twice` | `retry`/`delay` set both in the block's `[Options]` and as the step's own key | ✓ |
 | `pack::pattern_braces` | Unbalanced `{`/`}` in a `match:` pattern | |
 | `pack::pattern_empty_capture` | `{}` with no capture name | |
 | `pack::pattern_no_anchor` | A pattern with no literal word (capture-only) | ✓ |
@@ -106,6 +107,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-26 of the 60 codes carry a seeded corpus case today; the corpus guard asserts
+27 of the 61 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

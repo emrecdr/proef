@@ -5,7 +5,9 @@
 //!    macro names across packs (in `mod.rs`, at insertion) · 4. `use:` cycle +
 //!    depth ≤ [`MAX_USE_DEPTH`] · 5. unknown/missing `with:` keys ·
 //!    6. finite-retry lint (typed `retry:` plus a raw-block scan for infinite
-//!    hurl `retry`/`repeat` options) · 7. probe-instantiation parse of payload
+//!    hurl `retry`/`repeat` options, and the same scan's refusal of an option
+//!    declared both in `[Options]` and as its typed twin) · 7.
+//!    probe-instantiation parse of payload
 //!    blocks via the claiming engine's [`StepKindSpec::validate`] hook ·
 //!    8. every payload kind is claimed by a registered engine.
 
@@ -355,7 +357,9 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                         .entry(kind.as_str())
                         .and_modify(|n| *n += 1)
                         .or_insert(0);
-                    payload_passes(macro_, index, kind, payload, ordinal, kinds, &at, diags);
+                    payload_passes(
+                        macro_, index, kind, step, payload, ordinal, kinds, &at, diags,
+                    );
                 }
             }
         }
@@ -425,6 +429,7 @@ fn payload_passes(
     macro_: &Macro,
     index: usize,
     kind: &str,
+    step: &MacroStep,
     payload: &PayloadForm,
     ordinal: usize,
     kinds: &[StepKindSpec],
@@ -469,7 +474,7 @@ fn payload_passes(
         }
     };
 
-    lint_raw_options(macro_, index, kind, ordinal, text, at, diags);
+    lint_raw_options(macro_, index, kind, step, ordinal, text, at, diags);
 
     // Pass 7: probe-instantiation parse via the engine's validator.
     let Some(validate) = spec.validate else {
@@ -520,16 +525,32 @@ fn payload_passes(
 /// `delay` — parse numeric raw-option values and reject what no budget can
 /// absorb (ADR-0007). Non-numeric values (`{{…}}` templates) pass: the
 /// runtime batch budget still bounds those.
+///
+/// Also the double-declaration check: an option set *both* in the block's own
+/// `[Options]` and as its YAML twin (`retry:` / `delay:`). Lowering extends an
+/// author's section rather than opening a second one, and hurl resolves
+/// duplicate options last-wins, so the raw value quietly beat the typed one —
+/// the pack said one thing and the run did another. Only `[Options]`-section
+/// lines count: a request header may legitimately be named `retry`, and this
+/// is a hard error, so it must not fire on one.
+// Both checks read the same one-pass scan; splitting them would walk the block
+// twice and duplicate the fence and section bookkeeping.
+#[allow(clippy::too_many_arguments)]
 fn lint_raw_options(
     macro_: &Macro,
     index: usize,
     kind: &str,
+    step: &MacroStep,
     ordinal: usize,
     text: &str,
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
     let mut in_fence = false;
+    let mut in_options = false;
+    // One report per option family is enough to act on; a block whose every
+    // entry repeats the clash would otherwise bury the step in duplicates.
+    let (mut said_retry, mut said_delay) = (false, false);
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
@@ -538,6 +559,12 @@ fn lint_raw_options(
         }
         if in_fence {
             continue; // fenced body data — a literal `retry: -1` is payload, not an option
+        }
+        // A section runs until the next section header or the next entry.
+        if trimmed.starts_with('[') {
+            in_options = trimmed == "[Options]";
+        } else if crate::lower::is_method_line(trimmed) {
+            in_options = false;
         }
         let mut reject = |code: &'static str, message: String| {
             diags.push(
@@ -580,6 +607,39 @@ fn lint_raw_options(
                 format!(
                     "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
                     value.trim()
+                ),
+            );
+        }
+        if !in_options {
+            continue;
+        }
+        let is_retry = trimmed.starts_with("retry:") || trimmed.starts_with("retry-interval:");
+        let (option, twinned, said) = if is_retry {
+            ("retry", step.retry.is_some(), &mut said_retry)
+        } else if trimmed.starts_with("delay:") {
+            ("delay", step.delay_ms.is_some(), &mut said_delay)
+        } else {
+            continue;
+        };
+        if twinned && !*said {
+            *said = true;
+            diags.push(
+                at(Diag::error(
+                    "proef::pack::option_declared_twice",
+                    format!(
+                        "macro `{}` step {index}: `{option}` is declared twice — here in `[Options]`, and as the step's own `{option}:`",
+                        macro_.name
+                    ),
+                ))
+                .maybe_span(locate::payload_line_span(
+                    &macro_.source,
+                    &macro_.name,
+                    kind,
+                    ordinal,
+                    line_no + 1,
+                ))
+                .with_help(
+                    "an entry carries one policy per option — delete whichever of the two is not authoritative",
                 ),
             );
         }
@@ -949,5 +1009,85 @@ mod tests {
         )
         .unwrap();
         assert_eq!(packs.macros.len(), 32);
+    }
+
+    /// No validator, so nothing but the raw-option lint speaks.
+    const RAW: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: None,
+    }];
+
+    /// Setting an option in both the block's `[Options]` and its YAML twin
+    /// used to run silently: lowering extends the author's own section rather
+    /// than opening a second one, and hurl resolves a duplicated option
+    /// last-wins, so the raw value won and the pack's `retry:` was a lie. The
+    /// span lands on the raw line — the one that used to take effect.
+    #[test]
+    fn an_option_set_in_both_places_is_rejected() {
+        let source = PackSource {
+            name: "twice.yaml".into(),
+            text: Arc::from(concat!(
+                "macros:\n",
+                "  twiceOver:\n",
+                "    match: I set the retry in both places\n",
+                "    steps:\n",
+                "      - retry: { count: 3, interval_ms: 200 }\n",
+                "        alt: |\n",
+                "          GET http://x\n",
+                "          [Options]\n",
+                "          retry: 5\n",
+                "          HTTP 200\n",
+            )),
+        };
+        let FrontError::Diagnostics(diags) = pack::load(&[source], RAW).unwrap_err() else {
+            panic!("diagnostics expected");
+        };
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::option_declared_twice")
+            .unwrap_or_else(|| panic!("expected the clash in {diags:?}"));
+        assert!(diag.help.is_some(), "a remediation hint is expected");
+        let text = diag.source_text.as_ref().unwrap();
+        let span = diag
+            .span
+            .unwrap_or_else(|| panic!("expected a span: {diag:?}"));
+        assert_eq!(
+            &text[span.start..span.end],
+            "retry: 5",
+            "span should land on the raw option line, not the whole macro"
+        );
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.code == "proef::pack::option_declared_twice")
+                .count(),
+            1,
+            "one report per option family, however many entries repeat it"
+        );
+    }
+
+    /// The scan is `[Options]`-scoped on purpose. `retry` is a legal *request
+    /// header* name, and a header line is `name: value` like an option line —
+    /// so a line-shaped match alone would turn an ordinary header into a hard
+    /// error the moment the step also carried a typed `retry:`.
+    #[test]
+    fn a_request_header_named_retry_is_not_a_clash() {
+        let source = PackSource {
+            name: "header.yaml".into(),
+            text: Arc::from(concat!(
+                "macros:\n",
+                "  headerRetry:\n",
+                "    match: the request header is named retry\n",
+                "    steps:\n",
+                "      - retry: { count: 3, interval_ms: 200 }\n",
+                "        alt: |\n",
+                "          GET http://x\n",
+                "          retry: 5\n",
+                "          HTTP 200\n",
+            )),
+        };
+        pack::load(&[source], RAW)
+            .unwrap_or_else(|err| panic!("a header named `retry` must not clash: {err:?}"));
     }
 }
