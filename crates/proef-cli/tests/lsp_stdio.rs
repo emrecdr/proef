@@ -122,6 +122,22 @@ fn stdio_server_exits_after_shutdown_and_exit() {
 /// Proven by diagnostics: the CWD holds a suite that binds cleanly, the
 /// announced workspace holds one that does not. A diagnostic for the announced
 /// workspace's file can only come from having rooted there.
+/// A `file:` URI for `path`, valid on both platform families.
+///
+/// Windows paths use `\\`, which is an invalid escape inside a JSON string —
+/// interpolating one straight into a request produces a message the server
+/// cannot parse, so it dies during the handshake and the test sees an empty
+/// reply rather than a useful failure. Separators become `/`, and a drive
+/// letter gets the third slash (`file:///C:/...`) the URI form requires.
+fn file_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
 #[test]
 fn the_server_roots_at_the_workspace_the_client_announces() {
     let bin = assert_cmd::cargo::cargo_bin("proef");
@@ -152,10 +168,12 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
-    // Canonicalize: macOS tempdirs live under a /var -> /private/var symlink,
-    // and the server reports the path it walked, not the one announced.
-    let announced = elsewhere.path().canonicalize().unwrap();
-    let uri = format!("file://{}", announced.display());
+    // Not canonicalized: the server walks the root it is given and reports
+    // paths joined from it, so client and server agree as long as both use the
+    // same spelling. Canonicalizing would also introduce Windows extended-length
+    // prefixes (\\?\C:\...), which are not URI-shaped.
+    let announced = elsewhere.path().to_path_buf();
+    let uri = file_uri(&announced);
     write_msg(
         &mut stdin,
         &format!(
@@ -170,7 +188,7 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
     );
 
     // Open the announced workspace's broken file; its diagnostics prove the root.
-    let doc_uri = format!("file://{}/broken.feature", announced.display());
+    let doc_uri = file_uri(&announced.join("broken.feature"));
     write_msg(
         &mut stdin,
         &format!(
