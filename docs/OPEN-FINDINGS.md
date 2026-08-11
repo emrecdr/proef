@@ -17,6 +17,7 @@ tree and then retired into it:
 | first-run UX (0.5.3, engineer's first 30 min) | F1–F4 | **R1–R2** |
 | non-technical UX (0.8.0, PRD §4 P1 calibration) | N1–N5 | **R3** |
 | round-7 pre-merge review of PR #13 | 4 defects + residue | **§2.1–§2.4 below**; three shipped in #31 |
+| corpus-port report (0.8.0, a real 844-line hurl suite ported) | 12 items → 1 shipped (#41), 2 premises corrected | **M/E/C/D items below** |
 
 The review documents themselves were removed once their open items landed here; their
 full text, transcripts and citations are in git history (`git log --diff-filter=D
@@ -221,6 +222,181 @@ filter is an allowlist of `.feature`/`.yaml`/`.yml`, and no run-record file
 reproduce on macOS/FSEvents; `notify`'s own docs say it is real but
 platform-dependent and worst on inotify. Do not chase it on a Mac — that is how it
 gets "fixed" by coincidence. It needs a Linux reproduction first.
+
+---
+
+## Open — adoption and execution model (ingested 2026-08-11)
+
+Source: a report written while porting a real 844-line hurl corpus onto proef —
+field evidence rather than inspection, which is why it found a different class
+from the review rounds. Every claim below was re-checked against `main` before
+filing; where the report was wrong, the correction is recorded with the item.
+
+**Already closed from it:** the docstring-placeholder documentation gap (#41).
+Two of its claims did not survive checking, and both are noted in place (M1, D2).
+
+**The through-line.** These are *adoption*, not correctness. The first-run path
+is finished and the correctness series closed its bug class; the next constraint
+is whether a team with an existing hurl suite can move onto proef and
+**demonstrate** they lost nothing. M1 and M2 are that story. E1 is the first wall
+a real suite hits afterwards.
+
+### M1 — `fmt` cannot canonicalize a standalone `.hurl` *(report A2, reframed)*
+
+**The report had this backwards** and it is worth recording why. It claimed `fmt`
+*refuses* a file outside a pack, and proposed teaching it to accept `.hurl` as a
+small plumbing change. `fmt` in fact accepted any file and rewrote it — two
+defects fixed in #40, which now makes it refuse `.hurl` **correctly**, since
+applying YAML block-location logic to hurl syntax would be nonsense.
+
+So the item survives but changes shape: making it real means teaching `fmt` to
+recognize a hurl file and run the block canonicaliser over the whole thing, with
+no `hurl:` key to locate. That is a feature, not a flag.
+
+**Why it still ranks first.** It is what converts M2 from clerical to mechanical,
+and it is the cheapest unlock for the most valuable capability.
+
+### M2 — no mechanical equivalence check between a hurl corpus and its proef port *(report A1)*
+
+**Verified.** `Diff` takes `base`/`new` **run ids** only (`main.rs:187-195`); no
+path reads a `hurl --report-json`, which the pinned hurl 8.0.1 does emit.
+
+**Why it matters.** The safe way to adopt proef is to run both suites until the
+new one is trusted. During that window nothing *proves* the two assert the same
+things, so the equivalence gate degrades to a hand-maintained mapping table
+reviewed once by a human — and that table is what a team's decision to delete
+their old suite rests on.
+
+**Scope.** Not the hurl-import non-goal in disguise (`PRD.md:42`). Import means
+reading `.hurl` and *generating* Gherkin. This compares two **result** sets,
+which is `diff`'s existing job with one more input format. The non-goal
+forecloses a direction of data flow, not the ability to check your own work.
+
+### M3 — the port cost has never been measured *(report A3)*
+
+`PRD.md:42` makes hurl import a **permanent** non-goal, and that rests on
+persona P3's "pastes between corpus and packs" (`PRD.md:57`) being cheap —
+which nobody has measured. A 14-file, 844-line port is the first real datum
+available. Recording the hours settles a recurring argument in one direction or
+the other: cheap vindicates the non-goal with evidence instead of assertion,
+expensive earns the charter a re-examination with numbers rather than opinion.
+
+### E1 — no intra-run serialization primitive *(report B1)*
+
+**Verified.** `TECH-SPEC.md:313` — scenario ordering is "preserved for artifact
+naming, not execution order." No `serial` tag or config key exists anywhere in
+core, cli, `CONFIG.md` or `AUTHORING.md`.
+
+**Why it matters.** Real suites contain scenarios that mutate global state — the
+reporting corpus has two, one needing an empty database for absolute `items[N]`
+assertions and one installing a workflow definition governing everything created
+afterwards. Neither can run in a parallel pool, and proef offers no way to say
+so; the workaround is several CLI invocations driven by tag discipline in a
+Makefile.
+
+**Charter fit.** Scheduling, not a new engine or execution mode — the
+orchestrator already decides what runs when, and `[run] setup`/`teardown` prove
+the surrounding concept is in charter. Those cover *before* and *after* the pool
+and nothing *inside* it.
+
+**Options.** A reserved `@serial` tag, or `[run] serial-tags = [...]`. The config
+form is more explicit and keeps runner semantics out of the feature files — and
+E4 is an argument for it.
+
+### E2 — N invocations produce N run records, with no merge *(report B2; consequence of E1)*
+
+**Verified.** Each run writes its own `.proef-runs/<run-id>/` (`TECH-SPEC.md:299`).
+
+E1's workaround therefore yields N records, N JUnit files, N HTML reports, and
+pass/fail aggregation pushed onto the caller's shell, while `explain`/`diff`
+operate per-run so a post-mortem reader must know which to open. **Recorded as a
+consequence, not an independent item** — solve E1 and this largely evaporates;
+solving it alone (a `proef merge`) treats the symptom.
+
+### E3 — no per-scenario state reset hook *(report B3)*
+
+**Verified.** `[run] setup`/`teardown` are whole-suite only, run once around the
+pool (`CONFIG.md:63-64`, `120-141`).
+
+Any suite against a real database wants before-each; today isolation is
+convention (title prefixes so scenarios do not see each other's rows) and
+convention has no guardrail. proef knows nothing about databases, so "reset the
+DB" cannot be a proef feature — but framed as *a feature file run before each
+scenario* it is the same primitive as `setup` at a different scope, which is
+engine-agnostic by construction. The cost is real: it multiplies run time by
+scenario count and interacts with parallelism. **This needs an ADR against
+ADR-0014, not a patch**, and it may well be declined — deliberately rather than
+never asked.
+
+### E4 — nothing enforces tag-group discipline *(report B4; record, do not build)*
+
+If E1 ships as a tag convention, a scenario added six months later lands untagged
+in the parallel pool and breaks isolation intermittently — the worst failure
+mode, because it reads as flakiness. A lint would have to guess which endpoints
+are global, which proef cannot know. Its value is as a marker: this is the
+follow-on cost of the tag form of E1, and therefore an argument for the config
+form.
+
+### C1 — negative-schema testing has no prose-preserving catalogue form
+
+A validation corpus is naturally combinatorial, and its cases differ
+*structurally* (adding a key, not varying a value), so one parameterised macro
+cannot express them. Docstrings do take outline placeholders (#41), but an
+Examples cell cannot practically hold JSON, and raw JSON in a feature file
+defeats the prose premise the P1 persona is served by.
+
+**Not a blocker — a tax.** The workable answer already exists and reads well: one
+named macro per malformation (`creating a task with an empty title is refused`).
+The cost is pack growth proportional to the catalogue. **The fix is
+documentation, not code:** state the pattern in AUTHORING so authors reach it
+directly instead of discovering it after trying the docstring route.
+
+### C3 — `expect:` composition is under-sold
+
+`AUTHORING.md:102-104` documents the mechanism in two precise sentences and never
+shows it as the pattern it is: one `the error code is {code}` merging into the
+previous request entry served every negative case in the ported corpus — the
+single biggest de-duplicator in the port. Not a gap; an under-documented
+strength. A worked example costs a paragraph and changes how a first pack gets
+structured.
+
+### D1 — no first-class requirement traceability
+
+**Verified.** `flows --output json` prints one object per scenario
+(`main.rs:128-137`), which with tags like `@FRD-3.1-create` gets most of the way.
+Almost certainly a **documented recipe rather than a feature** — proef should not
+learn what a requirement is — but the recipe does not exist, so every team
+reinvents it and the capability is not advertised for this use.
+
+### D2 — report generation across N runs *(premise partly corrected)*
+
+**The report overstated this.** It claimed a Makefile must capture the run id
+because proef needs `proef report <run-id>`; in fact `run_id` is optional and
+defaults to the latest run (`main.rs:199-201`), so the ordinary single-run case
+needs nothing captured.
+
+What survives is the compounding with E2: with N invocations, "the latest" is one
+of N. Minor on its own, and listed because report-generation friction is felt by
+every CI integration rather than by one team.
+
+### Positive evidence — recorded so it is not undone
+
+- **The raw-hurl paste path covered 100% of a real corpus.** All 844 lines used
+  only `[Asserts]` (75) and `[Captures]` (15) — no `[Options]`, `[Query]`,
+  `[FormParams]` or `[Cookies]` — with seven ordinary predicates (`==`, `exists`,
+  `not exists`, `matches`, `count ==`, `>=`, `isString`), every one passing
+  through untouched. **The strongest evidence yet for ADR-0004**, and the kind of
+  claim that gets doubted later.
+- **`proef macros` printing sentences (#29) is load-bearing.** The porting plan
+  gated its prerequisite phase on it, purely to author 14 files of new prose.
+- **`--rerun`** (`main.rs:120-122`, re-run only the last run's failures) fits
+  conversion iteration exactly.
+
+### Suggested order
+
+M1 → M2 (adoption becomes provable) → E1 (dissolves E2) → C1 + C3 (docs, cheap,
+change how a first pack is structured). E3, E4, D1, D2, M3: record only; none
+blocks anyone today.
 
 ---
 
