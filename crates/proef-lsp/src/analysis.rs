@@ -81,5 +81,16 @@ pub fn recompute(inputs: &RecomputeInputs<'_>) -> Analysis {
         }
     }
 
+    // Fragment files too: go-to-definition into one needs its text to turn a
+    // byte span into a range, and a fragment file with no diagnostic would
+    // otherwise never be captured above.
+    for f in &suite.fragments {
+        if !raw.contains_key(&f.file)
+            && let Ok(text) = overlay.read(&f.file)
+        {
+            raw.insert(f.file.clone(), text);
+        }
+    }
+
     Analysis { suite, raw }
 }

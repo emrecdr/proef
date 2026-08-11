@@ -1870,6 +1870,57 @@ mod tests {
         );
     }
 
+    mod properties {
+        #![allow(clippy::ignored_unit_patterns)]
+
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// **No secret value can reach an artifact through a binding, and a
+            /// rename cannot lose which secret feeds which variable.**
+            ///
+            /// The rename is the risky part: `bind: { <var>: ${secret:<name>} }`
+            /// deliberately decouples the two, and the engine later joins them
+            /// again to call `insert_secret`. If the pair were dropped or
+            /// crossed, either the request goes out unauthenticated or the wrong
+            /// credential is sent — and the emitted text, which the artifact
+            /// *is* (ADR-0010), must carry neither name as a value.
+            #[test]
+            fn a_renamed_secret_binds_by_name_and_never_by_value(
+                variable in "[a-z][a-z_]{2,12}",
+                secret in "[a-zA-Z][a-zA-Z0-9]{3,12}",
+                literal in "[a-z][a-z0-9]{2,10}",
+            ) {
+                // `bind:` keys are distinct by construction; skip the collision
+                // rather than assert on a pack that could not be written.
+                prop_assume!(variable != "plain");
+                let pack = format!(
+                    "macros:\n  m:\n    match: it runs\n    bind:\n      {variable}: ${{secret:{secret}}}\n      plain: {literal}\n    steps:\n      - ref: f\n"
+                );
+                let fragments = format!("@f\n?{variable}\n?plain\n");
+                let lowered = lower_fragments(&pack, &fragments)
+                    .unwrap_or_else(|d| panic!("should lower: {d:?}"));
+                let text = only_entry(&lowered);
+
+                // The secret takes the `insert_secret` path, so the artifact
+                // names it nowhere — not as a variable line, not as a value.
+                let variable_line = format!("variable: {variable}=");
+                prop_assert!(!text.contains(&variable_line));
+                prop_assert!(!text.contains(&secret));
+                // The literal beside it still takes the ordinary path, so the
+                // assertion above cannot pass by injecting nothing at all.
+                let plain_line = format!("variable: plain=\"{literal}\"");
+                prop_assert!(text.contains(&plain_line));
+                // And the pairing survives: variable → secret, not either alone.
+                prop_assert_eq!(
+                    lowered.secrets.get(&variable).map(String::as_str),
+                    Some(secret.as_str())
+                );
+            }
+        }
+    }
+
     /// A capture from an earlier step counts as supplied — that is the whole
     /// point of chaining requests, and requiring a `bind:` for it would be wrong.
     #[test]

@@ -29,6 +29,36 @@ impl core::marker::Unpin for proef_core::analyze::Binding
 impl core::marker::UnsafeUnpin for proef_core::analyze::Binding
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::Binding
 impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::Binding
+pub struct proef_core::analyze::FragmentDef
+pub proef_core::analyze::FragmentDef::file: alloc::string::String
+pub proef_core::analyze::FragmentDef::name: alloc::string::String
+pub proef_core::analyze::FragmentDef::span: core::option::Option<proef_core::diag::Span>
+impl core::clone::Clone for proef_core::analyze::FragmentDef
+pub fn proef_core::analyze::FragmentDef::clone(&self) -> proef_core::analyze::FragmentDef
+impl core::fmt::Debug for proef_core::analyze::FragmentDef
+pub fn proef_core::analyze::FragmentDef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::analyze::FragmentDef
+impl core::marker::Send for proef_core::analyze::FragmentDef
+impl core::marker::Sync for proef_core::analyze::FragmentDef
+impl core::marker::Unpin for proef_core::analyze::FragmentDef
+impl core::marker::UnsafeUnpin for proef_core::analyze::FragmentDef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::FragmentDef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::FragmentDef
+pub struct proef_core::analyze::FragmentRef
+pub proef_core::analyze::FragmentRef::pack: alloc::string::String
+pub proef_core::analyze::FragmentRef::span: proef_core::diag::Span
+pub proef_core::analyze::FragmentRef::target_fragment: alloc::string::String
+impl core::clone::Clone for proef_core::analyze::FragmentRef
+pub fn proef_core::analyze::FragmentRef::clone(&self) -> proef_core::analyze::FragmentRef
+impl core::fmt::Debug for proef_core::analyze::FragmentRef
+pub fn proef_core::analyze::FragmentRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::analyze::FragmentRef
+impl core::marker::Send for proef_core::analyze::FragmentRef
+impl core::marker::Sync for proef_core::analyze::FragmentRef
+impl core::marker::Unpin for proef_core::analyze::FragmentRef
+impl core::marker::UnsafeUnpin for proef_core::analyze::FragmentRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::FragmentRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::FragmentRef
 pub struct proef_core::analyze::MacroRef
 pub proef_core::analyze::MacroRef::def_span: core::option::Option<proef_core::diag::Span>
 pub proef_core::analyze::MacroRef::match_span: core::option::Option<proef_core::diag::Span>
@@ -50,6 +80,8 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::MacroRef
 pub struct proef_core::analyze::SuiteAnalysis
 pub proef_core::analyze::SuiteAnalysis::bindings: alloc::vec::Vec<proef_core::analyze::Binding>
 pub proef_core::analyze::SuiteAnalysis::diagnostics: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<proef_core::diag::Diag>>
+pub proef_core::analyze::SuiteAnalysis::fragment_refs: alloc::vec::Vec<proef_core::analyze::FragmentRef>
+pub proef_core::analyze::SuiteAnalysis::fragments: alloc::vec::Vec<proef_core::analyze::FragmentDef>
 pub proef_core::analyze::SuiteAnalysis::macros: alloc::vec::Vec<proef_core::analyze::MacroRef>
 pub proef_core::analyze::SuiteAnalysis::use_refs: alloc::vec::Vec<proef_core::analyze::UseRef>
 impl core::default::Default for proef_core::analyze::SuiteAnalysis

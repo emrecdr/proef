@@ -158,6 +158,12 @@ pub(crate) fn line_span(text: &str, line: usize) -> Option<Span> {
     ))
 }
 
+/// Content spans of every `ref:` line in `macro_name`'s block, in textual
+/// order — the `use:` scan's twin, with the same flow-style caveat.
+pub(crate) fn ref_line_spans(text: &str, macro_name: &str) -> Vec<Span> {
+    key_line_spans(text, macro_name, "ref")
+}
+
 /// `(byte_offset, line_without_newline)` for every line.
 fn lines_with_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut offset = 0;

@@ -61,6 +61,31 @@ pub struct UseRef {
     pub target_macro: String,
 }
 
+/// One `ref:` reference inside a pack → the fragment it resolves to. Powers
+/// go-to-definition from a `ref:` line to the annotation in the `.hurl` file.
+#[derive(Debug, Clone)]
+pub struct FragmentRef {
+    /// Source name of the pack the `ref:` line lives in.
+    pub pack: String,
+    /// Byte span of the `ref:` line in the *normalized* pack source.
+    pub span: Span,
+    /// The fragment the reference resolves to (globally unique name).
+    pub target_fragment: String,
+}
+
+/// A fragment definition — the go-to-definition target for a `ref:`, and the
+/// vocabulary a `ref:` line completes against.
+#[derive(Debug, Clone)]
+pub struct FragmentDef {
+    /// Fragment name (globally unique across the scanned files).
+    pub name: String,
+    /// Source name of the file declaring it.
+    pub file: String,
+    /// Byte span of its `# @proef` annotation line, when locatable — the
+    /// landing anchor.
+    pub span: Option<Span>,
+}
+
 /// The product of one wholesale recompute: every feature's read from here.
 #[derive(Debug, Default)]
 pub struct SuiteAnalysis {
@@ -72,6 +97,10 @@ pub struct SuiteAnalysis {
     pub macros: Vec<MacroRef>,
     /// Every `use:` reference across the loaded packs, resolved to its target.
     pub use_refs: Vec<UseRef>,
+    /// Every `ref:` reference across the loaded packs, resolved to its target.
+    pub fragment_refs: Vec<FragmentRef>,
+    /// Every fragment definition across the scanned files.
+    pub fragments: Vec<FragmentDef>,
 }
 
 /// Everything `analyze_suite` needs, injected at the IO edge (sans-IO core).
@@ -163,6 +192,8 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     }
 
     out.use_refs = index_use_refs(&packs);
+    out.fragment_refs = index_fragment_refs(&packs);
+    out.fragments = index_fragments(&packs);
 
     let world = World::new(GlobalStore::default());
 
@@ -234,6 +265,56 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
 /// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
 /// pairing is unreliable and that macro is skipped entirely rather than risk a
 /// wrong `Some`.
+/// Every fragment definition, with its annotation line as the landing anchor.
+fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
+    packs
+        .fragments
+        .values()
+        .map(|f| FragmentDef {
+            name: f.name.clone(),
+            file: f.file.clone(),
+            span: crate::pack::locate::line_span(&f.source, f.line),
+        })
+        .collect()
+}
+
+/// Index every `ref:` reference → its resolved fragment, for go-to-def from a
+/// `ref:` line. Pairs positionally with the `ref:` line spans exactly as
+/// `index_use_refs` does, and carries the same guard: a flow-style step parses
+/// to a `Ref` but contributes no line, so a count mismatch means the pairing
+/// cannot be trusted and the macro is skipped rather than mis-anchored.
+fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
+    let mut refs = Vec::new();
+    for m in packs.macros.values() {
+        let MacroBody::Steps(steps) = &m.body else {
+            continue;
+        };
+        let targets: Vec<&str> = steps
+            .iter()
+            .filter_map(|step| match &step.kind {
+                MacroStepKind::Ref { target } => Some(target.as_str()),
+                MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
+            })
+            .collect();
+        let spans = crate::pack::locate::ref_line_spans(&m.source, &m.name);
+        if spans.len() != targets.len() {
+            continue;
+        }
+        for (span, target) in spans.into_iter().zip(targets) {
+            // Resolved by name, so an unknown target simply contributes no
+            // reference — pack validation already reported it.
+            if let Some(fragment) = packs.find_fragment(target) {
+                refs.push(FragmentRef {
+                    pack: m.pack.clone(),
+                    span,
+                    target_fragment: fragment.name.clone(),
+                });
+            }
+        }
+    }
+    refs
+}
+
 fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
     let mut use_refs = Vec::new();
     for m in packs.macros.values() {

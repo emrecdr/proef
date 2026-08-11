@@ -166,6 +166,42 @@ fn a_bound_secret_never_reaches_an_artifact() {
     }
 }
 
+/// The emitted artifact **is** the executed input (ADR-0010), so the shape of an
+/// injected `[Options] variable:` block is a compatibility surface. Pinned here
+/// rather than in the reference corpus, which carries no fragment — leaving it
+/// unpinned meant the emitter's whole binding output could change unnoticed.
+///
+/// Deterministic without a fixture: `artifacts` emits without running, so the
+/// base URL is a fixed literal and every path in the output is suite-relative.
+#[test]
+fn a_fragment_artifact_is_snapshot_locked() {
+    let dir = project(CORPUS, PACK);
+    std::fs::write(
+        dir.path().join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n\
+         [url]\nbase = \"http://example.test\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .args([
+            "artifacts",
+            "tests/features",
+            "-o",
+            "out",
+            "--run-id",
+            "snap",
+        ])
+        .assert()
+        .code(0);
+
+    let artifact = std::fs::read_to_string(dir.path().join("out/a--s.hurl")).unwrap();
+    insta::assert_snapshot!("fragment_artifact", artifact);
+}
+
 /// `--dry-run` is the validation gate, so the fragment-side refusals have to
 /// reach it. Each names the fragment file, not just the pack.
 fn dry_run_error(hurl: &str, pack: &str) -> String {

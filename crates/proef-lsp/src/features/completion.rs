@@ -12,6 +12,42 @@ use crate::analysis::Analysis;
 use crate::convert::{LineIndex, normalize};
 use crate::documents::url_to_name;
 
+/// Fragment-name completions when the cursor sits on a pack's `ref:` line.
+/// `None` when it does not, so the caller falls through to step completion.
+///
+/// Keyed on the line's own text rather than on an index of `ref:` spans: an
+/// author mid-type has written `ref: ` and nothing after it, which parses to no
+/// step at all and so appears in no index.
+fn complete_fragment_ref(
+    analysis: &Analysis,
+    raw: &str,
+    position: Position,
+) -> Option<Vec<CompletionItem>> {
+    let line = raw.lines().nth(position.line as usize)?;
+    let trimmed = line.trim_start();
+    let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+    let typed = after_dash.strip_prefix("ref:")?.trim();
+
+    let width = analysis.suite.fragments.len().to_string().len();
+    let mut items: Vec<CompletionItem> = analysis
+        .suite
+        .fragments
+        .iter()
+        .filter(|f| typed.is_empty() || f.name.starts_with(typed))
+        .enumerate()
+        .map(|(index, f)| CompletionItem {
+            label: f.name.clone(),
+            kind: Some(CompletionItemKind::REFERENCE),
+            detail: Some(format!("fragment in {}", f.file)),
+            insert_text: Some(f.name.clone()),
+            sort_text: Some(format!("{index:0width$}")),
+            ..CompletionItem::default()
+        })
+        .collect();
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    Some(items)
+}
+
 /// Escape one literal character for LSP snippet syntax.
 ///
 /// `$`, `}` and `\` are the syntax's own metacharacters, so a pattern that
@@ -63,6 +99,13 @@ pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<Compl
     let Some(raw) = analysis.raw.get(&name) else {
         return Vec::new();
     };
+    // A pack's `ref:` line completes against fragment names, not step prose —
+    // a different vocabulary in a different file, so it answers on its own and
+    // never mixes with the macro patterns below.
+    if let Some(items) = complete_fragment_ref(analysis, raw, position) {
+        return items;
+    }
+
     // The prose typed so far on this line, after the Gherkin keyword.
     let prefix = current_step_prefix(raw, position);
 
