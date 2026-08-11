@@ -416,6 +416,11 @@ fn expand_macro(
                     optional,
                     when: None,
                     label: None,
+                    // Not the `fragment` bound a few lines up: that one is
+                    // `ExpectItem::fragment`, raw assert *text* (YAML key
+                    // `hurl:`), and predates ADR-0018's named fragments. An
+                    // `expect:` step executes no request, so it refs nothing.
+                    fragment: None,
                     save_as: std::collections::BTreeMap::new(),
                 });
             }
@@ -597,6 +602,10 @@ fn expand_ref_step(
         step_ref,
         StepKindId::from(fragment.kind.as_str()),
         StepPayload::HurlEntries(text),
+        // Qualified here rather than at the reader: `target` is what the pack
+        // wrote, which may be the bare name, and a record has to stand on its
+        // own — by the time anyone reads it the pack may say something else.
+        Some(format!("{}#{}", fragment.file, fragment.name)),
         label_fakes_start,
         out,
         refs,
@@ -668,6 +677,7 @@ fn expand_payload_step(
         step_ref,
         StepKindId::from(kind),
         payload,
+        None, // inline `hurl:` block — no fragment to point at
         label_fakes_start,
         out,
         refs,
@@ -690,6 +700,9 @@ fn finish_step(
     step_ref: &StepRef,
     kind: StepKindId,
     payload: StepPayload,
+    // `file.hurl#name` for a `ref:` step, `None` for an inline block — the
+    // provenance a run record carries (ADR-0018).
+    fragment: Option<String>,
     label_fakes_start: usize,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
@@ -744,6 +757,7 @@ fn finish_step(
         optional: macro_step.optional,
         when,
         label,
+        fragment,
         save_as: macro_step.save_as.clone(),
     });
 }
@@ -1503,6 +1517,7 @@ mod tests {
                 optional: false,
                 when: None,
                 label: None,
+                fragment: None,
                 save_as: BTreeMap::new(),
             })
             .collect();

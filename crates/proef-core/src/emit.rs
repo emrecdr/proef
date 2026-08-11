@@ -459,6 +459,7 @@ mod tests {
             optional,
             when: None,
             label: label.map(ToOwned::to_owned),
+            fragment: None,
             save_as: BTreeMap::new(),
         }
     }

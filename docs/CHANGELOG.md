@@ -16,7 +16,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 > `Ok(Vec::new())` to serve none) — it was briefly defaulted, and the default
 > silently disabled fragments for a provider that forwarded the other two; and
 > `ScannedFragment::name` is a `String` rather than `Option<String>`, because a
-> scanner now reports only the entries it found an annotation on.
+> scanner now reports only the entries it found an annotation on; and both
+> `LoweredStep` and `Event::StepFinished` gain a `fragment: Option<String>`
+> field, so a literal construction of either needs one more line (`None`
+> reproduces the previous behaviour). The *wire* schema is unaffected — the
+> field is skipped when absent, which is what keeps existing records byte-equal.
 
 ### Added
 
@@ -117,6 +121,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   defaults that do not forward to one another. Overriding only `visit_template` silently
   under-reports an entry's inputs — and a missing input reads as "needs no binding".
 
+- **A run record says which fragment a step ran, and `explain` prints it.**
+  `step_finished` gains a `fragment` field carrying `file.hurl#name` (additive per
+  ADR-0008: absent for an inline `hurl:` block, so no pre-existing record changes a
+  byte — the reference event-stream snapshot is unmoved), and `proef explain` renders
+  it under a failure as `via tests/hurl/admin.hurl#admin.search`. A step that never ran
+  reports it too: "not run" is exactly when someone is reconstructing what the suite
+  was about to do.
+
+  This closes a promise ADR-0018 made rather than adding a new one — three files per
+  test was accepted *on the condition* that `explain` and go-to-definition earn it
+  back, and only go-to-definition had. The name is qualified at lowering rather than
+  by the reader, because a record has to stand alone: by the time it is read, the pack
+  that named the fragment may say something else.
+
 ### Internal
 
 - **The secret-name join has one home.** `proef_core::engine::secret_variables` pairs a
@@ -173,6 +191,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   ADR and the charter amendment land first, deliberately.
 
 ### Fixed
+
+- **A fragment's path was absolute everywhere it was named.** `[run] fragments`
+  resolves against the config file's directory, so `fragments = "tests/hurl"` became
+  `/home/you/project/tests/hurl` — and that spelling then *named* the file in every
+  diagnostic and, once steps recorded their provenance, in the run record too. Feature
+  and pack names are project-relative because the path the author typed was; a path the
+  author never typed had no such luck. Records went machine-specific: the same suite on
+  two checkouts stopped comparing equal, and a temp-dir path could reach a durable
+  artifact. The root is now shortened back to a cwd-relative spelling when it is under
+  the working directory — resolution is untouched, so which file gets read never
+  changes.
 
 - **Every `ref:` was an error in the editor while the same suite ran green.**
   `SourceProvider::discover_fragments` shipped with a default `Ok(Vec::new())`, and the

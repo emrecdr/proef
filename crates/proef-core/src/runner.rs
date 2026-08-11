@@ -719,6 +719,10 @@ fn run_scenario(
                 attempts: 0,
                 duration_ms: 0,
                 captures: Vec::new(),
+                // A step that never ran still says where it would have run
+                // from: "not run" is exactly when a reader is reconstructing
+                // what the suite was about to do.
+                fragment: step.fragment.clone(),
                 detail: Some(unreached_reason.to_owned()),
                 attempt_details: Vec::new(),
             });

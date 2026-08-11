@@ -162,6 +162,7 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             status: Status::Failed,
             attempts,
             detail,
+            fragment,
             ..
         } = event
         else {
@@ -171,11 +172,23 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             .as_deref()
             .map(|d| format!("\n      {d}"))
             .unwrap_or_default();
+        // ADR-0018 accepted "a test spans three files" as a cost *on the
+        // condition that `explain` and go-to-definition earn it back*. A
+        // `ref:` step's request text lives in neither the feature nor the
+        // pack, so a post-mortem that stops at the Gherkin line leaves the
+        // reader grepping for the file that actually failed. Printed after
+        // the reason, because the reason is what they came for. The
+        // `file.hurl#name` spelling is the one `ref:` itself accepts, so this
+        // line pastes straight back into a pack.
+        let via = fragment
+            .as_deref()
+            .map(|name| format!("\n      via {name}"))
+            .unwrap_or_default();
         failures
             .entry((step.file.to_string(), scenario.to_string()))
             .or_default()
             .push(format!(
-                "  ✗ {}:{} — {} ({attempts} attempt(s)){why}",
+                "  ✗ {}:{} — {} ({attempts} attempt(s)){why}{via}",
                 step.file, step.line, step.text
             ));
     }

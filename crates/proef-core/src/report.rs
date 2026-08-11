@@ -91,6 +91,7 @@ impl Redactions {
                 attempts,
                 duration_ms,
                 captures,
+                fragment,
                 detail,
                 attempt_details,
             } => Event::StepFinished {
@@ -105,6 +106,12 @@ impl Redactions {
                 attempts: *attempts,
                 duration_ms: *duration_ms,
                 captures: captures.iter().map(|name| self.apply(name)).collect(),
+                // Masked like `captures`, though both are authored identifiers
+                // rather than data: the masker's contract is that no secret
+                // substring survives anywhere in the stream, and a field
+                // exempted "because it can't contain one" is how that stops
+                // being true later.
+                fragment: fragment.as_deref().map(|text| self.apply(text)),
                 detail: detail.as_deref().map(|text| self.apply(text)),
                 attempt_details: attempt_details
                     .iter()
@@ -392,6 +399,7 @@ mod tests {
                 attempts: 2,
                 duration_ms: 12,
                 captures: vec!["token".to_owned()],
+                fragment: None,
                 detail: None,
                 attempt_details: Vec::new(),
             },
@@ -532,6 +540,7 @@ mod tests {
                     attempts: 2,
                     duration_ms: 1,
                     captures: vec![format!("cap-{secret}")],
+                    fragment: Some(format!("{secret}.hurl#admin.search")),
                     detail: Some(format!("boom {secret}")),
                     attempt_details: vec![format!("earlier boom {secret}")],
                 });
@@ -574,6 +583,7 @@ mod tests {
                         attempts: 1,
                         duration_ms: 1,
                         captures: Vec::new(),
+                        fragment: None,
                         detail: None,
                         attempt_details: Vec::new(),
                     });

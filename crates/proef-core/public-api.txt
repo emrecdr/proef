@@ -694,6 +694,7 @@ pub proef_core::event::Event::StepFinished::captures: alloc::vec::Vec<alloc::str
 pub proef_core::event::Event::StepFinished::detail: core::option::Option<alloc::string::String>
 pub proef_core::event::Event::StepFinished::duration_ms: u64
 pub proef_core::event::Event::StepFinished::engine: alloc::sync::Arc<str>
+pub proef_core::event::Event::StepFinished::fragment: core::option::Option<alloc::string::String>
 pub proef_core::event::Event::StepFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::StepFinished::status: proef_core::step::Status
 pub proef_core::event::Event::StepFinished::step: proef_core::step::StepRef
@@ -1432,6 +1433,7 @@ impl core::marker::UnsafeUnpin for proef_core::step::Guard
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Guard
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Guard
 pub struct proef_core::step::LoweredStep
+pub proef_core::step::LoweredStep::fragment: core::option::Option<alloc::string::String>
 pub proef_core::step::LoweredStep::kind: proef_core::step::StepKindId
 pub proef_core::step::LoweredStep::label: core::option::Option<alloc::string::String>
 pub proef_core::step::LoweredStep::optional: bool

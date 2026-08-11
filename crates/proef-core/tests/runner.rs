@@ -220,6 +220,7 @@ fn lowered_step(text: &str) -> LoweredStep {
         optional: false,
         when: None,
         label: None,
+        fragment: None,
         save_as: BTreeMap::new(),
     }
 }

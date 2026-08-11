@@ -107,6 +107,16 @@ pub struct LoweredStep {
     pub when: Option<Guard>,
     /// Pack-step entry label (events/console), when authored.
     pub label: Option<String>,
+    /// The fragment this step executes, qualified as `file.hurl#name`
+    /// (ADR-0018); `None` for an inline `hurl:` block.
+    ///
+    /// Qualified rather than bare because this is what a *reader* of a run
+    /// record needs: ADR-0018 accepted "a test spans three files" as a cost on
+    /// the condition that tooling earn it back, and a bare `admin.search`
+    /// still leaves you grepping for the file it lives in. The `file#name`
+    /// spelling is the one `ref:` itself accepts, so what a record prints can
+    /// be pasted straight back into a pack.
+    pub fragment: Option<String>,
     /// `saveAs:` promotions: capture name → `global` (ADR-0005).
     pub save_as: std::collections::BTreeMap<String, String>,
 }

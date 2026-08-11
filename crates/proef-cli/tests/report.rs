@@ -36,6 +36,7 @@ fn step(
         attempts,
         duration_ms,
         captures: Vec::new(),
+        fragment: None,
         detail: detail.map(str::to_owned),
         attempt_details: Vec::new(),
     }

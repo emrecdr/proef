@@ -301,3 +301,131 @@ fn unannotated_entries_are_inert() {
         "an unannotated entry must never be executed: {artifact}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Provenance: what a run record says about where a request came from
+// ---------------------------------------------------------------------------
+
+/// The same corpus, asserting a status the fixture will not return, so the
+/// `ref:` step fails and a post-mortem has something to explain.
+const FAILING_CORPUS: &str = "\
+# Admin endpoints. Owned by the backend team; proef only annotates.
+# @proef admin.search
+GET {{base}}/api/v1/admin/search/{{index}}
+Authorization: Bearer {{apiToken}}
+[Query]
+q: {{q}}
+HTTP 418
+";
+
+/// Both body forms in one pack: a `ref:` step and an inline `hurl:` block, so
+/// one run shows what provenance each carries.
+const MIXED_PACK: &str = r#"bind:
+  base: ${url:base}
+  apiToken: ${secret:apiToken}
+macros:
+  search:
+    params: [q, index]
+    defaults: { index: records }
+    match: "the operator searches for {q}"
+    bind: { q: "${q}", index: "${index}" }
+    steps:
+      - ref: admin.search
+  ping:
+    match: "the operator checks health"
+    steps:
+      - hurl: |
+          GET ${url:base}/health
+          HTTP 200
+"#;
+
+const MIXED_FEATURE: &str = "Feature: F\n\
+     \x20 Scenario: S\n    When the operator searches for \"Acme\"\n\
+     \x20 Scenario: T\n    When the operator checks health\n";
+
+/// The newest run record's raw JSONL.
+fn latest_events(cwd: &Path) -> String {
+    let mut runs: Vec<PathBuf> = std::fs::read_dir(cwd.join(".proef-runs"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    runs.sort();
+    std::fs::read_to_string(runs.pop().unwrap().join("events.jsonl")).unwrap()
+}
+
+/// Every `step_finished` in the record, as parsed JSON.
+fn step_events(jsonl: &str) -> Vec<serde_json::Value> {
+    jsonl
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event["event"] == "step_finished")
+        .collect()
+}
+
+/// A `ref:` step records the fragment it ran, qualified `file#name` — and an
+/// inline step records no such key at all.
+///
+/// The absence half is the ADR-0008 guarantee, not a detail: the field is
+/// additive, so every stream written before fragments existed must still parse
+/// and still compare equal to one written today by a suite that uses none.
+#[test]
+fn a_step_records_the_fragment_it_ran_and_inline_steps_record_none() {
+    let fixture = Fixture::start().unwrap();
+    let dir = project(FAILING_CORPUS, MIXED_PACK);
+    std::fs::write(dir.path().join("tests/features/a.feature"), MIXED_FEATURE).unwrap();
+
+    proef_in(dir.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(1);
+
+    let steps = step_events(&latest_events(dir.path()));
+    let refd = steps
+        .iter()
+        .find(|s| s["step"]["text"].as_str() == Some("the operator searches for \"Acme\""))
+        .expect("the ref: step must appear in the record");
+    assert_eq!(
+        refd["fragment"].as_str(),
+        Some("tests/hurl/admin.hurl#admin.search"),
+        "a ref: step must name its fragment, file-qualified: {refd}"
+    );
+
+    let inline = steps
+        .iter()
+        .find(|s| s["step"]["text"].as_str() == Some("the operator checks health"))
+        .expect("the inline step must appear in the record");
+    assert!(
+        inline.get("fragment").is_none(),
+        "an inline step has no fragment, and the key must be absent rather \
+         than null — pre-fragment streams are byte-unchanged: {inline}"
+    );
+}
+
+/// `proef explain` names the fragment file a failure came from.
+///
+/// ADR-0018 accepted "a test spans three files" only on the condition that
+/// tooling earn it back. Go-to-definition covers the authoring side; this is
+/// the post-mortem side, and without it a reader has the Gherkin line and the
+/// pack but not the request that actually failed.
+#[test]
+fn explain_names_the_fragment_a_failed_step_came_from() {
+    let fixture = Fixture::start().unwrap();
+    let dir = project(FAILING_CORPUS, PACK);
+
+    proef_in(dir.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(1);
+
+    let assert = proef_in(dir.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("via tests/hurl/admin.hurl#admin.search"),
+        "explain must point at the fragment file, in the spelling `ref:` \
+         accepts:\n{out}"
+    );
+}

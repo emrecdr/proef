@@ -46,7 +46,10 @@ ordinal within the scenario's artifact) · `retry` (0 = first attempt).
 **`step_finished`** — `scenario` · `engine` · `step` (`{file, line, text}`,
 the authored feature anchor) · `status` (`passed | failed | skipped |
 warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
-*names* only — never values) · `detail` (string, **only present** on
+*names* only — never values) · `fragment` (`file.hurl#name` of the named
+fragment the step ran, ADR-0018 — **only present** for a `ref:` step, so an
+inline `hurl:` block and every pre-fragment record omit the key entirely) ·
+`detail` (string, **only present** on
 failures/warnings/skips-with-reason) · `attempt_details` (array of strings —
 the messages from earlier, failed attempts of a step that ultimately passed;
 **only present** for a flaky pass, feeds JUnit `<flakyFailure>`).
@@ -104,4 +107,7 @@ and the exit code · `cancelled` (bool, **only present when true**).
 jq -r 'select(.event=="step_finished" and .status=="failed") | "\(.step.file):\(.step.line) \(.detail)"' events.jsonl
 jq -r 'select(.event=="run_finished")' events.jsonl          # the suite verdict (setup/teardown excluded)
 jq -r 'select(.event=="entry_running") | .retry' events.jsonl | sort | uniq -c   # retry pressure
+# which fragment files a failing run actually exercised (ADR-0018); `// empty`
+# drops the inline steps, which carry no `fragment` key at all
+jq -r 'select(.event=="step_finished") | .fragment // empty' events.jsonl | sort | uniq -c
 ```

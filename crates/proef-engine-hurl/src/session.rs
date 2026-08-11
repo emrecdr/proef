@@ -781,6 +781,7 @@ fn emit_step(
         attempts,
         duration_ms,
         captures: captures.to_vec(),
+        fragment: step.fragment.clone(),
         detail: detail.map(ToOwned::to_owned),
         attempt_details: attempt_details.to_vec(),
     });

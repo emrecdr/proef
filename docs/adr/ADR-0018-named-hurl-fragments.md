@@ -112,7 +112,19 @@ not apply to fragments: they parse as authored.
 Costs, stated rather than discovered later:
 
 - **A test spans three files** (`.feature` → pack → `.hurl`) instead of two. `explain`
-  and LSP go-to-definition have to earn that back.
+  and LSP go-to-definition have to earn that back — and both now do. Go-to-definition
+  on a `ref:` line lands on the annotation; a `ref:` step records the fragment it ran
+  as `file.hurl#name` in `step_finished` (an additive event field — ADR-0008 — absent
+  for inline steps, so no pre-existing record changes a byte), which `explain` prints
+  under a failure as `via …`. The qualified spelling is the one `ref:` itself accepts,
+  so a post-mortem line pastes straight back into a pack.
+
+  The record carries the name because it must stand alone: by the time anyone reads it,
+  the pack that named the fragment may say something else. That is also why the path is
+  shortened to a project-relative spelling before it is stored — `[run] fragments`
+  resolves against the config file's directory, and an absolute root would put a
+  machine-specific path in a durable artifact and stop two checkouts' records from
+  comparing equal.
 - **A bound value gets exactly one expansion pass, and no more.** hurl's `eval_template`
   is a single non-recursive pass, so a *rendered* variable's value is never re-parsed as
   a template. But a `[Options] variable:` value is itself evaluated as a template before

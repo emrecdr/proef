@@ -1564,6 +1564,7 @@ fn diff_step_finished() -> proef_core::event::Event {
         attempts: 1,
         duration_ms: 10,
         captures: Vec::new(),
+        fragment: None,
         detail: None,
         attempt_details: Vec::new(),
     }
@@ -2059,6 +2060,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             attempts: 3,
             duration_ms: 5,
             captures: Vec::new(),
+            fragment: None,
             detail: None,
             attempt_details: Vec::new(),
         },
@@ -2074,6 +2076,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             attempts: 2,
             duration_ms: 5,
             captures: Vec::new(),
+            fragment: None,
             detail: None,
             attempt_details: Vec::new(),
         },
