@@ -13,6 +13,8 @@ use crate::front;
 /// workspace root; the overlay-then-disk analysis reads through it.
 pub struct DiskSourceProvider {
     root: PathBuf,
+    /// The `[run] fragments` root, when the project configures one (ADR-0018).
+    fragments: Option<PathBuf>,
 }
 
 impl DiskSourceProvider {
@@ -22,7 +24,20 @@ impl DiskSourceProvider {
     /// source names from the identity the LSP client already knows via document
     /// URIs.
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            fragments: None,
+        }
+    }
+
+    /// Point the provider at a fragment root (`[run] fragments`), so the LSP
+    /// resolves `ref:` the same way a run does. Without it every `ref:` reads
+    /// as unknown in the editor while the suite runs fine — the drift that
+    /// makes editor diagnostics untrustworthy.
+    #[must_use]
+    pub fn with_fragments(mut self, fragments: Option<PathBuf>) -> Self {
+        self.fragments = fragments;
+        self
     }
 }
 
@@ -42,6 +57,19 @@ impl SourceProvider for DiskSourceProvider {
 
     fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
         front::pack_files(&self.root)
+            .map(names)
+            .map_err(|e| ProviderError(e.to_string()))
+    }
+
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+        let Some(root) = &self.fragments else {
+            return Ok(Vec::new());
+        };
+        let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
+            .iter()
+            .flat_map(|e| e.step_kinds().iter().copied())
+            .collect();
+        front::fragment_files(root, &kinds)
             .map(names)
             .map_err(|e| ProviderError(e.to_string()))
     }

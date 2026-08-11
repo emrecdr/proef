@@ -73,12 +73,12 @@ pub struct FrontEnd {
 /// listing a suite whose steps do not bind) would otherwise get nothing. The
 /// packs are complete whenever this returns: pack loading precedes binding and
 /// does not depend on it.
-pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
+pub fn load_packs(path: &Path, fragments: Option<&Path>) -> Result<PackSet, FrontError> {
     let kinds: Vec<proef_core::engine::StepKindSpec> = registry::engines()
         .iter()
         .flat_map(|e| e.step_kinds().iter().copied())
         .collect();
-    Ok(load_pack_set(path, &kinds)?.1)
+    Ok(load_pack_set(path, fragments, &kinds)?.1)
 }
 
 /// Discover and load a suite's packs — the single place that knows how a
@@ -90,12 +90,20 @@ pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
 /// path and forget in the other.
 fn load_pack_set(
     path: &Path,
+    fragments: Option<&Path>,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<(usize, PackSet), FrontError> {
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
     let packs_loaded = sources.len();
-    Ok((packs_loaded, pack::load(&sources, &[], kinds)?))
+    let fragment_sources = match fragments {
+        Some(root) => fragment_sources(root, kinds)?,
+        None => Vec::new(),
+    };
+    Ok((
+        packs_loaded,
+        pack::load(&sources, &fragment_sources, kinds)?,
+    ))
 }
 
 /// Run the front end over `path` (a `.feature` file or a directory tree).
@@ -107,6 +115,7 @@ pub fn run(
     mode: ResolveMode,
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
+    fragments: Option<&Path>,
 ) -> Result<FrontEnd, FrontError> {
     let engines = registry::engines();
     let kinds: Vec<proef_core::engine::StepKindSpec> = engines
@@ -137,7 +146,7 @@ pub fn run(
     );
     let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
 
-    let (packs_loaded, loaded) = load_pack_set(path, &kinds)?;
+    let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds)?;
     let packs: Arc<PackSet> = Arc::new(loaded);
     let kind_to_engine = Arc::new(kind_to_engine);
 
@@ -381,6 +390,62 @@ pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
     })?;
     out.sort();
     Ok(out)
+}
+
+/// Every fragment file under `root`, recursively (ADR-0018). Unlike packs
+/// there is no directory convention: the root is named in `[run] fragments`,
+/// so everything beneath it with a claimed extension is in scope. The
+/// extensions come from the registered engines' `file_ext`, so discovery never
+/// learns a file type of its own (ADR-0002).
+pub fn fragment_files(
+    root: &Path,
+    kinds: &[proef_core::engine::StepKindSpec],
+) -> Result<Vec<PathBuf>, FrontError> {
+    let exts: Vec<&str> = kinds.iter().filter_map(|kind| kind.file_ext).collect();
+    if exts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut visited = std::collections::BTreeSet::new();
+    walk_dir(root, &mut visited, &mut |_, file| {
+        if file
+            .extension()
+            .is_some_and(|e| exts.iter().any(|ext| e == *ext))
+        {
+            out.push(file);
+        }
+    })?;
+    out.sort();
+    Ok(out)
+}
+
+/// Read every fragment file under the configured root into [`PackSource`]s.
+/// A missing root is a user error, not a silent empty set: it was named on
+/// purpose, so a typo must not read as "this suite has no fragments".
+pub fn fragment_sources(
+    root: &Path,
+    kinds: &[proef_core::engine::StepKindSpec],
+) -> Result<Vec<PackSource>, FrontError> {
+    if !root.exists() {
+        return Err(FrontError::Core(CoreError::user(format!(
+            "`[run] fragments` names `{}`, which does not exist",
+            root.display()
+        ))));
+    }
+    let mut sources = Vec::new();
+    for path in fragment_files(root, kinds)? {
+        let text = std::fs::read_to_string(&path).map_err(|err| {
+            FrontError::Core(CoreError::system_with(
+                format!("cannot read fragment file {}", path.display()),
+                err,
+            ))
+        })?;
+        sources.push(PackSource {
+            name: portable_display(&path),
+            text: Arc::from(text.as_str()),
+        });
+    }
+    Ok(sources)
 }
 
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the

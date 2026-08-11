@@ -34,8 +34,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `option_declared_twice` an inline block gets, so the two body forms behave
   identically rather than differing by where the hurl text happens to live.
 
-  **Not yet runnable:** no fragment file is discovered yet, so every `ref:` currently
-  reports `unknown_ref`. Discovery follows.
+  Discovery arrives below, so a `ref:` resolves end to end.
+
+- **`[run] fragments` — the hurl files a pack may `ref:`.** Names one root, scanned
+  recursively for the extensions the registered engines claim, so discovery never learns
+  a file type of its own. Unset means no fragments: there is no convention fallback,
+  because `unknown_ref` saying *"no fragment files were loaded"* beats guessing at a
+  directory.
+
+  **Relative paths resolve against `proef.toml`'s own directory, not the working
+  directory.** The config is found by walking *up* from the cwd, so a path in a config
+  three levels above must mean "relative to the project" — otherwise `proef flows` from a
+  subdirectory reads the right config and then cannot find anything it names. `[run]
+  suite` predates this and stays cwd-relative; it is only consulted when no path was
+  given, so the difference is not observable there.
+
+  The LSP resolves fragments through the same root, so `ref:` does not read as unknown in
+  an editor while the suite runs green. `--watch` retriggers on `.hurl` edits and watches
+  the fragment root separately, since a corpus may live outside the suite. `proef fmt`
+  still refuses `.hurl` in both discovery branches — it locates hurl blocks *inside* YAML,
+  and a corpus proef did not write is not proef's to rewrite — now pinned by a test.
 
 - **Fragments lower, bind, and execute.** A `ref:` step emits the fragment's own text
   with its non-secret bindings baked in as per-entry `[Options] variable:` lines, so the

@@ -1027,6 +1027,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::provider::ProviderE
 impl core::panic::unwind_safe::UnwindSafe for proef_core::provider::ProviderError
 pub trait proef_core::provider::SourceProvider
 pub fn proef_core::provider::SourceProvider::discover_features(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
+pub fn proef_core::provider::SourceProvider::discover_fragments(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
 pub fn proef_core::provider::SourceProvider::discover_packs(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
 pub fn proef_core::provider::SourceProvider::read(&self, &str) -> core::result::Result<alloc::sync::Arc<str>, proef_core::provider::ProviderError>
 pub mod proef_core::report

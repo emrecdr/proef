@@ -375,9 +375,11 @@ fn main() -> std::process::ExitCode {
                             };
                             if watch_mode {
                                 // The loop owns Ctrl-C and hands each run its token.
+                                let fragments = config.fragments();
                                 watch::watch_loop(
                                     &path,
                                     config::config_path().as_deref(),
+                                    fragments.as_deref(),
                                     |token| run_once(Some(token)),
                                 )
                             } else {

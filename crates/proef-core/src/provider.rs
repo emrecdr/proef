@@ -30,6 +30,13 @@ pub trait SourceProvider {
     /// Every macro pack source name under the suite, in the order the provider finds them.
     fn discover_packs(&self) -> Result<Vec<String>, ProviderError>;
 
+    /// Every engine-native **fragment** file a pack may `ref:` (ADR-0018).
+    /// Defaults to none: fragments are opt-in, and a provider that predates
+    /// them keeps working unchanged.
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+        Ok(Vec::new())
+    }
+
     /// The raw bytes of one source, keyed by a name returned from discovery.
     fn read(&self, name: &str) -> Result<Arc<str>, ProviderError>;
 }

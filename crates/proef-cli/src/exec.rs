@@ -166,7 +166,14 @@ pub fn execute(
 
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let mut front = match front::run(path, ResolveMode::DryRun, run_id, Arc::clone(&config_vars)) {
+    let fragments = config.fragments();
+    let mut front = match front::run(
+        path,
+        ResolveMode::DryRun,
+        run_id,
+        Arc::clone(&config_vars),
+        fragments.as_deref(),
+    ) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
     };
@@ -179,7 +186,13 @@ pub fn execute(
     // mistake, same class, so it costs the same. Suite first, so a suite error
     // is not masked by a phase error.
     if let Some(teardown) = config.teardown()
-        && let Err(code) = load_phase_feature("teardown", Path::new(teardown), None, &config_vars)
+        && let Err(code) = load_phase_feature(
+            "teardown",
+            Path::new(teardown),
+            None,
+            &config_vars,
+            fragments.as_deref(),
+        )
     {
         return code;
     }
@@ -339,6 +352,7 @@ pub fn execute(
             &phase_sink("setup", sink.clone()),
             &cancel,
             &artifacts_dir,
+            fragments.as_deref(),
         ) {
             Err(code) => return code,
             Ok(summary) => {
@@ -443,6 +457,7 @@ pub fn execute(
             &phase_sink("teardown", sink.clone()),
             &teardown_cancel,
             &artifacts_dir,
+            fragments.as_deref(),
         ) {
             // The phase's own exit code, not a blanket 3: a teardown path that
             // does not exist is a user error like any other, and flattening it
@@ -891,6 +906,7 @@ pub(crate) fn load_phase_feature(
     path: &Path,
     run_id: Option<String>,
     config_vars: &Arc<BTreeMap<String, String>>,
+    fragments: Option<&Path>,
 ) -> Result<FrontEnd, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
@@ -903,7 +919,14 @@ pub(crate) fn load_phase_feature(
         );
         return Err(ExitCode::UserError);
     }
-    front::run(path, ResolveMode::DryRun, run_id, Arc::clone(config_vars)).map_err(|err| {
+    front::run(
+        path,
+        ResolveMode::DryRun,
+        run_id,
+        Arc::clone(config_vars),
+        fragments,
+    )
+    .map_err(|err| {
         crate::render::errln!("error: {label} feature failed to validate:");
         crate::commands::report_front_error(&err)
     })
@@ -926,12 +949,19 @@ fn run_phase(
     sink: &EventSink,
     cancel: &CancellationToken,
     artifacts_dir: &Path,
+    fragments: Option<&Path>,
 ) -> Result<runner::RunSummary, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
     // in the pool (exclude_phase_features matches a single file path), running
     // each scenario twice. Reject it loudly instead of silently double-running.
-    let front = load_phase_feature(label, path, Some(run_id.to_string()), config_vars)?;
+    let front = load_phase_feature(
+        label,
+        path,
+        Some(run_id.to_string()),
+        config_vars,
+        fragments,
+    )?;
     render::print_all(&front.warnings);
 
     let names: BTreeSet<String> = front

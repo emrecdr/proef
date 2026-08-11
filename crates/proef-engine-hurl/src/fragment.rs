@@ -87,14 +87,19 @@ pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError
     Ok(out)
 }
 
-/// The line an entry starts on: its first leading comment when it has one — so
-/// the annotation travels with the fragment — otherwise its method line.
+/// The line a fragment starts on: its `@proef` annotation when it has one, so
+/// the name travels with the text; otherwise the entry's method line.
+///
+/// Deliberately *not* the first leading comment. hurl attaches a file's whole
+/// header block to its first entry, so that rule pulled unrelated prose into
+/// every artifact referencing it — the annotation is where the fragment begins.
 fn start_line(entry: &Entry) -> usize {
     entry
         .request
         .line_terminators
         .iter()
-        .find_map(|lt| lt.comment.as_ref())
+        .filter_map(|lt| lt.comment.as_ref())
+        .find(|comment| annotation_name(&comment.value).is_some())
         .map_or_else(
             || entry.request.space0.source_info.start.line,
             |comment| comment.source_info.start.line,
@@ -266,17 +271,17 @@ mod tests {
         assert!(found[1].captures.is_empty());
     }
 
-    /// Fragment text is the entry's own lines, annotation included, and the
-    /// entries partition the file — no line is claimed twice or lost.
+    /// Fragment text runs from the annotation to just before the next entry:
+    /// the name travels with the request, the file's own header does not, and
+    /// no line is claimed twice or lost.
     #[test]
-    fn fragment_text_carries_the_entry_and_its_annotation() {
+    fn fragment_text_starts_at_the_annotation_not_the_file_header() {
         let found = scan(FILE).unwrap();
+        assert!(found[0].text.starts_with("# @proef admin.search\n"));
         assert!(
-            found[0]
-                .text
-                .starts_with("# a corpus file proef did not write\n")
+            !found[0].text.contains("a corpus file proef did not write"),
+            "hurl attaches a file's header to its first entry; a fragment is not the header"
         );
-        assert!(found[0].text.contains("# @proef admin.search\n"));
         assert!(
             found[0]
                 .text
@@ -287,7 +292,10 @@ mod tests {
             !found[0].text.contains("DELETE"),
             "an entry must not swallow the next one"
         );
-        assert_eq!(found[0].line, 1);
+        assert_eq!(
+            found[0].line, 2,
+            "the annotation line, not the header above it"
+        );
         assert_eq!(found[1].line, 11);
         // Each fragment parses on its own — that is what makes it referenceable.
         assert!(hurl_core::parser::parse_hurl_file(&found[1].text).is_ok());

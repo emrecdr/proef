@@ -130,7 +130,20 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     // Collect-all load: a broken pack contributes its diagnostic and is
     // excluded from the set, but its siblings still load — the editor keeps
     // binding against the good packs instead of going dark (v0.5.1 fix).
-    let (loaded, pack_diags) = pack::load_collecting(&sources, &[], ctx.kinds);
+    // Fragments too, or every `ref:` reads as unknown in the editor while the
+    // same suite runs green — the drift that makes diagnostics untrustworthy.
+    let mut fragments = Vec::new();
+    for name in ctx.provider.discover_fragments().unwrap_or_default() {
+        match ctx.provider.read(&name) {
+            Ok(text) => fragments.push(PackSource {
+                name: name.clone(),
+                text,
+            }),
+            Err(e) => out.push_diags(&name, [read_error_diag(&name, &e.0)]),
+        }
+    }
+
+    let (loaded, pack_diags) = pack::load_collecting(&sources, &fragments, ctx.kinds);
     for d in pack_diags {
         let name = d.source_name.clone().unwrap_or_default();
         out.push_diags(&name, [d]);

@@ -47,6 +47,13 @@ fn find_config_from(dir: &Path) -> Option<PathBuf> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
+    /// Directory holding the `proef.toml` this was read from, when there was
+    /// one. Relative paths in the config resolve against it: the file is found
+    /// by walking *up* from the working directory, so a path in a config three
+    /// levels above must mean "relative to the project", not "relative to
+    /// wherever the command happened to be run".
+    #[serde(skip)]
+    root: Option<PathBuf>,
     /// `[run]` table.
     #[serde(default)]
     pub run: RunTable,
@@ -79,6 +86,11 @@ pub struct RunTable {
     /// Default suite path used when `proef test` is given no path
     /// (falls back to the `tests/` convention when unset — see `suite`).
     pub suite: Option<String>,
+    /// Root directory holding the engine-native **fragment** files a pack may
+    /// `ref:` (ADR-0018), scanned recursively. Unset means no fragments — the
+    /// feature is opt-in, and naming the root explicitly is what makes reading
+    /// a corpus outside the suite a declared act rather than a silent walk.
+    pub fragments: Option<String>,
     /// Feature file run **once before** the suite pool (suite-level setup,
     /// ADR-0014). Its `saveAs: global` promotions are visible to every
     /// scenario; a setup failure aborts the run before the pool launches.
@@ -171,7 +183,10 @@ impl ProjectConfig {
         };
         let text = std::fs::read_to_string(&path)
             .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
-        toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))
+        let mut config: Self =
+            toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))?;
+        config.root = path.parent().map(Path::to_path_buf);
+        Ok(config)
     }
 
     /// The active `[env.<name>]` profile, or `None` when no environment is
@@ -245,6 +260,18 @@ impl ProjectConfig {
     /// back to the `tests/` convention when this is unset and no path is passed.
     pub fn suite(&self) -> Option<&str> {
         self.run.suite.as_deref()
+    }
+
+    /// The configured fragment root (`[run] fragments`) resolved against the
+    /// directory holding `proef.toml`. There is no convention fallback: a
+    /// `ref:` with nothing configured reports `unknown_ref` and says so, which
+    /// beats guessing at a directory.
+    pub fn fragments(&self) -> Option<PathBuf> {
+        let raw = PathBuf::from(self.run.fragments.as_deref()?);
+        if raw.is_absolute() {
+            return Some(raw);
+        }
+        Some(self.root.clone().unwrap_or_default().join(raw))
     }
 
     /// The default suite directory: `[run] suite` if set, else the `tests/`
