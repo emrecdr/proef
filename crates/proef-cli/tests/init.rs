@@ -317,3 +317,44 @@ fn init_never_overwrites_an_authored_pack_schema() {
         "an explicit `schema --add-to` must still install the current schema"
     );
 }
+
+/// The scaffold has two halves to fill in, and a reader can have done either.
+/// Someone who follows `init`'s instruction — point `[url] base` at your API —
+/// then hits the other half: the placeholder routes 404, and the target-side
+/// note deliberately cannot fire, because they *did* configure a target. They
+/// were told about the routes once, parenthetically, two commands earlier.
+///
+/// Decided from the pack's bytes, never from what the server answered: a 404
+/// proves a route is missing, not that it is a placeholder.
+#[test]
+fn a_run_against_untouched_scaffold_routes_says_so() {
+    let fixture = Fixture::start().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    proef(tmp.path()).arg("init").assert().code(0);
+
+    // Do exactly what `init` says: point the target at a real, reachable API
+    // and leave the routes alone.
+    let config = tmp.path().join("proef.toml");
+    let text = std::fs::read_to_string(&config).unwrap().replace(
+        "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}",
+        &fixture.base_url,
+    );
+    std::fs::write(&config, text).unwrap();
+
+    proef(tmp.path())
+        .arg("test")
+        .assert()
+        .stderr(contains("still the `proef init` placeholders"));
+
+    // Edit the routes and the note must stop — it is about untouched bytes,
+    // not about failing.
+    let pack = tmp.path().join("suite/packs/api.yaml");
+    let edited = std::fs::read_to_string(&pack)
+        .unwrap()
+        .replace("/health", "/my-real-health");
+    std::fs::write(&pack, edited).unwrap();
+    proef(tmp.path())
+        .arg("test")
+        .assert()
+        .stderr(contains("placeholders").not());
+}

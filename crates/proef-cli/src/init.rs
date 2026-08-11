@@ -44,7 +44,13 @@ const FEATURE: &str = r#"Feature: Directory search
     When the operator searches for "Acme"
 "#;
 
-const PACK: &str = r"# Replace these paths with your own API's — ${url:base} is set in proef.toml.
+/// The pack `init` writes, verbatim.
+///
+/// Exported so a failing run can tell whether the routes are still the
+/// scaffold's placeholders — provable from the file, with no inference from
+/// what the server answered. `scaffold_pack_matches_the_template` keeps this
+/// and the written bytes from drifting.
+pub(crate) const PACK: &str = r"# Replace these paths with your own API's — ${url:base} is set in proef.toml.
 macros:
   health:
     match: the service is healthy
@@ -169,7 +175,9 @@ pub fn init(dir: &Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{CONFIG, SCAFFOLD_BASE};
+    #![allow(clippy::unwrap_used)]
+
+    use super::{CONFIG, ExitCode, PACK, SCAFFOLD_BASE};
 
     /// The sentinel and the template it describes are two literals; nothing in
     /// the type system keeps them equal. If the scaffold's `base` changes and
@@ -182,5 +190,21 @@ mod tests {
             CONFIG.contains(&format!("base = \"{SCAFFOLD_BASE}\"")),
             "SCAFFOLD_BASE drifted from CONFIG's `[url] base` line:\n{CONFIG}"
         );
+    }
+
+    /// The exported template and the bytes `init` writes are two literals, and
+    /// the routes note compares against the first to describe the second. If
+    /// the scaffold's pack changes and `PACK` does not, the note stops firing
+    /// silently — a message that vanishes, which no other test would notice.
+    #[test]
+    fn scaffold_pack_matches_the_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(super::init(tmp.path()), ExitCode::Success);
+        let written = std::fs::read_to_string(tmp.path().join("suite/packs/api.yaml")).unwrap();
+        let body = written
+            .strip_prefix("# yaml-language-server:")
+            .and_then(|rest| rest.split_once('\n'))
+            .map_or(written.as_str(), |(_, rest)| rest);
+        assert_eq!(body, PACK, "PACK drifted from the pack `init` writes");
     }
 }

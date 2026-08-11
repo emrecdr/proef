@@ -80,6 +80,10 @@ re-reported after it is fixed.
 | B4 | `--output json`'s `exit_code` disagreed with the real exit after a JUnit failure | #35 |
 | B6 | LSP completion snippets did not escape `$`/`}`/`\` | #36 |
 | B9 | GitHub annotation `file=` and job-summary table cells were unescaped | #36 |
+| — | the `--dry-run` nudge echoed a command that was not the run validated (round-7) | #37 |
+| P3 | `--sarif` emitted no `startLine`, so it annotated nothing | #37 |
+| P5 | `--watch` did not retrigger on `proef.toml` | #37 |
+| — | a run against untouched scaffold *routes* got no coaching (round-8 §5) | #38 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -125,15 +129,25 @@ environment variable names in diagnostics, against the secret-masking posture), 
 `resolve::unknown_namespace` already enumerates all seven valid namespaces. Sibling
 codes share a *shape*, not a *candidate set*.
 
-### R3 — the scaffold default is still the dev fixture's port
+### R3 — the scaffold default is the dev fixture's port *(declined 2026-08-11)*
 
-`init.rs` writes `base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`, and 8787 is
-proef's own dev fixture port (`xtask fixture`, ADR-0011 amendment) — so to anyone who
-installed a binary and has no fixture, the value *looks* configured and is not. A
-failing run now says the suite is still the untouched scaffold (#24), which covers
-**recovery**; an obvious placeholder such as `https://api.example.com` would cover
-**prevention**. The cost is not the literal but its documentation blast radius:
-`GETTING-STARTED` ×2, `CONFIG`, `TROUBLESHOOTING` ×2, and the documented dev loop.
+`init.rs` writes `base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"`, which is
+proef's own dev fixture port — so to someone who installed a binary and has no
+fixture, the value *looks* configured and is not. The proposal was an obvious
+placeholder (`https://api.example.com`) to cover **prevention**, since a failing run
+already covers recovery.
+
+**Declined, with the reasoning recorded rather than a silent skip.** Recovery is now
+covered on *both* halves: an unreachable target and untouched routes each get their
+own note (#28, #38). The remaining benefit is that the config file would read as
+obviously unfilled. Against that, `init.rs`'s module doc states the scaffold
+deliberately mirrors what `GETTING-STARTED` teaches — so changing the literal changes
+the tutorial too, and the tutorial's "run it against `xtask fixture` with no
+`PROEF_BASE_URL`" flow stops working. That flow is a real onboarding asset for
+contributors. Trading a working tutorial for a more obviously-fake string is not worth
+it once the failure itself explains both halves.
+
+Revisit if first-run drop-off is ever measured rather than reasoned about.
 
 ### Decided against — do not re-raise
 
