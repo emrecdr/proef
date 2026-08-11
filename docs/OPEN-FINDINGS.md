@@ -17,7 +17,7 @@ tree and then retired into it:
 | first-run UX (0.5.3, engineer's first 30 min) | F1–F4 | **R1–R2** |
 | non-technical UX (0.8.0, PRD §4 P1 calibration) | N1–N5 | **R3** |
 | round-7 pre-merge review of PR #13 | 4 defects + residue | **§2.1–§2.4 below**; three shipped in #31 |
-| corpus-port report (0.8.0, a real 844-line hurl suite ported) | 12 items → 1 shipped (#41), 2 premises corrected | **M/E/C/D items below** |
+| corpus-port report (0.8.0, a real 844-line hurl suite ported) | 12 items → 3 shipped (#41, #43), 2 premises corrected | **M/E/D items below** |
 
 The review documents themselves were removed once their open items landed here; their
 full text, transcripts and citations are in git history (`git log --diff-filter=D
@@ -88,6 +88,8 @@ re-reported after it is fixed.
 | — | truncated-record fallback totals dropped `Warned` scenarios (round-7) | #39 |
 | — | `fmt` rewrote any file handed to it, not just a pack | #40 |
 | — | `fmt` trimmed the YAML skeleton, turning `--check` red outside its scope | #40 |
+| C1 | negative-case authoring had no signposted catalogue form | #43 |
+| C3 | `expect:` composition documented as a mechanism, never shown as the pattern | #43 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -337,29 +339,6 @@ are global, which proef cannot know. Its value is as a marker: this is the
 follow-on cost of the tag form of E1, and therefore an argument for the config
 form.
 
-### C1 — negative-schema testing has no prose-preserving catalogue form
-
-A validation corpus is naturally combinatorial, and its cases differ
-*structurally* (adding a key, not varying a value), so one parameterised macro
-cannot express them. Docstrings do take outline placeholders (#41), but an
-Examples cell cannot practically hold JSON, and raw JSON in a feature file
-defeats the prose premise the P1 persona is served by.
-
-**Not a blocker — a tax.** The workable answer already exists and reads well: one
-named macro per malformation (`creating a task with an empty title is refused`).
-The cost is pack growth proportional to the catalogue. **The fix is
-documentation, not code:** state the pattern in AUTHORING so authors reach it
-directly instead of discovering it after trying the docstring route.
-
-### C3 — `expect:` composition is under-sold
-
-`AUTHORING.md:102-104` documents the mechanism in two precise sentences and never
-shows it as the pattern it is: one `the error code is {code}` merging into the
-previous request entry served every negative case in the ported corpus — the
-single biggest de-duplicator in the port. Not a gap; an under-documented
-strength. A worked example costs a paragraph and changes how a first pack gets
-structured.
-
 ### D1 — no first-class requirement traceability
 
 **Verified.** `flows --output json` prints one object per scenario
@@ -394,8 +373,8 @@ every CI integration rather than by one team.
 
 ### Suggested order
 
-M1 → M2 (adoption becomes provable) → E1 (dissolves E2) → C1 + C3 (docs, cheap,
-change how a first pack is structured). E3, E4, D1, D2, M3: record only; none
+M1 → M2 (adoption becomes provable) → E1 (dissolves E2). The two documentation
+items, C1 and C3, shipped in #43. E3, E4, D1, D2 and M3 are record-only — none
 blocks anyone today.
 
 ---
