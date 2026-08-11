@@ -48,16 +48,22 @@ pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
         if let Some(totals) = rec.totals.filter(|_| !rec.legacy_multi_pair) {
             (totals.passed, totals.failed, totals.skipped)
         } else {
-            let count = |want: Status| {
+            let count = |want: &[Status]| {
                 rec.scenarios
                     .values()
-                    .filter(|run| run.status == want)
+                    .filter(|run| want.contains(&run.status))
                     .count()
             };
+            // `Warned` counts with `Passed`, exactly as the live path does
+            // (`RunSummary::passed` is "passed, warnings allowed"). Counting
+            // only the three other variants dropped a warned scenario from
+            // every column, so a fallback total silently disagreed with the
+            // run it was reconstructing — and `optional:` steps exist
+            // precisely so a scenario can warn and still pass.
             (
-                count(Status::Passed),
-                count(Status::Failed),
-                count(Status::Skipped),
+                count(&[Status::Passed, Status::Warned]),
+                count(&[Status::Failed]),
+                count(&[Status::Skipped]),
             )
         };
     // Step/attempt totals are unrelated to the suite-only scenario counts
