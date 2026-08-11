@@ -412,20 +412,26 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
     // `publishDiagnostics` for the pack is the completion signal, exactly as the
     // in-process suite's `wait_for_any_diagnostics` uses it.
     let deadline = Instant::now() + Duration::from_secs(20);
-    let mut analyzed = false;
+    let mut analyzed = None;
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         match rx.recv_timeout(remaining) {
             Ok(msg) if msg.contains("publishDiagnostics") => {
-                analyzed = true;
+                analyzed = Some(msg);
                 break;
             }
             Ok(_) => {}
             Err(_) => break,
         }
     }
+    let diagnostics =
+        analyzed.expect("the server never published diagnostics, so the suite was never analyzed");
+    // What the pack's own diagnostics say settles the question a `null` answer
+    // cannot: an `unknown_ref` here means the fragment corpus never loaded (a
+    // config or discovery problem), while clean diagnostics mean it loaded and
+    // the *definition* lookup is what failed.
     assert!(
-        analyzed,
-        "the server never published diagnostics, so the suite was never analyzed"
+        !diagnostics.contains("unknown_ref"),
+        "the fragment corpus never loaded, so `ref:` resolved to nothing: {diagnostics}"
     );
 
     write_msg(
@@ -456,9 +462,8 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
          root:        {root:?}\n\
          workspace:   {uri}\n\
          pack uri:    {pack_uri}\n\
-         server cwd:  {:?}\n\
+         diagnostics: {diagnostics}\n\
          server said: {}",
-        std::fs::canonicalize(root).ok(),
         stderr_log.lock().map(|g| g.clone()).unwrap_or_default(),
     );
 
