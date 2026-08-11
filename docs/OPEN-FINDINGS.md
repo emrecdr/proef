@@ -70,6 +70,12 @@ re-reported after it is fixed.
 | B3 | `windows.yml` built and tested without `--locked` | #30 |
 | B13 | `justfile` gate list omitted `public-api` (and the fuzz gate) | #30 |
 | B5 | `explain`/`diff`/`report` each inlined `ProjectConfig::load()` | #30 |
+| A6 | TROUBLESHOOTING's exit table omitted `130` | #30 |
+| A4 | README's ADR range and flag rows, and TECH-SPEC §10's command surface, were stale | #30, #34 |
+| A5 | TECH-SPEC's `publish` claim and its run-dir inventory were stale | #30 |
+| A1 | `EDITORS.md` claimed go-to-definition cannot land on a `match:` line | #34 |
+| A7 | `GETTING-STARTED`'s copy of the scaffold comment had a word the scaffold does not | #34 |
+| P11 | ADR-0015 described a `worker` on `ScenarioFinished` that is always `None` | #34 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -203,20 +209,22 @@ A macro name containing either produces a malformed snippet.
 
 ---
 
-## Open — docs drift
+## Closed — docs drift (2026-08-11)
 
-All confirmed 2026-08-06; **A5, A4, A6 re-verified still open on 2026-08-10.**
+Every item in this section shipped; the table above records which PR each landed in.
+Two did not reproduce when re-checked, and are recorded here rather than dropped, so
+the next reader does not spend the same time on them:
 
-| ID | Finding |
-|---|---|
-| A1 | `EDITORS.md` v1-limitations section is stale (match-line jump shipped in 0.5.1) and omits the real gap: builtin macros have no jump target and no hover |
-| A2 | `CONFIG.md` claims `[env.<n>.run]` overrides any section; `RunOverride` is jobs-only with `deny_unknown_fields` (`config.rs:81-86`), pinned by `env_run_rejects_non_jobs_overrides` (`config.rs:423`). Re-verified 2026-08-10 |
-| A4 | README's `test` row and TECH-SPEC §10 omit `--rerun`/`--sarif`/`--run-id`; `tap` is absent from `--output`; README says "ADR-0001…0011" against **17** actual ADRs |
-| A5 | TECH-SPEC §2 still says `publish = false` (four crates publish); §11's run-dir inventory omits `report.html` and the phase features |
-| A6 | TROUBLESHOOTING's exit table omits **130** (the second-Ctrl-C hard exit) — zero mentions in the file |
-| A7 | `GETTING-STARTED.md:144` has a stale comment after `suite = "suite"` |
-| B12 | The CHANGELOG's 0.5.2 entry lacks a line acknowledging the directory-setup hard error |
-| P11 | `ScenarioFinished.worker` is always `None` by design; EVENTS.md is accurate, ADR-0015's text is stale |
+- **A2** — `CONFIG.md` was said to claim `[env.<name>.run]` overrides any section. It
+  carries no such claim today: its precedence text names `jobs` specifically, which is
+  what `RunOverride` actually allows.
+- **B12** — the CHANGELOG's 0.5.2 entry was said to lack a line about the
+  directory-valued-phase hard error. It has one, first bullet under **Fixed**.
+
+One half of **A5** was deliberately not acted on: TECH-SPEC §11's run-dir inventory
+lists the files a run *generates*, and the `[run] setup`/`teardown` features are inputs
+named by config, not run-dir output. The reviewer called this half "defensible-but-
+interpretive" and it is; `report.html`, which the inventory genuinely omitted, was added.
 
 ---
 
