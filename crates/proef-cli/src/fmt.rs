@@ -14,6 +14,18 @@ use proef_core::error::ExitCode;
 /// Format pack files under `path` (a pack file or a directory containing
 /// `packs/`). `check` reports instead of rewriting (exit 1 when dirty).
 pub fn fmt(path: &Path, check: bool) -> ExitCode {
+    // An explicit file is taken on trust by `discover`, so without this the
+    // command rewrites whatever it is pointed at — a mistyped `proef fmt
+    // src/main.rs` strips trailing whitespace from source and reports success.
+    // Formatters parse before they write and refuse what they cannot parse;
+    // this one locates blocks textually, so the extension is the check it has.
+    if path.is_file() && !is_pack_file(path) {
+        crate::render::errln!(
+            "error: `{}` is not a pack file — `fmt` normalizes the hurl blocks inside `.yaml`/`.yml` packs",
+            path.display()
+        );
+        return ExitCode::UserError;
+    }
     let packs = discover(path);
     if packs.is_empty() {
         crate::render::errln!("error: no pack files found under `{}`", path.display());
@@ -51,6 +63,13 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
     }
 }
 
+/// A pack file by name — the extension rule `pack_files` also applies inside
+/// `packs/`. One predicate for both ways into `fmt`, so an explicit file and a
+/// discovered one cannot disagree about what counts as a pack.
+fn is_pack_file(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "yaml" || e == "yml")
+}
+
 fn discover(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
         return vec![path.to_path_buf()];
@@ -67,7 +86,7 @@ fn discover(path: &Path) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "yaml" || e == "yml"))
+        .filter(|p| is_pack_file(p))
         .collect();
     found.sort();
     found
@@ -116,7 +135,11 @@ fn normalize_pack(text: &str) -> String {
     let mut out: Vec<(String, &str)> = Vec::new();
     let mut lines = split_lines(text).into_iter().peekable();
     while let Some((line, term)) = lines.next() {
-        out.push((line.trim_end().to_owned(), term));
+        // Verbatim: this line is skeleton, and the skeleton is not this
+        // command's to normalize. Trimming it here turned `--check` red on a
+        // pack whose blocks were already canonical — the same false red the
+        // line-ending fix removed, from the same over-reach.
+        out.push((line.to_owned(), term));
         let trimmed = line.trim_start();
         let key = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         if !(key.starts_with("hurl:") && key.trim_end().ends_with('|')) {
@@ -184,10 +207,14 @@ fn normalize_pack(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The skeleton carries trailing whitespace of its own here, on a comment
+    /// and on a mapping line, because without it this test asserted the
+    /// "untouched" half of its own name vacuously: the input had nothing
+    /// outside the block that a stray trim could have damaged.
     #[test]
     fn blocks_are_canonicalized_and_yaml_untouched() {
-        let input = "# comment stays\nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x   \n\n\n          HTTP 200\n\n    match: keep\n";
-        let expected = "# comment stays\nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x\n\n          HTTP 200\n    match: keep\n";
+        let input = "# comment stays   \nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x   \n\n\n          HTTP 200\n\n    match: keep  \n";
+        let expected = "# comment stays   \nmacros:\n  m:\n    steps:\n      - hurl: |\n          GET http://x\n\n          HTTP 200\n    match: keep  \n";
         assert_eq!(normalize_pack(input), expected);
         // Idempotent.
         assert_eq!(normalize_pack(expected), expected);

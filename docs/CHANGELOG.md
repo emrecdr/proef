@@ -8,6 +8,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`proef fmt` refuses a file that is not a pack.** It took an explicit path on
+  trust, so it rewrote whatever it was pointed at: `proef fmt src/main.rs`
+  stripped trailing whitespace from Rust source, printed `formatted:`, and
+  exited 0. A mistyped path was a silent edit. Formatters parse before they
+  write and refuse what they cannot parse; this one locates blocks textually, so
+  the extension is the check available — and it is now the same predicate
+  discovery already used, rather than a second opinion about what a pack is.
+  Only the explicit-file path was affected: a directory was always filtered.
+
+### Fixed
+
+- **`proef fmt` leaves the YAML skeleton alone, as it always said it did.** Its
+  documented scope is hurl blocks — the module doc promises the skeleton,
+  comments included, is never touched, and the code claimed the trailing newline
+  was the only normalization applied outside a block. Both were wrong: every
+  line was trimmed. A pack whose blocks were already canonical failed
+  `fmt --check` on nothing but a trailing space in a comment, which is a CI red
+  an author cannot explain from the documented scope. This is the same
+  over-reach the line-ending fix removed in 0.8.0, in the same function, one
+  line above where that fix landed.
+
+### Fixed
+
 - **A truncated record no longer drops a warned scenario from its totals.**
   With no `run_finished` to read, `explain` recounts the scenarios present —
   and counted `Passed`/`Failed`/`Skipped` but not `Warned`, so a scenario whose

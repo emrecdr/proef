@@ -85,6 +85,8 @@ re-reported after it is fixed.
 | P5 | `--watch` did not retrigger on `proef.toml` | #37 |
 | — | a run against untouched scaffold *routes* got no coaching (round-8 §5) | #38 |
 | — | truncated-record fallback totals dropped `Warned` scenarios (round-7) | #39 |
+| — | `fmt` rewrote any file handed to it, not just a pack | #40 |
+| — | `fmt` trimmed the YAML skeleton, turning `--check` red outside its scope | #40 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -207,11 +209,6 @@ stop it happening twice. Halving it means either caching per analysis pass or a
 combined discovery call — both need a way to invalidate, which the
 `SourceProvider` trait has no hook for today. Purely a cost item now that the
 root is correct: no wrong answers depend on it.
-
-### P3 — `--sarif` emits no `startLine`
-
-Only `byteOffset`/`byteLength`, which defeats inline GitHub annotations. Repro'd.
-*Feature-defeating.*
 
 ### P5 — watch: the atomic-save half *(remainder)*
 
