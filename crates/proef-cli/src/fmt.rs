@@ -83,12 +83,40 @@ fn dominant_ending(text: &str) -> &'static str {
     if crlf > lf { "\r\n" } else { "\n" }
 }
 
+/// Split `text` into `(content, terminator)` pairs, keeping each line's own
+/// ending. `str::lines()` throws the terminator away, so rebuilding with a
+/// single ending homogenizes a mixed-endings file — a rewrite outside this
+/// command's stated scope (hurl blocks, not line endings), and one that turns
+/// `fmt --check` red on a file whose blocks are already canonical.
+fn split_lines(text: &str) -> Vec<(&str, &str)> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        // A final line with no terminator at all ends the walk.
+        let Some(index) = rest.find('\n') else {
+            out.push((rest, ""));
+            break;
+        };
+        let (line, tail) = rest.split_at(index + 1);
+        out.push(if let Some(content) = line.strip_suffix("\r\n") {
+            (content, "\r\n")
+        } else {
+            (&line[..line.len() - 1], "\n")
+        });
+        rest = tail;
+    }
+    out
+}
+
 /// Normalize every `hurl:` block-scalar body in the pack text.
 fn normalize_pack(text: &str) -> String {
-    let mut out: Vec<String> = Vec::new();
-    let mut lines = text.lines().peekable();
-    while let Some(line) = lines.next() {
-        out.push(line.trim_end().to_owned());
+    let ending = dominant_ending(text);
+    // `(content, terminator)`; the terminator travels with its line so an
+    // untouched line is written back byte-for-byte.
+    let mut out: Vec<(String, &str)> = Vec::new();
+    let mut lines = split_lines(text).into_iter().peekable();
+    while let Some((line, term)) = lines.next() {
+        out.push((line.trim_end().to_owned(), term));
         let trimmed = line.trim_start();
         let key = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         if !(key.starts_with("hurl:") && key.trim_end().ends_with('|')) {
@@ -96,48 +124,59 @@ fn normalize_pack(text: &str) -> String {
         }
         // Collect the block body: lines more indented than the key.
         let key_indent = line.len() - line.trim_start().len();
-        let mut body: Vec<String> = Vec::new();
-        while let Some(next) = lines.peek() {
+        let mut body: Vec<(&str, &str)> = Vec::new();
+        while let Some((next, _)) = lines.peek() {
             let is_blank = next.trim().is_empty();
             let indent = next.len() - next.trim_start().len();
             if !is_blank && indent <= key_indent {
                 break;
             }
-            body.push(lines.next().unwrap_or_default().to_owned());
+            if let Some(pair) = lines.next() {
+                body.push(pair);
+            }
         }
         // Canonicalize: collapse blank runs, drop trailing blanks — but a
         // fenced region (``` … ```) is the exact body the test sends, so
         // every byte inside it (blanks and trailing whitespace included)
         // stays verbatim.
-        let mut canonical: Vec<String> = Vec::new();
+        let mut canonical: Vec<(String, &str)> = Vec::new();
         let mut in_fence = false;
-        for body_line in body {
+        for (body_line, body_term) in body {
             let is_fence_delimiter = body_line.trim_start().starts_with("```");
             if in_fence {
                 in_fence = !is_fence_delimiter;
-                canonical.push(body_line);
+                canonical.push((body_line.to_owned(), body_term));
                 continue;
             }
             if is_fence_delimiter {
                 in_fence = true;
-                canonical.push(body_line.trim_end().to_owned());
+                canonical.push((body_line.trim_end().to_owned(), body_term));
             } else if body_line.trim().is_empty() {
-                if canonical.last().is_some_and(|l| l.trim().is_empty()) {
+                if canonical.last().is_some_and(|(l, _)| l.trim().is_empty()) {
                     continue;
                 }
-                canonical.push(String::new());
+                canonical.push((String::new(), body_term));
             } else {
-                canonical.push(body_line.trim_end().to_owned());
+                canonical.push((body_line.trim_end().to_owned(), body_term));
             }
         }
-        while !in_fence && canonical.last().is_some_and(|l| l.trim().is_empty()) {
+        while !in_fence && canonical.last().is_some_and(|(l, _)| l.trim().is_empty()) {
             canonical.pop();
         }
         out.extend(canonical);
     }
-    let ending = dominant_ending(text);
-    let mut result = out.join(ending);
-    result.push_str(ending);
+    let mut result = String::with_capacity(text.len());
+    for (index, (line, term)) in out.iter().enumerate() {
+        result.push_str(line);
+        // A file whose last line had no terminator still gets one — that is a
+        // normalization every formatter makes, and the only one this applies
+        // outside a hurl block.
+        if term.is_empty() && index + 1 == out.len() {
+            result.push_str(ending);
+        } else {
+            result.push_str(term);
+        }
+    }
     result
 }
 
@@ -186,6 +225,37 @@ mod tests {
         assert!(
             !formatted.contains('\r'),
             "LF input must stay LF: {formatted:?}"
+        );
+    }
+
+    /// A file mixing CRLF and LF keeps every line's own ending. `fmt`
+    /// normalizes hurl blocks, not line endings — homogenizing the file is a
+    /// rewrite outside that promise, and it turned `--check` red on a pack
+    /// whose blocks were already canonical. The earlier fix moved from "always
+    /// LF" to "the dominant ending", which still rewrote the minority lines.
+    #[test]
+    fn mixed_endings_survive_when_the_blocks_are_already_canonical() {
+        let input = "macros:\r\n  m:\r\n    steps:\r\n      - hurl: |\n          GET http://x\n          HTTP 200\n";
+        assert_eq!(
+            normalize_pack(input),
+            input,
+            "an already-canonical pack must come back byte-for-byte"
+        );
+    }
+
+    /// Rewriting a block still leaves the surrounding YAML's endings alone.
+    #[test]
+    fn normalizing_a_block_does_not_touch_the_yaml_s_endings() {
+        let input = "macros:\r\n  m:\r\n    steps:\r\n      - hurl: |\n          GET http://x   \n\n\n          HTTP 200\n";
+        let out = normalize_pack(input);
+        assert!(
+            out.starts_with("macros:\r\n  m:\r\n    steps:\r\n"),
+            "{out:?}"
+        );
+        assert!(out.contains("          GET http://x\n"), "{out:?}");
+        assert!(
+            !out.contains("   \n"),
+            "trailing whitespace must go: {out:?}"
         );
     }
 }

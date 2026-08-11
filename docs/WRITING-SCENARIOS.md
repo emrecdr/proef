@@ -45,11 +45,14 @@ $ proef macros
 
 ```
 builtin:core.yaml
-  expectStatus                 0×  the response status is {status}
-  expectPresent                0×  the value at {path} is present
+  expectPresent                0×  the value at {path} is present  (builtin, unused here)
+  expectStatus                 0×  the response status is {status}  (builtin, unused here)
+  …
 suite/packs/api.yaml
   health                       1×  the service is healthy
   search                       1×  the operator searches for {term}
+
+10 macro(s) · 0 unused
 ```
 
 The right-hand column is what you can say. The left is the internal name — you
@@ -145,7 +148,7 @@ genuinely does not exist yet. It is not something you need to write.
 proef::resolve::missing_config_var
 
   × in macro `health`: url variable `bse` is not set — define `[url]` `bse`
-    in proef.toml — did you mean `base`?
+    in proef.toml (or in the active `[env.<name>.url]`) — did you mean `base`?
 ```
 
 A sentence you used needs an address that nobody has filled in. This one lives

@@ -8,6 +8,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`proef fmt` keeps each line's own ending.** Its scope is hurl blocks, not
+  line endings, but it split the whole file with `str::lines()` — which throws
+  the terminator away — and rejoined with a single one. A file mixing CRLF and
+  LF was therefore homogenized, and `fmt --check` came back red on a pack whose
+  blocks were already canonical. The earlier fix moved from "always LF" to "the
+  dominant ending", which still rewrote the minority lines. Terminators now
+  travel with their line, so an untouched line is written back byte-for-byte;
+  the only ending `fmt` still supplies is a trailing newline on a file that
+  lacked one.
+
+- **`proef --help` describes `macros` as it now behaves.** It still said "with
+  its call count" after the command started printing the sentence each macro
+  binds — the README table was updated and the clap text that actually produces
+  `--help` was not.
+
+### Documentation
+
+- **`WRITING-SCENARIOS`'s two sample outputs match the binary again.** The
+  `macros` sample showed two builtins with no ellipsis and omitted the
+  `(builtin, unused here)` marker and the trailing count; the
+  `missing_config_var` sample dropped the `(or in the active
+  [env.<name>.url])` clause. Both read as verbatim transcripts, so a reader
+  comparing them against a real run found differences that were the document's,
+  not theirs.
+
+### Fixed
+
 - **`proef lsp` adopts the workspace root the client announces.** The root was
   resolved at the process edge, before the handshake, from the working
   directory — so an editor launched anywhere but the project analysed the wrong
