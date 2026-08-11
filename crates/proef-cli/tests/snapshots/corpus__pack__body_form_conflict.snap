@@ -1,0 +1,15 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::body_form_conflict
+
+  × macro `bothWays` step 0: a step is either `ref:` or a payload, not both
+   ╭─[tests/errors/pack__body_form_conflict/packs/broken.yaml:2:3]
+ 1 │ macros:
+ 2 │   bothWays:
+   ·   ────────
+ 3 │     match: the step is written twice over
+   ╰────
+
+1 error(s)

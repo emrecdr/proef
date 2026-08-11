@@ -130,7 +130,7 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     // Collect-all load: a broken pack contributes its diagnostic and is
     // excluded from the set, but its siblings still load — the editor keeps
     // binding against the good packs instead of going dark (v0.5.1 fix).
-    let (loaded, pack_diags) = pack::load_collecting(&sources, ctx.kinds);
+    let (loaded, pack_diags) = pack::load_collecting(&sources, &[], ctx.kinds);
     for d in pack_diags {
         let name = d.source_name.clone().unwrap_or_default();
         out.push_diags(&name, [d]);
@@ -231,7 +231,9 @@ fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
             .iter()
             .filter_map(|step| match &step.kind {
                 MacroStepKind::Use { target, .. } => Some(target.as_str()),
-                MacroStepKind::Payload { .. } => None,
+                // Only `use:` lines are indexed here; a `ref:` resolves to a
+                // fragment, not a macro, so it is not a go-to-macro target.
+                MacroStepKind::Payload { .. } | MacroStepKind::Ref { .. } => None,
             })
             .collect();
         let spans = crate::pack::locate::use_line_spans(&m.source, &m.name);

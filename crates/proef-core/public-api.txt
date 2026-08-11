@@ -859,6 +859,8 @@ pub enum proef_core::pack::MacroStepKind
 pub proef_core::pack::MacroStepKind::Payload
 pub proef_core::pack::MacroStepKind::Payload::kind: alloc::string::String
 pub proef_core::pack::MacroStepKind::Payload::payload: proef_core::pack::PayloadForm
+pub proef_core::pack::MacroStepKind::Ref
+pub proef_core::pack::MacroStepKind::Ref::target: alloc::string::String
 pub proef_core::pack::MacroStepKind::Use
 pub proef_core::pack::MacroStepKind::Use::target: alloc::string::String
 pub proef_core::pack::MacroStepKind::Use::with: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -901,7 +903,28 @@ impl core::marker::Unpin for proef_core::pack::ExpectItem
 impl core::marker::UnsafeUnpin for proef_core::pack::ExpectItem
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::ExpectItem
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::ExpectItem
+pub struct proef_core::pack::Fragment
+pub proef_core::pack::Fragment::captures: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::declares_retry: bool
+pub proef_core::pack::Fragment::file: alloc::string::String
+pub proef_core::pack::Fragment::line: usize
+pub proef_core::pack::Fragment::name: alloc::string::String
+pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::source: alloc::sync::Arc<str>
+pub proef_core::pack::Fragment::text: alloc::string::String
+impl core::clone::Clone for proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::clone(&self) -> proef_core::pack::Fragment
+impl core::fmt::Debug for proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::Fragment
+impl core::marker::Send for proef_core::pack::Fragment
+impl core::marker::Sync for proef_core::pack::Fragment
+impl core::marker::Unpin for proef_core::pack::Fragment
+impl core::marker::UnsafeUnpin for proef_core::pack::Fragment
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Fragment
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Fragment
 pub struct proef_core::pack::Macro
+pub proef_core::pack::Macro::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::Macro::body: proef_core::pack::MacroBody
 pub proef_core::pack::Macro::defaults: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::Macro::description: core::option::Option<alloc::string::String>
@@ -925,6 +948,7 @@ impl core::marker::UnsafeUnpin for proef_core::pack::Macro
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Macro
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Macro
 pub struct proef_core::pack::MacroStep
+pub proef_core::pack::MacroStep::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::MacroStep::delay_ms: core::option::Option<u64>
 pub proef_core::pack::MacroStep::kind: proef_core::pack::MacroStepKind
 pub proef_core::pack::MacroStep::name: core::option::Option<alloc::string::String>
@@ -944,8 +968,11 @@ impl core::marker::UnsafeUnpin for proef_core::pack::MacroStep
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroStep
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroStep
 pub struct proef_core::pack::PackSet
+pub proef_core::pack::PackSet::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+pub proef_core::pack::PackSet::fragments: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
 pub proef_core::pack::PackSet::macros: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Macro>
 impl proef_core::pack::PackSet
+pub fn proef_core::pack::PackSet::find_fragment(&self, &str) -> core::option::Option<&proef_core::pack::Fragment>
 pub fn proef_core::pack::PackSet::find_use_target(&self, &str) -> core::option::Option<&proef_core::pack::Macro>
 pub fn proef_core::pack::PackSet::step_defs(&self) -> alloc::vec::Vec<(&str, &str)>
 impl core::default::Default for proef_core::pack::PackSet
@@ -975,7 +1002,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PackSource
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSource
 pub fn proef_core::pack::builtin_sources() -> alloc::vec::Vec<proef_core::pack::PackSource>
 pub fn proef_core::pack::json_schema(&[proef_core::engine::StepKindSpec]) -> serde_json::value::Value
-pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
+pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &[proef_core::pack::PackSource], &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
 pub mod proef_core::provider
 pub struct proef_core::provider::ProviderError(pub alloc::string::String)
 impl core::clone::Clone for proef_core::provider::ProviderError

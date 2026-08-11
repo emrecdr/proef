@@ -47,6 +47,10 @@ pub fn builtin_sources() -> Vec<PackSource> {
 #[serde(deny_unknown_fields)]
 pub(crate) struct RawPack {
     pub(crate) macros: BTreeMap<String, RawMacro>,
+    /// Pack-scope fragment bindings (ADR-0018): the plumbing every macro in the
+    /// file needs, written once. Macro and step scope override it.
+    #[serde(default)]
+    pub(crate) bind: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -64,6 +68,9 @@ pub(crate) struct RawMacro {
     #[serde(default)]
     pub(crate) steps: Vec<RawStep>,
     pub(crate) expect: Option<Vec<RawExpectItem>>,
+    /// Macro-scope fragment bindings (ADR-0018).
+    #[serde(default)]
+    pub(crate) bind: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -80,6 +87,13 @@ pub(crate) struct RawStep {
     #[serde(rename = "use")]
     pub(crate) use_: Option<String>,
     pub(crate) with: Option<BTreeMap<String, String>>,
+    /// A named fragment this step executes (ADR-0018) — the alternative to an
+    /// inline payload, never both on one step.
+    #[serde(rename = "ref")]
+    pub(crate) ref_: Option<String>,
+    /// Step-scope fragment bindings, the most specific of the three.
+    #[serde(default)]
+    pub(crate) bind: BTreeMap<String, String>,
     /// The dynamic payload key (`hurl:`, or a future engine's kind) — validated
     /// against registered engine step kinds in pass 8.
     #[serde(flatten)]
@@ -111,11 +125,18 @@ pub(crate) struct RawExpectItem {
 // Loaded model (what binding and lowering consume)
 // ---------------------------------------------------------------------------
 
-/// A validated set of packs: every macro, indexed by (globally unique) name.
+/// A validated set of packs: every macro, indexed by (globally unique) name,
+/// plus the fragments packs may reference and the pack-scope bindings.
 #[derive(Debug, Default)]
 pub struct PackSet {
     /// All macros by name (pass 3 guarantees global uniqueness).
     pub macros: BTreeMap<String, Macro>,
+    /// All named fragments by name — globally unique for the same reason macro
+    /// names are: a `ref:` names one thing, wherever it was declared (ADR-0018).
+    pub fragments: BTreeMap<String, Fragment>,
+    /// Pack-scope `bind:` tables, keyed by pack name so a binding stays
+    /// attributable to the file that declared it.
+    pub bind: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl PackSet {
@@ -138,6 +159,44 @@ impl PackSet {
             None => self.macros.get(target),
         }
     }
+
+    /// Resolve a `ref:` target (`name` or `file.hurl#name`) to a fragment —
+    /// the same two spellings `use:` accepts, qualified the same way, because
+    /// they answer the same question.
+    pub fn find_fragment(&self, target: &str) -> Option<&Fragment> {
+        match target.split_once('#') {
+            Some((file_ref, name)) => self
+                .fragments
+                .get(name)
+                .filter(|f| pack_ref_matches(&f.file, file_ref)),
+            None => self.fragments.get(target),
+        }
+    }
+}
+
+/// One named entry of a fragment file (ADR-0018).
+///
+/// Every field but `name` is *read* from the entry by the claiming engine's own
+/// parser — nothing is declared twice, so nothing can drift from the file.
+#[derive(Debug, Clone)]
+pub struct Fragment {
+    /// The name its `# @proef` annotation gave it (globally unique).
+    pub name: String,
+    /// Source file name as authored — the `file.hurl#name` qualifier and the
+    /// diagnostic source.
+    pub file: String,
+    /// The entry's own text, annotation included.
+    pub text: String,
+    /// 1-based line the entry starts on.
+    pub line: usize,
+    /// Variables the entry reads: its required inputs.
+    pub placeholders: Vec<String>,
+    /// Variables the entry produces.
+    pub captures: Vec<String>,
+    /// Whether the entry sets its own retry policy.
+    pub declares_retry: bool,
+    /// The fragment file's text (for diagnostics).
+    pub source: Arc<str>,
 }
 
 /// Path-boundary-aware pack-qualifier match: `api.yaml` qualifies
@@ -170,6 +229,8 @@ pub struct Macro {
     pub tags: Vec<String>,
     /// Request steps or assert-only body.
     pub body: MacroBody,
+    /// Macro-scope fragment bindings (ADR-0018), overriding pack scope.
+    pub bind: BTreeMap<String, String>,
     /// The pack source text (for diagnostics).
     pub source: Arc<str>,
     /// Span of the macro's name in the pack file, when locatable.
@@ -205,6 +266,8 @@ pub struct MacroStep {
     pub retry: Option<Retry>,
     /// `saveAs:` promotions (capture name → `global`).
     pub save_as: BTreeMap<String, String>,
+    /// Step-scope fragment bindings (ADR-0018), the most specific of the three.
+    pub bind: BTreeMap<String, String>,
 }
 
 /// Payload or composition of a [`MacroStep`].
@@ -223,6 +286,11 @@ pub enum MacroStepKind {
         target: String,
         /// Arguments for the target's params.
         with: BTreeMap<String, String>,
+    },
+    /// A named fragment declared in an engine-native file (ADR-0018).
+    Ref {
+        /// Target fragment (`name` or `file.hurl#name`).
+        target: String,
     },
 }
 
@@ -259,11 +327,14 @@ pub struct ExpectItem {
 /// does not zero the whole suite; `load` is the fail-fast wrapper for a run.
 pub(crate) fn load_collecting(
     sources: &[PackSource],
+    fragments: &[PackSource],
     kinds: &[StepKindSpec],
 ) -> (PackSet, Vec<Diag>) {
     let mut diags: Vec<Diag> = Vec::new();
     let mut set = PackSet::default();
     let mut raw_packs: Vec<(usize, String, RawPack)> = Vec::new();
+
+    load_fragments(fragments, kinds, &mut set, &mut diags);
 
     for (index, source) in sources.iter().enumerate() {
         match serde_norway::from_str::<RawPack>(&source.text) {
@@ -311,17 +382,114 @@ pub(crate) fn load_collecting(
                 }
             }
         }
+        if !raw.bind.is_empty() {
+            set.bind.insert(pack_name.clone(), raw.bind.clone());
+        }
     }
 
     validate::run_cross_macro_passes(&set, kinds, &mut diags);
     (set, diags)
 }
 
+/// Scan every fragment file through the claiming engine's parser, indexing the
+/// annotated entries by name. Unannotated entries are dropped without comment:
+/// a corpus proef did not write is mostly those, and naming is the author's
+/// way of saying which ones proef may use.
+///
+/// A file the engine cannot parse contributes its diagnostic and nothing else —
+/// the same "never sinks its siblings" rule packs get.
+fn load_fragments(
+    sources: &[PackSource],
+    kinds: &[StepKindSpec],
+    set: &mut PackSet,
+    diags: &mut Vec<Diag>,
+) {
+    for source in sources {
+        // The extension decided which kind claims the file, so the scanner that
+        // reads it is the one whose engine owns that extension.
+        let Some(scan) = kinds.iter().find_map(|kind| kind.scan_fragments) else {
+            continue;
+        };
+        let scanned = match scan(&source.text) {
+            Ok(scanned) => scanned,
+            Err(err) => {
+                diags.push(
+                    Diag::error(
+                        "proef::pack::bad_annotation",
+                        format!("{}: {}", source.name, err.message),
+                    )
+                    .with_source(source.name.clone(), Arc::clone(&source.text))
+                    .maybe_span(line_span(&source.text, err.line)),
+                );
+                continue;
+            }
+        };
+        for entry in scanned {
+            let Some(name) = entry.name else { continue };
+            if let Some(existing) = set.fragments.get(&name) {
+                diags.push(
+                    Diag::error(
+                        "proef::pack::duplicate_fragment",
+                        format!(
+                            "fragment `{name}` is declared in both `{}` and `{}`",
+                            existing.file, source.name
+                        ),
+                    )
+                    .with_source(source.name.clone(), Arc::clone(&source.text))
+                    .maybe_span(line_span(&source.text, entry.line))
+                    .with_help(
+                        "fragment names are global — rename one, or qualify the `ref:` \
+                         as `file.hurl#name`",
+                    ),
+                );
+                continue;
+            }
+            set.fragments.insert(
+                name.clone(),
+                Fragment {
+                    name,
+                    file: source.name.clone(),
+                    text: entry.text,
+                    line: entry.line,
+                    placeholders: entry.placeholders,
+                    captures: entry.captures,
+                    declares_retry: entry.declares_retry,
+                    source: Arc::clone(&source.text),
+                },
+            );
+        }
+    }
+}
+
+/// Byte span of one 1-based line's trimmed content — the anchor for a
+/// diagnostic the engine reported by position rather than by offset.
+fn line_span(text: &str, line: usize) -> Option<Span> {
+    let (start, raw) = text
+        .split_inclusive('\n')
+        .scan(0usize, |offset, raw| {
+            let at = *offset;
+            *offset += raw.len();
+            Some((at, raw))
+        })
+        .nth(line.checked_sub(1)?)?;
+    let content = raw.trim_end_matches(['\n', '\r']);
+    let lead = content.len() - content.trim_start().len();
+    Some(Span::clamped(
+        start + lead,
+        start + content.trim_end().len(),
+        text.len(),
+    ))
+}
+
 /// Parse and validate `sources`, failing on the first error-severity diagnostic
 /// (the fail-fast contract a real `proef` run depends on). All diagnostics are
 /// still collected — one bad pack does not hide problems in another.
-pub fn load(sources: &[PackSource], kinds: &[StepKindSpec]) -> Result<PackSet, FrontError> {
-    let (set, diags) = load_collecting(sources, kinds);
+pub fn load(
+    sources: &[PackSource],
+    fragments: &[PackSource],
+    kinds: &[StepKindSpec],
+) -> Result<PackSet, FrontError> {
+    let (set, diags) = load_collecting(sources, fragments, kinds);
     if diags
         .iter()
         .any(|d| d.severity == crate::diag::Severity::Error)

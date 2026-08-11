@@ -1,0 +1,10 @@
+macros:
+  bothWays:
+    match: the step is written twice over
+    steps:
+      # A step is exactly one body form: an inline block splices `${…}` at
+      # lower time, a `ref:` binds `{{…}}` at run time. Both is neither.
+      - ref: admin.search
+        hurl: |
+          GET http://127.0.0.1:8787/health
+          HTTP 200

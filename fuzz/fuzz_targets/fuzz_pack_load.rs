@@ -22,6 +22,6 @@ fuzz_target!(|data: &[u8]| {
             name: "fuzz.yaml".to_owned(),
             text: Arc::from(text),
         }];
-        let _ = pack::load(&sources, KINDS);
+        let _ = pack::load(&sources, &[], KINDS);
     }
 });

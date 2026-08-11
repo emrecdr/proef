@@ -95,7 +95,7 @@ fn load_pack_set(
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
     let packs_loaded = sources.len();
-    Ok((packs_loaded, pack::load(&sources, kinds)?))
+    Ok((packs_loaded, pack::load(&sources, &[], kinds)?))
 }
 
 /// Run the front end over `path` (a `.feature` file or a directory tree).

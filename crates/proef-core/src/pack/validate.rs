@@ -161,6 +161,7 @@ pub(crate) fn normalize_macro(
         description: raw.description.clone(),
         tags: raw.tags.clone(),
         body,
+        bind: raw.bind.clone(),
         source: Arc::clone(&source.text),
         span,
         match_span,
@@ -218,69 +219,112 @@ fn normalize_step(
         None => None,
     };
 
-    let kind = match (&raw.use_, raw.payload.len()) {
-        (Some(target), 0) => {
-            if raw.optional || raw.when.is_some() || retry.is_some() || !save_as.is_empty() {
-                diags.push(at(Diag::error(
+    // `bind:` supplies a *fragment's* `{{names}}`. On an inline step there is
+    // nothing to supply them to — `${…}` splices at lower time — so accepting it
+    // there would silently ignore what the author wrote.
+    if !raw.bind.is_empty() && raw.ref_.is_none() {
+        diags.push(at(Diag::error(
+            "proef::pack::bind_without_ref",
+            format!(
+                "macro `{macro_name}` step {index}: `bind:` supplies a fragment's `{{{{…}}}}` variables, so it needs a `ref:` — an inline `hurl:` block takes `${{…}}` instead"
+            ),
+        )));
+    }
+
+    let kind = if let Some(target) = &raw.ref_ {
+        // Body form: a step is exactly one of `hurl:`, `use:`, `ref:`.
+        if !raw.payload.is_empty() || raw.use_.is_some() {
+            let other = if raw.use_.is_some() {
+                "use:"
+            } else {
+                "a payload"
+            };
+            diags.push(at(Diag::error(
+                "proef::pack::body_form_conflict",
+                format!(
+                    "macro `{macro_name}` step {index}: a step is either `ref:` or {other}, not both"
+                ),
+            )));
+            return None;
+        }
+        if raw.with.is_some() {
+            diags.push(at(Diag::error(
+                "proef::pack::with_without_use",
+                format!("macro `{macro_name}` step {index}: `with:` only accompanies `use:`"),
+            )));
+        }
+        // Unlike `use:`, a `ref:` step *does* take the step modifiers: it is one
+        // request of this macro's own, not an inlining of somebody else's steps.
+        MacroStepKind::Ref {
+            target: target.clone(),
+        }
+    } else {
+        match (&raw.use_, raw.payload.len()) {
+            (Some(target), 0) => {
+                if raw.optional || raw.when.is_some() || retry.is_some() || !save_as.is_empty() {
+                    diags.push(at(Diag::error(
                     "proef::pack::use_with_modifiers",
                     format!("macro `{macro_name}` step {index}: `use:` steps take only `with:` (and `name:`) — modifiers belong on the target macro's steps"),
                 )));
+                }
+                MacroStepKind::Use {
+                    target: target.clone(),
+                    with: raw.with.clone().unwrap_or_default(),
+                }
             }
-            MacroStepKind::Use {
-                target: target.clone(),
-                with: raw.with.clone().unwrap_or_default(),
-            }
-        }
-        (Some(_), _) => {
-            diags.push(at(Diag::error(
+            (Some(_), _) => {
+                diags.push(at(Diag::error(
                 "proef::pack::use_with_payload",
                 format!("macro `{macro_name}` step {index}: a step is either `use:` or a payload, not both"),
             )));
-            return None;
-        }
-        (None, 0) => {
-            diags.push(at(Diag::error(
+                return None;
+            }
+            (None, 0) => {
+                diags.push(at(Diag::error(
                 "proef::pack::empty_step",
                 format!(
-                    "macro `{macro_name}` step {index} has no payload (`hurl: |…`) and no `use:`"
+                    "macro `{macro_name}` step {index} has no payload (`hurl: |…`), no `ref:`, and no `use:`"
                 ),
             )));
-            return None;
-        }
-        (None, 1) => {
-            if raw.with.is_some() {
+                return None;
+            }
+            (None, 1) => {
+                if raw.with.is_some() {
+                    diags.push(at(Diag::error(
+                        "proef::pack::with_without_use",
+                        format!(
+                            "macro `{macro_name}` step {index}: `with:` only accompanies `use:`"
+                        ),
+                    )));
+                }
+                let (kind_key, value) = raw
+                    .payload
+                    .iter()
+                    .next()
+                    .map(|(k, v)| (k.clone(), v.clone()))?;
+                let payload = match value {
+                    serde_norway::Value::String(text) => PayloadForm::Raw(text),
+                    other => PayloadForm::Structured(
+                        serde_json::to_value(&other).unwrap_or(serde_json::Value::Null),
+                    ),
+                };
+                MacroStepKind::Payload {
+                    kind: kind_key,
+                    payload,
+                }
+            }
+            (None, _) => {
+                let keys: Vec<&str> = raw.payload.keys().map(String::as_str).collect();
                 diags.push(at(Diag::error(
-                    "proef::pack::with_without_use",
-                    format!("macro `{macro_name}` step {index}: `with:` only accompanies `use:`"),
+                    "proef::pack::multiple_payloads",
+                    format!(
+                        "macro `{macro_name}` step {index} has {} payload keys ({}) — one per step",
+                        keys.len(),
+                        keys.join(", ")
+                    ),
                 )));
+                return None;
             }
-            let (kind_key, value) = raw
-                .payload
-                .iter()
-                .next()
-                .map(|(k, v)| (k.clone(), v.clone()))?;
-            let payload = match value {
-                serde_norway::Value::String(text) => PayloadForm::Raw(text),
-                other => PayloadForm::Structured(
-                    serde_json::to_value(&other).unwrap_or(serde_json::Value::Null),
-                ),
-            };
-            MacroStepKind::Payload {
-                kind: kind_key,
-                payload,
-            }
-        }
-        (None, _) => {
-            let keys: Vec<&str> = raw.payload.keys().map(String::as_str).collect();
-            diags.push(at(Diag::error(
-                "proef::pack::multiple_payloads",
-                format!(
-                    "macro `{macro_name}` step {index} has {} payload keys ({}) — one per step",
-                    keys.len(),
-                    keys.join(", ")
-                ),
-            )));
-            return None;
         }
     };
 
@@ -307,6 +351,7 @@ fn normalize_step(
         when: raw.when.clone(),
         retry,
         save_as,
+        bind: raw.bind.clone(),
     })
 }
 
@@ -350,6 +395,9 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                 MacroStepKind::Use { target, with } => {
                     use_target_passes(set, macro_, index, target, with, &at, diags);
                 }
+                MacroStepKind::Ref { target } => {
+                    ref_target_passes(set, macro_, index, step, target, &at, diags);
+                }
                 MacroStepKind::Payload { kind, payload } => {
                     let ordinal = *payload_ordinals
                         .entry(kind.as_str())
@@ -362,6 +410,56 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
     }
 
     use_graph_passes(set, diags);
+}
+
+/// Target existence for one `ref:`, plus the retry double-declaration check
+/// against the fragment's own `[Options]` — the same rule `lint_raw_options`
+/// applies to an inline block, so the two body forms behave identically rather
+/// than differing by where the hurl text happens to live.
+fn ref_target_passes(
+    set: &PackSet,
+    macro_: &Macro,
+    index: usize,
+    step: &MacroStep,
+    target: &str,
+    at: &impl Fn(Diag) -> Diag,
+    diags: &mut Vec<Diag>,
+) {
+    let Some(fragment) = set.find_fragment(target) else {
+        let suggestion = matcher::closest(
+            target.rsplit('#').next().unwrap_or(target),
+            set.fragments.keys().map(String::as_str),
+        )
+        .map(|f| format!(" — did you mean `{f}`?"))
+        .unwrap_or_default();
+        diags.push(
+            at(Diag::error(
+                "proef::pack::unknown_ref",
+                format!(
+                    "macro `{}` step {index}: `ref: {target}` names no loaded fragment{suggestion}",
+                    macro_.name
+                ),
+            ))
+            .with_help(if set.fragments.is_empty() {
+                "no fragment files were loaded — set `[run] fragments` in proef.toml to the \
+                 directory holding them"
+            } else {
+                "a fragment is one hurl entry marked `# @proef <name>` in a scanned file"
+            }),
+        );
+        return;
+    };
+    if fragment.declares_retry && step.retry.is_some() {
+        diags.push(at(Diag::error(
+            "proef::pack::option_declared_twice",
+            format!(
+                "macro `{}` step {index}: `retry` is declared twice — in fragment `{}` (`{}` line {}) and as this step's own `retry:`",
+                macro_.name, fragment.name, fragment.file, fragment.line
+            ),
+        )).with_help(
+            "an entry carries one policy per option — delete whichever of the two is not authoritative",
+        ));
+    }
 }
 
 /// Pass 4 (target existence) + pass 5 (`with:` key coverage) for one `use:`.
@@ -823,7 +921,7 @@ mod tests {
                 "macros:\n  empty:\n    match: nothing binds this\n    expect:\n      - hurl: |\n\n",
             ),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &[], KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -867,7 +965,7 @@ mod tests {
             name: "mixed.yaml".into(),
             text: Arc::clone(&text),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &[], KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -904,7 +1002,7 @@ mod tests {
                 "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
             ),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &[], KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -949,9 +1047,240 @@ mod tests {
                 name: "chain.yaml".into(),
                 text: Arc::from(yaml.as_str()),
             }],
+            &[],
             PLAIN,
         )
         .unwrap();
         assert_eq!(packs.macros.len(), 32);
+    }
+
+    // -----------------------------------------------------------------------
+    // Fragments (ADR-0018)
+    // -----------------------------------------------------------------------
+
+    /// A stand-in for a real engine's scanner. `proef-core` cannot depend on
+    /// `proef-engine-hurl`, so these tests drive the loader through the seam
+    /// exactly as a future engine would — which is also the point: nothing in
+    /// the loading rules knows what hurl is.
+    ///
+    /// `@name` opens a fragment, `retry` marks the one above as declaring a
+    /// retry policy, `?var` a read, `!var` a capture, and `@!boom` fails.
+    fn fake_scan(
+        text: &str,
+    ) -> Result<Vec<crate::engine::ScannedFragment>, crate::engine::FragmentScanError> {
+        let mut out: Vec<crate::engine::ScannedFragment> = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line == "@!boom" {
+                return Err(crate::engine::FragmentScanError {
+                    line: index + 1,
+                    column: 1,
+                    message: "unreadable entry".to_owned(),
+                });
+            }
+            if let Some(name) = line.strip_prefix('@') {
+                out.push(crate::engine::ScannedFragment {
+                    name: Some(name.to_owned()),
+                    text: format!("GET http://x/{name}\n"),
+                    line: index + 1,
+                    placeholders: Vec::new(),
+                    captures: Vec::new(),
+                    declares_retry: false,
+                });
+            } else if let Some(last) = out.last_mut() {
+                if line == "retry" {
+                    last.declares_retry = true;
+                } else if let Some(read) = line.strip_prefix('?') {
+                    last.placeholders.push(read.to_owned());
+                } else if let Some(write) = line.strip_prefix('!') {
+                    last.captures.push(write.to_owned());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    const SCANNING: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: None,
+        file_ext: Some("frag"),
+        scan_fragments: Some(fake_scan),
+    }];
+
+    fn source(name: &str, text: &str) -> PackSource {
+        PackSource {
+            name: name.to_owned(),
+            text: Arc::from(text),
+        }
+    }
+
+    fn diags_of(packs: &[PackSource], fragments: &[PackSource]) -> Vec<crate::diag::Diag> {
+        match pack::load(packs, fragments, SCANNING) {
+            Ok(_) => Vec::new(),
+            Err(FrontError::Diagnostics(diags)) => diags,
+            Err(other) => panic!("diagnostics expected, got {other:?}"),
+        }
+    }
+
+    fn has(diags: &[crate::diag::Diag], code: &str) -> bool {
+        diags.iter().any(|d| d.code == code)
+    }
+
+    #[test]
+    fn a_ref_names_a_loaded_fragment() {
+        let packs = pack::load(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+            )],
+            &[source("api.frag", "@admin.search\n")],
+            SCANNING,
+        )
+        .unwrap_or_else(|err| panic!("should load: {err:?}"));
+        assert_eq!(packs.fragments.len(), 1);
+        assert!(packs.find_fragment("admin.search").is_some());
+        // Qualified and bare spellings resolve the same fragment, as `use:` does.
+        assert!(packs.find_fragment("api.frag#admin.search").is_some());
+        assert!(packs.find_fragment("other.frag#admin.search").is_none());
+    }
+
+    #[test]
+    fn a_ref_to_an_unknown_fragment_is_rejected_with_a_suggestion() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.serch\n",
+            )],
+            &[source("api.frag", "@admin.search\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::unknown_ref")
+            .unwrap_or_else(|| panic!("expected unknown_ref in {diags:?}"));
+        assert!(diag.message.contains("did you mean `admin.search`?"));
+    }
+
+    /// With no fragment files loaded at all, the help has to say so — otherwise
+    /// the author reads "names no loaded fragment" as a typo in their own name.
+    #[test]
+    fn an_unknown_ref_with_no_fragments_loaded_points_at_the_config() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+            )],
+            &[],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::unknown_ref")
+            .unwrap_or_else(|| panic!("expected unknown_ref in {diags:?}"));
+        assert!(
+            diag.help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("fragments"),
+            "{:?}",
+            diag.help
+        );
+    }
+
+    #[test]
+    fn a_step_is_one_body_form_only() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        alt: |\n          GET http://x\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(has(&diags, "proef::pack::body_form_conflict"), "{diags:?}");
+    }
+
+    /// `bind:` feeds a fragment's variables. On an inline step there is nothing
+    /// to feed, so accepting it would silently ignore what the author wrote.
+    #[test]
+    fn bind_without_a_ref_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - bind: { a: b }\n        alt: |\n          GET http://x\n",
+            )],
+            &[],
+        );
+        assert!(has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    #[test]
+    fn fragment_names_are_global() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: dup\n",
+            )],
+            &[source("a.frag", "@dup\n"), source("b.frag", "@dup\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::duplicate_fragment")
+            .unwrap_or_else(|| panic!("expected duplicate_fragment in {diags:?}"));
+        assert!(diag.message.contains("a.frag") && diag.message.contains("b.frag"));
+    }
+
+    /// A fragment file the engine cannot read reports its own diagnostic and is
+    /// skipped — the same "never sinks its siblings" rule packs get.
+    #[test]
+    fn an_unreadable_fragment_file_does_not_sink_the_others() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: ok\n",
+            )],
+            &[source("bad.frag", "@!boom\n"), source("good.frag", "@ok\n")],
+        );
+        assert!(has(&diags, "proef::pack::bad_annotation"), "{diags:?}");
+        assert!(
+            !has(&diags, "proef::pack::unknown_ref"),
+            "the readable file still loaded: {diags:?}"
+        );
+    }
+
+    /// The same rule an inline block gets: one authority per option, whichever
+    /// body form the hurl text lives in.
+    #[test]
+    fn retry_declared_by_both_fragment_and_step_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: poll\n        retry: { count: 3, interval_ms: 200 }\n",
+            )],
+            &[source("api.frag", "@poll\nretry\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::option_declared_twice")
+            .unwrap_or_else(|| panic!("expected option_declared_twice in {diags:?}"));
+        assert!(diag.message.contains("fragment `poll`"), "{}", diag.message);
+    }
+
+    #[test]
+    fn bind_scopes_survive_loading() {
+        let packs = pack::load(
+            &[source(
+                "p.yaml",
+                "bind:\n  base: ${url:base}\nmacros:\n  m:\n    match: it runs\n    bind:\n      q: ${q}\n    steps:\n      - ref: f\n        bind:\n          id: \"{{recordId}}\"\n",
+            )],
+            &[source("api.frag", "@f\n")],
+            SCANNING,
+        )
+        .unwrap_or_else(|err| panic!("should load: {err:?}"));
+        assert_eq!(packs.bind["p.yaml"]["base"], "${url:base}");
+        let macro_ = &packs.macros["m"];
+        assert_eq!(macro_.bind["q"], "${q}");
+        let crate::pack::MacroBody::Steps(steps) = &macro_.body else {
+            panic!("steps expected");
+        };
+        assert_eq!(steps[0].bind["id"], "{{recordId}}");
     }
 }

@@ -281,6 +281,23 @@ fn expand_step(
     resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
 ) {
     match &macro_step.kind {
+        MacroStepKind::Ref { target } => {
+            let Some(fragment) = ctx.packs.find_fragment(target) else {
+                return; // pack validation reported it
+            };
+            // Binding a fragment's variables is not wired yet, and a fragment
+            // emitted without its bindings would run with unresolved `{{…}}` —
+            // green output from a request nobody described. Refuse loudly
+            // instead. Unreachable while no fragment file is ever loaded; this
+            // exists so wiring discovery early fails here rather than silently.
+            diags.push(at(Diag::error(
+                "proef::lower::fragment_unlowered",
+                format!(
+                    "internal: fragment `{}` cannot be lowered yet — `bind:` resolution is not wired",
+                    fragment.name
+                ),
+            )));
+        }
         MacroStepKind::Use { target, with } => {
             let Some(target_macro) = ctx.packs.find_use_target(target) else {
                 return; // pack validation reported it
@@ -772,6 +789,7 @@ mod tests {
                 name: "test.yaml".into(),
                 text: Arc::from(PACK),
             }],
+            &[],
             KINDS,
         )
         .unwrap();
@@ -924,6 +942,7 @@ mod tests {
                 name: "test.yaml".into(),
                 text: Arc::from(PACK),
             }],
+            &[],
             KINDS,
         )
         .unwrap();
@@ -988,6 +1007,7 @@ mod tests {
                     "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${url:base}/item\"\n          checks: [\"${url:base}\", 7]\n",
                 ),
             }],
+            &[],
             ALT_KINDS,
         )
         .unwrap();
@@ -1035,6 +1055,7 @@ mod tests {
                     "macros:\n  pair:\n    match: both calls run\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n          [Asserts]\n          status == 200\n          GET http://x/b\n  expectStatus:\n    params: [status]\n    match: \"the response status is {status}\"\n    expect:\n      - status: \"${status}\"\n",
                 ),
             }],
+            &[],
             KINDS,
         )
         .unwrap();
@@ -1186,6 +1207,7 @@ mod tests {
                 name: "fakes.yaml".into(),
                 text: Arc::from(FAKE_PACK),
             }],
+            &[],
             KINDS,
         )
         .unwrap();
@@ -1271,6 +1293,7 @@ mod tests {
                 name: "unmirrored.yaml".into(),
                 text: Arc::from(FAKE_PACK),
             }],
+            &[],
             KINDS,
         )
         .unwrap();

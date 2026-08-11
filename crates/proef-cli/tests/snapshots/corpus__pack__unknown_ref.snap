@@ -1,0 +1,16 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::unknown_ref
+
+  × macro `searchRecords` step 0: `ref: admin.search` names no loaded fragment
+   ╭─[tests/errors/pack__unknown_ref/packs/broken.yaml:2:3]
+ 1 │ macros:
+ 2 │   searchRecords:
+   ·   ─────────────
+ 3 │     match: the operator searches the index
+   ╰────
+  help: no fragment files were loaded — set `[run] fragments` in proef.toml to the directory holding them
+
+1 error(s)

@@ -6,7 +6,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+> **Breaking (library):** `proef_core::pack::load` takes a second
+> `&[PackSource]` of fragment files, between the packs and the step kinds.
+> Pass `&[]` for the previous behaviour.
+
 ### Added
+
+- **Packs can name fragments: `ref:` and `bind:` (ADR-0018).** A macro step's body
+  may be `ref: <fragment>` instead of an inline `hurl:` block, and `bind:` supplies the
+  fragment's `{{…}}` variables at pack, macro and step scope, most specific winning.
+  Fragment names are global, and `file.hurl#name` qualifies one — the same two
+  spellings, resolved the same way, that `use:` already accepts.
+
+  Refused at load, each with its own code: a `ref:` naming no loaded fragment
+  (`unknown_ref`, suggesting the closest, and saying so plainly when *no* fragment file
+  was loaded rather than implying a typo); two files declaring one name
+  (`duplicate_fragment`); a file the engine cannot read (`bad_annotation` — its
+  siblings still load); a step that is both `ref:` and a payload
+  (`body_form_conflict`); and `bind:` on a step with no `ref:`
+  (`bind_without_ref` — an inline block takes `${…}`, so that binding would feed
+  nothing, and a setting silently ignored is the bug this refuses to ship).
+
+  A fragment declaring its own retry alongside a step's `retry:` is the same
+  `option_declared_twice` an inline block gets, so the two body forms behave
+  identically rather than differing by where the hurl text happens to live.
+
+  **Not yet runnable:** no fragment file is discovered yet, so every `ref:` currently
+  reports `unknown_ref`. Discovery and lowering follow.
 
 - **The engine seam can describe fragment files (ADR-0018, groundwork).**
   `StepKindSpec` gains `file_ext` and `scan_fragments`, and `proef-core` gains
