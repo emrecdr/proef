@@ -8,6 +8,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **AUTHORING shows how to write a validation-error catalogue.** Two patterns
+  that were reachable but not signposted, and that compose into one. A
+  validation suite's cases differ *structurally* — one omits a key, one empties
+  it, one adds a key the caller may not set — so a single parameterised macro
+  cannot express them and an `Examples` cell cannot practically hold JSON; the
+  answer is one named macro per malformation, whose sentence says what is wrong
+  in business terms. The expectation side then does **not** grow with the
+  catalogue: because an `expect:` merges into the *previous* request entry, one
+  parameterised `the error code is {code}` covers every case in the set,
+  typically the largest de-duplicator in a validation pack. That merging was
+  documented as a mechanism in two sentences and never shown as the pattern it
+  is. The cost is stated rather than hidden — the pack grows with the catalogue,
+  which is what buys feature files a non-engineer can review.
+
 - **An outline's `<column>` placeholders substitute into the docstring, and
   AUTHORING now says so.** They always have — TECH-SPEC §4.4 specifies it and
   the code has done it since — but the author-facing guide named only step
