@@ -12,7 +12,7 @@
 //! secrets stay on their own encrypted channel and never appear here.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use proef_core::engine::HttpDefaults;
 use serde::Deserialize;
@@ -22,8 +22,17 @@ use crate::sla::SlaThresholds;
 /// The nearest `proef.toml` walking up from the working directory (like
 /// cargo/git), or `None` if none exists in any ancestor.
 fn find_config() -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    cwd.ancestors()
+    find_config_from(&std::env::current_dir().ok()?)
+}
+
+/// The nearest `proef.toml` at or above `dir` (cargo/git style).
+///
+/// Split out from [`find_config`] because `proef lsp` must search from the
+/// workspace root the *client* announced, not from wherever the editor happened
+/// to be launched — a server started in `$HOME` would otherwise adopt `$HOME`'s
+/// config, or none, for a project two directories down.
+fn find_config_from(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
         .map(|dir| dir.join("proef.toml"))
         .find(|candidate| candidate.is_file())
 }
@@ -140,7 +149,18 @@ impl ProjectConfig {
     /// (like cargo/git) so config is found from any subdirectory. Absent file =
     /// defaults; a malformed file is a user error worth failing loudly on.
     pub fn load() -> Result<Self, String> {
-        let Some(path) = find_config() else {
+        Self::from_nearest(find_config())
+    }
+
+    /// Like [`load`](Self::load), but searching from `dir` instead of the
+    /// process working directory — what `proef lsp` needs once the client has
+    /// told it where the workspace actually is.
+    pub fn load_from(dir: &Path) -> Result<Self, String> {
+        Self::from_nearest(find_config_from(dir))
+    }
+
+    fn from_nearest(found: Option<PathBuf>) -> Result<Self, String> {
+        let Some(path) = found else {
             return Ok(Self::default());
         };
         let text = std::fs::read_to_string(&path)

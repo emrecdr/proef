@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::RecvTimeoutError;
@@ -49,7 +49,24 @@ pub struct ServerConfig {
     pub config_vars: BTreeMap<String, String>,
     /// Debounce window coalescing a burst of edits; tests set 0 for determinism.
     pub debounce: Duration,
+    /// Re-resolve `root`/`disk` once the client announces its workspace.
+    ///
+    /// The root is decided at the process edge, before this server runs — but
+    /// the client only says where the workspace is during `initialize`, which
+    /// happens *inside* [`run`]. Without a way back out, the handshake's
+    /// `workspaceFolders`/`rootUri` could only be ignored, so a server launched
+    /// from `$HOME` analysed `$HOME`. This is that way back: given the client's
+    /// root, the caller returns the suite root and a provider over it. Keeping
+    /// it a callback is what lets `proef-lsp` stay ignorant of `proef.toml`,
+    /// which the CLI owns (ADR-0012).
+    ///
+    /// `None` (and a client that announces nothing) leaves the injected root
+    /// untouched.
+    pub resolve_root: Option<RootResolver>,
 }
+
+/// See [`ServerConfig::resolve_root`]. `FnOnce`: the handshake happens once.
+pub type RootResolver = Box<dyn FnOnce(&Path) -> (PathBuf, Box<dyn SourceProvider + Send>) + Send>;
 
 /// Failure modes of the LSP event loop.
 #[derive(Debug)]
@@ -107,11 +124,19 @@ pub fn run(mut cfg: ServerConfig) -> Result<(), ServerError> {
     // encoding failure here becomes a protocol error like any other.
     let caps = serde_json::to_value(capabilities())
         .map_err(|e| ServerError::Protocol(format!("capabilities serialize: {e}")))?;
-    // Blocks until the client's `initialize`; the workspace root and providers
-    // are injected via `cfg`, so the returned params are unused in v1.
-    let _init_params = connection
+    // Blocks until the client's `initialize`. The root injected via `cfg` is a
+    // best guess made from the process working directory; the client is the
+    // authority on where its workspace is, so adopt what it says.
+    let init_params = connection
         .initialize(caps)
         .map_err(|e| ServerError::Protocol(e.to_string()))?;
+    if let Some(client_root) = client_root(&init_params)
+        && let Some(resolve) = cfg.resolve_root.take()
+    {
+        let (root, disk) = resolve(&client_root);
+        cfg.root = root;
+        cfg.disk = disk;
+    }
 
     main_loop(&connection, &cfg)?;
 
@@ -125,6 +150,25 @@ pub fn run(mut cfg: ServerConfig) -> Result<(), ServerError> {
         threads.join().map_err(ServerError::Io)?;
     }
     Ok(())
+}
+
+/// The workspace root the client announced, as a path.
+///
+/// `workspaceFolders` wins over `rootUri`: `rootUri` has been deprecated since
+/// LSP 3.16, and the spec is explicit that a server must ignore it when folders
+/// are present. Only the first folder is used — proef analyses one suite, and
+/// picking arbitrarily among several would be a worse answer than the
+/// configured default.
+fn client_root(params: &serde_json::Value) -> Option<PathBuf> {
+    let uri = params
+        .get("workspaceFolders")
+        .and_then(|folders| folders.as_array())
+        .and_then(|folders| folders.first())
+        .and_then(|folder| folder.get("uri"))
+        .or_else(|| params.get("rootUri"))?
+        .as_str()?;
+    let uri: lsp_types::Uri = uri.parse().ok()?;
+    Some(PathBuf::from(crate::documents::url_to_name(&uri)))
 }
 
 /// Mutable server state that outlives a single message: the open-buffer overlay
@@ -436,6 +480,7 @@ mod tests {
                 env: BTreeMap::new(),
                 config_vars: BTreeMap::new(),
                 debounce: Duration::ZERO,
+                resolve_root: None,
             })
             .unwrap();
         });

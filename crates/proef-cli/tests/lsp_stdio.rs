@@ -111,3 +111,127 @@ fn stdio_server_exits_after_shutdown_and_exit() {
         panic!("proef lsp exited with {status:?}, expected success\nstderr:\n{captured}");
     }
 }
+
+/// The server adopts the workspace root the client announces.
+///
+/// The root is resolved at the process edge, before the handshake, from the
+/// process working directory — so a server launched anywhere but the project
+/// analysed the wrong tree. `nvim ~/proj/x.feature` from `$HOME` rooted the
+/// analyser at `$HOME`. The client is the authority on where its workspace is.
+///
+/// Proven by diagnostics: the CWD holds a suite that binds cleanly, the
+/// announced workspace holds one that does not. A diagnostic for the announced
+/// workspace's file can only come from having rooted there.
+/// A `file:` URI for `path`, valid on both platform families.
+///
+/// Windows paths use `\\`, which is an invalid escape inside a JSON string —
+/// interpolating one straight into a request produces a message the server
+/// cannot parse, so it dies during the handshake and the test sees an empty
+/// reply rather than a useful failure. Separators become `/`, and a drive
+/// letter gets the third slash (`file:///C:/...`) the URI form requires.
+fn file_uri(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
+#[test]
+fn the_server_roots_at_the_workspace_the_client_announces() {
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let cwd = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    // The directory the process is launched in: a suite with nothing wrong.
+    std::fs::create_dir_all(cwd.path().join("packs")).unwrap();
+    std::fs::write(cwd.path().join("ok.feature"), "Feature: F\n").unwrap();
+
+    // The workspace the client announces: a step no pack binds.
+    std::fs::create_dir_all(elsewhere.path().join("packs")).unwrap();
+    std::fs::write(
+        elsewhere.path().join("broken.feature"),
+        "Feature: F\n  Scenario: S\n    When nothing binds this sentence\n",
+    )
+    .unwrap();
+    std::fs::write(elsewhere.path().join("packs/p.yaml"), "macros: {}\n").unwrap();
+
+    let mut child = Command::new(bin)
+        .arg("lsp")
+        .current_dir(cwd.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    // Not canonicalized: the server walks the root it is given and reports
+    // paths joined from it, so client and server agree as long as both use the
+    // same spelling. Canonicalizing would also introduce Windows extended-length
+    // prefixes (\\?\C:\...), which are not URI-shaped.
+    let announced = elsewhere.path().to_path_buf();
+    let uri = file_uri(&announced);
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{}},"workspaceFolders":[{{"uri":"{uri}","name":"w"}}]}}}}"#
+        ),
+    );
+    let init_resp = read_msg(&mut stdout);
+    assert!(init_resp.contains("\"id\":1"), "{init_resp}");
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
+    );
+
+    // Open the announced workspace's broken file; its diagnostics prove the root.
+    let doc_uri = file_uri(&announced.join("broken.feature"));
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{doc_uri}","languageId":"gherkin","version":1,"text":"Feature: F\n  Scenario: S\n    When nothing binds this sentence\n"}}}}}}"#
+        ),
+    );
+
+    // Read on a thread. `read_msg` blocks, so polling a deadline around it only
+    // works while messages keep arriving — and the failure being guarded against
+    // is precisely "no diagnostic ever comes", which would hang rather than
+    // fail. A channel turns that into a timeout.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            let msg = read_msg(&mut stdout);
+            if tx.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut saw = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(msg) if msg.contains("publishDiagnostics") && msg.contains("unbound_step") => {
+                saw = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(
+        saw,
+        "the announced workspace's file must be analysed — the server rooted elsewhere"
+    );
+
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#,
+    );
+    write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
+    drop(stdin);
+    let _ = child.wait();
+}

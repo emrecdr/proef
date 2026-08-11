@@ -203,6 +203,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -263,6 +264,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -342,6 +344,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -422,6 +425,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -505,6 +509,7 @@ fn completion_offers_macro_pattern_snippets() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -609,6 +614,7 @@ fn references_lists_every_step_bound_to_the_macro() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
@@ -665,6 +671,7 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
             env: BTreeMap::new(),
             config_vars: BTreeMap::new(),
             debounce: Duration::ZERO,
+            resolve_root: None,
         })
         .unwrap();
     });
