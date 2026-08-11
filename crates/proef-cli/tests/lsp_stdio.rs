@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -112,16 +113,6 @@ fn stdio_server_exits_after_shutdown_and_exit() {
     }
 }
 
-/// The server adopts the workspace root the client announces.
-///
-/// The root is resolved at the process edge, before the handshake, from the
-/// process working directory — so a server launched anywhere but the project
-/// analysed the wrong tree. `nvim ~/proj/x.feature` from `$HOME` rooted the
-/// analyser at `$HOME`. The client is the authority on where its workspace is.
-///
-/// Proven by diagnostics: the CWD holds a suite that binds cleanly, the
-/// announced workspace holds one that does not. A diagnostic for the announced
-/// workspace's file can only come from having rooted there.
 /// A `file:` URI for `path`, valid on both platform families.
 ///
 /// Windows paths use `\\`, which is an invalid escape inside a JSON string —
@@ -173,6 +164,16 @@ fn file_uri_renders_windows_shapes_a_client_can_resolve() {
     );
 }
 
+/// The server adopts the workspace root the client announces.
+///
+/// The root is resolved at the process edge, before the handshake, from the
+/// process working directory — so a server launched anywhere but the project
+/// analysed the wrong tree. `nvim ~/proj/x.feature` from `$HOME` rooted the
+/// analyser at `$HOME`. The client is the authority on where its workspace is.
+///
+/// Proven by diagnostics: the CWD holds a suite that binds cleanly, the
+/// announced workspace holds one that does not. A diagnostic for the announced
+/// workspace's file can only come from having rooted there.
 #[test]
 fn the_server_roots_at_the_workspace_the_client_announces() {
     let bin = assert_cmd::cargo::cargo_bin("proef");
@@ -281,16 +282,35 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
 /// spelling (for the sake of portable run records) made every fragment name
 /// relative, and `name_to_url` yields `None` for those, so this request returned
 /// null while the suite still ran green.
-#[test]
-fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
-    let bin = assert_cmd::cargo::cargo_bin("proef");
-    let dir = tempfile::tempdir().unwrap();
-    // Canonicalized deliberately: on macOS a tempdir is `/var/...` whose real
-    // path is `/private/var/...`, so an uncanonicalized root disagrees with the
-    // server's own `current_dir()` and any cwd-relative path handling silently
-    // no-ops — the test would pass without ever reaching the behaviour. A real
-    // editor announces the same path the process runs in.
-    let root = &std::fs::canonicalize(dir.path()).unwrap();
+/// The pack this suite's `ref:` line lives in — the document the definition
+/// request is made against.
+const REF_PACK: &str = "macros:\n  search:\n    match: \"the operator searches\"\n    steps:\n      - ref: admin.search\n";
+
+/// A workspace root a real editor could announce: absolute, symlink-resolved,
+/// and free of Windows' verbatim prefix.
+///
+/// Canonicalized deliberately. On macOS a tempdir is `/var/...` whose real path
+/// is `/private/var/...`, so an uncanonicalized root disagrees with the server's
+/// own `current_dir()` and every cwd-relative path silently no-ops — the test
+/// would pass without ever reaching the behaviour. Windows needs it too, where a
+/// tempdir can arrive as an 8.3 short name (`RUNNER~1`).
+///
+/// The `\\?\` verbatim prefix canonicalize returns on Windows is then dropped,
+/// at this single point rather than at each place the root is later spelled.
+/// Production never produces a verbatim path — `disk_provider` and `lsp` both
+/// keep source names uncanonicalized precisely so they stay byte-identical to
+/// the client's URIs — so a test manufacturing one announces a workspace no real
+/// editor would.
+fn announceable_root(dir: &std::path::Path) -> PathBuf {
+    let canonical = std::fs::canonicalize(dir).unwrap();
+    match canonical.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(stripped) => PathBuf::from(stripped),
+        None => canonical.clone(),
+    }
+}
+
+/// A project whose pack `ref:`s a fragment, with `[run] fragments` configured.
+fn write_fragment_project(root: &std::path::Path) {
     std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
     std::fs::create_dir_all(root.join("tests/hurl")).unwrap();
     std::fs::write(
@@ -303,13 +323,41 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
         "# corpus header\n# @proef admin.search\nGET http://127.0.0.1:1/x\nHTTP 200\n",
     )
     .unwrap();
-    let pack = "macros:\n  search:\n    match: \"the operator searches\"\n    steps:\n      - ref: admin.search\n";
-    std::fs::write(root.join("tests/features/packs/api.yaml"), pack).unwrap();
+    std::fs::write(root.join("tests/features/packs/api.yaml"), REF_PACK).unwrap();
     std::fs::write(
         root.join("tests/features/a.feature"),
         "Feature: F\n  Scenario: S\n    When the operator searches\n",
     )
     .unwrap();
+}
+
+/// Drain a child's stderr into a buffer a failure can quote. A `null` answer
+/// says only "something upstream went wrong"; the server's own complaint says
+/// which — and this test's failures reproduce only on a platform the local gate
+/// does not run.
+fn collect_stderr(stderr: std::process::ChildStderr) -> std::sync::Arc<std::sync::Mutex<String>> {
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let into = std::sync::Arc::clone(&sink);
+    let mut err = BufReader::new(stderr);
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        while err.read_line(&mut line).is_ok_and(|n| n > 0) {
+            if let Ok(mut guard) = into.lock() {
+                guard.push_str(&line);
+            }
+            line.clear();
+        }
+    });
+    sink
+}
+
+#[test]
+fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let dir = tempfile::tempdir().unwrap();
+    let root = &announceable_root(dir.path());
+    write_fragment_project(root);
+    let pack = REF_PACK;
 
     let mut child = Command::new(bin)
         .arg("lsp")
@@ -321,6 +369,8 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let stderr_log = collect_stderr(child.stderr.take().unwrap());
 
     let uri = file_uri(root);
     write_msg(
@@ -345,13 +395,6 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
             r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{pack_uri}","languageId":"yaml","version":1,"text":"{escaped}"}}}}}}"#
         ),
     );
-    write_msg(
-        &mut stdin,
-        &format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{{"textDocument":{{"uri":"{pack_uri}"}},"position":{{"line":4,"character":20}}}}}}"#
-        ),
-    );
-
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         loop {
@@ -361,6 +404,36 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
             }
         }
     });
+
+    // Wait for the suite to be analyzed before asking anything about it. The
+    // server debounces recompute (`lsp.rs`: 200ms), so a definition request sent
+    // straight after `didOpen` races it and is answered `null` from an empty
+    // index — a green run here would only mean the machine was slow enough.
+    // `publishDiagnostics` for the pack is the completion signal, exactly as the
+    // in-process suite's `wait_for_any_diagnostics` uses it.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut analyzed = false;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(msg) if msg.contains("publishDiagnostics") => {
+                analyzed = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    assert!(
+        analyzed,
+        "the server never published diagnostics, so the suite was never analyzed"
+    );
+
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{{"textDocument":{{"uri":"{pack_uri}"}},"position":{{"line":4,"character":20}}}}}}"#
+        ),
+    );
 
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut answer = None;
@@ -378,7 +451,15 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
     let answer = answer.expect("the definition request must be answered");
     assert!(
         answer.contains("admin.hurl"),
-        "go-to-definition must land in the fragment file, not return null: {answer}"
+        "go-to-definition must land in the fragment file, not return null.\n\
+         answer:      {answer}\n\
+         root:        {root:?}\n\
+         workspace:   {uri}\n\
+         pack uri:    {pack_uri}\n\
+         server cwd:  {:?}\n\
+         server said: {}",
+        std::fs::canonicalize(root).ok(),
+        stderr_log.lock().map(|g| g.clone()).unwrap_or_default(),
     );
 
     write_msg(
