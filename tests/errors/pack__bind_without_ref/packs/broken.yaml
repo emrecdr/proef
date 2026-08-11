@@ -1,0 +1,12 @@
+macros:
+  boundNothing:
+    match: the binding has nothing to bind
+    steps:
+      # `bind:` supplies a fragment's `{{…}}` variables. An inline block takes
+      # `${…}` instead, so this binding would feed nothing — and a setting that
+      # is silently ignored is the bug this refuses to ship.
+      - bind:
+          base: ${url:base}
+        hurl: |
+          GET http://127.0.0.1:8787/health
+          HTTP 200

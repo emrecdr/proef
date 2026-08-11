@@ -29,6 +29,39 @@ impl core::marker::Unpin for proef_core::analyze::Binding
 impl core::marker::UnsafeUnpin for proef_core::analyze::Binding
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::Binding
 impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::Binding
+pub struct proef_core::analyze::FragmentDef
+pub proef_core::analyze::FragmentDef::file: alloc::string::String
+pub proef_core::analyze::FragmentDef::name: alloc::string::String
+pub proef_core::analyze::FragmentDef::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::analyze::FragmentDef::source: alloc::sync::Arc<str>
+pub proef_core::analyze::FragmentDef::span: core::option::Option<proef_core::diag::Span>
+pub proef_core::analyze::FragmentDef::supplied_variables: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::analyze::FragmentDef
+pub fn proef_core::analyze::FragmentDef::clone(&self) -> proef_core::analyze::FragmentDef
+impl core::fmt::Debug for proef_core::analyze::FragmentDef
+pub fn proef_core::analyze::FragmentDef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::analyze::FragmentDef
+impl core::marker::Send for proef_core::analyze::FragmentDef
+impl core::marker::Sync for proef_core::analyze::FragmentDef
+impl core::marker::Unpin for proef_core::analyze::FragmentDef
+impl core::marker::UnsafeUnpin for proef_core::analyze::FragmentDef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::FragmentDef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::FragmentDef
+pub struct proef_core::analyze::FragmentRef
+pub proef_core::analyze::FragmentRef::pack: alloc::string::String
+pub proef_core::analyze::FragmentRef::span: proef_core::diag::Span
+pub proef_core::analyze::FragmentRef::target_fragment: alloc::string::String
+impl core::clone::Clone for proef_core::analyze::FragmentRef
+pub fn proef_core::analyze::FragmentRef::clone(&self) -> proef_core::analyze::FragmentRef
+impl core::fmt::Debug for proef_core::analyze::FragmentRef
+pub fn proef_core::analyze::FragmentRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::analyze::FragmentRef
+impl core::marker::Send for proef_core::analyze::FragmentRef
+impl core::marker::Sync for proef_core::analyze::FragmentRef
+impl core::marker::Unpin for proef_core::analyze::FragmentRef
+impl core::marker::UnsafeUnpin for proef_core::analyze::FragmentRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::FragmentRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::FragmentRef
 pub struct proef_core::analyze::MacroRef
 pub proef_core::analyze::MacroRef::def_span: core::option::Option<proef_core::diag::Span>
 pub proef_core::analyze::MacroRef::match_span: core::option::Option<proef_core::diag::Span>
@@ -50,6 +83,8 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::MacroRef
 pub struct proef_core::analyze::SuiteAnalysis
 pub proef_core::analyze::SuiteAnalysis::bindings: alloc::vec::Vec<proef_core::analyze::Binding>
 pub proef_core::analyze::SuiteAnalysis::diagnostics: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<proef_core::diag::Diag>>
+pub proef_core::analyze::SuiteAnalysis::fragment_refs: alloc::vec::Vec<proef_core::analyze::FragmentRef>
+pub proef_core::analyze::SuiteAnalysis::fragments: alloc::vec::Vec<proef_core::analyze::FragmentDef>
 pub proef_core::analyze::SuiteAnalysis::macros: alloc::vec::Vec<proef_core::analyze::MacroRef>
 pub proef_core::analyze::SuiteAnalysis::use_refs: alloc::vec::Vec<proef_core::analyze::UseRef>
 impl core::default::Default for proef_core::analyze::SuiteAnalysis
@@ -380,6 +415,40 @@ impl core::marker::Unpin for proef_core::engine::EngineId
 impl core::marker::UnsafeUnpin for proef_core::engine::EngineId
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::EngineId
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::EngineId
+pub struct proef_core::engine::FragmentScanError
+pub proef_core::engine::FragmentScanError::column: usize
+pub proef_core::engine::FragmentScanError::line: usize
+pub proef_core::engine::FragmentScanError::message: alloc::string::String
+impl core::clone::Clone for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::clone(&self) -> proef_core::engine::FragmentScanError
+impl core::cmp::Eq for proef_core::engine::FragmentScanError
+impl core::cmp::PartialEq for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::eq(&self, &proef_core::engine::FragmentScanError) -> bool
+impl core::fmt::Debug for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::FragmentScanError
+impl core::marker::Freeze for proef_core::engine::FragmentScanError
+impl core::marker::Send for proef_core::engine::FragmentScanError
+impl core::marker::Sync for proef_core::engine::FragmentScanError
+impl core::marker::Unpin for proef_core::engine::FragmentScanError
+impl core::marker::UnsafeUnpin for proef_core::engine::FragmentScanError
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::FragmentScanError
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentScanError
+pub struct proef_core::engine::FragmentSupport
+pub proef_core::engine::FragmentSupport::ext: &'static str
+pub proef_core::engine::FragmentSupport::scan: proef_core::engine::FragmentScanner
+impl core::clone::Clone for proef_core::engine::FragmentSupport
+pub fn proef_core::engine::FragmentSupport::clone(&self) -> proef_core::engine::FragmentSupport
+impl core::fmt::Debug for proef_core::engine::FragmentSupport
+pub fn proef_core::engine::FragmentSupport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::FragmentSupport
+impl core::marker::Freeze for proef_core::engine::FragmentSupport
+impl core::marker::Send for proef_core::engine::FragmentSupport
+impl core::marker::Sync for proef_core::engine::FragmentSupport
+impl core::marker::Unpin for proef_core::engine::FragmentSupport
+impl core::marker::UnsafeUnpin for proef_core::engine::FragmentSupport
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::FragmentSupport
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentSupport
 pub struct proef_core::engine::HttpDefaults
 pub proef_core::engine::HttpDefaults::follow_location: bool
 pub proef_core::engine::HttpDefaults::timeout_ms: u64
@@ -416,12 +485,35 @@ impl core::marker::Unpin for proef_core::engine::PayloadProbeError
 impl core::marker::UnsafeUnpin for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeError
+pub struct proef_core::engine::ScannedFragment
+pub proef_core::engine::ScannedFragment::declared_options: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::line: usize
+pub proef_core::engine::ScannedFragment::name: alloc::string::String
+pub proef_core::engine::ScannedFragment::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::supplied_variables: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::text: alloc::string::String
+impl core::clone::Clone for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::clone(&self) -> proef_core::engine::ScannedFragment
+impl core::cmp::Eq for proef_core::engine::ScannedFragment
+impl core::cmp::PartialEq for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::eq(&self, &proef_core::engine::ScannedFragment) -> bool
+impl core::fmt::Debug for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::ScannedFragment
+impl core::marker::Freeze for proef_core::engine::ScannedFragment
+impl core::marker::Send for proef_core::engine::ScannedFragment
+impl core::marker::Sync for proef_core::engine::ScannedFragment
+impl core::marker::Unpin for proef_core::engine::ScannedFragment
+impl core::marker::UnsafeUnpin for proef_core::engine::ScannedFragment
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScannedFragment
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScannedFragment
 pub struct proef_core::engine::ScenarioCtx
 pub proef_core::engine::ScenarioCtx::artifact: core::option::Option<proef_core::engine::ArtifactRef>
 pub proef_core::engine::ScenarioCtx::file_root: core::option::Option<std::path::PathBuf>
 pub proef_core::engine::ScenarioCtx::http: proef_core::engine::HttpDefaults
 pub proef_core::engine::ScenarioCtx::run_id: alloc::sync::Arc<str>
 pub proef_core::engine::ScenarioCtx::scenario: alloc::sync::Arc<str>
+pub proef_core::engine::ScenarioCtx::secret_bindings: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 pub proef_core::engine::ScenarioCtx::secrets: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 impl core::clone::Clone for proef_core::engine::ScenarioCtx
 pub fn proef_core::engine::ScenarioCtx::clone(&self) -> proef_core::engine::ScenarioCtx
@@ -435,6 +527,7 @@ impl core::marker::UnsafeUnpin for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScenarioCtx
 pub struct proef_core::engine::StepKindSpec
+pub proef_core::engine::StepKindSpec::fragments: core::option::Option<proef_core::engine::FragmentSupport>
 pub proef_core::engine::StepKindSpec::prefix: &'static str
 pub proef_core::engine::StepKindSpec::schema: &'static str
 pub proef_core::engine::StepKindSpec::validate: core::option::Option<proef_core::engine::PayloadValidator>
@@ -450,6 +543,7 @@ impl core::marker::Unpin for proef_core::engine::StepKindSpec
 impl core::marker::UnsafeUnpin for proef_core::engine::StepKindSpec
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::StepKindSpec
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::StepKindSpec
+pub const proef_core::engine::OPTION_FAMILIES: &[&str]
 pub trait proef_core::engine::EngineFactory: core::marker::Send + core::marker::Sync
 pub fn proef_core::engine::EngineFactory::doctor(&self) -> alloc::vec::Vec<proef_core::engine::DoctorCheck>
 pub fn proef_core::engine::EngineFactory::id(&self) -> &'static str
@@ -459,6 +553,8 @@ pub trait proef_core::engine::EngineSession: core::marker::Send
 pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::step::StepBatch) -> core::option::Option<core::time::Duration>
 pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
+pub fn proef_core::engine::secret_variables<'a>(&'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>, &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>) -> impl core::iter::traits::iterator::Iterator<Item = (&'a str, &'a str)>
+pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<alloc::vec::Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
 pub mod proef_core::error
 pub enum proef_core::error::CoreError
@@ -601,6 +697,7 @@ pub proef_core::event::Event::StepFinished::captures: alloc::vec::Vec<alloc::str
 pub proef_core::event::Event::StepFinished::detail: core::option::Option<alloc::string::String>
 pub proef_core::event::Event::StepFinished::duration_ms: u64
 pub proef_core::event::Event::StepFinished::engine: alloc::sync::Arc<str>
+pub proef_core::event::Event::StepFinished::fragment: core::option::Option<alloc::string::String>
 pub proef_core::event::Event::StepFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::StepFinished::status: proef_core::step::Status
 pub proef_core::event::Event::StepFinished::step: proef_core::step::StepRef
@@ -724,7 +821,7 @@ pub proef_core::lower::LoweredScenario::batches: alloc::vec::Vec<proef_core::ste
 pub proef_core::lower::LoweredScenario::globals: alloc::collections::btree::set::BTreeSet<alloc::string::String>
 pub proef_core::lower::LoweredScenario::line: usize
 pub proef_core::lower::LoweredScenario::name: alloc::string::String
-pub proef_core::lower::LoweredScenario::secrets: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::lower::LoweredScenario::secrets: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LoweredScenario::tags: alloc::vec::Vec<alloc::string::String>
 pub proef_core::lower::LoweredScenario::warnings: alloc::vec::Vec<proef_core::diag::Diag>
 impl core::fmt::Debug for proef_core::lower::LoweredScenario
@@ -815,6 +912,8 @@ pub enum proef_core::pack::MacroStepKind
 pub proef_core::pack::MacroStepKind::Payload
 pub proef_core::pack::MacroStepKind::Payload::kind: alloc::string::String
 pub proef_core::pack::MacroStepKind::Payload::payload: proef_core::pack::PayloadForm
+pub proef_core::pack::MacroStepKind::Ref
+pub proef_core::pack::MacroStepKind::Ref::target: alloc::string::String
 pub proef_core::pack::MacroStepKind::Use
 pub proef_core::pack::MacroStepKind::Use::target: alloc::string::String
 pub proef_core::pack::MacroStepKind::Use::with: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
@@ -857,7 +956,44 @@ impl core::marker::Unpin for proef_core::pack::ExpectItem
 impl core::marker::UnsafeUnpin for proef_core::pack::ExpectItem
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::ExpectItem
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::ExpectItem
+pub struct proef_core::pack::Fragment
+pub proef_core::pack::Fragment::declared_options: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::file: alloc::string::String
+pub proef_core::pack::Fragment::kind: alloc::string::String
+pub proef_core::pack::Fragment::line: usize
+pub proef_core::pack::Fragment::name: alloc::string::String
+pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::source: alloc::sync::Arc<str>
+pub proef_core::pack::Fragment::supplied_variables: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::text: alloc::string::String
+impl proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::qualified(&self) -> alloc::string::String
+impl core::clone::Clone for proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::clone(&self) -> proef_core::pack::Fragment
+impl core::fmt::Debug for proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::Fragment
+impl core::marker::Send for proef_core::pack::Fragment
+impl core::marker::Sync for proef_core::pack::Fragment
+impl core::marker::Unpin for proef_core::pack::Fragment
+impl core::marker::UnsafeUnpin for proef_core::pack::Fragment
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Fragment
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Fragment
+pub struct proef_core::pack::FragmentCorpus
+impl proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::empty() -> Self
+pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
+impl core::fmt::Debug for proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for proef_core::pack::FragmentCorpus
+impl core::marker::Send for proef_core::pack::FragmentCorpus
+impl core::marker::Sync for proef_core::pack::FragmentCorpus
+impl core::marker::Unpin for proef_core::pack::FragmentCorpus
+impl core::marker::UnsafeUnpin for proef_core::pack::FragmentCorpus
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::FragmentCorpus
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::FragmentCorpus
 pub struct proef_core::pack::Macro
+pub proef_core::pack::Macro::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::Macro::body: proef_core::pack::MacroBody
 pub proef_core::pack::Macro::defaults: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::Macro::description: core::option::Option<alloc::string::String>
@@ -881,6 +1017,7 @@ impl core::marker::UnsafeUnpin for proef_core::pack::Macro
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Macro
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Macro
 pub struct proef_core::pack::MacroStep
+pub proef_core::pack::MacroStep::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::MacroStep::delay_ms: core::option::Option<u64>
 pub proef_core::pack::MacroStep::kind: proef_core::pack::MacroStepKind
 pub proef_core::pack::MacroStep::name: core::option::Option<alloc::string::String>
@@ -888,6 +1025,8 @@ pub proef_core::pack::MacroStep::optional: bool
 pub proef_core::pack::MacroStep::retry: core::option::Option<proef_core::step::Retry>
 pub proef_core::pack::MacroStep::save_as: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::MacroStep::when: core::option::Option<alloc::string::String>
+impl proef_core::pack::MacroStep
+pub fn proef_core::pack::MacroStep::declared_options(&self) -> impl core::iter::traits::iterator::Iterator<Item = &'static str>
 impl core::clone::Clone for proef_core::pack::MacroStep
 pub fn proef_core::pack::MacroStep::clone(&self) -> proef_core::pack::MacroStep
 impl core::fmt::Debug for proef_core::pack::MacroStep
@@ -900,8 +1039,11 @@ impl core::marker::UnsafeUnpin for proef_core::pack::MacroStep
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroStep
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroStep
 pub struct proef_core::pack::PackSet
+pub proef_core::pack::PackSet::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
+pub proef_core::pack::PackSet::fragments: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>>
 pub proef_core::pack::PackSet::macros: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Macro>
 impl proef_core::pack::PackSet
+pub fn proef_core::pack::PackSet::find_fragment(&self, &str) -> core::option::Option<&proef_core::pack::Fragment>
 pub fn proef_core::pack::PackSet::find_use_target(&self, &str) -> core::option::Option<&proef_core::pack::Macro>
 pub fn proef_core::pack::PackSet::step_defs(&self) -> alloc::vec::Vec<(&str, &str)>
 impl core::default::Default for proef_core::pack::PackSet
@@ -931,7 +1073,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PackSource
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSource
 pub fn proef_core::pack::builtin_sources() -> alloc::vec::Vec<proef_core::pack::PackSource>
 pub fn proef_core::pack::json_schema(&[proef_core::engine::StepKindSpec]) -> serde_json::value::Value
-pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
+pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &proef_core::pack::FragmentCorpus, &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
 pub mod proef_core::provider
 pub struct proef_core::provider::ProviderError(pub alloc::string::String)
 impl core::clone::Clone for proef_core::provider::ProviderError
@@ -954,6 +1096,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::provider::ProviderE
 impl core::panic::unwind_safe::UnwindSafe for proef_core::provider::ProviderError
 pub trait proef_core::provider::SourceProvider
 pub fn proef_core::provider::SourceProvider::discover_features(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
+pub fn proef_core::provider::SourceProvider::discover_fragments(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
 pub fn proef_core::provider::SourceProvider::discover_packs(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
 pub fn proef_core::provider::SourceProvider::read(&self, &str) -> core::result::Result<alloc::sync::Arc<str>, proef_core::provider::ProviderError>
 pub mod proef_core::report
@@ -1156,6 +1299,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::Fault
 pub struct proef_core::runner::Prepared
 pub proef_core::runner::Prepared::artifact: core::option::Option<proef_core::engine::ArtifactRef>
 pub proef_core::runner::Prepared::batches: alloc::vec::Vec<proef_core::step::StepBatch>
+pub proef_core::runner::Prepared::secret_bindings: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 impl core::marker::Freeze for proef_core::runner::Prepared
 impl core::marker::Send for proef_core::runner::Prepared
 impl core::marker::Sync for proef_core::runner::Prepared
@@ -1308,6 +1452,7 @@ impl core::marker::UnsafeUnpin for proef_core::step::Guard
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::step::Guard
 impl core::panic::unwind_safe::UnwindSafe for proef_core::step::Guard
 pub struct proef_core::step::LoweredStep
+pub proef_core::step::LoweredStep::fragment: core::option::Option<alloc::string::String>
 pub proef_core::step::LoweredStep::kind: proef_core::step::StepKindId
 pub proef_core::step::LoweredStep::label: core::option::Option<alloc::string::String>
 pub proef_core::step::LoweredStep::optional: bool
@@ -1403,6 +1548,7 @@ pub proef_core::step::StepOutcome::attempt_details: alloc::vec::Vec<alloc::strin
 pub proef_core::step::StepOutcome::attempts: u32
 pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::duration: core::time::Duration
+pub proef_core::step::StepOutcome::fragment: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::reproduce_hint: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::status: proef_core::step::Status
 pub proef_core::step::StepOutcome::step: proef_core::step::StepRef

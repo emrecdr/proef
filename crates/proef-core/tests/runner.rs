@@ -76,6 +76,7 @@ impl EngineSession for MockSession {
                 detail: None,
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
+                fragment: step.fragment.clone(),
             })
             .collect();
         BatchResult { steps, error: None }
@@ -128,6 +129,7 @@ impl EngineSession for FailingSession {
                 detail: Some("mock failure".to_owned()),
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
+                fragment: step.fragment.clone(),
             })
             .collect();
         BatchResult {
@@ -220,6 +222,7 @@ fn lowered_step(text: &str) -> LoweredStep {
         optional: false,
         when: None,
         label: None,
+        fragment: None,
         save_as: BTreeMap::new(),
     }
 }
@@ -245,6 +248,7 @@ fn spec(name: &str, engines_by_batch: &[&'static str]) -> ScenarioSpec {
             Ok(Prepared {
                 batches,
                 artifact: None,
+                secret_bindings: std::collections::BTreeMap::default(),
             })
         }),
     }
@@ -404,6 +408,7 @@ fn optional_batch_error_does_not_rereport_later_batches() {
             Ok(Prepared {
                 batches,
                 artifact: None,
+                secret_bindings: std::collections::BTreeMap::default(),
             })
         }),
     };

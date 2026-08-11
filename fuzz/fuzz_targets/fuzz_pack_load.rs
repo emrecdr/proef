@@ -12,6 +12,7 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
     prefix: "hurl",
     schema: "true",
     validate: None,
+    fragments: None,
 }];
 
 fuzz_target!(|data: &[u8]| {
@@ -20,6 +21,6 @@ fuzz_target!(|data: &[u8]| {
             name: "fuzz.yaml".to_owned(),
             text: Arc::from(text),
         }];
-        let _ = pack::load(&sources, KINDS);
+        let _ = pack::load(&sources, &pack::FragmentCorpus::empty(), KINDS);
     }
 });

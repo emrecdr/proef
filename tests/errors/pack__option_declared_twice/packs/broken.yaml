@@ -1,0 +1,13 @@
+macros:
+  twiceOver:
+    match: I set the retry in both places
+    steps:
+      # `retry:` here and `retry:` in the block below. Lowering extends the
+      # author's own `[Options]`, and hurl takes the last of a duplicated
+      # option — so the raw 5 silently beat this 3 until it became an error.
+      - retry: { count: 3, interval_ms: 200 }
+        hurl: |
+          GET http://x
+          [Options]
+          retry: 5
+          HTTP 200

@@ -213,6 +213,8 @@ fn normalize_pack(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
 
     /// The skeleton carries trailing whitespace of its own here, on a comment
@@ -331,5 +333,33 @@ mod tests {
             let once = normalize_pack(&text);
             proptest::prop_assert_eq!(normalize_pack(&once), once.clone());
         }
+    }
+
+    /// `fmt` normalizes hurl blocks *inside packs* by locating them in YAML.
+    /// A `.hurl` file has no `hurl:` key to locate, so that logic is nonsense
+    /// applied to one — and a fragment file may belong to somebody else, whose
+    /// bytes proef must not touch (ADR-0018). Directory discovery must
+    /// therefore never pick one up, whether it lands in the `packs/` branch or
+    /// the plain-directory fallback.
+    #[test]
+    fn directory_discovery_never_picks_up_a_fragment_file() {
+        let tmp = tempfile::tempdir().expect("create tempdir");
+        let dir = tmp.path();
+        std::fs::write(dir.join("api.yaml"), "macros: {}\n").expect("write pack");
+        std::fs::write(dir.join("admin.hurl"), "GET http://x\n").expect("write fragment");
+
+        let found = discover(dir);
+        assert!(
+            found.iter().any(|p| p.ends_with("api.yaml")),
+            "the pack is still formatted: {found:?}"
+        );
+        assert!(
+            !found
+                .iter()
+                .any(|p| p.extension().is_some_and(|e| e == "hurl")),
+            "a fragment file must not be formatted: {found:?}"
+        );
+        // Naming one explicitly is refused for the same reason.
+        assert!(discover(&dir.join("admin.hurl")).is_empty());
     }
 }

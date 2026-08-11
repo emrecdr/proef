@@ -1,0 +1,16 @@
+---
+source: crates/proef-cli/tests/corpus.rs
+expression: stderr
+---
+proef::pack::option_declared_twice
+
+  × macro `twiceOver` step 0: `retry` is declared twice — here in `[Options]`, and as the step's own `retry:`
+    ╭─[tests/errors/pack__option_declared_twice/packs/broken.yaml:12:11]
+ 11 │           [Options]
+ 12 │           retry: 5
+    ·           ────────
+ 13 │           HTTP 200
+    ╰────
+  help: an entry carries one policy per option — delete whichever of the two is not authoritative
+
+1 error(s)

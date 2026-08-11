@@ -30,6 +30,17 @@ pub trait SourceProvider {
     /// Every macro pack source name under the suite, in the order the provider finds them.
     fn discover_packs(&self) -> Result<Vec<String>, ProviderError>;
 
+    /// Every engine-native **fragment** file a pack may `ref:` (ADR-0018).
+    /// Return an empty vec when the provider serves no fragments.
+    ///
+    /// Deliberately **not** defaulted. Every implementation lives in this
+    /// workspace, so a default body buys no compatibility — and it cost the
+    /// feature once already: a delegating wrapper that forwarded the other two
+    /// discoveries silently inherited "no fragments", so the editor reported
+    /// every `ref:` as `unknown_ref` while the same suite ran green. A required
+    /// method makes a forwarding provider fail to compile instead.
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError>;
+
     /// The raw bytes of one source, keyed by a name returned from discovery.
     fn read(&self, name: &str) -> Result<Arc<str>, ProviderError>;
 }
@@ -47,6 +58,9 @@ mod tests {
         }
         fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
             Ok(vec!["packs/p.yaml".to_owned()])
+        }
+        fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(Vec::new())
         }
         fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
             match name {

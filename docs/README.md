@@ -9,8 +9,10 @@ This folder is the project corpus: the product requirements, the decision log, t
 normative technical spec, the milestone plan, and the testing strategy. Written
 2026-07-28 from a validated research round (a working spike ran 5/5 scenarios green
 under both a prototype native runner and stock hurl 8.0.1 on identical generated
-artifacts); implementation has since delivered milestones M0–M5 — the plan and the
-repo-root `CLAUDE.md` carry the live status.
+artifacts); implementation has since delivered milestones M0–M5 and everything after
+them — external config and environments, the correctness series, v0.9.0, and named hurl
+fragments. Only M6 (a second engine) is unscheduled. The repo-root `CLAUDE.md` carries
+the live status.
 
 ## Reading order
 
@@ -58,6 +60,7 @@ repo-root `CLAUDE.md` carry the live status.
 | [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
 | [0016](adr/ADR-0016-openapi-suite-generator.md) | OpenAPI → suite generator: one-shot seed allowed under a bright line; oracle/drift mode permanently rejected | Proposed (defer) |
 | [0017](adr/ADR-0017-lsp-language-server.md) | `proef lsp` language server: sync lsp-server, whole-suite wholesale recompute, injectable-provider + collect-all front-end refactor | Accepted |
+| [0018](adr/ADR-0018-named-hurl-fragments.md) | Named hurl fragments: `ref:` as a second macro body form, `# @proef <name>` in real `.hurl` files, explicit `bind:` scopes | Accepted |
 
 ## Naming & identifiers
 

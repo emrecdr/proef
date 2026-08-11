@@ -1,0 +1,21 @@
+---
+source: crates/proef-cli/tests/fragments.rs
+expression: artifact
+---
+# proef artifact — S
+# source: tests/features/a.feature:2
+# replay: hurl --test a--s.hurl --variables-file a--s.vars --secret apiToken=<value>
+
+# tests/features/a.feature:3 — the operator searches for "Acme"
+# @proef admin.search
+GET {{base}}/api/v1/admin/search/{{index}}
+Authorization: Bearer {{apiToken}}
+[Options]
+variable: base="http://example.test"
+variable: index="records"
+variable: q="Acme"
+[Query]
+q: {{q}}
+HTTP 200
+[Captures]
+recordId: jsonpath "$[0].id"

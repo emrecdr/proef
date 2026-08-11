@@ -27,6 +27,7 @@ use proef_lsp::{ServerConfig, Transport, run};
 struct FakeDisk {
     features: Vec<String>,
     packs: Vec<String>,
+    fragments: Vec<String>,
     files: BTreeMap<String, Arc<str>>,
 }
 impl SourceProvider for FakeDisk {
@@ -36,12 +37,50 @@ impl SourceProvider for FakeDisk {
     fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
         Ok(self.packs.clone())
     }
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+        Ok(self.fragments.clone())
+    }
     fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
         self.files
             .get(name)
             .cloned()
             .ok_or_else(|| ProviderError(format!("no {name}")))
     }
+}
+
+/// A stand-in fragment scanner: `@name` opens a fragment, `?var` declares a
+/// placeholder. Keeps the test off the real hurl parser while still exercising
+/// the seam the LSP reads fragments through.
+///
+/// The `Result` is never `Err` here, but the signature is fixed by
+/// `engine::FragmentScanner`'s fn-pointer type — it cannot be narrowed.
+#[allow(clippy::unnecessary_wraps)]
+fn fake_scan(
+    text: &str,
+) -> Result<Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError> {
+    let mut out: Vec<proef_core::engine::ScannedFragment> = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if let Some(name) = line.strip_prefix('@') {
+            out.push(proef_core::engine::ScannedFragment {
+                name: name.to_owned(),
+                text: format!("GET http://x/{name}\nHTTP 200\n"),
+                line: index + 1,
+                placeholders: Vec::new(),
+                declared_options: Vec::new(),
+                supplied_variables: Vec::new(),
+            });
+        } else if let Some(last) = out.last_mut() {
+            if let Some(read) = line.strip_prefix('?') {
+                last.placeholders.push(read.to_owned());
+            } else if let Some(supplied) = line.strip_prefix('=') {
+                // `[Options] variable:` — read *and* supplied by the entry.
+                last.placeholders.push(supplied.to_owned());
+                last.supplied_variables.push(supplied.to_owned());
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn init(client: &Connection) {
@@ -178,6 +217,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
     let disk = FakeDisk {
         features: vec![feature_name.clone()],
         packs: vec![pack_name],
+        fragments: Vec::new(),
         files,
     };
 
@@ -189,6 +229,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -243,6 +284,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
     let disk = FakeDisk {
         features: vec![feature_name.clone()],
         packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
         files,
     };
 
@@ -250,6 +292,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -323,6 +366,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
     let disk = FakeDisk {
         features: vec![feature_name.clone()],
         packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
         files,
     };
 
@@ -330,6 +374,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -392,6 +437,121 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
     shutdown(&client, server);
 }
 
+/// Go-to-definition from a `ref:` line lands on the annotation in the fragment
+/// file — the editor half of ADR-0018, end to end through the real provider
+/// chain.
+///
+/// This exists because that chain broke silently once: `discover_fragments` had
+/// a default `Ok(Vec::new())`, and the LSP's overlay provider forwarded the
+/// other two discoveries without overriding it. Every `ref:` then read as
+/// `unknown_ref` in the editor while the same suite ran green — and no test
+/// noticed, because every fake provider inherited the same default. The trait
+/// method is now required; this asserts the wiring it forces.
+#[test]
+fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let fragment_name = native_abs("corpus/api.hurl");
+    let pack_text =
+        "macros:\n  search:\n    match: the wrapper\n    steps:\n      - ref: task.search\n";
+    // Line 0 is a header comment, so the annotation is line 1 — a fragment
+    // anchors on its own annotation, never on the file's leading prose.
+    let fragment_text = "# corpus header\n@task.search\n?q\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    files.insert(fragment_name.clone(), Arc::from(fragment_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: vec![fragment_name.clone()],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: Some(proef_core::engine::FragmentSupport {
+            ext: "hurl",
+            scan: fake_scan,
+        }),
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, pack_text);
+    let diags = wait_for_any_diagnostics(&client);
+
+    // The `ref:` resolves, so it must not report `unknown_ref` anywhere.
+    assert!(
+        !diags
+            .diagnostics
+            .iter()
+            .any(|d| format!("{d:?}").contains("unknown_ref")),
+        "a resolvable ref: must not be an error in the editor: {diags:?}"
+    );
+
+    // "      - ref: task.search" is line 4; char 15 lands on the target name.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(10),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: pack_url.clone(),
+                    },
+                    position: Position {
+                        line: 4,
+                        character: 15,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let target: Location = match loc {
+        GotoDefinitionResponse::Scalar(l) => l,
+        GotoDefinitionResponse::Array(mut v) => v.remove(0),
+        GotoDefinitionResponse::Link(links) => {
+            panic!("unexpected definition response: {links:?}")
+        }
+    };
+    assert_eq!(
+        target.uri,
+        name_to_url(&fragment_name).unwrap(),
+        "the jump leaves the pack and lands in the fragment file"
+    );
+    assert_eq!(
+        target.range.start.line, 1,
+        "on the `@task.search` annotation, not the file header"
+    );
+
+    shutdown(&client, server);
+}
+
 #[test]
 fn definition_on_a_step_lands_on_the_match_line() {
     let feature_name = native_abs("suite/f.feature");
@@ -404,6 +564,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
     let disk = FakeDisk {
         features: vec![feature_name.clone()],
         packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
         files,
     };
 
@@ -411,6 +572,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -488,6 +650,7 @@ fn completion_offers_macro_pattern_snippets() {
     let disk = FakeDisk {
         features: vec![feature_name.clone()],
         packs: vec![pack_name],
+        fragments: Vec::new(),
         files,
     };
 
@@ -495,6 +658,7 @@ fn completion_offers_macro_pattern_snippets() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -593,6 +757,7 @@ fn references_lists_every_step_bound_to_the_macro() {
     let disk = FakeDisk {
         features: vec![f1.clone(), f2.clone()],
         packs: vec![pack],
+        fragments: Vec::new(),
         files,
     };
 
@@ -600,6 +765,7 @@ fn references_lists_every_step_bound_to_the_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -658,6 +824,7 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
     let disk = FakeDisk {
         features: Vec::new(),
         packs: Vec::new(),
+        fragments: Vec::new(),
         files: BTreeMap::new(),
     };
     let (server_conn, client) = Connection::memory();
@@ -748,4 +915,121 @@ fn native_abs(rel: &str) -> String {
     {
         format!("/{rel}")
     }
+}
+
+/// A `bind:` table completes against what the fragments this pack refs actually
+/// read (ADR-0018).
+///
+/// The names live in the `.hurl` file, which is exactly the file an author
+/// adopting a foreign corpus has not memorised. Without this the only way to
+/// learn them is to run the suite and read `lower::unbound_placeholder` — an
+/// error that arrives at lower time, i.e. after a failure.
+#[test]
+fn completion_inside_bind_offers_the_fragments_variables() {
+    use lsp_types::{CompletionParams, CompletionResponse};
+
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let fragment_name = native_abs("corpus/api.hurl");
+    // Two placeholders on the reffed fragment, one on a fragment nothing refs —
+    // the unreferenced one must not be offered. `region` is read *and* supplied
+    // by the fragment itself, so it needs no `bind:` and must not be offered
+    // either: binding it would be refused as `option_declared_twice`.
+    let fragment_text = "@task.search\n?q\n?index\n=region\n@task.delete\n?doomed\n";
+    let pack_text = "macros:\n  search:\n    match: the wrapper\n    steps:\n      - ref: task.search\n        bind:\n          \n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    files.insert(fragment_name.clone(), Arc::from(fragment_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: vec![fragment_name],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: Some(proef_core::engine::FragmentSupport {
+            ext: "hurl",
+            scan: fake_scan,
+        }),
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, pack_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // Line 6 is the indented blank line under `bind:` — its parent is `bind:`,
+    // which is what puts the cursor in a bind table.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(30),
+            method: "textDocument/completion".to_owned(),
+            params: serde_json::to_value(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: pack_url.clone(),
+                    },
+                    position: Position {
+                        line: 6,
+                        character: 10,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+                context: None,
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let resp = wait_for_response::<CompletionResponse>(&client, &RequestId::from(30));
+    let items = match resp {
+        CompletionResponse::Array(v) => v,
+        CompletionResponse::List(l) => l.items,
+    };
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"q") && labels.contains(&"index"),
+        "the reffed fragment's reads must be offered: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"doomed"),
+        "a fragment this pack never refs must not be offered: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"region"),
+        "a variable the fragment supplies itself needs no `bind:` — offering it \
+         would propose an edit `option_declared_twice` then rejects: {labels:?}"
+    );
+    let q = items.iter().find(|i| i.label == "q").unwrap();
+    assert_eq!(q.detail.as_deref(), Some("read by task.search"));
+    assert_eq!(
+        q.insert_text.as_deref(),
+        Some("q: "),
+        "the completion writes the key, ready for its value"
+    );
+
+    shutdown(&client, server);
 }

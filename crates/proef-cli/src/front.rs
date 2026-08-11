@@ -17,7 +17,7 @@ use proef_core::emit::{self, Artifact};
 use proef_core::error::CoreError;
 use proef_core::feature::{self, FeatureFile};
 use proef_core::lower::{self, LowerCtx, LoweredScenario};
-use proef_core::pack::{self, PackSet, PackSource};
+use proef_core::pack::{self, FragmentCorpus, PackSet, PackSource};
 use proef_core::resolve::ResolveMode;
 use proef_core::world::{GlobalStore, World};
 
@@ -73,12 +73,30 @@ pub struct FrontEnd {
 /// listing a suite whose steps do not bind) would otherwise get nothing. The
 /// packs are complete whenever this returns: pack loading precedes binding and
 /// does not depend on it.
-pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
-    let kinds: Vec<proef_core::engine::StepKindSpec> = registry::engines()
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
-    Ok(load_pack_set(path, &kinds)?.1)
+pub fn load_packs(path: &Path, fragments: &FragmentCorpus) -> Result<PackSet, FrontError> {
+    let kinds = registry::step_kinds();
+    Ok(load_pack_set(path, fragments, &kinds)?.1)
+}
+
+/// Read the configured fragment root into a [`FragmentCorpus`] — once per CLI
+/// invocation, whatever it is then used for.
+///
+/// A `proef test` loads packs up to four times (the suite, then `[run] setup`
+/// and `[run] teardown`, each validated and then run). Those loads use
+/// different feature paths but always the same corpus, so re-reading and
+/// re-scanning it per load was pure repetition; the corpus is read here and
+/// scans itself at most once, lazily, on first use.
+///
+/// Built per invocation rather than cached in a static: `--watch` re-enters
+/// `execute` after every edit in the same process, and a corpus that outlived
+/// one run would serve the pre-edit corpus to the next.
+pub fn fragment_corpus(root: Option<&Path>) -> Result<FragmentCorpus, FrontError> {
+    let kinds = registry::step_kinds();
+    let sources = match root {
+        Some(root) => fragment_sources(root, &kinds)?,
+        None => Vec::new(),
+    };
+    Ok(FragmentCorpus::new(sources, &kinds))
 }
 
 /// Discover and load a suite's packs — the single place that knows how a
@@ -90,12 +108,13 @@ pub fn load_packs(path: &Path) -> Result<PackSet, FrontError> {
 /// path and forget in the other.
 fn load_pack_set(
     path: &Path,
+    fragments: &FragmentCorpus,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<(usize, PackSet), FrontError> {
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
     let packs_loaded = sources.len();
-    Ok((packs_loaded, pack::load(&sources, kinds)?))
+    Ok((packs_loaded, pack::load(&sources, fragments, kinds)?))
 }
 
 /// Run the front end over `path` (a `.feature` file or a directory tree).
@@ -107,6 +126,7 @@ pub fn run(
     mode: ResolveMode,
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
+    fragments: &FragmentCorpus,
 ) -> Result<FrontEnd, FrontError> {
     let engines = registry::engines();
     let kinds: Vec<proef_core::engine::StepKindSpec> = engines
@@ -137,7 +157,7 @@ pub fn run(
     );
     let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
 
-    let (packs_loaded, loaded) = load_pack_set(path, &kinds)?;
+    let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds)?;
     let packs: Arc<PackSet> = Arc::new(loaded);
     let kind_to_engine = Arc::new(kind_to_engine);
 
@@ -383,6 +403,79 @@ pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
     Ok(out)
 }
 
+/// The file extensions the registered engines claim for fragment files. The one
+/// place that answers "is this a fragment?", so discovery, `--watch` and any
+/// future consumer cannot disagree — a second engine's format must not be
+/// something one of them knows about and another does not (ADR-0002).
+pub fn fragment_extensions(kinds: &[proef_core::engine::StepKindSpec]) -> Vec<&'static str> {
+    kinds
+        .iter()
+        .filter_map(|kind| Some(kind.fragments?.ext))
+        .collect()
+}
+
+/// Every fragment file under `root`, recursively (ADR-0018). Unlike packs
+/// there is no directory convention: the root is named in `[run] fragments`,
+/// so everything beneath it with a claimed extension is in scope. The
+/// extensions come from the registered engines' `fragments.ext`, so discovery never
+/// learns a file type of its own (ADR-0002).
+pub fn fragment_files(
+    root: &Path,
+    kinds: &[proef_core::engine::StepKindSpec],
+) -> Result<Vec<PathBuf>, FrontError> {
+    let exts: Vec<&str> = fragment_extensions(kinds);
+    if exts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut visited = std::collections::BTreeSet::new();
+    walk_dir(root, &mut visited, &mut |_, file| {
+        if file
+            .extension()
+            .is_some_and(|e| exts.iter().any(|ext| e == *ext))
+        {
+            out.push(file);
+        }
+    })?;
+    out.sort();
+    Ok(out)
+}
+
+/// Read every fragment file under the configured root into [`PackSource`]s.
+/// A missing root is a user error, not a silent empty set: it was named on
+/// purpose, so a typo must not read as "this suite has no fragments".
+pub fn fragment_sources(
+    root: &Path,
+    kinds: &[proef_core::engine::StepKindSpec],
+) -> Result<Vec<PackSource>, FrontError> {
+    if !root.exists() {
+        return Err(FrontError::Core(CoreError::user(format!(
+            "`[run] fragments` names `{}`, which does not exist",
+            root.display()
+        ))));
+    }
+    let mut sources = read_sources(fragment_files(root, kinds)?, "fragment file")?;
+    // Spell the names the way every other source is spelled: relative to where
+    // the command was run. Features and packs get that free — their paths are
+    // the ones the caller typed — but a fragment path is *derived* from
+    // `[run] fragments`, which resolves against the config file's directory and
+    // is therefore absolute. Left that way it reaches `Fragment::file`, and
+    // from there diagnostics, the artifact map and the run record, making a
+    // record machine-specific: two checkouts of one suite stop comparing equal,
+    // and a temp directory can end up in a durable artifact.
+    //
+    // Naming only. The path used to *read* the file stays absolute, which is
+    // what `proef lsp` needs to turn a source name back into a document URI.
+    if let Ok(cwd) = std::env::current_dir() {
+        for source in &mut sources {
+            if let Ok(rest) = Path::new(&source.name).strip_prefix(&cwd) {
+                source.name = portable_display(rest);
+            }
+        }
+    }
+    Ok(sources)
+}
+
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the
 /// input file's parent) via [`pack_files`].
 fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
@@ -391,16 +484,23 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
     } else {
         crate::fsutil::parent_dir(path)
     };
-    let mut sources = Vec::new();
-    for pack_path in pack_files(&base)? {
-        let text = std::fs::read_to_string(&pack_path).map_err(|err| {
+    read_sources(pack_files(&base)?, "pack")
+}
+
+/// Read discovered files into [`PackSource`]s. `what` names them in the read
+/// error, which is the only thing that differs between the kinds of input the
+/// front end loads — the naming and `Arc` sharing must not.
+fn read_sources(paths: Vec<PathBuf>, what: &str) -> Result<Vec<PackSource>, FrontError> {
+    let mut sources = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = std::fs::read_to_string(&path).map_err(|err| {
             FrontError::Core(CoreError::system_with(
-                format!("cannot read pack {}", pack_path.display()),
+                format!("cannot read {what} {}", path.display()),
                 err,
             ))
         })?;
         sources.push(PackSource {
-            name: portable_display(&pack_path),
+            name: portable_display(&path),
             text: Arc::from(text.as_str()),
         });
     }

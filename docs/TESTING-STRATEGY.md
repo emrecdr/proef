@@ -49,6 +49,29 @@ cancel mid-run completes within budget, reports written), parallel `--jobs` dete
 (event Normalize), artifact↔execution same-bytes assertion (hash the emitted file and
 the text handed to `parse_hurl_file`).
 
+**Fragments (ADR-0018):** `crates/proef-cli/tests/fragments.rs` builds a **self-contained
+project per test** — its own `proef.toml`, corpus and pack in a temp dir — because the
+reference corpus under `tests/` is config-independent by design (several tests run it from
+a temp cwd with settings passed by environment variable and no `proef.toml` in scope), so
+anything needing `[run] fragments` cannot live there. That is also why four diagnostic
+codes are covered here rather than in `tests/errors/` (DIAGNOSTICS.md says which).
+
+The headline case runs **one file under both runners**: `proef test` against the fixture,
+then stock `hurl` invoked on the same bytes with an equivalent variables file, asserting
+the corpus comes back byte-identical. The engine is embedded, so a `hurl` binary is not a
+build requirement — that half skips with a printed note when none is on `PATH` rather than
+being faked. Provenance is asserted at both ends: the JSONL record for the event-driven
+readers, and `--junit` for the `RunSummary`-driven ones, since those are fed by a second
+copy that a green suite would not otherwise exercise.
+
+**LSP over stdio (`crates/proef-cli/tests/lsp_stdio.rs`):** the real binary, spoken to as
+an editor does. This is the only place `proef.toml` → `DiskSourceProvider` → document URI
+is exercised end to end: the `proef-lsp` unit tests inject absolute source names through a
+fake provider, so a config-layer change can break every go-to-definition while they stay
+green — which has happened. These tests **canonicalize their temp root**, because on macOS
+a tempdir is `/var/…` whose real path is `/private/var/…`, and without that any
+cwd-relative path logic silently no-ops and the test passes without reaching the behaviour.
+
 **Corpus:** `--dry-run` over every `.feature` in `tests/` —
 the suite's own features are the regression corpus.
 

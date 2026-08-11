@@ -92,7 +92,7 @@ pub fn run() -> ExitCode {
     let cfg = proef_lsp::ServerConfig {
         transport: proef_lsp::Transport::Stdio,
         root: root.clone(),
-        disk: Box::new(DiskSourceProvider::new(root)),
+        disk: Box::new(DiskSourceProvider::new(root).with_fragments(config.fragments())),
         kinds,
         kind_to_engine,
         env,
@@ -117,7 +117,7 @@ pub fn run() -> ExitCode {
                 },
             );
             let disk: Box<dyn proef_core::provider::SourceProvider + Send> =
-                Box::new(DiskSourceProvider::new(root.clone()));
+                Box::new(DiskSourceProvider::new(root.clone()).with_fragments(config.fragments()));
             (root, disk)
         })),
     };

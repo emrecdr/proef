@@ -93,6 +93,12 @@ pub enum Event {
         duration_ms: u64,
         /// Names (never values) of captures produced by this step.
         captures: Vec<String>,
+        /// The fragment that supplied this step's request, as `file.hurl#name`
+        /// (ADR-0018). Additive schema field: absent for an inline `hurl:`
+        /// block, which is every step in every stream written before
+        /// fragments existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fragment: Option<String>,
         /// Failure detail, when the step failed (additive schema field —
         /// absent on passing steps, so pre-existing streams are unchanged).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -219,6 +225,7 @@ mod tests {
             attempts: 2,
             duration_ms: 42,
             captures: vec!["recordId".to_owned()],
+            fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
             detail: None,
             attempt_details: vec!["attempt 1: HTTP 404 (retried)".to_owned()],
         };

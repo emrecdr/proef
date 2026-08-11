@@ -107,6 +107,16 @@ pub struct LoweredStep {
     pub when: Option<Guard>,
     /// Pack-step entry label (events/console), when authored.
     pub label: Option<String>,
+    /// The fragment this step executes, qualified as `file.hurl#name`
+    /// (ADR-0018); `None` for an inline `hurl:` block.
+    ///
+    /// Qualified rather than bare because this is what a *reader* of a run
+    /// record needs: ADR-0018 accepted "a test spans three files" as a cost on
+    /// the condition that tooling earn it back, and a bare `admin.search`
+    /// still leaves you grepping for the file it lives in. The `file#name`
+    /// spelling is the one `ref:` itself accepts, so what a record prints can
+    /// be pasted straight back into a pack.
+    pub fragment: Option<String>,
     /// `saveAs:` promotions: capture name → `global` (ADR-0005).
     pub save_as: std::collections::BTreeMap<String, String>,
 }
@@ -159,6 +169,15 @@ pub struct StepOutcome {
     /// it with the redacted `curl` of the failing request). Set only on failure;
     /// `None` otherwise and for engines that offer no hint.
     pub reproduce_hint: Option<String>,
+    /// The fragment this step ran, copied from [`LoweredStep::fragment`]
+    /// (ADR-0018); `None` for an inline block.
+    ///
+    /// Carried on the outcome as well as the event because the two feed
+    /// different readers: the event stream reaches `explain`, while `JUnit` and
+    /// the GitHub summary are built from [`crate::runner::RunSummary`]. CI is
+    /// where a reader is *least* able to go looking, so it is the last place
+    /// provenance should drop out.
+    pub fragment: Option<String>,
 }
 
 /// Result of dispatching one [`StepBatch`] to an engine.

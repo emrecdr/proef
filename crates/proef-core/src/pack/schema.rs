@@ -33,6 +33,7 @@ mod tests {
             prefix: "hurl",
             schema: r#"{ "type": "string" }"#,
             validate: None,
+            fragments: None,
         }];
         let schema = json_schema(&kinds);
         assert_eq!(

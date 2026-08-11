@@ -290,6 +290,7 @@ mod tests {
             attempts,
             duration_ms,
             captures: Vec::new(),
+            fragment: None,
             detail: None,
             attempt_details: Vec::new(),
         }

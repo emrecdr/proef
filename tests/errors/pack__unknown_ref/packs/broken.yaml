@@ -1,0 +1,7 @@
+macros:
+  searchRecords:
+    match: the operator searches the index
+    steps:
+      # Names a fragment nothing declares. With no fragment files loaded at
+      # all, the help says so — otherwise this reads as a typo in the name.
+      - ref: admin.search

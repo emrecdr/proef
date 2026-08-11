@@ -166,7 +166,19 @@ pub fn execute(
 
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let mut front = match front::run(path, ResolveMode::DryRun, run_id, Arc::clone(&config_vars)) {
+    // Read once for the whole invocation: this same corpus serves the suite's
+    // validation pass, both phase validations and both phase runs (ADR-0018).
+    let fragments = match crate::commands::corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let mut front = match front::run(
+        path,
+        ResolveMode::DryRun,
+        run_id,
+        Arc::clone(&config_vars),
+        &fragments,
+    ) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
     };
@@ -179,7 +191,13 @@ pub fn execute(
     // mistake, same class, so it costs the same. Suite first, so a suite error
     // is not masked by a phase error.
     if let Some(teardown) = config.teardown()
-        && let Err(code) = load_phase_feature("teardown", Path::new(teardown), None, &config_vars)
+        && let Err(code) = load_phase_feature(
+            "teardown",
+            Path::new(teardown),
+            None,
+            &config_vars,
+            &fragments,
+        )
     {
         return code;
     }
@@ -188,7 +206,9 @@ pub fn execute(
         .features
         .iter()
         .flat_map(|f| f.scenarios.iter())
-        .flat_map(|s| s.lowered.secrets.iter().cloned())
+        // The *values* are the secret names to look up; the keys are the hurl
+        // variables a binding may have renamed them to (ADR-0018).
+        .flat_map(|s| s.lowered.secrets.values().cloned())
         .collect();
     let secrets = match crate::secretstore::resolve_all(&secret_names) {
         Ok(secrets) => Arc::new(secrets),
@@ -337,6 +357,7 @@ pub fn execute(
             &phase_sink("setup", sink.clone()),
             &cancel,
             &artifacts_dir,
+            &fragments,
         ) {
             Err(code) => return code,
             Ok(summary) => {
@@ -441,6 +462,7 @@ pub fn execute(
             &phase_sink("teardown", sink.clone()),
             &teardown_cancel,
             &artifacts_dir,
+            &fragments,
         ) {
             // The phase's own exit code, not a blanket 3: a teardown path that
             // does not exist is a user error like any other, and flattening it
@@ -516,10 +538,11 @@ pub fn execute(
                 && let Some(detail) = &step.detail
             {
                 crate::render::errln!(
-                    "  ✗ {}:{} — {}",
+                    "  ✗ {}:{} — {}{}",
                     step.step.file,
                     step.step.line,
-                    redactions.apply(detail)
+                    redactions.apply(detail),
+                    crate::render::via(step.fragment.as_deref())
                 );
                 if let Some(hint) = &step.reproduce_hint {
                     crate::render::errln!("    curl: {}", redactions.apply(hint));
@@ -889,6 +912,7 @@ pub(crate) fn load_phase_feature(
     path: &Path,
     run_id: Option<String>,
     config_vars: &Arc<BTreeMap<String, String>>,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<FrontEnd, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
@@ -901,7 +925,14 @@ pub(crate) fn load_phase_feature(
         );
         return Err(ExitCode::UserError);
     }
-    front::run(path, ResolveMode::DryRun, run_id, Arc::clone(config_vars)).map_err(|err| {
+    front::run(
+        path,
+        ResolveMode::DryRun,
+        run_id,
+        Arc::clone(config_vars),
+        fragments,
+    )
+    .map_err(|err| {
         crate::render::errln!("error: {label} feature failed to validate:");
         crate::commands::report_front_error(&err)
     })
@@ -924,19 +955,26 @@ fn run_phase(
     sink: &EventSink,
     cancel: &CancellationToken,
     artifacts_dir: &Path,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<runner::RunSummary, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
     // in the pool (exclude_phase_features matches a single file path), running
     // each scenario twice. Reject it loudly instead of silently double-running.
-    let front = load_phase_feature(label, path, Some(run_id.to_string()), config_vars)?;
+    let front = load_phase_feature(
+        label,
+        path,
+        Some(run_id.to_string()),
+        config_vars,
+        fragments,
+    )?;
     render::print_all(&front.warnings);
 
     let names: BTreeSet<String> = front
         .features
         .iter()
         .flat_map(|feature| feature.scenarios.iter())
-        .flat_map(|scenario| scenario.lowered.secrets.iter().cloned())
+        .flat_map(|scenario| scenario.lowered.secrets.values().cloned())
         .collect();
     let secrets = match crate::secretstore::resolve_all(&names) {
         Ok(secrets) => Arc::new(secrets),
@@ -1100,6 +1138,7 @@ fn build_specs(
                 Ok(Prepared {
                     batches: lowered.batches,
                     artifact,
+                    secret_bindings: lowered.secrets,
                 })
             });
             specs.push(ScenarioSpec {

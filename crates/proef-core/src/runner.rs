@@ -50,6 +50,11 @@ pub struct Prepared {
     pub batches: Vec<StepBatch>,
     /// The emitted artifact (the hurl engine's executed input, ADR-0010).
     pub artifact: Option<ArtifactRef>,
+    /// This scenario's secrets as **engine variable name → secret name**. The
+    /// two differ when a fragment binding renamed one (ADR-0018); an inline
+    /// `${secret:X}` maps `X` to itself, so this covers every secret the
+    /// scenario needs, not just the renamed ones.
+    pub secret_bindings: std::collections::BTreeMap<String, String>,
 }
 
 /// Run-level configuration.
@@ -636,6 +641,7 @@ fn run_scenario(
                 scenario: Arc::clone(&spec.name),
                 artifact: prepared.artifact.clone(),
                 secrets: Arc::clone(&config.secrets),
+                secret_bindings: Arc::new(prepared.secret_bindings.clone()),
                 http: config.http,
                 file_root: spec.file_root.clone(),
             };
@@ -713,6 +719,10 @@ fn run_scenario(
                 attempts: 0,
                 duration_ms: 0,
                 captures: Vec::new(),
+                // A step that never ran still says where it would have run
+                // from: "not run" is exactly when a reader is reconstructing
+                // what the suite was about to do.
+                fragment: step.fragment.clone(),
                 detail: Some(unreached_reason.to_owned()),
                 attempt_details: Vec::new(),
             });
@@ -724,6 +734,7 @@ fn run_scenario(
                 detail: Some(unreached_reason.to_owned()),
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
+                fragment: step.fragment.clone(),
             });
         }
     }

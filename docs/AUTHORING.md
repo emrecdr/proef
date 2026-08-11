@@ -103,6 +103,84 @@ run as their own batch so a failure cannot poison neighbours.
 assert lines merge into the *previous* request entry (a `Then` before any
 `When` is an error).
 
+### `hurl:` or `ref:` — two body forms, chosen by capability
+
+A step's body is an inline `hurl:` block **or** a `ref:` naming an entry in a
+real `.hurl` file (ADR-0018). They are not two spellings of one thing, so the
+choice is not a matter of taste:
+
+| | `hurl: \|` | `ref: name` |
+|---|---|---|
+| variables | `${…}` **spliced** before hurl parses | `{{…}}` **bound** via `bind:` |
+| can substitute | anything, anywhere — including a whole multi-line docstring body | only what hurl can template |
+| reuse | none: the block has no name | any number of macros, each binding differently |
+| runs under stock `hurl` | no | yes, unchanged |
+| unknown variable | caught when the artifact is parsed | caught at `--dry-run`, by name |
+
+**Reach for inline** for a request only this macro makes, and always when you
+need to splice something hurl cannot template — `${docstring}` as a request
+body is the clearest case, since a bound value is a single-line scalar.
+
+**Reach for `ref:`** when the same request serves several macros, when the hurl
+was written by somebody else, or when the file must stay runnable on its own.
+
+```yaml
+bind:                              # pack scope — every macro in this file
+  base:     ${url:base}
+  apiToken: ${secret:apiToken}     # injected at run time, never into an artifact
+macros:
+  search:
+    params: [q]
+    match: "the operator searches for {q}"
+    bind: { q: "${q}" }            # macro scope
+    steps:
+      - ref: admin.search
+        bind: { index: records }   # step scope — the most specific wins
+```
+
+Set `[run] fragments` to the directory holding those files (see
+[CONFIG.md](CONFIG.md)). Every `{{variable}}` a fragment reads must be bound in
+one of the three scopes, captured by an earlier step, or supplied by the fragment
+itself; nothing is implicit, because hurl's per-entry `variable:` assigns into one
+shared set rather than scoping, so an unbound name would quietly inherit an
+earlier entry's value.
+
+A fragment supplies its own value with an ordinary `[Options] variable:` line —
+which is how a corpus file stays runnable on its own, with fewer variables to
+pass in:
+
+```hurl
+# @proef admin.search
+GET {{base}}/api/v1/admin/search/{{index}}
+[Options]
+variable: index=records      # the file answers its own question
+HTTP 200
+```
+
+Do **not** then also `bind:` that name. Both spellings reach the entry as
+`variable: index=`, hurl takes the last, and the fragment's own line is last — so
+the bound value would never reach the request. Proef refuses the pair
+(`pack::option_declared_twice`) rather than picking one silently; delete whichever
+is not authoritative.
+
+Bindings resolve **once per scope instantiation** — pack scope once per scenario,
+macro scope once per invocation, step scope per step — so one `bind:` entry is one
+value, and two are two. That is what makes a pack-scope `${fake:email}` a single
+identity for the whole scenario.
+
+A `bind:` that nothing can read is refused (`proef::pack::bind_without_ref`)
+rather than dropped, at every scope. Note the one that surprises people: a
+macro-scope `bind:` does **not** reach a `use:` target — the target resolves its
+own pack and macro scopes — so the table belongs on the macro that actually
+carries the `ref:`.
+
+You do not have to memorise a corpus you did not write: with `proef lsp` running,
+completing inside a `bind:` table offers the `{{variables}}` the fragments this
+pack `ref:`s actually read, each labelled with the fragment that wants it. The
+names are read off the `.hurl` file itself, so they cannot drift from it. If a
+name still goes unsupplied, `proef::lower::unbound_placeholder` names it at lower
+time — `--dry-run` is enough to surface that, no server needed.
+
 ## Asserting responses — the hurl vocabulary
 
 Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the

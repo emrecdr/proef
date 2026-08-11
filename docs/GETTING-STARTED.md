@@ -151,6 +151,31 @@ The rule is uniform: under `[env.<name>]`, `url.*` / `vars.*` override variables
 so an environment names only what changes (the Cloudflare-Wrangler / Cargo-profile model).
 Secrets never live here — they stay in the encrypted store (`${secret:…}`, §5).
 
+## 3.6 A step's body has two forms
+
+Everything above uses an inline `hurl:` block, which is complete and permanent. The other
+form is `ref: <name>`, which points at one entry of a **real `.hurl` file** marked
+`# @proef <name>`, with values supplied by a `bind:` table:
+
+```toml
+# proef.toml — where the corpus lives
+[run]
+fragments = "tests/hurl"
+```
+
+```yaml
+    steps:
+      - ref: admin.search          # one entry of tests/hurl/admin.hurl
+        bind: { q: "${term}" }
+```
+
+That file stays valid hurl, so the same bytes run under stock `hurl` *and* under proef —
+useful when a corpus already exists and you would rather annotate it once than transcribe
+it. Choose by capability, not taste: inline splices text (so `${docstring}` can carry a
+multi-line body, which no binding can express), while `ref:` buys a name, reuse, standalone
+runnability, and a static check that every variable is supplied. AUTHORING.md §"`hurl:` or
+`ref:`" has the full comparison.
+
 ## 4. Validate without a network
 
 ```console

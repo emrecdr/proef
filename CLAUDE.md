@@ -153,6 +153,22 @@ never import each other. The structural acceptance test: *adding an engine leave
   `parse_hurl_file` at load); structured payloads are reserved for future engines;
   `expect:` macros merge asserts into the *previous* request entry; `retry:` must be
   finite; `use:` nesting is cycle-checked, depth ≤ 32.
+- **Two body forms, chosen by capability (ADR-0018):** a step is `hurl: |` (lower-time
+  **splicing**: `${…}` substitutes anything anywhere, including a multi-line
+  `${docstring}` body — which no binding can express) **or** `ref: <name>` (run-time
+  **binding**: one `# @proef <name>` entry of a real `.hurl` file, values supplied by
+  `bind:` at pack/macro/step scope, most specific winning). Neither subsumes the other,
+  and the inline path is backed by a measured 844-line corpus port — do not deprecate it.
+  The annotation carries **a name and nothing else, permanently**; all orchestration
+  stays in YAML. Fragment files are *inputs proef never writes*: `fmt` refuses them.
+  Every `{{…}}` a fragment reads must be bound, captured by an earlier step, or supplied
+  by the fragment's own `[Options] variable:` (which keeps the file runnable standalone —
+  and which therefore *collides* with a `bind:` of that name, refused as
+  `option_declared_twice`), because
+  hurl's per-entry `variable:` **assigns into one shared set rather than scoping**. A
+  bound `[Options] variable:` value *is* templated once before storage, so a bound
+  `${url:…}` containing `{{captured}}` resolves — `eval_template` being non-recursive
+  applies to rendering, not to the binding path.
 
 ## Testing expectations (`docs/TESTING-STRATEGY.md` is normative)
 
@@ -163,6 +179,14 @@ schema, event streams) + fixture integration (green path = the reference-corpus 
 retry/cookies/optional/World/cancellation cases) + `--dry-run` corpus over `tests/` +
 assert_cmd CLI/exit-code suite + the hurl upgrade canary. Flake rule: assert attempt
 counts and normalized event order, never wall-clock or raw interleaving.
+
+**The reference corpus (`tests/features`) is config-independent by design** — several
+tests run it from a temp cwd with settings passed by environment variable and no
+`proef.toml` in scope. Anything needing a config key (`[run] fragments`, …) belongs in a
+self-contained test that builds its own project; `crates/proef-cli/tests/fragments.rs` is
+the pattern, and it runs the same file under proef *and* under stock `hurl` (skipped, with
+a printed note, when no `hurl` is on PATH — the engine is embedded, so the binary is not a
+build requirement).
 
 ## Status (update as milestones land)
 
@@ -186,6 +210,29 @@ counts and normalized event order, never wall-clock or raw interleaving.
       `proef_core::resolve::resolve` takes a caller-owned occurrence counter,
       a scenario with no steps is an error, and exit codes moved (stdout
       failure → 3, malformed env var → 2)
+- [x] v0.9.0 — tool-surface integrity & authoring guidance (`fmt` refuses a non-pack and
+      leaves the skeleton alone, pinned by properties; a truncated record counts its
+      warned scenarios; AUTHORING gains the validation-error catalogue and the
+      outline-into-docstring pattern). Breaking: `secret set --value` → `--stdin`;
+      `macros --output json` `pattern` is `string|null`
+- [x] named hurl fragments (ADR-0018) — a step may `ref:` one `# @proef <name>` entry of
+      a real `.hurl` file, values supplied by `bind:` at pack/macro/step scope; the file
+      stays valid hurl, so the same bytes run under stock `hurl` and under proef (pinned
+      by `crates/proef-cli/tests/fragments.rs`, both runners against the fixture).
+      `[run] fragments` names the scanned root; PRD §3's hurl non-goal was narrowed to
+      *generation* in the same change. Inline `hurl: |` is unchanged and permanent.
+      A `ref:` step records the fragment it ran as `file.hurl#name`, which `explain`,
+      the console, TAP, JUnit, the GitHub summary and the HTML report all name on a
+      failure (ADR-0018 accepted three-files-per-test only on condition tooling earned
+      it back); the editor completes `bind:` keys from the fragment's own placeholders
+      and jumps from `ref:` to the annotation. The corpus is read once per command and
+      scanned lazily, at most once — `[run] fragments` resolves to an absolute path
+      because `proef lsp` keys document identity on one, and the shortening that makes
+      a record portable happens at the naming boundary, never at resolution.
+      Breaking (library): `pack::load` takes a `&FragmentCorpus` (scans on first use),
+      `PackSet::fragments` is an `Arc`, `LoweredScenario::secrets` is a map,
+      `Prepared`/`ScenarioCtx` carry `secret_bindings`, and `LoweredStep`/`StepOutcome`/
+      `Event::StepFinished` carry `fragment`
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

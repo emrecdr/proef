@@ -120,9 +120,11 @@ pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Op
     if has_vars {
         let _ = write!(replay, " --variables-file {slug}.vars");
     }
-    for secret in &scenario.secrets {
+    for variable in scenario.secrets.keys() {
         // Placeholders, never values (ADR-0005) — the human fills them in.
-        let _ = write!(replay, " --secret {secret}=<value>");
+        // Keyed by the *hurl* variable name, which is what a replay must set;
+        // a binding may have renamed it away from the secret's own name.
+        let _ = write!(replay, " --secret {variable}=<value>");
     }
     push_line(&mut text, &mut line, &replay);
 
@@ -265,7 +267,7 @@ fn trimmed_lines(payload: &str) -> Vec<&str> {
 /// custom-method entry line ends the previous entry via [`is_method_line`],
 /// the same recogniser the lowering pass uses. Otherwise phantom rows reach
 /// `.map.json`, a normative artifact (ADR-0010).
-fn capture_names(body: &[&str]) -> Vec<String> {
+pub(crate) fn capture_names(body: &[&str]) -> Vec<String> {
     let mut names = Vec::new();
     let mut in_captures = false;
     let mut in_fence = false;
@@ -393,10 +395,17 @@ fn vars_content(scenario: &LoweredScenario, slug: &str, world: &World) -> String
             }
         }
     }
-    for name in &scenario.secrets {
+    for (variable, secret) in &scenario.secrets {
+        // Names only, never values (ADR-0005). When a binding renamed one, say
+        // both: the replay flag needs the variable, the vault needs the secret.
+        let source = if variable == secret {
+            String::new()
+        } else {
+            format!(" (from secret `{secret}`)")
+        };
         let _ = writeln!(
             out,
-            "# secret `{name}` — supply at replay: --secret {name}=<value>"
+            "# secret `{variable}`{source} — supply at replay: --secret {variable}=<value>"
         );
     }
     out
@@ -450,6 +459,7 @@ mod tests {
             optional,
             when: None,
             label: label.map(ToOwned::to_owned),
+            fragment: None,
             save_as: BTreeMap::new(),
         }
     }
@@ -483,7 +493,7 @@ mod tests {
                     )],
                 },
             ],
-            secrets: BTreeSet::from(["apiToken".to_owned()]),
+            secrets: BTreeMap::from([("apiToken".to_owned(), "apiToken".to_owned())]),
             globals: BTreeSet::from(["envName".to_owned()]),
             warnings: Vec::new(),
         }
@@ -699,7 +709,7 @@ mod tests {
             tags: Vec::new(),
             line: 1,
             batches: Vec::new(),
-            secrets: BTreeSet::new(),
+            secrets: BTreeMap::new(),
             globals: BTreeSet::new(),
             warnings: Vec::new(),
         };

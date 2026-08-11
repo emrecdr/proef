@@ -1,13 +1,31 @@
-//! Pack validation passes 1–8 (TECH-SPEC §4.1).
+//! Pack validation passes 1–13 (TECH-SPEC §4.1).
 //!
 //! 1. `match:` guard rails (literal anchor, no adjacent captures, balanced
 //!    braces, declared params) · 2. params/defaults coverage · 3. duplicate
 //!    macro names across packs (in `mod.rs`, at insertion) · 4. `use:` cycle +
 //!    depth ≤ [`MAX_USE_DEPTH`] · 5. unknown/missing `with:` keys ·
 //!    6. finite-retry lint (typed `retry:` plus a raw-block scan for infinite
-//!    hurl `retry`/`repeat` options) · 7. probe-instantiation parse of payload
+//!    hurl `retry`/`repeat` options, and the same scan's refusal of an option
+//!    declared both in `[Options]` and as its typed twin) · 7.
+//!    probe-instantiation parse of payload
 //!    blocks via the claiming engine's [`StepKindSpec::validate`] hook ·
 //!    8. every payload kind is claimed by a registered engine.
+//!
+//! Fragments (ADR-0018) add five more: 9. a `ref:` names a loaded fragment ·
+//! 10. no two fragment files declare the same name (in `mod.rs`, at insertion) ·
+//! 11. a step is `ref:` **xor** a payload/`use:` · 12. an option family is not
+//! declared both in the fragment's own `[Options]` and as the step's key, and no
+//! variable is both supplied by the fragment's `[Options] variable:` and given by
+//! a `bind:` — pass 6's rule applied across the file boundary, family-to-family
+//! for options and name-to-name for variables · 13. a fragment file the
+//! engine's scanner could not read, or an annotation it could not attach (in
+//! `mod.rs`, at scan time).
+//!
+//! Fragments deliberately **skip pass 7**: they parse as authored, so there is
+//! no probe instantiation to guess at. Their `bind:` tables are checked here
+//! for reachability; whether every `{{…}}` is actually supplied is a lower-time
+//! question (`proef::lower::unbound_placeholder`), because only lowering knows
+//! what earlier steps captured.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -69,6 +87,21 @@ pub(crate) fn normalize_macro(
                 ),
             )));
         }
+    }
+
+    // Pass 2b: a macro-scope `bind:` needs something in this macro to bind.
+    // Same rule as the step-scope check, at the scope above it: a `bind:` no
+    // `ref:` can read is silently dropped at lower time, and a setting quietly
+    // ignored is the bug both halves refuse to ship. The predicate is *this
+    // macro's own* steps because a `use:` target resolves its own scopes — a
+    // parent's macro-scope table never reaches the child (ADR-0018).
+    if !raw.bind.is_empty() && !raw.steps.iter().any(|step| step.ref_.is_some()) {
+        diags.push(at(Diag::error(
+            "proef::pack::bind_without_ref",
+            format!(
+                "macro `{name}`: `bind:` supplies a fragment's `{{{{…}}}}` variables, but no step here has a `ref:` — a `use:` target resolves its own bindings, so this table would go unread"
+            ),
+        )));
     }
 
     // Body shape: steps XOR expect.
@@ -161,6 +194,7 @@ pub(crate) fn normalize_macro(
         description: raw.description.clone(),
         tags: raw.tags.clone(),
         body,
+        bind: raw.bind.clone(),
         source: Arc::clone(&source.text),
         span,
         match_span,
@@ -218,69 +252,112 @@ fn normalize_step(
         None => None,
     };
 
-    let kind = match (&raw.use_, raw.payload.len()) {
-        (Some(target), 0) => {
-            if raw.optional || raw.when.is_some() || retry.is_some() || !save_as.is_empty() {
-                diags.push(at(Diag::error(
+    // `bind:` supplies a *fragment's* `{{names}}`. On an inline step there is
+    // nothing to supply them to — `${…}` splices at lower time — so accepting it
+    // there would silently ignore what the author wrote.
+    if !raw.bind.is_empty() && raw.ref_.is_none() {
+        diags.push(at(Diag::error(
+            "proef::pack::bind_without_ref",
+            format!(
+                "macro `{macro_name}` step {index}: `bind:` supplies a fragment's `{{{{…}}}}` variables, so it needs a `ref:` — an inline `hurl:` block takes `${{…}}` instead"
+            ),
+        )));
+    }
+
+    let kind = if let Some(target) = &raw.ref_ {
+        // Body form: a step is exactly one of `hurl:`, `use:`, `ref:`.
+        if !raw.payload.is_empty() || raw.use_.is_some() {
+            let other = if raw.use_.is_some() {
+                "use:"
+            } else {
+                "a payload"
+            };
+            diags.push(at(Diag::error(
+                "proef::pack::body_form_conflict",
+                format!(
+                    "macro `{macro_name}` step {index}: a step is either `ref:` or {other}, not both"
+                ),
+            )));
+            return None;
+        }
+        if raw.with.is_some() {
+            diags.push(at(Diag::error(
+                "proef::pack::with_without_use",
+                format!("macro `{macro_name}` step {index}: `with:` only accompanies `use:`"),
+            )));
+        }
+        // Unlike `use:`, a `ref:` step *does* take the step modifiers: it is one
+        // request of this macro's own, not an inlining of somebody else's steps.
+        MacroStepKind::Ref {
+            target: target.clone(),
+        }
+    } else {
+        match (&raw.use_, raw.payload.len()) {
+            (Some(target), 0) => {
+                if raw.optional || raw.when.is_some() || retry.is_some() || !save_as.is_empty() {
+                    diags.push(at(Diag::error(
                     "proef::pack::use_with_modifiers",
                     format!("macro `{macro_name}` step {index}: `use:` steps take only `with:` (and `name:`) — modifiers belong on the target macro's steps"),
                 )));
+                }
+                MacroStepKind::Use {
+                    target: target.clone(),
+                    with: raw.with.clone().unwrap_or_default(),
+                }
             }
-            MacroStepKind::Use {
-                target: target.clone(),
-                with: raw.with.clone().unwrap_or_default(),
-            }
-        }
-        (Some(_), _) => {
-            diags.push(at(Diag::error(
+            (Some(_), _) => {
+                diags.push(at(Diag::error(
                 "proef::pack::use_with_payload",
                 format!("macro `{macro_name}` step {index}: a step is either `use:` or a payload, not both"),
             )));
-            return None;
-        }
-        (None, 0) => {
-            diags.push(at(Diag::error(
+                return None;
+            }
+            (None, 0) => {
+                diags.push(at(Diag::error(
                 "proef::pack::empty_step",
                 format!(
-                    "macro `{macro_name}` step {index} has no payload (`hurl: |…`) and no `use:`"
+                    "macro `{macro_name}` step {index} has no payload (`hurl: |…`), no `ref:`, and no `use:`"
                 ),
             )));
-            return None;
-        }
-        (None, 1) => {
-            if raw.with.is_some() {
+                return None;
+            }
+            (None, 1) => {
+                if raw.with.is_some() {
+                    diags.push(at(Diag::error(
+                        "proef::pack::with_without_use",
+                        format!(
+                            "macro `{macro_name}` step {index}: `with:` only accompanies `use:`"
+                        ),
+                    )));
+                }
+                let (kind_key, value) = raw
+                    .payload
+                    .iter()
+                    .next()
+                    .map(|(k, v)| (k.clone(), v.clone()))?;
+                let payload = match value {
+                    serde_norway::Value::String(text) => PayloadForm::Raw(text),
+                    other => PayloadForm::Structured(
+                        serde_json::to_value(&other).unwrap_or(serde_json::Value::Null),
+                    ),
+                };
+                MacroStepKind::Payload {
+                    kind: kind_key,
+                    payload,
+                }
+            }
+            (None, _) => {
+                let keys: Vec<&str> = raw.payload.keys().map(String::as_str).collect();
                 diags.push(at(Diag::error(
-                    "proef::pack::with_without_use",
-                    format!("macro `{macro_name}` step {index}: `with:` only accompanies `use:`"),
+                    "proef::pack::multiple_payloads",
+                    format!(
+                        "macro `{macro_name}` step {index} has {} payload keys ({}) — one per step",
+                        keys.len(),
+                        keys.join(", ")
+                    ),
                 )));
+                return None;
             }
-            let (kind_key, value) = raw
-                .payload
-                .iter()
-                .next()
-                .map(|(k, v)| (k.clone(), v.clone()))?;
-            let payload = match value {
-                serde_norway::Value::String(text) => PayloadForm::Raw(text),
-                other => PayloadForm::Structured(
-                    serde_json::to_value(&other).unwrap_or(serde_json::Value::Null),
-                ),
-            };
-            MacroStepKind::Payload {
-                kind: kind_key,
-                payload,
-            }
-        }
-        (None, _) => {
-            let keys: Vec<&str> = raw.payload.keys().map(String::as_str).collect();
-            diags.push(at(Diag::error(
-                "proef::pack::multiple_payloads",
-                format!(
-                    "macro `{macro_name}` step {index} has {} payload keys ({}) — one per step",
-                    keys.len(),
-                    keys.join(", ")
-                ),
-            )));
-            return None;
         }
     };
 
@@ -307,6 +384,7 @@ fn normalize_step(
         when: raw.when.clone(),
         retry,
         save_as,
+        bind: raw.bind.clone(),
     })
 }
 
@@ -350,18 +428,132 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                 MacroStepKind::Use { target, with } => {
                     use_target_passes(set, macro_, index, target, with, &at, diags);
                 }
+                MacroStepKind::Ref { target } => {
+                    ref_target_passes(set, macro_, index, step, target, &at, diags);
+                }
                 MacroStepKind::Payload { kind, payload } => {
                     let ordinal = *payload_ordinals
                         .entry(kind.as_str())
                         .and_modify(|n| *n += 1)
                         .or_insert(0);
-                    payload_passes(macro_, index, kind, payload, ordinal, kinds, &at, diags);
+                    payload_passes(
+                        macro_, index, kind, step, payload, ordinal, kinds, &at, diags,
+                    );
                 }
             }
         }
     }
 
     use_graph_passes(set, diags);
+}
+
+/// Target existence for one `ref:`, plus the double-declaration checks against
+/// the fragment's own `[Options]` — the same rule `lint_raw_options` applies to
+/// an inline block, so the two body forms behave identically rather than
+/// differing by where the hurl text happens to live.
+///
+/// Two comparisons, because the two halves of an `[Options]` section clash on
+/// different keys: option *families* (`retry:`, `delay:`) family-to-family, and
+/// supplied *variables* name-to-name.
+fn ref_target_passes(
+    set: &PackSet,
+    macro_: &Macro,
+    index: usize,
+    step: &MacroStep,
+    target: &str,
+    at: &impl Fn(Diag) -> Diag,
+    diags: &mut Vec<Diag>,
+) {
+    let Some(fragment) = set.find_fragment(target) else {
+        let suggestion = matcher::closest(
+            target.rsplit('#').next().unwrap_or(target),
+            set.fragments.keys().map(String::as_str),
+        )
+        .map(|f| format!(" — did you mean `{f}`?"))
+        .unwrap_or_default();
+        diags.push(
+            at(Diag::error(
+                "proef::pack::unknown_ref",
+                format!(
+                    "macro `{}` step {index}: `ref: {target}` names no loaded fragment{suggestion}",
+                    macro_.name
+                ),
+            ))
+            .with_help(if set.fragments.is_empty() {
+                "no fragment files were loaded — set `[run] fragments` in proef.toml to the \
+                 directory holding them"
+            } else {
+                "a fragment is one hurl entry marked `# @proef <name>` in a scanned file"
+            }),
+        );
+        return;
+    };
+    // Every option family the step sets, not just retry: `delay:` bakes into the
+    // same `[Options]` section through the same code path, so leaving it
+    // unchecked reproduces exactly the silent last-wins the inline half of this
+    // rule exists to refuse. The families come from the step itself, so this and
+    // `lint_raw_options` cannot disagree about what a step declared.
+    for family in step.declared_options() {
+        if fragment.declared_options.iter().any(|o| o == family) {
+            diags.push(at(Diag::error(
+                "proef::pack::option_declared_twice",
+                format!(
+                    "macro `{}` step {index}: `{family}` is declared twice — in fragment `{}` (`{}` line {}) and as this step's own `{family}:`",
+                    macro_.name, fragment.name, fragment.file, fragment.line
+                ),
+            )).with_help(
+                "an entry carries one policy per option — delete whichever of the two is not authoritative",
+            ));
+        }
+    }
+    // The same rule one level down. A `bind:` reaches hurl as `[Options]
+    // variable:`, so a fragment supplying that name is the identical silent
+    // last-wins — except here the *fragment's* line lands last and wins,
+    // discarding the value the pack author wrote. Worse than the retry case:
+    // hurl assigns `variable:` into the run-level set rather than scoping it,
+    // so the discarded value stays discarded for every later entry too.
+    for name in &fragment.supplied_variables {
+        let Some(scope) = binding_scope(set, macro_, step, name) else {
+            continue;
+        };
+        diags.push(
+            at(Diag::error(
+                "proef::pack::option_declared_twice",
+                format!(
+                    "macro `{}` step {index}: `{name}` is supplied twice — by fragment `{}` (`{}` line {}) and by the {scope} `bind:`",
+                    macro_.name, fragment.name, fragment.file, fragment.line
+                ),
+            ))
+            .with_help(format!(
+                "delete whichever is not authoritative — both reach the entry as \
+                 `variable: {name}=`, where the fragment's own line lands last and the bound \
+                 value would never reach the request",
+            )),
+        );
+    }
+}
+
+/// Which `bind:` scope supplies `name`, most specific first — the half of a
+/// double-supply diagnostic that says where to look for the other declaration.
+fn binding_scope(
+    set: &PackSet,
+    macro_: &Macro,
+    step: &MacroStep,
+    name: &str,
+) -> Option<&'static str> {
+    if step.bind.contains_key(name) {
+        Some("step's")
+    } else if macro_.bind.contains_key(name) {
+        Some("macro's")
+    } else if set
+        .bind
+        .get(&macro_.pack)
+        .is_some_and(|table| table.contains_key(name))
+    {
+        Some("pack's")
+    } else {
+        None
+    }
 }
 
 /// Pass 4 (target existence) + pass 5 (`with:` key coverage) for one `use:`.
@@ -425,6 +617,7 @@ fn payload_passes(
     macro_: &Macro,
     index: usize,
     kind: &str,
+    step: &MacroStep,
     payload: &PayloadForm,
     ordinal: usize,
     kinds: &[StepKindSpec],
@@ -469,7 +662,7 @@ fn payload_passes(
         }
     };
 
-    lint_raw_options(macro_, index, kind, ordinal, text, at, diags);
+    lint_raw_options(macro_, index, kind, step, ordinal, text, at, diags);
 
     // Pass 7: probe-instantiation parse via the engine's validator.
     let Some(validate) = spec.validate else {
@@ -520,16 +713,33 @@ fn payload_passes(
 /// `delay` — parse numeric raw-option values and reject what no budget can
 /// absorb (ADR-0007). Non-numeric values (`{{…}}` templates) pass: the
 /// runtime batch budget still bounds those.
+///
+/// Also the double-declaration check: an option set *both* in the block's own
+/// `[Options]` and as its YAML twin (`retry:` / `delay:`). Lowering extends an
+/// author's section rather than opening a second one, and hurl resolves
+/// duplicate options last-wins, so the raw value quietly beat the typed one —
+/// the pack said one thing and the run did another. Only `[Options]`-section
+/// lines count: a request header may legitimately be named `retry`, and this
+/// is a hard error, so it must not fire on one.
+// Both checks read the same one-pass scan; splitting them would walk the block
+// twice and duplicate the fence and section bookkeeping.
+#[allow(clippy::too_many_arguments)]
 fn lint_raw_options(
     macro_: &Macro,
     index: usize,
     kind: &str,
+    step: &MacroStep,
     ordinal: usize,
     text: &str,
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
     let mut in_fence = false;
+    let mut in_options = false;
+    // One report per option family is enough to act on; a block whose every
+    // entry repeats the clash would otherwise bury the step in duplicates.
+    // A list rather than a flag per family, so a new family needs no latch.
+    let mut said: Vec<&'static str> = Vec::new();
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
@@ -538,6 +748,12 @@ fn lint_raw_options(
         }
         if in_fence {
             continue; // fenced body data — a literal `retry: -1` is payload, not an option
+        }
+        // A section runs until the next section header or the next entry.
+        if trimmed.starts_with('[') {
+            in_options = trimmed == "[Options]";
+        } else if crate::lower::is_method_line(trimmed) {
+            in_options = false;
         }
         let mut reject = |code: &'static str, message: String| {
             diags.push(
@@ -580,6 +796,41 @@ fn lint_raw_options(
                 format!(
                     "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
                     value.trim()
+                ),
+            );
+        }
+        if !in_options {
+            continue;
+        }
+        // hurl's `retry-interval` folds into `retry` — one policy, and a step's
+        // `retry:` sets both — so the two spellings map to the one family the
+        // pack knows (`engine::OPTION_FAMILIES`).
+        let option = if trimmed.starts_with("retry:") || trimmed.starts_with("retry-interval:") {
+            "retry"
+        } else if trimmed.starts_with("delay:") {
+            "delay"
+        } else {
+            continue;
+        };
+        if step.declared_options().any(|f| f == option) && !said.contains(&option) {
+            said.push(option);
+            diags.push(
+                at(Diag::error(
+                    "proef::pack::option_declared_twice",
+                    format!(
+                        "macro `{}` step {index}: `{option}` is declared twice — here in `[Options]`, and as the step's own `{option}:`",
+                        macro_.name
+                    ),
+                ))
+                .maybe_span(locate::payload_line_span(
+                    &macro_.source,
+                    &macro_.name,
+                    kind,
+                    ordinal,
+                    line_no + 1,
+                ))
+                .with_help(
+                    "an entry carries one policy per option — delete whichever of the two is not authoritative",
                 ),
             );
         }
@@ -806,6 +1057,7 @@ mod tests {
         prefix: "alt",
         schema: "true",
         validate: Some(deny),
+        fragments: None,
     }];
 
     /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
@@ -821,7 +1073,7 @@ mod tests {
                 "macros:\n  empty:\n    match: nothing binds this\n    expect:\n      - hurl: |\n\n",
             ),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -865,7 +1117,7 @@ mod tests {
             name: "mixed.yaml".into(),
             text: Arc::clone(&text),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -902,7 +1154,7 @@ mod tests {
                 "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
             ),
         };
-        let err = pack::load(&[source], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -924,6 +1176,7 @@ mod tests {
             prefix: "alt",
             schema: "true",
             validate: None,
+            fragments: None,
         }];
         use std::fmt::Write as _;
         let mut yaml = String::from("macros:\n");
@@ -945,9 +1198,480 @@ mod tests {
                 name: "chain.yaml".into(),
                 text: Arc::from(yaml.as_str()),
             }],
+            &crate::pack::FragmentCorpus::empty(),
             PLAIN,
         )
         .unwrap();
         assert_eq!(packs.macros.len(), 32);
+    }
+
+    /// No validator, so nothing but the raw-option lint speaks.
+    const RAW: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: None,
+        fragments: None,
+    }];
+
+    /// Setting an option in both the block's `[Options]` and its YAML twin
+    /// used to run silently: lowering extends the author's own section rather
+    /// than opening a second one, and hurl resolves a duplicated option
+    /// last-wins, so the raw value won and the pack's `retry:` was a lie. The
+    /// span lands on the raw line — the one that used to take effect.
+    #[test]
+    fn an_option_set_in_both_places_is_rejected() {
+        let source = PackSource {
+            name: "twice.yaml".into(),
+            text: Arc::from(concat!(
+                "macros:\n",
+                "  twiceOver:\n",
+                "    match: I set the retry in both places\n",
+                "    steps:\n",
+                "      - retry: { count: 3, interval_ms: 200 }\n",
+                "        alt: |\n",
+                "          GET http://x\n",
+                "          [Options]\n",
+                "          retry: 5\n",
+                "          HTTP 200\n",
+            )),
+        };
+        let FrontError::Diagnostics(diags) =
+            pack::load(&[source], &crate::pack::FragmentCorpus::empty(), RAW).unwrap_err()
+        else {
+            panic!("diagnostics expected");
+        };
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::option_declared_twice")
+            .unwrap_or_else(|| panic!("expected the clash in {diags:?}"));
+        assert!(diag.help.is_some(), "a remediation hint is expected");
+        let text = diag.source_text.as_ref().unwrap();
+        let span = diag
+            .span
+            .unwrap_or_else(|| panic!("expected a span: {diag:?}"));
+        assert_eq!(
+            &text[span.start..span.end],
+            "retry: 5",
+            "span should land on the raw option line, not the whole macro"
+        );
+        assert_eq!(
+            diags
+                .iter()
+                .filter(|d| d.code == "proef::pack::option_declared_twice")
+                .count(),
+            1,
+            "one report per option family, however many entries repeat it"
+        );
+    }
+
+    /// The scan is `[Options]`-scoped on purpose. `retry` is a legal *request
+    /// header* name, and a header line is `name: value` like an option line —
+    /// so a line-shaped match alone would turn an ordinary header into a hard
+    /// error the moment the step also carried a typed `retry:`.
+    #[test]
+    fn a_request_header_named_retry_is_not_a_clash() {
+        let source = PackSource {
+            name: "header.yaml".into(),
+            text: Arc::from(concat!(
+                "macros:\n",
+                "  headerRetry:\n",
+                "    match: the request header is named retry\n",
+                "    steps:\n",
+                "      - retry: { count: 3, interval_ms: 200 }\n",
+                "        alt: |\n",
+                "          GET http://x\n",
+                "          retry: 5\n",
+                "          HTTP 200\n",
+            )),
+        };
+        pack::load(&[source], &crate::pack::FragmentCorpus::empty(), RAW)
+            .unwrap_or_else(|err| panic!("a header named `retry` must not clash: {err:?}"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Fragments (ADR-0018)
+    // -----------------------------------------------------------------------
+
+    /// A stand-in for a real engine's scanner. `proef-core` cannot depend on
+    /// `proef-engine-hurl`, so these tests drive the loader through the seam
+    /// exactly as a future engine would — which is also the point: nothing in
+    /// the loading rules knows what hurl is.
+    ///
+    /// `@name` opens a fragment, `retry` marks the one above as declaring a
+    /// retry policy, `?var` a read, `!var` a capture, and `@!boom` fails.
+    fn fake_scan(
+        text: &str,
+    ) -> Result<Vec<crate::engine::ScannedFragment>, crate::engine::FragmentScanError> {
+        let mut out: Vec<crate::engine::ScannedFragment> = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if line == "@!boom" {
+                return Err(crate::engine::FragmentScanError {
+                    line: index + 1,
+                    column: 1,
+                    message: "unreadable entry".to_owned(),
+                });
+            }
+            if let Some(name) = line.strip_prefix('@') {
+                out.push(crate::engine::ScannedFragment {
+                    name: name.to_owned(),
+                    text: format!("GET http://x/{name}\n"),
+                    line: index + 1,
+                    placeholders: Vec::new(),
+                    declared_options: Vec::new(),
+                    supplied_variables: Vec::new(),
+                });
+            } else if let Some(last) = out.last_mut() {
+                if line == "retry" {
+                    last.declared_options.push("retry".to_owned());
+                } else if let Some(read) = line.strip_prefix('?') {
+                    last.placeholders.push(read.to_owned());
+                } else if let Some(supplied) = line.strip_prefix('=') {
+                    use std::fmt::Write as _;
+                    let _ = write!(last.text, "[Options]\nvariable: {supplied}=from-fragment\n");
+                    last.supplied_variables.push(supplied.to_owned());
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    const SCANNING: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: None,
+        fragments: Some(crate::engine::FragmentSupport {
+            ext: "frag",
+            scan: fake_scan,
+        }),
+    }];
+
+    fn source(name: &str, text: &str) -> PackSource {
+        PackSource {
+            name: name.to_owned(),
+            text: Arc::from(text),
+        }
+    }
+
+    fn diags_of(packs: &[PackSource], fragments: &[PackSource]) -> Vec<crate::diag::Diag> {
+        let corpus = pack::FragmentCorpus::new(fragments.to_vec(), SCANNING);
+        match pack::load(packs, &corpus, SCANNING) {
+            Ok(_) => Vec::new(),
+            Err(FrontError::Diagnostics(diags)) => diags,
+            Err(other) => panic!("diagnostics expected, got {other:?}"),
+        }
+    }
+
+    fn has(diags: &[crate::diag::Diag], code: &str) -> bool {
+        diags.iter().any(|d| d.code == code)
+    }
+
+    #[test]
+    fn a_ref_names_a_loaded_fragment() {
+        let packs = pack::load(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+            )],
+            &pack::FragmentCorpus::new(vec![source("api.frag", "@admin.search\n")], SCANNING),
+            SCANNING,
+        )
+        .unwrap_or_else(|err| panic!("should load: {err:?}"));
+        assert_eq!(packs.fragments.len(), 1);
+        assert!(packs.find_fragment("admin.search").is_some());
+        // Qualified and bare spellings resolve the same fragment, as `use:` does.
+        assert!(packs.find_fragment("api.frag#admin.search").is_some());
+        assert!(packs.find_fragment("other.frag#admin.search").is_none());
+    }
+
+    #[test]
+    fn a_ref_to_an_unknown_fragment_is_rejected_with_a_suggestion() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.serch\n",
+            )],
+            &[source("api.frag", "@admin.search\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::unknown_ref")
+            .unwrap_or_else(|| panic!("expected unknown_ref in {diags:?}"));
+        assert!(diag.message.contains("did you mean `admin.search`?"));
+    }
+
+    /// With no fragment files loaded at all, the help has to say so — otherwise
+    /// the author reads "names no loaded fragment" as a typo in their own name.
+    #[test]
+    fn an_unknown_ref_with_no_fragments_loaded_points_at_the_config() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+            )],
+            &[],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::unknown_ref")
+            .unwrap_or_else(|| panic!("expected unknown_ref in {diags:?}"));
+        assert!(
+            diag.help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("fragments"),
+            "{:?}",
+            diag.help
+        );
+    }
+
+    #[test]
+    fn a_step_is_one_body_form_only() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        alt: |\n          GET http://x\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(has(&diags, "proef::pack::body_form_conflict"), "{diags:?}");
+    }
+
+    /// `bind:` feeds a fragment's variables. On an inline step there is nothing
+    /// to feed, so accepting it would silently ignore what the author wrote.
+    #[test]
+    fn bind_without_a_ref_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - bind: { a: b }\n        alt: |\n          GET http://x\n",
+            )],
+            &[],
+        );
+        assert!(has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// The same rule one scope up. A macro-scope `bind:` on a macro with no
+    /// `ref:` step is unreadable — and the tempting reading, that a `use:`
+    /// target will pick it up, is wrong: the child resolves its own scopes.
+    /// Left unchecked this is the *silent* half of the same mistake, and it is
+    /// the one authors hit, because factoring plumbing upward is the habit.
+    #[test]
+    fn a_macro_scope_bind_with_no_ref_step_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  target:\n    match: the target\n    steps:\n      - ref: f\n  m:\n    match: it runs\n    bind:\n      a: b\n    steps:\n      - use: target\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// …and it must not fire on a macro that does have one, or the rule would
+    /// refuse the feature it exists to protect.
+    #[test]
+    fn a_macro_scope_bind_beside_a_ref_step_is_accepted() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    bind:\n      a: b\n    steps:\n      - ref: f\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(!has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// `bind:` reaches hurl as `[Options] variable:`, so a fragment supplying
+    /// the same name is the same silent last-wins `option_declared_twice` was
+    /// built for — and it lands the wrong way round: the fragment's literal
+    /// wins and the bound value never reaches the request. Checked at each
+    /// scope, because the diagnostic has to say where the other half lives.
+    #[test]
+    fn a_variable_the_fragment_supplies_and_the_pack_binds_is_refused() {
+        for (scope, pack) in [
+            (
+                "step's",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          token: v\n",
+            ),
+            (
+                "macro's",
+                "macros:\n  m:\n    match: it runs\n    bind:\n      token: v\n    steps:\n      - ref: f\n",
+            ),
+            (
+                "pack's",
+                "bind:\n  token: v\nmacros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            ),
+        ] {
+            let diags = diags_of(
+                &[source("p.yaml", pack)],
+                &[source("api.frag", "@f\n=token\n")],
+            );
+            let diag = diags
+                .iter()
+                .find(|d| d.code == "proef::pack::option_declared_twice")
+                .unwrap_or_else(|| panic!("expected {scope} clash in {diags:?}"));
+            assert!(
+                diag.message.contains("token") && diag.message.contains(scope),
+                "{scope}: {}",
+                diag.message
+            );
+        }
+    }
+
+    /// The other half of the same rule: a fragment may supply a variable no one
+    /// binds. That is how the file stays runnable under stock `hurl` with no
+    /// variables file, so refusing it would break ADR-0018's premise.
+    #[test]
+    fn a_variable_only_the_fragment_supplies_is_accepted() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            )],
+            &[source("api.frag", "@f\n=token\n")],
+        );
+        assert!(
+            !has(&diags, "proef::pack::option_declared_twice"),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn fragment_names_are_global() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: dup\n",
+            )],
+            &[source("a.frag", "@dup\n"), source("b.frag", "@dup\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::duplicate_fragment")
+            .unwrap_or_else(|| panic!("expected duplicate_fragment in {diags:?}"));
+        assert!(diag.message.contains("a.frag") && diag.message.contains("b.frag"));
+    }
+
+    /// A fragment file the engine cannot read reports its own diagnostic and is
+    /// skipped — the same "never sinks its siblings" rule packs get.
+    #[test]
+    fn an_unreadable_fragment_file_does_not_sink_the_others() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: ok\n",
+            )],
+            &[source("bad.frag", "@!boom\n"), source("good.frag", "@ok\n")],
+        );
+        assert!(has(&diags, "proef::pack::bad_annotation"), "{diags:?}");
+        assert!(
+            !has(&diags, "proef::pack::unknown_ref"),
+            "the readable file still loaded: {diags:?}"
+        );
+    }
+
+    /// The same rule an inline block gets: one authority per option, whichever
+    /// body form the hurl text lives in.
+    #[test]
+    fn retry_declared_by_both_fragment_and_step_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: poll\n        retry: { count: 3, interval_ms: 200 }\n",
+            )],
+            &[source("api.frag", "@poll\nretry\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::option_declared_twice")
+            .unwrap_or_else(|| panic!("expected option_declared_twice in {diags:?}"));
+        assert!(diag.message.contains("fragment `poll`"), "{}", diag.message);
+    }
+
+    #[test]
+    fn bind_scopes_survive_loading() {
+        let packs = pack::load(
+            &[source(
+                "p.yaml",
+                "bind:\n  base: ${url:base}\nmacros:\n  m:\n    match: it runs\n    bind:\n      q: ${q}\n    steps:\n      - ref: f\n        bind:\n          id: \"{{recordId}}\"\n",
+            )],
+            &pack::FragmentCorpus::new(vec![source("api.frag", "@f\n")], SCANNING),
+            SCANNING,
+        )
+        .unwrap_or_else(|err| panic!("should load: {err:?}"));
+        assert_eq!(packs.bind["p.yaml"]["base"], "${url:base}");
+        let macro_ = &packs.macros["m"];
+        assert_eq!(macro_.bind["q"], "${q}");
+        let crate::pack::MacroBody::Steps(steps) = &macro_.body else {
+            panic!("steps expected");
+        };
+        assert_eq!(steps[0].bind["id"], "{{recordId}}");
+    }
+
+    /// A corpus is scanned **at most once**, however many times packs are loaded
+    /// against it.
+    ///
+    /// One `proef test` loads packs up to four times — the suite, then
+    /// `[run] setup`/`teardown`, each validated and then run — always against
+    /// the same corpus. Rescanning per load measured ~75% of a 200-file run's
+    /// total work, so this is a performance property, and performance nothing
+    /// asserts is performance that quietly comes back.
+    #[test]
+    fn one_corpus_is_scanned_once_however_many_loads_read_it() {
+        let packs = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+        )];
+        let corpus =
+            pack::FragmentCorpus::new(vec![source("api.frag", "@admin.search\n")], SCANNING);
+
+        let (first, _) = pack::load_collecting(&packs, &corpus, SCANNING);
+        let (second, _) = pack::load_collecting(&packs, &corpus, SCANNING);
+
+        assert!(first.find_fragment("admin.search").is_some());
+        assert!(
+            Arc::ptr_eq(&first.fragments, &second.fragments),
+            "a second load must reuse the first scan, not repeat it"
+        );
+    }
+
+    /// A corpus nothing `ref:`s is never scanned — CONFIG.md's promise that
+    /// pointing proef at a corpus you did not write costs nothing.
+    ///
+    /// Proven by making the scan *observable*: the file would fail to parse, so
+    /// a `bad_annotation` diagnostic appears exactly when the scan ran. Sharing
+    /// one corpus across loads must not have turned the scan eager.
+    #[test]
+    fn a_corpus_no_pack_refs_is_never_scanned() {
+        let unreadable = vec![source("api.frag", "@!boom\n")];
+
+        let no_ref = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - alt: GET /x\n",
+        )];
+        let corpus = pack::FragmentCorpus::new(unreadable.clone(), SCANNING);
+        let (_, diags) = pack::load_collecting(&no_ref, &corpus, SCANNING);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == "proef::pack::bad_annotation"),
+            "no `ref:` anywhere, so the corpus must never be read: {diags:?}"
+        );
+
+        // Control: the same corpus, with a `ref:` present, *is* scanned — so the
+        // assertion above is about laziness, not about a scanner that never runs.
+        let with_ref = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: whatever\n",
+        )];
+        let corpus = pack::FragmentCorpus::new(unreadable, SCANNING);
+        let (_, diags) = pack::load_collecting(&with_ref, &corpus, SCANNING);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "proef::pack::bad_annotation"),
+            "a pack with a `ref:` must reach the scanner: {diags:?}"
+        );
     }
 }

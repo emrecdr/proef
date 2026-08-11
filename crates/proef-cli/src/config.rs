@@ -47,6 +47,13 @@ fn find_config_from(dir: &Path) -> Option<PathBuf> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
+    /// Directory holding the `proef.toml` this was read from, when there was
+    /// one. Relative paths in the config resolve against it: the file is found
+    /// by walking *up* from the working directory, so a path in a config three
+    /// levels above must mean "relative to the project", not "relative to
+    /// wherever the command happened to be run".
+    #[serde(skip)]
+    root: Option<PathBuf>,
     /// `[run]` table.
     #[serde(default)]
     pub run: RunTable,
@@ -79,6 +86,11 @@ pub struct RunTable {
     /// Default suite path used when `proef test` is given no path
     /// (falls back to the `tests/` convention when unset — see `suite`).
     pub suite: Option<String>,
+    /// Root directory holding the engine-native **fragment** files a pack may
+    /// `ref:` (ADR-0018), scanned recursively. Unset means no fragments — the
+    /// feature is opt-in, and naming the root explicitly is what makes reading
+    /// a corpus outside the suite a declared act rather than a silent walk.
+    pub fragments: Option<String>,
     /// Feature file run **once before** the suite pool (suite-level setup,
     /// ADR-0014). Its `saveAs: global` promotions are visible to every
     /// scenario; a setup failure aborts the run before the pool launches.
@@ -171,7 +183,10 @@ impl ProjectConfig {
         };
         let text = std::fs::read_to_string(&path)
             .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
-        toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))
+        let mut config: Self =
+            toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))?;
+        config.root = path.parent().map(Path::to_path_buf);
+        Ok(config)
     }
 
     /// The active `[env.<name>]` profile, or `None` when no environment is
@@ -245,6 +260,25 @@ impl ProjectConfig {
     /// back to the `tests/` convention when this is unset and no path is passed.
     pub fn suite(&self) -> Option<&str> {
         self.run.suite.as_deref()
+    }
+
+    /// The configured fragment root (`[run] fragments`) resolved against the
+    /// directory holding `proef.toml`. There is no convention fallback: a
+    /// `ref:` with nothing configured reports `unknown_ref` and says so, which
+    /// beats guessing at a directory.
+    /// Returns a **resolvable** path, never a display spelling. `proef lsp`
+    /// feeds this straight to `DiskSourceProvider`, which keys document
+    /// identity on absolute source names (`documents::name_to_url` yields
+    /// `None` for anything relative), so shortening it here silently costs
+    /// go-to-definition and `.hurl`-positioned diagnostics. How a fragment
+    /// path is *spelled* in artifacts is a naming question and lives at the
+    /// naming boundary — `front::fragment_sources`.
+    pub fn fragments(&self) -> Option<PathBuf> {
+        let raw = PathBuf::from(self.run.fragments.as_deref()?);
+        if raw.is_absolute() {
+            return Some(raw);
+        }
+        Some(self.root.clone().unwrap_or_default().join(raw))
     }
 
     /// The default suite directory: `[run] suite` if set, else the `tests/`
@@ -400,6 +434,46 @@ mod tests {
         );
 
         std::env::set_current_dir(prev).expect("restore cwd");
+    }
+
+    /// `fragments()` returns a **resolvable** path, always — never a display
+    /// spelling.
+    ///
+    /// `proef lsp` hands this to `DiskSourceProvider`, which keys document
+    /// identity on absolute source names: `documents::name_to_url` returns
+    /// `None` for a relative path, so a shortened root silently costs
+    /// go-to-definition on every `ref:` and drops `.hurl`-positioned
+    /// diagnostics — the exact capability the fragment LSP work shipped. It
+    /// regressed once by shortening here for the sake of the run record; how a
+    /// path is *spelled* in artifacts belongs to `front::fragment_sources`.
+    #[test]
+    fn the_fragment_root_stays_resolvable_for_the_editor() {
+        // Spelled for the host platform. A bare `/proj` is **not** absolute on
+        // Windows — absolute there means a drive or UNC prefix — so a
+        // Unix-shaped fixture would assert nothing on the one platform whose
+        // path rules differ, which is the vacuity this test exists to prevent.
+        // The corpus root is a TOML *literal* string (single quotes): `\c` is
+        // not a valid escape in a basic string.
+        let (project, corpus) = if cfg!(windows) {
+            (r"C:\proj", r"C:\corpus\hurl")
+        } else {
+            ("/proj", "/corpus/hurl")
+        };
+
+        let mut config = parse("[run]\nfragments = \"tests/hurl\"\n");
+        config.root = Some(PathBuf::from(project));
+        let root = config.fragments().expect("configured");
+        assert_eq!(root, Path::new(project).join("tests/hurl"));
+        assert!(
+            root.is_absolute(),
+            "a relative root makes every fragment URI unformable: {root:?}"
+        );
+
+        // An absolute `[run] fragments` is taken as written — the corpus may
+        // sit outside the project entirely.
+        let mut config = parse(&format!("[run]\nfragments = '{corpus}'\n"));
+        config.root = Some(PathBuf::from(project));
+        assert_eq!(config.fragments(), Some(PathBuf::from(corpus)));
     }
 
     #[test]

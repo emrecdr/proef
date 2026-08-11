@@ -1,6 +1,9 @@
 # proef — Technical Specification
 
-**Status:** normative for M0–M5 · **Date:** 2026-07-28 · decisions referenced as ADR-XXXX.
+**Status:** normative · **Date:** 2026-07-28, current through ADR-0018 (named hurl
+fragments) · decisions referenced as ADR-XXXX. Post-M5 work — external config and
+environments (ADR-0012), the v0.6–v0.8 correctness series, v0.9.0, and fragments — is
+specified here too; "M0–M5" described this file's scope only until those landed.
 Verified upstream facts cite hurl master @ `03fcb84c` (2026-07-27) as `file:line`.
 
 ## 1. System overview
@@ -73,7 +76,10 @@ pub struct World { scenario: BTreeMap<String, Value>,
 // step.rs — lowered, engine-agnostic
 pub struct StepRef { pub file: Arc<str>, pub line: usize, pub text: Arc<str> }  // feature anchor
 pub struct LoweredStep { pub step: StepRef, pub kind: StepKindId, pub payload: StepPayload,
-                         pub optional: bool, pub when: Option<Guard> }   // retry travels as baked [Options]
+                         pub optional: bool, pub when: Option<Guard>,
+                         // `file.hurl#name` for a `ref:` step, None for an inline block
+                         // (ADR-0018) — qualified at lowering so a record stands alone
+                         pub fragment: Option<String> }   // retry travels as baked [Options]
 pub enum StepPayload { HurlEntries(String /* lowered hurl text */),
                        MergedAsserts { lines: usize /* expect: rows own the appended assert lines */ },
                        Structured(serde_json::Value) }
@@ -82,12 +88,43 @@ pub struct StepBatch { pub index: usize /* scenario-wide ordinal */, pub engine:
 
 // engine.rs — the seam (ADR-0002); see ADR text for EngineFactory/EngineSession
 pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* JSON-Schema frag */,
-                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>> }
+                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>>,
+                          // fragment files (ADR-0018): one Option, so extension and reader
+                          // cannot disagree; discovery asks for the extension, never names one
+                          pub fragments: Option<FragmentSupport> }
+pub struct FragmentSupport { pub ext: &'static str /* "hurl" */, pub scan: FragmentScanner }
+pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+// Everything here is *read* from the entry — nothing is declared twice, so nothing can drift.
+// A scanner reports ONLY annotated entries: an unannotated one is not a fragment, and a
+// foreign corpus is mostly those, so building them only to be discarded is the bulk of a scan
+pub struct ScannedFragment { pub name: String /* from `# @proef <name>` */, pub text: String,
+                             pub line: usize, pub placeholders: Vec<String> /* reads */,
+                             pub declared_options: Vec<String> /* ⊆ OPTION_FAMILIES */,
+                             // `[Options] variable:` — what the entry supplies to itself.
+                             // Answers its own placeholders (so the file runs standalone)
+                             // and clashes name-to-name with a `bind:` of that name; kept
+                             // apart from declared_options, which clashes family-to-family
+                             pub supplied_variables: Vec<String> }
+pub struct FragmentScanError { pub line: usize, pub column: usize, pub message: String }
+// The vocabulary `declared_options` must use: matched by string equality against the pack's
+// own option keys, so an engine-only spelling silences `option_declared_twice` rather than
+// firing it. `MacroStep::declared_options()` derives the other half of that comparison.
+pub const OPTION_FAMILIES: &[&str] = &["retry", "delay"];
+// The one place `secret_bindings` (variable → secret) is joined with `secrets` (name → value).
+// Yields borrows: an owned map would copy every secret value per scenario (ADR-0005)
+pub fn secret_variables<'a>(bindings: &'a BTreeMap<String, String>,
+                            secrets: &'a BTreeMap<String, String>)
+                            -> impl Iterator<Item = (&'a str, &'a str)>;
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
+// `fragment` is carried here as well as on the event: JUnit, the job summary, the
+// annotations, TAP and the console are built from RunSummary after the event stream has
+// been written out, so they cannot read it back. Both are copies of one lowering-time
+// source, so they cannot drift from each other.
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,
                          pub duration: Duration, pub detail: Option<String>,
-                         pub attempt_details: Vec<String>, pub reproduce_hint: Option<String> }
+                         pub attempt_details: Vec<String>, pub reproduce_hint: Option<String>,
+                         pub fragment: Option<String> }
 
 // events.rs — the spine (ADR-0008); serde, versioned
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -98,7 +135,14 @@ pub struct EventSink(Arc<dyn Fn(&Event) + Send + Sync>);   // borrowed events
 
 ## 4. Pipeline (all in `proef-core`; pure — inputs include injected `run_id`, `now`, env snapshot)
 
-**4.1 Load packs.** Discover embedded `helpers/` + project `packs/`; serde_norway with
+**4.1 Load packs.** The fragment corpus (`[run] fragments`) is read once per command
+into a `pack::FragmentCorpus` and **scanned at most once**, lazily — only when some pack
+actually carries a `ref:`, which is what makes "pointing at a corpus you did not write
+costs nothing" true of the scan (CONFIG.md). One `proef test` loads packs up to four
+times (the suite, then `[run] setup`/`teardown`, each validated and then run) against
+the same corpus, so the memo belongs with the corpus rather than the caller — a caller
+that scanned eagerly to share the result would trade the promise for the speed.
+Discover embedded `helpers/` + project `packs/`; serde_norway with
 `deny_unknown_fields`; validation passes: (1) `match:` guard rails — must contain literal
 text, no adjacent captures, unclosed braces rejected; (2) params/defaults coverage;
 (3) duplicate macro names across packs → error (qualify `pack.yaml#name`); (4) `use:`
@@ -107,6 +151,28 @@ cycle + depth ≤ 32; (5) unknown `with:` keys → "did you mean" (edit distance
 lower a probe instantiation with placeholder params and `parse_hurl_file` it — syntax
 errors reported with block-relative spans mapped to pack file/line; (8) engine kinds:
 every step kind must be claimed by a registered engine's `StepKindSpec`.
+
+Fragments (ADR-0018) add five: (9) a `ref:` must name a loaded fragment → "did you
+mean" over the scanned names, or a pointer at `[run] fragments` when none loaded;
+(10) duplicate fragment name across files → error (qualify `file.hurl#name`, the same
+suffix matching `pack.yaml#name` uses); (11) a step is `ref:` **xor** a payload/`use:`;
+(12) an option family declared both in the fragment's own `[Options]` and as the step's
+YAML key → error (pass 6's twinned-option rule, applied across the file boundary), and
+the same rule name-to-name for a variable both supplied by the fragment's `[Options]
+variable:` and given by a `bind:` — the pair reaches one entry as two `variable: k=`
+lines, where hurl's last-wins would drop the bound value into every later entry too;
+(13) a fragment file the engine's `FragmentSupport::scan` could not read, or an
+annotation it could not attach, positioned in the `.hurl` file itself.
+
+Fragments **skip pass 7**: they parse as authored, so the probe instantiation has
+nothing to guess. Whether every `{{…}}` a fragment reads is actually supplied — by a
+`bind:` in scope, by an earlier step's `[Captures]`, or by the fragment's own
+`[Options] variable:` — is checked at lower time (§4.4,
+`proef::lower::unbound_placeholder`) — only lowering knows what the preceding steps
+captured, and a load-time half-check would be worse than one complete one. The
+self-supplied source is scoped to the fragment that declares it: a name another entry
+left in hurl's shared set is the implicit inheritance this check exists to refuse, so
+only `[Captures]` carries a value forward.
 
 **4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); tags from
 Feature/Rule/Scenario accumulate. Localized (`# language:`) features are
@@ -192,6 +258,8 @@ field), the console, JUnit, and the GitHub summary.
 ## 6. Pack schema v1 (normative field reference)
 
 ```yaml
+bind:                         # pack-scope fragment bindings (ADR-0018); macro and
+  <var>: "${…}"               # step scope override, most specific winning
 macros:
   <macroName>:                # unique across packs; qualify as pack.yaml#name on clash
     params: [a, b]            # required unless defaulted
@@ -206,10 +274,16 @@ macros:
         retry: { count: N, interval_ms: M }   # finite only (lint); → [Options] retry
         saveAs: { captureName: global }        # promote capture(s) into the World
                               # (refused with a warning if the value equals a secret)
+        bind: { <var>: "…" }  # step-scope fragment bindings (only with `ref:`)
         hurl: |               # PRIMARY form (ADR-0004): raw hurl, ${…} lowered first,
           …                   # {{…}} left for run time; validated by parse_hurl_file
         # OR structured payload (reserved for future non-hurl engines):
         # <kind>: { … }  (a future engine's structured payload)
+      - ref: file.hurl#name   # ALTERNATE form (ADR-0018): one `# @proef <name>` entry
+                              # of a scanned fragment file; `{{…}}` supplied by bind:,
+                              # every one bound, captured by an earlier step, or set
+                              # by the fragment's own [Options] variable: (which then
+                              # may not also be bound — option_declared_twice)
       - use: pack.yaml#other  # composition, with:/inline args; cycle+depth checked
         with: { a: "${a}" }
     expect:                   # assert-only macro (Then-steps): merges into previous entry

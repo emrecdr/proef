@@ -7,8 +7,15 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
 - **Diagnostics** — the same validation `proef test --dry-run` performs (unbound
   steps, unknown step kinds, malformed hurl blocks, unresolved `${…}`
   references), published across the whole suite as you edit.
-- **Go-to-definition** — jump from a Gherkin step to the macro that binds it.
-- **Completion** — step completions offering the suite's macro patterns.
+- **Go-to-definition** — jump from a Gherkin step to the macro that binds it, or
+  from a pack's `ref:` to the `# @proef` annotation in the `.hurl` file
+  (ADR-0018).
+- **Completion** — step completions offering the suite's macro patterns; on a
+  pack's `ref:` line, the fragment names in scope; and inside a `bind:` table,
+  the `{{variables}}` those fragments actually read, each labelled with the
+  fragment that wants it. A variable a fragment supplies itself
+  (`[Options] variable:`) is left out: it needs no `bind:`, and binding it would
+  be refused as `option_declared_twice`.
 - **Find-references** — every step across the suite that a given macro binds.
 
 The server analyzes **the configured suite** — `proef.toml`'s `[run] suite` if

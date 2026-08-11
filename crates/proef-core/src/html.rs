@@ -23,6 +23,8 @@ struct StepRow {
     attempts: u32,
     duration_ms: u64,
     detail: Option<String>,
+    /// `file.hurl#name` when the step ran a named fragment (ADR-0018).
+    fragment: Option<String>,
 }
 
 /// One scenario's block: identity, aggregate status, and its steps in order.
@@ -63,6 +65,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                 attempts,
                 duration_ms,
                 detail,
+                fragment,
                 ..
             } => {
                 total_steps += 1;
@@ -75,6 +78,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                     attempts: *attempts,
                     duration_ms: *duration_ms,
                     detail: detail.clone(),
+                    fragment: fragment.clone(),
                 });
             }
             Event::ScenarioStarted {
@@ -279,6 +283,13 @@ fn render_block(
         if let Some(detail) = &step.detail {
             let _ = write!(html, "<pre class=\"detail\">{}</pre>", esc(detail));
         }
+        // Every `ref:` step, not only failing ones: this is a per-step listing
+        // rather than a failure list, so a green report answers "which file did
+        // this run" too. It sits last so a failure still reads reason-first
+        // (ADR-0018).
+        if let Some(fragment) = &step.fragment {
+            let _ = write!(html, "<p class=\"via\">via {}</p>", esc(fragment));
+        }
         html.push_str("</li>\n");
     }
     html.push_str("</ol>\n</details>\n");
@@ -431,4 +442,5 @@ li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph
 .tbar{position:absolute;top:1px;height:calc(100% - 2px);min-width:2px;border-radius:2px;opacity:.9}\
 .tbar.pass{background:var(--pass)}.tbar.fail{background:var(--fail)}.tbar.skip{background:var(--skip)}.tbar.warn{background:var(--warn)}\
 .detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}\
+.via{color:var(--muted);font-size:.78rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:.3rem 0 0}\
 ";

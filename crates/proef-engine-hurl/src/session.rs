@@ -42,6 +42,8 @@ const CONNECT_TIMEOUT_CAP_MS: u64 = 10_000;
 pub(crate) struct HurlSession {
     artifact: ArtifactRef,
     secrets: Arc<BTreeMap<String, String>>,
+    /// Variable name → secret name for this scenario (ADR-0018).
+    secret_bindings: Arc<BTreeMap<String, String>>,
     redactions: proef_core::report::Redactions,
     http: HttpDefaults,
     file_root: Option<std::path::PathBuf>,
@@ -61,6 +63,7 @@ impl HurlSession {
             artifact,
             redactions: proef_core::report::Redactions::new(ctx.secrets.values().cloned()),
             secrets: Arc::clone(&ctx.secrets),
+            secret_bindings: Arc::clone(&ctx.secret_bindings),
             http: ctx.http,
             file_root: ctx.file_root.clone(),
             scenario: Arc::clone(&ctx.scenario),
@@ -132,8 +135,13 @@ impl HurlSession {
         for (name, value) in world.merged() {
             variables.insert(name.to_owned(), to_hurl_value(value));
         }
-        for (name, value) in self.secrets.iter() {
-            variables.insert_secret(name.clone(), value.clone());
+        // Keyed by the *variable* name the artifact reads, with the value taken
+        // by *secret* name — they differ when a fragment binding renamed one
+        // (ADR-0018). Core owns that join so no engine can invert it.
+        for (variable, value) in
+            proef_core::engine::secret_variables(&self.secret_bindings, &self.secrets)
+        {
+            variables.insert_secret(variable.to_owned(), value.to_owned());
         }
         variables
     }
@@ -208,13 +216,8 @@ impl EngineSession for HurlSession {
                 .is_some_and(proef_core::step::Guard::skips);
             if guarded_off {
                 outcomes.push(StepOutcome {
-                    step: step.step.clone(),
-                    status: Status::Skipped,
-                    attempts: 0,
-                    duration: Duration::ZERO,
                     detail: Some("skipped by `when:` guard".to_owned()),
-                    attempt_details: Vec::new(),
-                    reproduce_hint: None,
+                    ..skipped_outcome(step)
                 });
                 emit_step(
                     events,
@@ -608,6 +611,7 @@ impl EngineSession for HurlSession {
                     detail: detail.clone(),
                     attempt_details: attempt_details.clone(),
                     reproduce_hint,
+                    fragment: step.fragment.clone(),
                 });
                 emit_step(
                     events,
@@ -749,6 +753,7 @@ fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
         detail: None,
         attempt_details: Vec::new(),
         reproduce_hint: None,
+        fragment: step.fragment.clone(),
     }
 }
 
@@ -773,6 +778,7 @@ fn emit_step(
         attempts,
         duration_ms,
         captures: captures.to_vec(),
+        fragment: step.fragment.clone(),
         detail: detail.map(ToOwned::to_owned),
         attempt_details: attempt_details.to_vec(),
     });

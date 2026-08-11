@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -112,6 +113,57 @@ fn stdio_server_exits_after_shutdown_and_exit() {
     }
 }
 
+/// A `file:` URI for `path`, valid on both platform families.
+///
+/// Windows paths use `\\`, which is an invalid escape inside a JSON string —
+/// interpolating one straight into a request produces a message the server
+/// cannot parse, so it dies during the handshake and the test sees an empty
+/// reply rather than a useful failure. Separators become `/`, and a drive
+/// letter gets the third slash (`file:///C:/...`) the URI form requires.
+///
+/// The `\\?\` verbatim prefix is stripped first. `std::fs::canonicalize` returns
+/// one on Windows, and left in place it survives the separator swap as a leading
+/// `//?/`, which then takes the `starts_with('/')` branch and yields a
+/// four-slash `file:////?/C:/…` no client can resolve — the workspace root
+/// silently points nowhere and every request answers `null`. Production never
+/// produces a verbatim path (`disk_provider` and `lsp` both keep source names
+/// uncanonicalized on purpose), so this is the test's own hazard to clear.
+fn file_uri(path: &std::path::Path) -> String {
+    let raw = path.to_string_lossy();
+    let text = raw.strip_prefix(r"\\?\").unwrap_or(&raw).replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
+/// [`file_uri`] is pure string work, so its Windows-shaped inputs are checked on
+/// **every** platform. The alternative is what already happened once: the
+/// verbatim-prefix bug was invisible on macOS and only surfaced on Windows CI,
+/// as a `null` answer three requests later with nothing pointing at the URI.
+#[test]
+fn file_uri_renders_windows_shapes_a_client_can_resolve() {
+    use std::path::PathBuf;
+
+    // `std::fs::canonicalize` returns this shape on Windows.
+    assert_eq!(
+        file_uri(&PathBuf::from(r"\\?\C:\proj\tests\hurl")),
+        "file:///C:/proj/tests/hurl",
+        "a verbatim prefix must not survive into the URI"
+    );
+    assert_eq!(
+        file_uri(&PathBuf::from(r"C:\proj\a.hurl")),
+        "file:///C:/proj/a.hurl",
+        "a drive letter takes the third slash"
+    );
+    assert_eq!(
+        file_uri(&PathBuf::from("/proj/a.hurl")),
+        "file:///proj/a.hurl",
+        "a unix path keeps exactly three slashes"
+    );
+}
+
 /// The server adopts the workspace root the client announces.
 ///
 /// The root is resolved at the process edge, before the handshake, from the
@@ -122,22 +174,6 @@ fn stdio_server_exits_after_shutdown_and_exit() {
 /// Proven by diagnostics: the CWD holds a suite that binds cleanly, the
 /// announced workspace holds one that does not. A diagnostic for the announced
 /// workspace's file can only come from having rooted there.
-/// A `file:` URI for `path`, valid on both platform families.
-///
-/// Windows paths use `\\`, which is an invalid escape inside a JSON string —
-/// interpolating one straight into a request produces a message the server
-/// cannot parse, so it dies during the handshake and the test sees an empty
-/// reply rather than a useful failure. Separators become `/`, and a drive
-/// letter gets the third slash (`file:///C:/...`) the URI form requires.
-fn file_uri(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.starts_with('/') {
-        format!("file://{text}")
-    } else {
-        format!("file:///{text}")
-    }
-}
-
 #[test]
 fn the_server_roots_at_the_workspace_the_client_announces() {
     let bin = assert_cmd::cargo::cargo_bin("proef");
@@ -230,6 +266,186 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
     write_msg(
         &mut stdin,
         r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#,
+    );
+    write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
+    drop(stdin);
+    let _ = child.wait();
+}
+
+/// Go-to-definition on a `ref:` line reaches the `.hurl` file, with the
+/// fragment root coming from a **real `proef.toml`** rather than a test double.
+///
+/// This is the seam the unit tests cannot cover: `proef-lsp`'s own tests inject
+/// absolute source names through `FakeDisk`, so they never exercise
+/// `ProjectConfig::fragments()` → `DiskSourceProvider` → `name_to_url`. That gap
+/// let a regression ship — shortening the configured root to a cwd-relative
+/// spelling (for the sake of portable run records) made every fragment name
+/// relative, and `name_to_url` yields `None` for those, so this request returned
+/// null while the suite still ran green.
+/// The pack this suite's `ref:` line lives in — the document the definition
+/// request is made against.
+const REF_PACK: &str = "macros:\n  search:\n    match: \"the operator searches\"\n    steps:\n      - ref: admin.search\n";
+
+/// A workspace root a real editor could announce: absolute, symlink-resolved,
+/// and free of Windows' verbatim prefix.
+///
+/// Canonicalized deliberately. On macOS a tempdir is `/var/...` whose real path
+/// is `/private/var/...`, so an uncanonicalized root disagrees with the server's
+/// own `current_dir()` and every cwd-relative path silently no-ops — the test
+/// would pass without ever reaching the behaviour. Windows needs it too, where a
+/// tempdir can arrive as an 8.3 short name (`RUNNER~1`).
+///
+/// The `\\?\` verbatim prefix canonicalize returns on Windows is then dropped,
+/// at this single point rather than at each place the root is later spelled.
+/// Production never produces a verbatim path — `disk_provider` and `lsp` both
+/// keep source names uncanonicalized precisely so they stay byte-identical to
+/// the client's URIs — so a test manufacturing one announces a workspace no real
+/// editor would.
+fn announceable_root(dir: &std::path::Path) -> PathBuf {
+    let canonical = std::fs::canonicalize(dir).unwrap();
+    match canonical.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(stripped) => PathBuf::from(stripped),
+        None => canonical.clone(),
+    }
+}
+
+/// A project whose pack `ref:`s a fragment, with `[run] fragments` configured.
+fn write_fragment_project(root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
+    std::fs::create_dir_all(root.join("tests/hurl")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/hurl/admin.hurl"),
+        "# corpus header\n# @proef admin.search\nGET http://127.0.0.1:1/x\nHTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("tests/features/packs/api.yaml"), REF_PACK).unwrap();
+    std::fs::write(
+        root.join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches\n",
+    )
+    .unwrap();
+}
+
+/// Drain a child's stderr into a buffer a failure can quote. A `null` answer
+/// says only "something upstream went wrong"; the server's own complaint says
+/// which — and this test's failures reproduce only on a platform the local gate
+/// does not run.
+fn collect_stderr(stderr: std::process::ChildStderr) -> std::sync::Arc<std::sync::Mutex<String>> {
+    let sink = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let into = std::sync::Arc::clone(&sink);
+    let mut err = BufReader::new(stderr);
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        while err.read_line(&mut line).is_ok_and(|n| n > 0) {
+            if let Ok(mut guard) = into.lock() {
+                guard.push_str(&line);
+            }
+            line.clear();
+        }
+    });
+    sink
+}
+
+#[test]
+fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let dir = tempfile::tempdir().unwrap();
+    let root = &announceable_root(dir.path());
+    write_fragment_project(root);
+    let pack = REF_PACK;
+
+    let mut child = Command::new(bin)
+        .arg("lsp")
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let stderr_log = collect_stderr(child.stderr.take().unwrap());
+
+    let uri = file_uri(root);
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{}},"workspaceFolders":[{{"uri":"{uri}","name":"w"}}]}}}}"#
+        ),
+    );
+    assert!(read_msg(&mut stdout).contains("\"id\":1"));
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
+    );
+
+    // Open the pack, then ask where its `ref:` points. Line 4 is
+    // "      - ref: admin.search"; character 20 sits inside the target name.
+    let pack_uri = file_uri(&root.join("tests/features/packs/api.yaml"));
+    let escaped = pack.replace('\n', "\\n").replace('"', "\\\"");
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{pack_uri}","languageId":"yaml","version":1,"text":"{escaped}"}}}}}}"#
+        ),
+    );
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            let msg = read_msg(&mut stdout);
+            if tx.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+
+    // No synchronization before the request, deliberately. A feature request
+    // recomputes the analysis itself (`server::current_analysis`: "every
+    // on-demand feature request … all call this"), so the 200ms diagnostics
+    // debounce cannot race it, and `didOpen` is already in the overlay because
+    // one stream delivers both in order.
+
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{{"textDocument":{{"uri":"{pack_uri}"}},"position":{{"line":4,"character":20}}}}}}"#
+        ),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut answer = None;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(msg) if msg.contains("\"id\":2") => {
+                answer = Some(msg);
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    let answer = answer.expect("the definition request must be answered");
+    assert!(
+        answer.contains("admin.hurl"),
+        "go-to-definition must land in the fragment file, not return null.\n\
+         answer:      {answer}\n\
+         root:        {root:?}\n\
+         workspace:   {uri}\n\
+         pack uri:    {pack_uri}\n\
+         server said: {}",
+        stderr_log.lock().map(|g| g.clone()).unwrap_or_default(),
+    );
+
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}"#,
     );
     write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
     drop(stdin);

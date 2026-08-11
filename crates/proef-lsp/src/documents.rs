@@ -197,6 +197,9 @@ impl SourceProvider for OverlaySourceProvider<'_> {
     fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
         self.disk.discover_packs()
     }
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+        self.disk.discover_fragments()
+    }
     fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
         if let Some(text) = self.overlay.get(name) {
             return Ok(Arc::from(text));
@@ -268,6 +271,9 @@ mod tests {
             fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
                 Ok(vec![])
             }
+            fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec![])
+            }
             fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
                 if name == native_abs("s/a.feature") {
                     Ok(Arc::from("on disk"))
@@ -307,6 +313,9 @@ mod tests {
                 Ok(vec![native_abs("s/a(b.feature")])
             }
             fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+                Ok(vec![])
+            }
+            fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
                 Ok(vec![])
             }
             fn read(&self, _name: &str) -> Result<Arc<str>, ProviderError> {

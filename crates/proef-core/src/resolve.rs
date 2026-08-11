@@ -222,7 +222,7 @@ fn resolve_pass(
 
 /// Find the first live `${…}` reference, skipping `$${` escapes. Returns
 /// `(name, start_of_ref, end_after_brace)` in byte offsets.
-fn first_reference(text: &str) -> Option<(&str, usize, usize)> {
+pub(crate) fn first_reference(text: &str) -> Option<(&str, usize, usize)> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {

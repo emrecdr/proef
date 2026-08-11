@@ -12,6 +12,163 @@ use crate::analysis::Analysis;
 use crate::convert::{LineIndex, normalize};
 use crate::documents::url_to_name;
 
+/// Fragment-name completions when the cursor sits on a pack's `ref:` line.
+/// `None` when it does not, so the caller falls through to step completion.
+///
+/// Keyed on the line's own text rather than on an index of `ref:` spans: an
+/// author mid-type has written `ref: ` and nothing after it, which parses to no
+/// step at all and so appears in no index.
+fn complete_fragment_ref(
+    analysis: &Analysis,
+    raw: &str,
+    position: Position,
+) -> Option<Vec<CompletionItem>> {
+    let line = raw.lines().nth(position.line as usize)?;
+    let trimmed = line.trim_start();
+    let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+    let typed = after_dash.strip_prefix("ref:")?.trim();
+
+    // No `sort_text`: fragments are indexed from a name-keyed `BTreeMap`, so this
+    // list is already in label order and the labels are unique. Pinning a rank
+    // here would only restate the client's own default ordering — and the
+    // ranked completions elsewhere in this file need `sort_text` precisely
+    // because *their* order is not the label's.
+    Some(
+        analysis
+            .suite
+            .fragments
+            .iter()
+            .filter(|f| typed.is_empty() || f.name.starts_with(typed))
+            .map(|f| CompletionItem {
+                label: f.name.clone(),
+                kind: Some(CompletionItemKind::REFERENCE),
+                detail: Some(format!("fragment in {}", f.file)),
+                insert_text: Some(f.name.clone()),
+                ..CompletionItem::default()
+            })
+            .collect(),
+    )
+}
+
+/// Is the cursor inside a `bind:` table — either flow (`bind: { a: 1 }`) or
+/// block style?
+///
+/// Block style is decided by YAML's own rule rather than by a regex: the
+/// nearest non-blank line above with a *smaller* indent is this line's parent,
+/// and we are in a bind table exactly when that parent is `bind:`. Which also
+/// means the `bind:` line itself answers no — its own parent is the step.
+fn cursor_is_in_bind(raw: &str, position: Position) -> bool {
+    let row = position.line as usize;
+    // `nth`, as `complete_fragment_ref` does: this runs per completion request,
+    // so the flow-style answer below should not first materialise every line of
+    // the document.
+    let Some(line) = raw.lines().nth(row) else {
+        return false;
+    };
+    // Anchored like `complete_fragment_ref`'s `ref:` check, not a substring
+    // search: `rebind: {…}` is not a bind table, and a value that merely
+    // contains `bind:` is not one either.
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("bind:")
+        && let Some(brace) = line.find('{')
+        && let Some(close) = line.rfind('}')
+    {
+        let at = position.character as usize;
+        return at > brace && at <= close;
+    }
+    let indent = |s: &str| s.len() - s.trim_start().len();
+    let here = indent(line);
+    // The parent is the *nearest* line above with a smaller indent. Taken as
+    // the last such line scanning forward rather than the first scanning back,
+    // which is the same line without needing a reversible (i.e. collected)
+    // iterator.
+    raw.lines()
+        .take(row)
+        .filter(|l| !l.trim().is_empty() && indent(l) < here)
+        .last()
+        .is_some_and(|parent| parent.trim() == "bind:")
+}
+
+/// Placeholder completions when the cursor sits inside a `bind:` table.
+/// `None` when it does not, so the caller falls through to step completion.
+///
+/// What a fragment reads is taken off the engine's own AST at scan time, so
+/// this offers the file's real interface rather than a second description that
+/// could disagree with it. Without it, the only route to a foreign corpus's
+/// variable names is to run the suite and read
+/// `proef::lower::unbound_placeholder` — a *lower-time* error, so today the
+/// names arrive only after a failure.
+///
+/// Every fragment this pack refs contributes, ranked by how near its `ref:`
+/// line is to the cursor. `bind:` exists at three scopes (pack, macro, step)
+/// and only the step one names a single fragment unambiguously, so narrowing
+/// to one would be wrong in two cases out of three; the owning fragment rides
+/// in `detail` instead, which keeps a union readable.
+fn complete_bind_key(
+    analysis: &Analysis,
+    pack: &str,
+    raw: &str,
+    position: Position,
+) -> Option<Vec<CompletionItem>> {
+    if !cursor_is_in_bind(raw, position) {
+        return None;
+    }
+    let index = LineIndex::new(raw);
+    let cursor = position.line as usize;
+    let mut refs: Vec<(usize, &str)> = analysis
+        .suite
+        .fragment_refs
+        .iter()
+        .filter(|r| r.pack == pack)
+        .map(|r| {
+            let line = index.span_to_range(r.span).start.line as usize;
+            (line.abs_diff(cursor), r.target_fragment.as_str())
+        })
+        .collect();
+    // Distance first, then name: two `ref:`s equidistant from the cursor must
+    // not order by whichever the index happened to visit first.
+    refs.sort_unstable();
+
+    let defs: std::collections::BTreeMap<&str, &proef_core::analyze::FragmentDef> = analysis
+        .suite
+        .fragments
+        .iter()
+        .map(|f| (f.name.as_str(), f))
+        .collect();
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut items: Vec<CompletionItem> = Vec::new();
+    for (_, fragment) in refs {
+        let Some(def) = defs.get(fragment) else {
+            continue;
+        };
+        for placeholder in &def.placeholders {
+            // A variable the fragment supplies itself needs no `bind:` and may
+            // not have one, so offering it would propose an edit the next
+            // `option_declared_twice` rejects. The list is what still needs a
+            // value, not everything the file mentions.
+            if def.supplied_variables.contains(placeholder) {
+                continue;
+            }
+            if !seen.insert(placeholder.as_str()) {
+                continue;
+            }
+            let rank = items.len();
+            items.push(CompletionItem {
+                label: placeholder.clone(),
+                kind: Some(CompletionItemKind::VARIABLE),
+                detail: Some(format!("read by {fragment}")),
+                insert_text: Some(format!("{placeholder}: ")),
+                // Nearest `ref:` first, so the step-scope case reads as exact
+                // even though the list is a union.
+                sort_text: Some(format!("{rank:04}")),
+                ..CompletionItem::default()
+            });
+        }
+    }
+    Some(items)
+}
+
 /// Escape one literal character for LSP snippet syntax.
 ///
 /// `$`, `}` and `\` are the syntax's own metacharacters, so a pattern that
@@ -63,6 +220,18 @@ pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<Compl
     let Some(raw) = analysis.raw.get(&name) else {
         return Vec::new();
     };
+    // A pack's `ref:` line completes against fragment names, not step prose —
+    // a different vocabulary in a different file, so it answers on its own and
+    // never mixes with the macro patterns below.
+    if let Some(items) = complete_fragment_ref(analysis, raw, position) {
+        return items;
+    }
+    // A `bind:` table completes against what the fragments this pack refs
+    // actually read — again a pack vocabulary, never step prose.
+    if let Some(items) = complete_bind_key(analysis, &name, raw, position) {
+        return items;
+    }
+
     // The prose typed so far on this line, after the Gherkin keyword.
     let prefix = current_step_prefix(raw, position);
 
@@ -143,5 +312,50 @@ mod snippet_tests {
             pattern_to_snippet("pay ${amount} now"),
             "pay \\$${1:amount} now"
         );
+    }
+}
+
+#[cfg(test)]
+mod bind_scope_tests {
+    use super::cursor_is_in_bind;
+    use lsp_types::Position;
+
+    fn at(raw: &str, line: u32, character: u32) -> bool {
+        cursor_is_in_bind(raw, Position { line, character })
+    }
+
+    /// Whether the cursor is in a `bind:` table decides whether an author is
+    /// offered a fragment's variables or a list of step patterns. Both styles
+    /// occur in real packs, and the near-misses (the `bind:` line itself, a
+    /// sibling key) must answer no or the wrong vocabulary appears.
+    #[test]
+    fn a_bind_table_is_recognised_in_both_yaml_styles() {
+        let block = "macros:\n  m:\n    steps:\n      - ref: f\n        bind:\n          q: 1\n";
+        assert!(at(block, 5, 10), "a child of `bind:` is inside it");
+        assert!(
+            !at(block, 4, 13),
+            "the `bind:` line itself is not inside its own table"
+        );
+        assert!(!at(block, 3, 20), "a `ref:` line is not a bind table");
+
+        let flow = "macros:\n  m:\n    bind: { q: 1 }\n";
+        assert!(at(flow, 2, 13), "past the brace is inside the flow table");
+        assert!(
+            !at(flow, 2, 6),
+            "on the key itself is not yet inside the table"
+        );
+        assert!(!at(flow, 2, 18), "past the closing brace is outside again");
+
+        // The key is matched anchored, not as a substring: another key that
+        // merely ends in `bind:` is a different setting entirely.
+        let lookalike = "macros:\n  m:\n    rebind: { q: 1 }\n";
+        assert!(!at(lookalike, 2, 15), "`rebind:` is not `bind:`");
+
+        // A sibling key nested just as deeply, under a different parent.
+        let sibling = "macros:\n  m:\n    defaults:\n      index: records\n";
+        assert!(!at(sibling, 3, 12), "`defaults:` is not `bind:`");
+
+        // Out of range never panics and never claims to be in a table.
+        assert!(!at(block, 99, 0));
     }
 }

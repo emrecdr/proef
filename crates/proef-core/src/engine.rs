@@ -30,6 +30,7 @@
 //!             prefix: "null",
 //!             schema: "true",
 //!             validate: None,
+//!             fragments: None,
 //!         }];
 //!         KINDS
 //!     }
@@ -106,10 +107,112 @@ pub struct StepKindSpec {
     /// Probe-validate a lowered payload text (`None` = no static validation).
     /// Keeps the core engine-agnostic: the hurl parser stays behind the seam.
     pub validate: Option<PayloadValidator>,
+    /// Fragment support, or `None` when the kind has no fragment form
+    /// (ADR-0018). One `Option` rather than a separate extension and scanner,
+    /// so the two can never disagree: a kind that claims `.http` files but
+    /// cannot read them is not expressible.
+    pub fragments: Option<FragmentSupport>,
 }
 
 /// An engine-contributed static payload validator (pack validation pass 7).
 pub type PayloadValidator = fn(&str) -> Result<(), PayloadProbeError>;
+
+/// An engine-contributed reader for one fragment file's whole text (ADR-0018).
+pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+
+/// What a step kind needs to own a fragment file format: the extension that
+/// identifies one and the parser that reads it. Source discovery asks the
+/// registry for the extension rather than naming a file type itself, so adding
+/// an engine never teaches the CLI a new one (ADR-0002).
+#[derive(Debug, Clone, Copy)]
+pub struct FragmentSupport {
+    /// File extension without the dot (`"hurl"`).
+    pub ext: &'static str,
+    /// Reader for a whole file of that extension.
+    pub scan: FragmentScanner,
+}
+
+/// One entry of a fragment file, as the claiming engine's own parser sees it.
+///
+/// Engine-agnostic by construction: `proef-core` never learns a hurl type, and
+/// a future engine fills the same shape from its own AST. Everything here is
+/// *read* from the entry — nothing is declared separately and nothing can
+/// therefore drift from the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedFragment {
+    /// The name its `# @proef <name>` annotation gave it.
+    ///
+    /// A scanner reports **only annotated entries**. An unannotated one is not a
+    /// fragment — nothing can `ref:` it — and a corpus proef did not write is
+    /// expected to be mostly those, so building them only to be discarded is
+    /// the bulk of a scan for no one's benefit.
+    pub name: String,
+    /// The entry's own source text, annotation included (provenance survives
+    /// into the artifact).
+    pub text: String,
+    /// 1-based line the entry starts on, for diagnostics.
+    pub line: usize,
+    /// Every variable the entry *reads*, in first-seen order — its required
+    /// inputs.
+    pub placeholders: Vec<String>,
+    /// Option families the entry sets for itself, which a referencing step may
+    /// then not also set (`proef::pack::option_declared_twice`). A list rather
+    /// than one flag per option, so the core applies its general rule to
+    /// whatever it knows about and a new family costs no engine change.
+    ///
+    /// **Every element must be one of [`OPTION_FAMILIES`]** — these strings are
+    /// matched against the pack's own option keys, so a spelling only the engine
+    /// knows silences the check rather than failing it.
+    pub declared_options: Vec<String>,
+    /// Every variable the entry *supplies to itself*, in first-seen order — the
+    /// engine equivalent of a `bind:`, written into the fragment file.
+    ///
+    /// Kept apart from [`Self::declared_options`] because the two clash on
+    /// different keys: an option family is a closed vocabulary compared
+    /// family-to-family, while a supplied variable is an open set compared
+    /// *name to name* — `token` clashes with a `bind:` of `token` and with
+    /// nothing else. Folding them together would make [`OPTION_FAMILIES`]'
+    /// "every element is one of these" invariant unstatable.
+    ///
+    /// Both halves of this field are load-bearing. A name here **satisfies** a
+    /// placeholder of the same name (the fragment answers its own question, so
+    /// the file still runs standalone under the engine's own binary — ADR-0018's
+    /// premise), and it **collides** with a `bind:` of that name
+    /// (`proef::pack::option_declared_twice`), because the engine may resolve
+    /// the pair silently rather than refusing it.
+    pub supplied_variables: Vec<String>,
+}
+
+/// The option families a pack step and a fragment can *both* declare, spelled as
+/// the pack spells them.
+///
+/// This is the vocabulary [`ScannedFragment::declared_options`] must use: the
+/// double-declaration rule works by string equality against the keys a step
+/// writes in YAML, so an engine reporting hurl's own spelling (`retry-interval`,
+/// say) would match nothing and the clash would go quiet — which is exactly the
+/// silent last-wins `proef::pack::option_declared_twice` exists to refuse.
+/// Engines fold their spellings into these (hurl's `retry-interval` is `retry`:
+/// one policy, and a step's `retry:` sets both).
+///
+/// Kept in step with `MacroStep::declared_options`, which derives the other half
+/// of the same comparison.
+pub const OPTION_FAMILIES: &[&str] = &["retry", "delay"];
+
+/// A fragment file the claiming engine's parser could not read (1-based
+/// line/column **within that file**).
+///
+/// Distinct from [`PayloadProbeError`] despite the same shape: that one is
+/// positioned inside a pack's payload block and gets mapped onto the pack
+/// file, this one already points at a real file of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FragmentScanError {
+    /// 1-based line within the fragment file.
+    pub line: usize,
+    /// 1-based column within that line.
+    pub column: usize,
+    /// Parser message.
+    pub message: String,
+}
 
 /// A syntax problem found while probe-validating a step payload
 /// (1-based line/column **within the payload text**; the pack loader maps it
@@ -202,11 +305,41 @@ pub struct ScenarioCtx {
     /// them via their redacting mechanisms (`insert_secret`); values never
     /// enter events or artifacts (ADR-0005).
     pub secrets: Arc<std::collections::BTreeMap<String, String>>,
+    /// Engine variable name → secret name for this scenario. Do not join this
+    /// against `secrets` by hand — call [`secret_variables`], the one place
+    /// that knows how (ADR-0018).
+    pub secret_bindings: Arc<std::collections::BTreeMap<String, String>>,
     /// Engine option defaults from project config (`timeout-ms`, …).
     pub http: HttpDefaults,
     /// Root directory for file bodies (`context_dir` confinement, §13) —
     /// the feature file's directory.
     pub file_root: Option<std::path::PathBuf>,
+}
+
+/// Every engine variable a scenario must inject as a secret, paired with its
+/// value — [`ScenarioCtx::secret_bindings`] joined against
+/// [`ScenarioCtx::secrets`]. **The one place that join is written.**
+///
+/// It lives in core, not in each engine, because it is easy to get subtly
+/// wrong: inject under the *secret* name rather than the *variable* name and a
+/// renamed binding (ADR-0018) resolves to nothing, so the request goes out with
+/// an unresolved `{{…}}` and fails far from the cause.
+///
+/// It yields borrows on purpose. Returning an owned variable→value map would put
+/// a second copy of every secret value in memory for each scenario; ADR-0005
+/// keeps values in exactly one place, the run-level `secrets` map.
+///
+/// A binding whose secret is absent is skipped — the CLI already refuses a run
+/// whose secrets it cannot resolve, so that is defence in depth, not a path.
+pub fn secret_variables<'a>(
+    bindings: &'a std::collections::BTreeMap<String, String>,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+) -> impl Iterator<Item = (&'a str, &'a str)> {
+    bindings.iter().filter_map(|(variable, secret)| {
+        secrets
+            .get(secret)
+            .map(|value| (variable.as_str(), value.as_str()))
+    })
 }
 
 /// Batch-level HTTP defaults (per-entry `[Options]` in artifacts override them

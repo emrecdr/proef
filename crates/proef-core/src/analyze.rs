@@ -61,6 +61,53 @@ pub struct UseRef {
     pub target_macro: String,
 }
 
+/// One `ref:` reference inside a pack → the fragment it resolves to. Powers
+/// go-to-definition from a `ref:` line to the annotation in the `.hurl` file.
+#[derive(Debug, Clone)]
+pub struct FragmentRef {
+    /// Source name of the pack the `ref:` line lives in.
+    pub pack: String,
+    /// Byte span of the `ref:` line in the *normalized* pack source.
+    pub span: Span,
+    /// The fragment the reference resolves to (globally unique name).
+    pub target_fragment: String,
+}
+
+/// A fragment definition — the go-to-definition target for a `ref:`, and the
+/// vocabulary a `ref:` line completes against.
+#[derive(Debug, Clone)]
+pub struct FragmentDef {
+    /// Fragment name (globally unique across the scanned files).
+    pub name: String,
+    /// Source name of the file declaring it.
+    pub file: String,
+    /// Byte span of its `# @proef` annotation line, when locatable — the
+    /// landing anchor.
+    pub span: Option<Span>,
+    /// The exact text `span` was measured against. Carried rather than re-read:
+    /// a consumer converting the span needs a line index built from *these*
+    /// bytes, and a fresh read could observe a newer edit and mis-anchor.
+    pub source: Arc<str>,
+    /// Every variable the entry reads, in first-seen order — exactly the names a
+    /// `bind:` in scope has to supply (ADR-0018).
+    ///
+    /// Read off the engine's own AST at scan time, so an editor offering them is
+    /// offering the file's real interface rather than a second description of it
+    /// that could disagree. Without this the only way to learn a foreign
+    /// corpus's variable names is to run the suite and read
+    /// `proef::lower::unbound_placeholder`.
+    ///
+    /// Faithful to what the entry *reads*, so subtract [`Self::supplied_variables`]
+    /// before offering these as `bind:` keys.
+    pub placeholders: Vec<String>,
+    /// Every variable the entry supplies to itself (`[Options] variable:`).
+    ///
+    /// A name here needs no `bind:` and may not have one
+    /// (`proef::pack::option_declared_twice`), so an editor offering it as a
+    /// completion would be proposing an edit its own diagnostics then reject.
+    pub supplied_variables: Vec<String>,
+}
+
 /// The product of one wholesale recompute: every feature's read from here.
 #[derive(Debug, Default)]
 pub struct SuiteAnalysis {
@@ -72,6 +119,10 @@ pub struct SuiteAnalysis {
     pub macros: Vec<MacroRef>,
     /// Every `use:` reference across the loaded packs, resolved to its target.
     pub use_refs: Vec<UseRef>,
+    /// Every `ref:` reference across the loaded packs, resolved to its target.
+    pub fragment_refs: Vec<FragmentRef>,
+    /// Every fragment definition across the scanned files.
+    pub fragments: Vec<FragmentDef>,
 }
 
 /// Everything `analyze_suite` needs, injected at the IO edge (sans-IO core).
@@ -130,7 +181,21 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     // Collect-all load: a broken pack contributes its diagnostic and is
     // excluded from the set, but its siblings still load — the editor keeps
     // binding against the good packs instead of going dark (v0.5.1 fix).
-    let (loaded, pack_diags) = pack::load_collecting(&sources, ctx.kinds);
+    // Fragments too, or every `ref:` reads as unknown in the editor while the
+    // same suite runs green — the drift that makes diagnostics untrustworthy.
+    let mut fragments = Vec::new();
+    for name in ctx.provider.discover_fragments().unwrap_or_default() {
+        match ctx.provider.read(&name) {
+            Ok(text) => fragments.push(PackSource {
+                name: name.clone(),
+                text,
+            }),
+            Err(e) => out.push_diags(&name, [read_error_diag(&name, &e.0)]),
+        }
+    }
+
+    let fragments = pack::FragmentCorpus::new(fragments, ctx.kinds);
+    let (loaded, pack_diags) = pack::load_collecting(&sources, &fragments, ctx.kinds);
     for d in pack_diags {
         let name = d.source_name.clone().unwrap_or_default();
         out.push_diags(&name, [d]);
@@ -150,6 +215,8 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     }
 
     out.use_refs = index_use_refs(&packs);
+    out.fragment_refs = index_fragment_refs(&packs);
+    out.fragments = index_fragments(&packs);
 
     let world = World::new(GlobalStore::default());
 
@@ -214,6 +281,61 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     out
 }
 
+/// Every fragment definition, with its annotation line as the landing anchor.
+/// Names are unique across the corpus (pass 10), so unlike the `use:`/`ref:`
+/// indexes below this one needs no positional pairing and no guard.
+fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
+    packs
+        .fragments
+        .values()
+        .map(|f| FragmentDef {
+            name: f.name.clone(),
+            file: f.file.clone(),
+            span: crate::pack::locate::line_span(&f.source, f.line),
+            source: Arc::clone(&f.source),
+            placeholders: f.placeholders.clone(),
+            supplied_variables: f.supplied_variables.clone(),
+        })
+        .collect()
+}
+
+/// Index every `ref:` reference → its resolved fragment, for go-to-def from a
+/// `ref:` line. Pairs positionally with the `ref:` line spans exactly as
+/// `index_use_refs` does, and carries the same guard: a flow-style step parses
+/// to a `Ref` but contributes no line, so a count mismatch means the pairing
+/// cannot be trusted and the macro is skipped rather than mis-anchored.
+fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
+    let mut refs = Vec::new();
+    for m in packs.macros.values() {
+        let MacroBody::Steps(steps) = &m.body else {
+            continue;
+        };
+        let targets: Vec<&str> = steps
+            .iter()
+            .filter_map(|step| match &step.kind {
+                MacroStepKind::Ref { target } => Some(target.as_str()),
+                MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
+            })
+            .collect();
+        let spans = crate::pack::locate::ref_line_spans(&m.source, &m.name);
+        if spans.len() != targets.len() {
+            continue;
+        }
+        for (span, target) in spans.into_iter().zip(targets) {
+            // Resolved by name, so an unknown target simply contributes no
+            // reference — pack validation already reported it.
+            if let Some(fragment) = packs.find_fragment(target) {
+                refs.push(FragmentRef {
+                    pack: m.pack.clone(),
+                    span,
+                    target_fragment: fragment.name.clone(),
+                });
+            }
+        }
+    }
+    refs
+}
+
 /// Index every `use:` reference → its resolved target, for go-to-def from a
 /// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
 /// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
@@ -231,7 +353,9 @@ fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
             .iter()
             .filter_map(|step| match &step.kind {
                 MacroStepKind::Use { target, .. } => Some(target.as_str()),
-                MacroStepKind::Payload { .. } => None,
+                // Only `use:` lines are indexed here; a `ref:` resolves to a
+                // fragment, not a macro, so it is not a go-to-macro target.
+                MacroStepKind::Payload { .. } | MacroStepKind::Ref { .. } => None,
             })
             .collect();
         let spans = crate::pack::locate::use_line_spans(&m.source, &m.name);
@@ -342,6 +466,7 @@ mod tests {
     struct MemProvider {
         features: Vec<String>,
         packs: Vec<String>,
+        fragments: Vec<String>,
         files: BTreeMap<String, Arc<str>>,
     }
     impl SourceProvider for MemProvider {
@@ -350,6 +475,9 @@ mod tests {
         }
         fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
             Ok(self.packs.clone())
+        }
+        fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(self.fragments.clone())
         }
         fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
             self.files
@@ -369,6 +497,7 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        fragments: None,
     }];
 
     fn hurl_kind_map() -> &'static BTreeMap<String, String> {
@@ -407,6 +536,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -450,6 +580,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -498,6 +629,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["bad.feature".to_owned(), "good.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -562,6 +694,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/good.yaml".to_owned(), "packs/broken.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -604,6 +737,7 @@ mod tests {
         let provider = MemProvider {
             features: vec![],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -654,6 +788,7 @@ mod tests {
         let provider = MemProvider {
             features: vec![],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();

@@ -9,6 +9,22 @@ use notify::{RecursiveMode, Watcher};
 use proef_core::cancel::CancellationToken;
 use proef_core::error::ExitCode;
 
+/// Extensions whose edits retrigger a run: proef's own authored formats, plus
+/// whatever the registered engines claim for fragment files.
+///
+/// The engine half is **asked of the registry**, never hardcoded. Discovery
+/// already derives it from `StepKindSpec::fragments`, and a second engine whose
+/// fragment edits silently failed to retrigger `--watch` is exactly the drift
+/// ADR-0002 exists to prevent. Anything else — run records, the state file,
+/// editor swap files — must not requeue, or a watched tree containing proef's
+/// own output reruns itself forever.
+fn watched_extensions() -> Vec<&'static str> {
+    let kinds = crate::registry::step_kinds();
+    let mut exts = vec!["feature", "yaml", "yml"];
+    exts.extend(crate::front::fragment_extensions(&kinds));
+    exts
+}
+
 /// Run `once` immediately, then again after every filesystem change under
 /// `path` (debounced). The loop owns the Ctrl-C lifecycle (ADR-0007): the
 /// first interrupt cancels the in-flight run gracefully and leaves the loop
@@ -16,6 +32,7 @@ use proef_core::error::ExitCode;
 pub fn watch_loop(
     path: &Path,
     config_path: Option<&Path>,
+    fragments: Option<&Path>,
     mut once: impl FnMut(CancellationToken) -> ExitCode,
 ) -> ExitCode {
     // `proef.toml` lives above the suite, so the recursive watch below never
@@ -24,6 +41,7 @@ pub fn watch_loop(
     // watcher being broken.
     let config_path = config_path.map(Path::to_path_buf);
     let watched_config = config_path.clone();
+    let watched_exts = watched_extensions();
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = match notify::recommended_watcher(move |event| {
         if let Ok(event) = event {
@@ -40,11 +58,9 @@ pub fn watch_loop(
             // the tree.
             let authored = event.paths.iter().any(|p| {
                 watched_config.as_deref().is_some_and(|c| p == c)
-                    || p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                        e.eq_ignore_ascii_case("feature")
-                            || e.eq_ignore_ascii_case("yaml")
-                            || e.eq_ignore_ascii_case("yml")
-                    })
+                    || p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| watched_exts.iter().any(|ext| e.eq_ignore_ascii_case(ext)))
             });
             if authored {
                 let _ = tx.send(());
@@ -61,6 +77,18 @@ pub fn watch_loop(
         crate::render::errln!("error: cannot watch {}: {err}", path.display());
         return ExitCode::SystemError;
     }
+    // A fragment root may sit outside the suite (a corpus in another repo), so
+    // the recursive suite watch above does not necessarily cover it. Same
+    // warn-do-not-fail rule as the config: the suite watch is the primary one.
+    if let Some(fragments) = fragments
+        && let Err(err) = watcher.watch(fragments, RecursiveMode::Recursive)
+    {
+        crate::render::errln!(
+            "warning: cannot watch {} (fragment edits will not retrigger): {err}",
+            fragments.display()
+        );
+    }
+
     // Watched as a single file, not recursively: its directory is the project
     // root, which may hold anything. A config that cannot be watched is a
     // warning, not a failure — the suite watch above is the primary one.
