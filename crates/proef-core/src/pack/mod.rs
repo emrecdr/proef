@@ -195,10 +195,8 @@ pub struct Fragment {
     pub line: usize,
     /// Variables the entry reads: its required inputs.
     pub placeholders: Vec<String>,
-    /// Variables the entry produces.
-    pub captures: Vec<String>,
-    /// Whether the entry sets its own retry policy.
-    pub declares_retry: bool,
+    /// Option families the entry sets for itself (`"retry"`, `"delay"`).
+    pub declared_options: Vec<String>,
     /// The fragment file's text (for diagnostics).
     pub source: Arc<str>,
 }
@@ -338,8 +336,6 @@ pub(crate) fn load_collecting(
     let mut set = PackSet::default();
     let mut raw_packs: Vec<(usize, String, RawPack)> = Vec::new();
 
-    load_fragments(fragments, kinds, &mut set, &mut diags);
-
     for (index, source) in sources.iter().enumerate() {
         match serde_norway::from_str::<RawPack>(&source.text) {
             Ok(raw) => raw_packs.push((index, source.name.clone(), raw)),
@@ -358,6 +354,20 @@ pub(crate) fn load_collecting(
                 diags.push(diag);
             }
         }
+    }
+
+    // Fragments load only when some pack actually names one. Scanning a corpus
+    // means walking, reading and hurl-parsing every file in it, and the root may
+    // be large and external — a suite that references none must not pay for it
+    // on every `test`, `dry-run`, `flows` and `macros`. This is what makes
+    // "pointing at a corpus costs nothing until a pack names one of its
+    // requests" (CONFIG.md) true of the code rather than only of the semantics.
+    if raw_packs.iter().any(|(_, _, raw)| {
+        raw.macros
+            .values()
+            .any(|m| m.steps.iter().any(|s| s.ref_.is_some()))
+    }) {
+        load_fragments(fragments, kinds, &mut set, &mut diags);
     }
 
     // Normalize each raw macro (structural checks happen inline).
@@ -409,18 +419,15 @@ fn load_fragments(
     diags: &mut Vec<Diag>,
 ) {
     for source in sources {
-        // The extension decided which kind claims the file, so the scanner that
-        // reads it is the one whose engine owns that extension.
-        let claimed = kinds.iter().find(|kind| {
-            kind.scan_fragments.is_some()
-                && kind
-                    .file_ext
-                    .is_some_and(|ext| source.name.rsplit('.').next() == Some(ext))
-        });
-        let Some((kind_name, scan)) = claimed
-            .or_else(|| kinds.iter().find(|kind| kind.scan_fragments.is_some()))
-            .and_then(|kind| kind.scan_fragments.map(|scan| (kind.prefix, scan)))
-        else {
+        // The extension decides which kind claims the file. A file no kind
+        // claims is skipped rather than handed to whichever scanner happens to
+        // be first: that guess would blame one engine's parser for another
+        // engine's file, and route the fragment to the wrong engine at run time.
+        let Some((kind_name, scan)) = kinds.iter().find_map(|kind| {
+            let support = kind.fragments?;
+            (source.name.rsplit('.').next() == Some(support.ext))
+                .then_some((kind.prefix, support.scan))
+        }) else {
             continue;
         };
         let scanned = match scan(&source.text) {
@@ -432,7 +439,7 @@ fn load_fragments(
                         format!("{}: {}", source.name, err.message),
                     )
                     .with_source(source.name.clone(), Arc::clone(&source.text))
-                    .maybe_span(line_span(&source.text, err.line)),
+                    .maybe_span(locate::line_span(&source.text, err.line)),
                 );
                 continue;
             }
@@ -449,7 +456,7 @@ fn load_fragments(
                         ),
                     )
                     .with_source(source.name.clone(), Arc::clone(&source.text))
-                    .maybe_span(line_span(&source.text, entry.line))
+                    .maybe_span(locate::line_span(&source.text, entry.line))
                     .with_help(
                         "fragment names are global — rename one, or qualify the `ref:` \
                          as `file.hurl#name`",
@@ -466,33 +473,12 @@ fn load_fragments(
                     text: entry.text,
                     line: entry.line,
                     placeholders: entry.placeholders,
-                    captures: entry.captures,
-                    declares_retry: entry.declares_retry,
+                    declared_options: entry.declared_options,
                     source: Arc::clone(&source.text),
                 },
             );
         }
     }
-}
-
-/// Byte span of one 1-based line's trimmed content — the anchor for a
-/// diagnostic the engine reported by position rather than by offset.
-fn line_span(text: &str, line: usize) -> Option<Span> {
-    let (start, raw) = text
-        .split_inclusive('\n')
-        .scan(0usize, |offset, raw| {
-            let at = *offset;
-            *offset += raw.len();
-            Some((at, raw))
-        })
-        .nth(line.checked_sub(1)?)?;
-    let content = raw.trim_end_matches(['\n', '\r']);
-    let lead = content.len() - content.trim_start().len();
-    Some(Span::clamped(
-        start + lead,
-        start + content.trim_end().len(),
-        text.len(),
-    ))
 }
 
 /// Parse and validate `sources`, failing on the first error-severity diagnostic

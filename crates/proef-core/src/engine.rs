@@ -30,8 +30,7 @@
 //!             prefix: "null",
 //!             schema: "true",
 //!             validate: None,
-//!             file_ext: None,
-//!             scan_fragments: None,
+//!             fragments: None,
 //!         }];
 //!         KINDS
 //!     }
@@ -108,15 +107,11 @@ pub struct StepKindSpec {
     /// Probe-validate a lowered payload text (`None` = no static validation).
     /// Keeps the core engine-agnostic: the hurl parser stays behind the seam.
     pub validate: Option<PayloadValidator>,
-    /// File extension of this kind's **fragment** files, without the dot
-    /// (`"hurl"`); `None` when the kind has no fragment form. Source discovery
-    /// asks the registry for this rather than naming a file type itself, so
-    /// adding an engine never teaches the CLI a new extension (ADR-0002).
-    pub file_ext: Option<&'static str>,
-    /// Scan a fragment file into its entries (`None` = no fragment support).
-    /// The engine's own parser does the reading; the core only ever sees the
-    /// neutral [`ScannedFragment`] (ADR-0018).
-    pub scan_fragments: Option<FragmentScanner>,
+    /// Fragment support, or `None` when the kind has no fragment form
+    /// (ADR-0018). One `Option` rather than a separate extension and scanner,
+    /// so the two can never disagree: a kind that claims `.http` files but
+    /// cannot read them is not expressible.
+    pub fragments: Option<FragmentSupport>,
 }
 
 /// An engine-contributed static payload validator (pack validation pass 7).
@@ -124,6 +119,18 @@ pub type PayloadValidator = fn(&str) -> Result<(), PayloadProbeError>;
 
 /// An engine-contributed reader for one fragment file's whole text (ADR-0018).
 pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+
+/// What a step kind needs to own a fragment file format: the extension that
+/// identifies one and the parser that reads it. Source discovery asks the
+/// registry for the extension rather than naming a file type itself, so adding
+/// an engine never teaches the CLI a new one (ADR-0002).
+#[derive(Debug, Clone, Copy)]
+pub struct FragmentSupport {
+    /// File extension without the dot (`"hurl"`).
+    pub ext: &'static str,
+    /// Reader for a whole file of that extension.
+    pub scan: FragmentScanner,
+}
 
 /// One entry of a fragment file, as the claiming engine's own parser sees it.
 ///
@@ -145,11 +152,12 @@ pub struct ScannedFragment {
     /// Every variable the entry *reads*, in first-seen order — its required
     /// inputs.
     pub placeholders: Vec<String>,
-    /// Every variable the entry *produces*, in first-seen order.
-    pub captures: Vec<String>,
-    /// Whether the entry sets its own retry policy, which a referencing step
-    /// may then not also set (`proef::pack::option_declared_twice`).
-    pub declares_retry: bool,
+    /// Option families the entry sets for itself (`"retry"`, `"delay"`), which
+    /// a referencing step may then not also set
+    /// (`proef::pack::option_declared_twice`). A list rather than one flag per
+    /// option, so the core applies its general rule to whatever it knows about
+    /// and a new family costs no engine change.
+    pub declared_options: Vec<String>,
 }
 
 /// A fragment file the claiming engine's parser could not read (1-based

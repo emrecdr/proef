@@ -8,9 +8,11 @@
 //! This module is the only place a hurl AST is turned into
 //! [`ScannedFragment`]; `proef-core` never sees a hurl type.
 
+use std::borrow::Cow;
+
 use hurl_core::ast::visit::{self, Visitor};
 use hurl_core::ast::{
-    Capture, Entry, ExprKind, OptionKind, Placeholder, Template, TemplateElement,
+    Comment, Entry, ExprKind, OptionKind, Placeholder, Template, TemplateElement,
 };
 use proef_core::engine::{FragmentScanError, ScannedFragment};
 
@@ -21,11 +23,13 @@ const MARKER: &str = "@proef";
 
 /// Scan one fragment file into its entries, annotated or not.
 pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError> {
-    // Appending to the end cannot move any line, so positions stay valid.
-    let mut normalized = text.to_owned();
-    if !normalized.ends_with('\n') {
-        normalized.push('\n');
-    }
+    // Appending to the end cannot move any line, so positions stay valid — and
+    // a file that already ends in one (nearly all of them) is not copied.
+    let normalized = if text.ends_with('\n') {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(format!("{text}\n"))
+    };
     let file =
         hurl_core::parser::parse_hurl_file(&normalized).map_err(|err| FragmentScanError {
             line: err.pos.line,
@@ -40,11 +44,10 @@ pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError
         if let Some(comment) = &lt.comment
             && annotation_name(&comment.value).is_some()
         {
-            return Err(FragmentScanError {
-                line: comment.source_info.start.line,
-                column: comment.source_info.start.column,
-                message: "`@proef` annotation is followed by no request".to_owned(),
-            });
+            return Err(at_comment(
+                comment,
+                "`@proef` annotation is followed by no request".to_owned(),
+            ));
         }
     }
 
@@ -75,16 +78,29 @@ pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError
             text: format!("{}\n", body.trim_end()),
             line: start,
             placeholders: collect.placeholders,
-            captures: collect.captures,
-            declares_retry: entry.request.options().iter().any(|option| {
-                matches!(
-                    option.kind,
-                    OptionKind::Retry(_) | OptionKind::RetryInterval(_)
-                )
-            }),
+            declared_options: declared_options(entry),
         });
     }
     Ok(out)
+}
+
+/// The option families an entry sets for itself, named as the pack spells them
+/// so the core can match them against a step's own keys without knowing hurl.
+/// `retry-interval` folds into `retry`: they are one policy, and a step's
+/// `retry:` sets both.
+fn declared_options(entry: &Entry) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for option in entry.request.options() {
+        let family = match option.kind {
+            OptionKind::Retry(_) | OptionKind::RetryInterval(_) => "retry",
+            OptionKind::Delay(_) => "delay",
+            _ => continue,
+        };
+        if !out.iter().any(|seen| seen == family) {
+            out.push(family.to_owned());
+        }
+    }
+    out
 }
 
 /// The line a fragment starts on: its `@proef` annotation when it has one, so
@@ -106,6 +122,16 @@ fn start_line(entry: &Entry) -> usize {
         )
 }
 
+/// A scan error positioned at `comment` — the four sites below differ only in
+/// what they say, so the position is written once.
+fn at_comment(comment: &Comment, message: impl Into<String>) -> FragmentScanError {
+    FragmentScanError {
+        line: comment.source_info.start.line,
+        column: comment.source_info.start.column,
+        message: message.into(),
+    }
+}
+
 /// The `@proef` name an entry declares, if any.
 fn annotation(entry: &Entry) -> Result<Option<String>, FragmentScanError> {
     let mut found: Option<String> = None;
@@ -115,28 +141,25 @@ fn annotation(entry: &Entry) -> Result<Option<String>, FragmentScanError> {
             continue;
         };
         if found.is_some() {
-            return Err(FragmentScanError {
-                line: comment.source_info.start.line,
-                column: comment.source_info.start.column,
-                message: "request carries more than one `@proef` annotation".to_owned(),
-            });
+            return Err(at_comment(
+                comment,
+                "request carries more than one `@proef` annotation".to_owned(),
+            ));
         }
         if name.is_empty() {
-            return Err(FragmentScanError {
-                line: comment.source_info.start.line,
-                column: comment.source_info.start.column,
-                message: "`@proef` needs a fragment name".to_owned(),
-            });
+            return Err(at_comment(
+                comment,
+                "`@proef` needs a fragment name".to_owned(),
+            ));
         }
         if name.split_whitespace().count() > 1 {
-            return Err(FragmentScanError {
-                line: comment.source_info.start.line,
-                column: comment.source_info.start.column,
-                message: format!(
+            return Err(at_comment(
+                comment,
+                format!(
                     "`@proef` takes a name and nothing else, but found `{name}` — \
                      step settings belong in the pack"
                 ),
-            });
+            ));
         }
         found = Some(name);
     }
@@ -163,7 +186,6 @@ fn annotation_name(comment: &str) -> Option<String> {
 #[derive(Default)]
 struct Collect {
     placeholders: Vec<String>,
-    captures: Vec<String>,
 }
 
 impl Collect {
@@ -202,28 +224,6 @@ impl Visitor for Collect {
     fn visit_placeholder(&mut self, placeholder: &Placeholder) {
         self.record(placeholder);
     }
-
-    fn visit_capture(&mut self, capture: &Capture) {
-        if let Some(name) = literal(&capture.name)
-            && !self.captures.contains(&name)
-        {
-            self.captures.push(name);
-        }
-        visit::walk_capture(self, capture);
-    }
-}
-
-/// A template's text when it is entirely literal; `None` when it interpolates
-/// (a computed capture name is not statically knowable, so it is not claimed).
-fn literal(template: &Template) -> Option<String> {
-    let mut out = String::new();
-    for element in &template.elements {
-        match element {
-            TemplateElement::String { value, .. } => out.push_str(value),
-            TemplateElement::Placeholder(_) => return None,
-        }
-    }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -257,8 +257,7 @@ mod tests {
         // The URL is reached through `visit_url`, the header and query through
         // `visit_template` — a scanner overriding only one would miss the rest.
         assert_eq!(search.placeholders, ["base", "index", "apiToken", "q"]);
-        assert_eq!(search.captures, ["recordId"]);
-        assert!(!search.declares_retry);
+        assert!(search.declared_options.is_empty());
     }
 
     /// An unannotated entry is reported, not dropped: a corpus proef does not
@@ -268,7 +267,6 @@ mod tests {
         let found = scan(FILE).unwrap();
         assert_eq!(found[1].name, None);
         assert_eq!(found[1].placeholders, ["base", "recordId"]);
-        assert!(found[1].captures.is_empty());
     }
 
     /// Fragment text runs from the annotation to just before the next entry:
@@ -304,7 +302,7 @@ mod tests {
     #[test]
     fn a_retry_option_is_reported_for_the_double_declaration_check() {
         let found = scan("# @proef poll\nGET http://x\n[Options]\nretry: 3\nHTTP 200\n").unwrap();
-        assert!(found[0].declares_retry);
+        assert_eq!(found[0].declared_options, ["retry"]);
     }
 
     #[test]

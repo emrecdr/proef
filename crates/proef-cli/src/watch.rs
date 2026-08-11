@@ -9,6 +9,25 @@ use notify::{RecursiveMode, Watcher};
 use proef_core::cancel::CancellationToken;
 use proef_core::error::ExitCode;
 
+/// Extensions whose edits retrigger a run: proef's own authored formats, plus
+/// whatever the registered engines claim for fragment files.
+///
+/// The engine half is **asked of the registry**, never hardcoded. Discovery
+/// already derives it from `StepKindSpec::fragments`, and a second engine whose
+/// fragment edits silently failed to retrigger `--watch` is exactly the drift
+/// ADR-0002 exists to prevent. Anything else — run records, the state file,
+/// editor swap files — must not requeue, or a watched tree containing proef's
+/// own output reruns itself forever.
+fn watched_extensions() -> Vec<&'static str> {
+    let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
+        .iter()
+        .flat_map(|e| e.step_kinds().iter().copied())
+        .collect();
+    let mut exts = vec!["feature", "yaml", "yml"];
+    exts.extend(crate::front::fragment_extensions(&kinds));
+    exts
+}
+
 /// Run `once` immediately, then again after every filesystem change under
 /// `path` (debounced). The loop owns the Ctrl-C lifecycle (ADR-0007): the
 /// first interrupt cancels the in-flight run gracefully and leaves the loop
@@ -25,6 +44,7 @@ pub fn watch_loop(
     // watcher being broken.
     let config_path = config_path.map(Path::to_path_buf);
     let watched_config = config_path.clone();
+    let watched_exts = watched_extensions();
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = match notify::recommended_watcher(move |event| {
         if let Ok(event) = event {
@@ -41,15 +61,9 @@ pub fn watch_loop(
             // the tree.
             let authored = event.paths.iter().any(|p| {
                 watched_config.as_deref().is_some_and(|c| p == c)
-                    || p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                        e.eq_ignore_ascii_case("feature")
-                            || e.eq_ignore_ascii_case("yaml")
-                            || e.eq_ignore_ascii_case("yml")
-                            // Fragment files are suite inputs too (ADR-0018):
-                            // editing one changes what a `ref:` executes, so a
-                            // watch that ignored them would show stale results.
-                            || e.eq_ignore_ascii_case("hurl")
-                    })
+                    || p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| watched_exts.iter().any(|ext| e.eq_ignore_ascii_case(ext)))
             });
             if authored {
                 let _ = tx.send(());

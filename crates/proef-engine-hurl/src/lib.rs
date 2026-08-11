@@ -13,8 +13,8 @@ mod fragment;
 mod session;
 
 use proef_core::engine::{
-    DoctorCheck, DoctorResult, EngineFactory, EngineSession, PayloadProbeError, ScenarioCtx,
-    StepKindSpec,
+    DoctorCheck, DoctorResult, EngineFactory, EngineSession, FragmentSupport, PayloadProbeError,
+    ScenarioCtx, StepKindSpec,
 };
 use proef_core::error::EngineError;
 
@@ -33,8 +33,10 @@ const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
     prefix: "hurl",
     schema: r#"{ "type": "string", "description": "Raw hurl entries; ${…} lowered at author time, {{…}} resolved by hurl at run time" }"#,
     validate: Some(validate_payload),
-    file_ext: Some("hurl"),
-    scan_fragments: Some(fragment::scan),
+    fragments: Some(FragmentSupport {
+        ext: "hurl",
+        scan: fragment::scan,
+    }),
 }];
 
 /// The compiled-in hurl engine, registered by `proef-cli` (ADR-0002).

@@ -121,7 +121,6 @@ fn macro_has_ref(macro_: &Macro) -> bool {
 /// invocation — which is what makes "one binding, one value" mean something
 /// different at each level (ADR-0018). Empty for a macro with no `ref:` step,
 /// so an unused table never advances the `${fake:…}` counter.
-#[allow(clippy::too_many_arguments)]
 fn scope_bindings(
     macro_: &Macro,
     ctx: &LowerCtx<'_>,
@@ -156,7 +155,6 @@ fn scope_bindings(
 }
 
 /// Resolve one `bind:` table in the caller's scope.
-#[allow(clippy::too_many_arguments)]
 fn resolve_bindings(
     table: &BTreeMap<String, String>,
     refs: &mut Refs,
@@ -509,32 +507,48 @@ fn expand_ref_step(
     // one shared set (it does not scope), so an unbound name would
     // silently inherit whatever an earlier entry happened to leave —
     // running green against the wrong value.
-    let available = captures_before(out);
-    let missing: Vec<&str> = fragment
+    let unbound: Vec<&str> = fragment
         .placeholders
         .iter()
         .filter(|name| {
-            !bindings.contains_key(name.as_str())
-                && !available.contains(name.as_str())
-                && !refs.secrets.contains_key(name.as_str())
+            !bindings.contains_key(name.as_str()) && !refs.secrets.contains_key(name.as_str())
         })
         .map(String::as_str)
         .collect();
+    // Captures are the expensive half — the scan re-reads every step lowered so
+    // far — so it only runs for names a binding did not already cover, which in
+    // a pack that binds what its fragment reads is none of them.
+    let missing: Vec<&str> = if unbound.is_empty() {
+        Vec::new()
+    } else {
+        let available = captures_before(out);
+        unbound
+            .into_iter()
+            .filter(|name| !available.contains(*name))
+            .collect()
+    };
     if !missing.is_empty() {
+        // Anchored on the fragment, not on the pack step: the variable is
+        // literally on that line of that file, and ADR-0018 promises a real
+        // file:line. The message names the macro, so the other end of the link
+        // is not lost.
+        let message = format!(
+            "fragment `{}` reads `{}`, which nothing supplies — no `bind:` in scope gives a value, and no earlier step captures it",
+            fragment.name,
+            missing.join("`, `"),
+        );
         diags.push(
-                    at(Diag::error(
-                        "proef::lower::unbound_placeholder",
-                        format!(
-                            "fragment `{}` reads `{}`, which nothing supplies — no `bind:` in scope gives a value, and no earlier step captures it",
-                            fragment.name,
-                            missing.join("`, `"),
-                        ),
-                    ))
-                    .with_help(format!(
-                        "add `bind: {{ {}: … }}` to the step, its macro, or the pack",
-                        missing[0]
-                    )),
-                );
+            Diag::error("proef::lower::unbound_placeholder", message)
+                .with_source(fragment.file.clone(), Arc::clone(&fragment.source))
+                .maybe_span(crate::pack::locate::line_span(
+                    &fragment.source,
+                    fragment.line,
+                ))
+                .with_help(format!(
+                    "add `bind: {{ {}: … }}` to the step, its macro, or the pack",
+                    missing[0]
+                )),
+        );
         return;
     }
 
@@ -582,7 +596,7 @@ fn expand_ref_step(
 
 /// One inline-payload step: resolve `${…}` in place, then bake the step's own
 /// `retry:`/`delay:` into `[Options]` (ADR-0010 — artifacts replay identically).
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 fn expand_payload_step(
     macro_step: &MacroStep,
     kind: &str,
@@ -744,6 +758,15 @@ fn bake_entry_options(
     // lets a bound `${url:…}` containing `{{captured}}` finish resolving.
     for (name, value) in bindings {
         option_lines.push(format!("variable: {name}=\"{}\"", quote_option(value)));
+    }
+    // Nothing to inject: a `ref:` step whose bindings are all secrets, or whose
+    // variables all come from earlier captures, would otherwise pay the whole
+    // two-pass rewrite to rebuild an identical string — and gain an empty
+    // `[Options]` section for it. (The inline path guards at its call site; a
+    // `ref:` step cannot, since it does not know whether bindings survived the
+    // secret split.)
+    if option_lines.is_empty() {
+        return text.to_owned();
     }
     let retry_lines = option_lines.join("\n");
     // Pre-scan: entries whose author already wrote an `[Options]` section only
@@ -1023,8 +1046,7 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
 
     const PACK: &str = r#"macros:
@@ -1279,8 +1301,7 @@ mod tests {
             prefix: "alt",
             schema: "true",
             validate: None,
-            file_ext: None,
-            scan_fragments: None,
+            fragments: None,
         }];
         let packs = pack::load(
             &[PackSource {
@@ -1651,17 +1672,15 @@ mod tests {
                     text: format!("GET http://x/{name}\nHTTP 200\n"),
                     line: index + 1,
                     placeholders: Vec::new(),
-                    captures: Vec::new(),
-                    declares_retry: false,
+                    declared_options: Vec::new(),
                 });
             } else if let Some(last) = out.last_mut() {
                 if let Some(read) = line.strip_prefix('?') {
                     last.placeholders.push(read.to_owned());
                 } else if let Some(write) = line.strip_prefix('!') {
-                    last.captures.push(write.to_owned());
-                    // A real scanner reads the captures *out of* the entry, so
-                    // the text and the declared list can never disagree. Keep
-                    // the stand-in honest about that.
+                    // A real scanner reads captures out of the entry text, and
+                    // so does the core (`emit::capture_names`) — one mechanism,
+                    // so keep the stand-in's text honest.
                     if !last.text.contains("[Captures]") {
                         last.text.push_str("[Captures]\n");
                     }
@@ -1677,8 +1696,10 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: Some("frag"),
-        scan_fragments: Some(frag_scan),
+        fragments: Some(crate::engine::FragmentSupport {
+            ext: "frag",
+            scan: frag_scan,
+        }),
     }];
 
     /// Lower a one-step scenario over the given pack and fragment file.

@@ -384,8 +384,7 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
 
     fn hurl_kind_map() -> &'static BTreeMap<String, String> {

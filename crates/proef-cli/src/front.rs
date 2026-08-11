@@ -392,6 +392,17 @@ pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
     Ok(out)
 }
 
+/// The file extensions the registered engines claim for fragment files. The one
+/// place that answers "is this a fragment?", so discovery, `--watch` and any
+/// future consumer cannot disagree — a second engine's format must not be
+/// something one of them knows about and another does not (ADR-0002).
+pub fn fragment_extensions(kinds: &[proef_core::engine::StepKindSpec]) -> Vec<&'static str> {
+    kinds
+        .iter()
+        .filter_map(|kind| Some(kind.fragments?.ext))
+        .collect()
+}
+
 /// Every fragment file under `root`, recursively (ADR-0018). Unlike packs
 /// there is no directory convention: the root is named in `[run] fragments`,
 /// so everything beneath it with a claimed extension is in scope. The
@@ -401,7 +412,7 @@ pub fn fragment_files(
     root: &Path,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<Vec<PathBuf>, FrontError> {
-    let exts: Vec<&str> = kinds.iter().filter_map(|kind| kind.file_ext).collect();
+    let exts: Vec<&str> = fragment_extensions(kinds);
     if exts.is_empty() {
         return Ok(Vec::new());
     }

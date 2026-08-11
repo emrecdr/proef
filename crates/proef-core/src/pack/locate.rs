@@ -145,6 +145,19 @@ pub(crate) fn use_line_spans(text: &str, macro_name: &str) -> Vec<Span> {
     key_line_spans(text, macro_name, "use")
 }
 
+/// Byte span of one 1-based line's trimmed content — the anchor for a finding
+/// an engine reported by position rather than by offset (a fragment scan, a
+/// payload probe). Degrades to `None` past the end, like every locator here.
+pub(crate) fn line_span(text: &str, line: usize) -> Option<Span> {
+    let (offset, raw) = lines_with_offsets(text).nth(line.checked_sub(1)?)?;
+    let lead = raw.len() - raw.trim_start().len();
+    Some(Span::clamped(
+        offset + lead,
+        offset + raw.trim_end().len(),
+        text.len(),
+    ))
+}
+
 /// `(byte_offset, line_without_newline)` for every line.
 fn lines_with_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut offset = 0;

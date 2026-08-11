@@ -243,6 +243,26 @@ is whether a team with an existing hurl suite can move onto proef and
 **demonstrate** they lost nothing. M1 and M2 are that story. E1 is the first wall
 a real suite hits afterwards.
 
+### F1 — `proef.toml` now has two path-resolution rules
+
+`[run] fragments` resolves relative to the **config file's directory** (ADR-0018);
+`suite`, `setup`, `teardown` and `runs-dir` stay relative to the **working
+directory**. The reasoning that produced the new rule — the config is found by
+walking *up*, so a path in a config three levels above must mean "relative to the
+project" — applies verbatim to all five keys, and `setup`/`teardown`/`runs-dir`
+are consulted on every run rather than only when a path was omitted.
+
+Cost: one file with two semantics and no marker distinguishing them. A user with
+`setup` and `fragments` in the same `proef.toml` gets one working from a
+subdirectory and one not, and every future path key re-litigates the choice
+against four precedents for the older rule.
+
+**Not fixed here on purpose.** Changing the four existing keys is a behaviour
+change for every project that already relies on cwd-relative resolution, which
+is out of scope for the change that introduced the fifth. The fix is a single
+`ProjectConfig::resolve_path` used by every path accessor, shipped deliberately
+with a changelog note — recorded so it is a decision rather than an oversight.
+
 **ADR-0018 (named hurl fragments) lands into this section — read it against these
 items before assuming what it closes.** It lets a pack `ref:` a named entry in a real
 `.hurl` file, so a corpus file is annotated once instead of transcribed, and stays

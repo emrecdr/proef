@@ -453,16 +453,25 @@ fn ref_target_passes(
         );
         return;
     };
-    if fragment.declares_retry && step.retry.is_some() {
-        diags.push(at(Diag::error(
-            "proef::pack::option_declared_twice",
-            format!(
-                "macro `{}` step {index}: `retry` is declared twice — in fragment `{}` (`{}` line {}) and as this step's own `retry:`",
-                macro_.name, fragment.name, fragment.file, fragment.line
-            ),
-        )).with_help(
-            "an entry carries one policy per option — delete whichever of the two is not authoritative",
-        ));
+    // Every option family the step can also set, not just retry: `delay:` bakes
+    // into the same `[Options]` section through the same code path, so leaving
+    // it unchecked reproduces exactly the silent last-wins the inline half of
+    // this rule exists to refuse.
+    for (family, declared_by_step) in [
+        ("retry", step.retry.is_some()),
+        ("delay", step.delay_ms.is_some()),
+    ] {
+        if declared_by_step && fragment.declared_options.iter().any(|o| o == family) {
+            diags.push(at(Diag::error(
+                "proef::pack::option_declared_twice",
+                format!(
+                    "macro `{}` step {index}: `{family}` is declared twice — in fragment `{}` (`{}` line {}) and as this step's own `{family}:`",
+                    macro_.name, fragment.name, fragment.file, fragment.line
+                ),
+            )).with_help(
+                "an entry carries one policy per option — delete whichever of the two is not authoritative",
+            ));
+        }
     }
 }
 
@@ -964,8 +973,7 @@ mod tests {
         prefix: "alt",
         schema: "true",
         validate: Some(deny),
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
 
     /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
@@ -1084,8 +1092,7 @@ mod tests {
             prefix: "alt",
             schema: "true",
             validate: None,
-            file_ext: None,
-            scan_fragments: None,
+            fragments: None,
         }];
         use std::fmt::Write as _;
         let mut yaml = String::from("macros:\n");
@@ -1119,8 +1126,7 @@ mod tests {
         prefix: "alt",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
 
     /// Setting an option in both the block's `[Options]` and its YAML twin
@@ -1226,16 +1232,13 @@ mod tests {
                     text: format!("GET http://x/{name}\n"),
                     line: index + 1,
                     placeholders: Vec::new(),
-                    captures: Vec::new(),
-                    declares_retry: false,
+                    declared_options: Vec::new(),
                 });
             } else if let Some(last) = out.last_mut() {
                 if line == "retry" {
-                    last.declares_retry = true;
+                    last.declared_options.push("retry".to_owned());
                 } else if let Some(read) = line.strip_prefix('?') {
                     last.placeholders.push(read.to_owned());
-                } else if let Some(write) = line.strip_prefix('!') {
-                    last.captures.push(write.to_owned());
                 }
             }
         }
@@ -1246,8 +1249,10 @@ mod tests {
         prefix: "alt",
         schema: "true",
         validate: None,
-        file_ext: Some("frag"),
-        scan_fragments: Some(fake_scan),
+        fragments: Some(crate::engine::FragmentSupport {
+            ext: "frag",
+            scan: fake_scan,
+        }),
     }];
 
     fn source(name: &str, text: &str) -> PackSource {

@@ -189,8 +189,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -252,8 +251,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -334,8 +332,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -417,8 +414,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -503,8 +499,7 @@ fn completion_offers_macro_pattern_snippets() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -610,8 +605,7 @@ fn references_lists_every_step_bound_to_the_macro() {
         prefix: "hurl",
         schema: "true",
         validate: None,
-        file_ext: None,
-        scan_fragments: None,
+        fragments: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 

@@ -65,7 +65,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   Two refusals guard the parts that could otherwise pass silently:
 
   - `lower::unbound_placeholder` — a fragment reading a `{{variable}}` that no `bind:`
-    in scope supplies and no earlier step captures. hurl's `[Options] variable:`
+    in scope supplies and no earlier step captures, anchored on the `.hurl` line the
+    variable is on rather than on the pack. hurl's `[Options] variable:`
     *assigns into one shared set* rather than scoping, so an unbound name would inherit
     whatever a previous entry happened to leave and run green against the wrong value.
   - `lower::secret_in_composite_bind` — a `bind:` value mixing `${secret:…}` into a
@@ -97,6 +98,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   of naming `.hurl` itself, so this stays ADR-0002's "adding an engine leaves
   `proef-core` diff-empty" rather than an exception to it. **Nothing observable ships
   yet:** no pack can reference a fragment until the schema lands.
+
+  `StepKindSpec::fragments` is one `Option<FragmentSupport>` rather than a separate
+  extension and scanner, so a kind that claims a format it cannot read is not
+  expressible; a file no kind claims is skipped rather than handed to whichever engine
+  happens to be registered first. `ScannedFragment::declared_options` lists option
+  *families* rather than flagging retry alone, so the core applies its
+  double-declaration rule to `delay:` too — through the same `bake_entry_options` path,
+  so leaving it out reproduced the very last-wins bug the rule exists to refuse.
 
   A note for whoever extends the scanner: hurl's `Visitor` treats templates as *leaves*,
   and `visit_template`, `visit_url` and `visit_filename` are three separate no-op
