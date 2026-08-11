@@ -218,8 +218,18 @@ build requirement).
       by `crates/proef-cli/tests/fragments.rs`, both runners against the fixture).
       `[run] fragments` names the scanned root; PRD §3's hurl non-goal was narrowed to
       *generation* in the same change. Inline `hurl: |` is unchanged and permanent.
-      Breaking (library): `pack::load` takes a fragments slice, `LoweredScenario::secrets`
-      is a map, `Prepared`/`ScenarioCtx` carry `secret_bindings`
+      A `ref:` step records the fragment it ran as `file.hurl#name`, which `explain`,
+      the console, TAP, JUnit, the GitHub summary and the HTML report all name on a
+      failure (ADR-0018 accepted three-files-per-test only on condition tooling earned
+      it back); the editor completes `bind:` keys from the fragment's own placeholders
+      and jumps from `ref:` to the annotation. The corpus is read once per command and
+      scanned lazily, at most once — `[run] fragments` resolves to an absolute path
+      because `proef lsp` keys document identity on one, and the shortening that makes
+      a record portable happens at the naming boundary, never at resolution.
+      Breaking (library): `pack::load` takes a `&FragmentCorpus` (scans on first use),
+      `PackSet::fragments` is an `Arc`, `LoweredScenario::secrets` is a map,
+      `Prepared`/`ScenarioCtx` carry `secret_bindings`, and `LoweredStep`/`StepOutcome`/
+      `Event::StepFinished` carry `fragment`
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

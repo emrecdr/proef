@@ -73,7 +73,10 @@ pub struct World { scenario: BTreeMap<String, Value>,
 // step.rs — lowered, engine-agnostic
 pub struct StepRef { pub file: Arc<str>, pub line: usize, pub text: Arc<str> }  // feature anchor
 pub struct LoweredStep { pub step: StepRef, pub kind: StepKindId, pub payload: StepPayload,
-                         pub optional: bool, pub when: Option<Guard> }   // retry travels as baked [Options]
+                         pub optional: bool, pub when: Option<Guard>,
+                         // `file.hurl#name` for a `ref:` step, None for an inline block
+                         // (ADR-0018) — qualified at lowering so a record stands alone
+                         pub fragment: Option<String> }   // retry travels as baked [Options]
 pub enum StepPayload { HurlEntries(String /* lowered hurl text */),
                        MergedAsserts { lines: usize /* expect: rows own the appended assert lines */ },
                        Structured(serde_json::Value) }
@@ -106,9 +109,14 @@ pub fn secret_variables<'a>(bindings: &'a BTreeMap<String, String>,
                             -> impl Iterator<Item = (&'a str, &'a str)>;
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
+// `fragment` is carried here as well as on the event: JUnit, the job summary, the
+// annotations, TAP and the console are built from RunSummary after the event stream has
+// been written out, so they cannot read it back. Both are copies of one lowering-time
+// source, so they cannot drift from each other.
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,
                          pub duration: Duration, pub detail: Option<String>,
-                         pub attempt_details: Vec<String>, pub reproduce_hint: Option<String> }
+                         pub attempt_details: Vec<String>, pub reproduce_hint: Option<String>,
+                         pub fragment: Option<String> }
 
 // events.rs — the spine (ADR-0008); serde, versioned
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -119,7 +127,14 @@ pub struct EventSink(Arc<dyn Fn(&Event) + Send + Sync>);   // borrowed events
 
 ## 4. Pipeline (all in `proef-core`; pure — inputs include injected `run_id`, `now`, env snapshot)
 
-**4.1 Load packs.** Discover embedded `helpers/` + project `packs/`; serde_norway with
+**4.1 Load packs.** The fragment corpus (`[run] fragments`) is read once per command
+into a `pack::FragmentCorpus` and **scanned at most once**, lazily — only when some pack
+actually carries a `ref:`, which is what makes "pointing at a corpus you did not write
+costs nothing" true of the scan (CONFIG.md). One `proef test` loads packs up to four
+times (the suite, then `[run] setup`/`teardown`, each validated and then run) against
+the same corpus, so the memo belongs with the corpus rather than the caller — a caller
+that scanned eagerly to share the result would trade the promise for the speed.
+Discover embedded `helpers/` + project `packs/`; serde_norway with
 `deny_unknown_fields`; validation passes: (1) `match:` guard rails — must contain literal
 text, no adjacent captures, unclosed braces rejected; (2) params/defaults coverage;
 (3) duplicate macro names across packs → error (qualify `pack.yaml#name`); (4) `use:`
