@@ -1802,6 +1802,53 @@ mod tests {
         assert!(diag.help.is_some());
     }
 
+    /// Scope decides *when* a binding resolves, and that is observable through
+    /// `${fake:…}`. One macro-scope binding is one value for every step of the
+    /// macro — the shared identity a register-then-verify flow needs — while two
+    /// separate bindings stay two values. The correctness series made repeated
+    /// `${fake:…}` *occurrences* distinct; this keeps that true without making a
+    /// single binding mean two different things.
+    #[test]
+    fn one_binding_is_one_value_across_a_macros_steps() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    bind:\n      shared: ${fake:email}\n    steps:\n      - ref: first\n        bind:\n          own: ${fake:email}\n      - ref: second\n        bind:\n          own: ${fake:email}\n",
+            "@first\n?shared\n?own\n@second\n?shared\n?own\n",
+        )
+        .expect("lowers");
+        let entries: Vec<&str> = lowered
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .filter_map(|s| match &s.payload {
+                StepPayload::HurlEntries(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(entries.len(), 2);
+        let shared = |text: &str| {
+            text.lines()
+                .find(|l| l.starts_with("variable: shared="))
+                .expect("shared binding")
+                .to_owned()
+        };
+        let own = |text: &str| {
+            text.lines()
+                .find(|l| l.starts_with("variable: own="))
+                .expect("own binding")
+                .to_owned()
+        };
+        assert_eq!(
+            shared(entries[0]),
+            shared(entries[1]),
+            "one macro-scope binding is one value for the whole macro"
+        );
+        assert_ne!(
+            own(entries[0]),
+            own(entries[1]),
+            "two step-scope bindings are two values"
+        );
+    }
+
     /// A capture from an earlier step counts as supplied — that is the whole
     /// point of chaining requests, and requiring a `bind:` for it would be wrong.
     #[test]

@@ -113,6 +113,11 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-29 of the 66 codes carry a seeded corpus case today; the corpus guard asserts
+The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
+`lower::unbound_placeholder`, `lower::secret_in_composite_bind`) are covered in
+`crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
+`[run] fragments` root, and the seeded corpus is deliberately config-independent.
+
+29 of the 67 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.

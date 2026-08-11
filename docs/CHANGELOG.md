@@ -105,6 +105,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Documentation
 
+- **AUTHORING says which body form to reach for, and why.** A table contrasting
+  splicing against binding — what each can substitute, whether it can be reused, whether
+  stock `hurl` can run it, and when an unknown variable is caught — plus the rule that
+  decides it: inline when you need to splice something hurl cannot template
+  (`${docstring}` as a body has no binding equivalent), `ref:` when the request is
+  shared, foreign, or must stand alone. `CONFIG.md` gains `[run] fragments` with a
+  worked three-file example.
+
 - **The hurl non-goal is about generation, not direction (PRD §3 amendment).** It read
   "importing/round-tripping *hand-written* hurl files into Gherkin (artifacts flow
   outward only)" — a clause and a parenthetical saying two different things, the

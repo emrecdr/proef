@@ -213,6 +213,8 @@ fn normalize_pack(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
 
     /// The skeleton carries trailing whitespace of its own here, on a comment
