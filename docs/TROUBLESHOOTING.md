@@ -56,8 +56,12 @@ dev fixture (`cargo run -p xtask -- fixture`) binds the default `${url:base}` po
 **"batch budget exceeded — scenario thread abandoned"** — the watchdog killed
 a batch that outran its computed budget (timeouts × attempts + delays +
 repeats + margin, ADR-0007). Usually a huge `retry:`/`repeat:`/`delay:` value
-(the pack lint caps literals; `{{var}}`-driven values only the budget can
-catch) or a target that hangs instead of refusing.
+(the pack lint caps literals). A `{{var}}`-driven
+`retry:`/`repeat:`/`delay:`/`max-time:` cannot be estimated at all — it resolves
+inside hurl at run time — so the batch falls back to the default budget
+(`[http] timeout` × 4, at least 60s) rather than to an estimate that assumes no
+retries. If a legitimately long templated retry is being abandoned, raise
+`[http] timeout`.
 
 **"global state file .proef-state.json is not valid JSON"** — the persistent
 World is derived data (only `saveAs: global` promotions live there).

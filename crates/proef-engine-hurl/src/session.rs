@@ -639,9 +639,13 @@ impl EngineSession for HurlSession {
         for entries in self.entries_per_step(ordinal, batch.steps.len()) {
             for index in entries {
                 let entry = parsed.entries.get(index)?;
-                let (retries, interval) = entry_retry(entry);
-                let timeout = entry_timeout(entry).unwrap_or(default_timeout);
-                let delay = entry_delay(entry);
+                // `?` on any of these: a `{{…}}` placeholder (or an infinite
+                // count) means this batch cannot be estimated, and the
+                // orchestrator's documented fallback is a better answer than a
+                // confident under-count that abandons a healthy scenario.
+                let (retries, interval) = entry_retry(entry)?;
+                let timeout = entry_timeout(entry, default_timeout)?;
+                let delay = entry_delay(entry)?;
                 // Saturating throughout: user-authored durations must never
                 // panic the budget math (they cap at Duration::MAX instead).
                 let attempts = retries.saturating_add(1);
@@ -650,7 +654,7 @@ impl EngineSession for HurlSession {
                     .saturating_add(interval.saturating_mul(retries))
                     .saturating_add(delay.saturating_mul(attempts));
                 // `repeat:` runs the whole entry (with its retries) N times.
-                budget = budget.saturating_add(per_run.saturating_mul(entry_repeat(entry)));
+                budget = budget.saturating_add(per_run.saturating_mul(entry_repeat(entry)?));
             }
         }
         Some(budget.saturating_add(BUDGET_MARGIN))
@@ -906,7 +910,18 @@ fn entry_options(entry: &hurl_core::ast::Entry) -> impl Iterator<Item = &OptionK
 }
 
 /// Per-entry `[Options]` retry (finite by pack lint) and interval.
-fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
+/// `(retries, interval)` for an entry, or `None` when a `{{…}}` placeholder
+/// makes it unknowable.
+///
+/// A placeholder resolves inside hurl at run time (ADR-0005's second tier), so
+/// no static estimate can see it. Reporting "no retries" for one — which is
+/// what falling through to the default did — under-counts the budget by the
+/// whole retry loop, and the watchdog then abandons a scenario that was
+/// retrying exactly as authored, attributing it to the environment (exit 3).
+/// `None` propagates to [`EngineSession::batch_budget`], whose contract already
+/// covers this: the orchestrator falls back to `default_batch_budget` rather
+/// than to a confidently wrong number.
+fn entry_retry(entry: &hurl_core::ast::Entry) -> Option<(u32, Duration)> {
     let mut retries = 0u32;
     let mut interval = Duration::from_secs(1);
     for kind in entry_options(entry) {
@@ -917,44 +932,70 @@ fn entry_retry(entry: &hurl_core::ast::Entry) -> (u32, Duration) {
             OptionKind::RetryInterval(DurationOption::Literal(duration)) => {
                 interval = ast_duration(duration);
             }
+            // Unestimatable: a placeholder resolves inside hurl at run time,
+            // and an infinite count is unbounded by definition (the pack lint
+            // rejects it; this is the runtime backstop).
+            OptionKind::Retry(
+                CountOption::Literal(Count::Infinite) | CountOption::Placeholder(_),
+            )
+            | OptionKind::RetryInterval(DurationOption::Placeholder(_)) => return None,
             _ => {}
         }
     }
-    (retries, interval)
+    Some((retries, interval))
 }
 
 /// Per-entry `[Options] repeat:` — hurl runs the entry that many times; the
 /// budget must scale with it or legitimate long repeats get abandoned and
 /// blamed on the environment. Default 1; `repeat: -1` saturates (the load
 /// lint rejects it, this is the runtime backstop).
-fn entry_repeat(entry: &hurl_core::ast::Entry) -> u32 {
-    entry_options(entry)
-        .find_map(|kind| match kind {
+fn entry_repeat(entry: &hurl_core::ast::Entry) -> Option<u32> {
+    let mut repeat = 1u32;
+    for kind in entry_options(entry) {
+        match kind {
             OptionKind::Repeat(CountOption::Literal(Count::Finite(count))) => {
-                Some(u32::try_from(*count).unwrap_or(u32::MAX))
+                repeat = u32::try_from(*count).unwrap_or(u32::MAX);
             }
-            OptionKind::Repeat(CountOption::Literal(Count::Infinite)) => Some(u32::MAX),
-            _ => None,
-        })
-        .unwrap_or(1)
+            OptionKind::Repeat(
+                CountOption::Literal(Count::Infinite) | CountOption::Placeholder(_),
+            ) => return None,
+            _ => {}
+        }
+    }
+    Some(repeat)
 }
 
 /// Per-entry `[Options] delay:` — an uninterruptible sleep hurl applies per
 /// attempt; it must be part of the budget or the watchdog kills the scenario.
-fn entry_delay(entry: &hurl_core::ast::Entry) -> Duration {
-    entry_options(entry)
-        .find_map(|kind| match kind {
-            OptionKind::Delay(DurationOption::Literal(duration)) => Some(ast_duration(duration)),
-            _ => None,
-        })
-        .unwrap_or(Duration::ZERO)
+/// The entry's `delay:`, or `None` when it is a placeholder — see
+/// [`entry_retry`] for why an unknown value must not read as zero.
+fn entry_delay(entry: &hurl_core::ast::Entry) -> Option<Duration> {
+    let mut delay = Duration::ZERO;
+    for kind in entry_options(entry) {
+        match kind {
+            OptionKind::Delay(DurationOption::Literal(duration)) => delay = ast_duration(duration),
+            OptionKind::Delay(DurationOption::Placeholder(_)) => return None,
+            _ => {}
+        }
+    }
+    Some(delay)
 }
 
-fn entry_timeout(entry: &hurl_core::ast::Entry) -> Option<Duration> {
-    entry_options(entry).find_map(|kind| match kind {
-        OptionKind::MaxTime(DurationOption::Literal(duration)) => Some(ast_duration(duration)),
-        _ => None,
-    })
+/// The entry's effective timeout, or `None` when a placeholder makes it
+/// unknowable. `default` is used when the option is simply absent — so `None`
+/// carries one meaning here, "cannot estimate", and not two.
+fn entry_timeout(entry: &hurl_core::ast::Entry, default: Duration) -> Option<Duration> {
+    let mut timeout = default;
+    for kind in entry_options(entry) {
+        match kind {
+            OptionKind::MaxTime(DurationOption::Literal(duration)) => {
+                timeout = ast_duration(duration);
+            }
+            OptionKind::MaxTime(DurationOption::Placeholder(_)) => return None,
+            _ => {}
+        }
+    }
+    Some(timeout)
 }
 
 fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {
@@ -966,5 +1007,59 @@ fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {
         Some(DurationUnit::Second) => Duration::from_secs(value),
         Some(DurationUnit::Minute) => Duration::from_secs(value.saturating_mul(60)),
         Some(DurationUnit::Hour) => Duration::from_secs(value.saturating_mul(3600)),
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{entry_delay, entry_repeat, entry_retry};
+
+    fn first_entry(text: &str) -> hurl_core::ast::Entry {
+        hurl_core::parser::parse_hurl_file(text)
+            .unwrap()
+            .entries
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    /// A `{{…}}` timing option is unknowable before hurl runs, so the estimate
+    /// must say so. It used to fall through to the default and report "no
+    /// retries", which under-counts the budget by the whole retry loop — the
+    /// watchdog then abandons a scenario that was retrying exactly as authored
+    /// and reports it as an environment fault.
+    #[test]
+    fn a_templated_timing_option_is_unestimatable_not_zero() {
+        let literal = first_entry("GET http://x\n[Options]\nretry: 3\nHTTP 200\n");
+        assert_eq!(
+            entry_retry(&literal).map(|(retries, _)| retries),
+            Some(3),
+            "a literal count is still counted exactly"
+        );
+
+        let templated = first_entry("GET http://x\n[Options]\nretry: {{n}}\nHTTP 200\n");
+        assert_eq!(
+            entry_retry(&templated),
+            None,
+            "a templated retry must not read as zero retries"
+        );
+
+        let templated_delay = first_entry("GET http://x\n[Options]\ndelay: {{d}}\nHTTP 200\n");
+        assert_eq!(entry_delay(&templated_delay), None);
+
+        let templated_repeat = first_entry("GET http://x\n[Options]\nrepeat: {{r}}\nHTTP 200\n");
+        assert_eq!(entry_repeat(&templated_repeat), None);
+    }
+
+    /// An entry with no timing options at all is fully estimatable — the
+    /// change must not make every batch fall back to the default.
+    #[test]
+    fn a_plain_entry_is_still_estimatable() {
+        let plain = first_entry("GET http://x\nHTTP 200\n");
+        assert_eq!(entry_retry(&plain).map(|(r, _)| r), Some(0));
+        assert_eq!(entry_delay(&plain), Some(std::time::Duration::ZERO));
+        assert_eq!(entry_repeat(&plain), Some(1));
     }
 }
