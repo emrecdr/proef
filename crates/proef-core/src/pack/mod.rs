@@ -342,7 +342,7 @@ pub struct ExpectItem {
 // ---------------------------------------------------------------------------
 
 /// Parse and validate `sources` against the registered engine step `kinds`
-/// (validation passes 1–8, TECH-SPEC §4.1), returning the partial [`PackSet`]
+/// (validation passes 1–13, TECH-SPEC §4.1), returning the partial [`PackSet`]
 /// built from every pack that parses+normalizes AND all diagnostics collected
 /// along the way. A pack that fails to parse contributes only its diagnostic
 /// and is excluded from the set — it never sinks its siblings. This is the

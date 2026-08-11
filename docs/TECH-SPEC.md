@@ -129,6 +129,21 @@ lower a probe instantiation with placeholder params and `parse_hurl_file` it —
 errors reported with block-relative spans mapped to pack file/line; (8) engine kinds:
 every step kind must be claimed by a registered engine's `StepKindSpec`.
 
+Fragments (ADR-0018) add five: (9) a `ref:` must name a loaded fragment → "did you
+mean" over the scanned names, or a pointer at `[run] fragments` when none loaded;
+(10) duplicate fragment name across files → error (qualify `file.hurl#name`, the same
+suffix matching `pack.yaml#name` uses); (11) a step is `ref:` **xor** a payload/`use:`;
+(12) an option family declared both in the fragment's own `[Options]` and as the step's
+YAML key → error (pass 6's twinned-option rule, applied across the file boundary);
+(13) a fragment file the engine's `FragmentSupport::scan` could not read, or an
+annotation it could not attach, positioned in the `.hurl` file itself.
+
+Fragments **skip pass 7**: they parse as authored, so the probe instantiation has
+nothing to guess. Whether every `{{…}}` a fragment reads is actually supplied is
+checked at lower time (§4.4, `proef::lower::unbound_placeholder`) — only lowering
+knows what the preceding steps captured, and a load-time half-check would be worse
+than one complete one.
+
 **4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); tags from
 Feature/Rule/Scenario accumulate. Localized (`# language:`) features are
 supported and test-covered: the crate strips the dialect keywords, proef

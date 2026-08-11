@@ -1,4 +1,4 @@
-//! Pack validation passes 1–8 (TECH-SPEC §4.1).
+//! Pack validation passes 1–13 (TECH-SPEC §4.1).
 //!
 //! 1. `match:` guard rails (literal anchor, no adjacent captures, balanced
 //!    braces, declared params) · 2. params/defaults coverage · 3. duplicate
@@ -10,6 +10,20 @@
 //!    probe-instantiation parse of payload
 //!    blocks via the claiming engine's [`StepKindSpec::validate`] hook ·
 //!    8. every payload kind is claimed by a registered engine.
+//!
+//! Fragments (ADR-0018) add five more: 9. a `ref:` names a loaded fragment ·
+//! 10. no two fragment files declare the same name (in `mod.rs`, at insertion) ·
+//! 11. a step is `ref:` **xor** a payload/`use:` · 12. an option family is not
+//! declared both in the fragment's own `[Options]` and as the step's key —
+//! pass 6's rule applied across the file boundary · 13. a fragment file the
+//! engine's scanner could not read, or an annotation it could not attach (in
+//! `mod.rs`, at scan time).
+//!
+//! Fragments deliberately **skip pass 7**: they parse as authored, so there is
+//! no probe instantiation to guess at. Their `bind:` tables are checked here
+//! for reachability; whether every `{{…}}` is actually supplied is a lower-time
+//! question (`proef::lower::unbound_placeholder`), because only lowering knows
+//! what earlier steps captured.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
