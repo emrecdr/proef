@@ -42,6 +42,8 @@ const CONNECT_TIMEOUT_CAP_MS: u64 = 10_000;
 pub(crate) struct HurlSession {
     artifact: ArtifactRef,
     secrets: Arc<BTreeMap<String, String>>,
+    /// Variable name → secret name for this scenario (ADR-0018).
+    secret_bindings: Arc<BTreeMap<String, String>>,
     redactions: proef_core::report::Redactions,
     http: HttpDefaults,
     file_root: Option<std::path::PathBuf>,
@@ -61,6 +63,7 @@ impl HurlSession {
             artifact,
             redactions: proef_core::report::Redactions::new(ctx.secrets.values().cloned()),
             secrets: Arc::clone(&ctx.secrets),
+            secret_bindings: Arc::clone(&ctx.secret_bindings),
             http: ctx.http,
             file_root: ctx.file_root.clone(),
             scenario: Arc::clone(&ctx.scenario),
@@ -132,8 +135,14 @@ impl HurlSession {
         for (name, value) in world.merged() {
             variables.insert(name.to_owned(), to_hurl_value(value));
         }
-        for (name, value) in self.secrets.iter() {
-            variables.insert_secret(name.clone(), value.clone());
+        // Keyed by the *variable* name the artifact reads, with the value taken
+        // by *secret* name. They match unless a fragment binding renamed one
+        // (ADR-0018), and the map covers every secret the scenario references —
+        // an inline `${secret:X}` maps `X` to itself.
+        for (variable, secret) in self.secret_bindings.iter() {
+            if let Some(value) = self.secrets.get(secret) {
+                variables.insert_secret(variable.clone(), value.clone());
+            }
         }
         variables
     }

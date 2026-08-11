@@ -27,6 +27,13 @@ fn config_vars_for(
         })
 }
 
+/// The configured fragment root as a path, if any (`[run] fragments`). One
+/// place, so a command cannot forget fragments and silently report every
+/// `ref:` as unknown.
+fn fragment_root(config: &ProjectConfig) -> Option<std::path::PathBuf> {
+    config.fragments()
+}
+
 /// Load and validate a suite through the front-end (dry-run mode), mapping a
 /// front-end error to its exit code. The shared load path for `flows`,
 /// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
@@ -38,11 +45,13 @@ fn load_front(
     config: &ProjectConfig,
 ) -> Result<front::FrontEnd, ExitCode> {
     let config_vars = config_vars_for(active_env, config)?;
+    let fragments = fragment_root(config);
     front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         config_vars,
+        fragments.as_deref(),
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -159,9 +168,16 @@ fn validate_phase_features(
     config_vars: &Arc<BTreeMap<String, String>>,
 ) -> Result<usize, ExitCode> {
     let mut scenarios = 0usize;
+    let fragments = fragment_root(config);
     for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
         let Some(path) = path else { continue };
-        let front = crate::exec::load_phase_feature(label, Path::new(path), None, config_vars)?;
+        let front = crate::exec::load_phase_feature(
+            label,
+            Path::new(path),
+            None,
+            config_vars,
+            fragments.as_deref(),
+        )?;
         render::print_all(&front.warnings);
         scenarios += front
             .features
@@ -255,11 +271,13 @@ pub fn dry_run(
         Ok(vars) => vars,
         Err(code) => return code,
     };
+    let fragments = fragment_root(config);
     let result = front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         Arc::clone(&config_vars),
+        fragments.as_deref(),
     );
 
     // SARIF export (shift-left gate): serialize the validation findings —
@@ -438,7 +456,7 @@ pub fn macros(
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(packs) = front::load_packs(path) else {
+            let Ok(packs) = front::load_packs(path, fragment_root(config).as_deref()) else {
                 return code;
             };
             crate::render::errln!(

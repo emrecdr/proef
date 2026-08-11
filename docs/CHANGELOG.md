@@ -6,6 +6,132 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+> **Breaking (library):** `proef_core::pack::load` takes a second
+> `&[PackSource]` of fragment files, between the packs and the step kinds
+> (pass `&[]` for the previous behaviour); `LoweredScenario::secrets` is a
+> `BTreeMap<String, String>` of engine-variable → secret name rather than a
+> `BTreeSet<String>`; `Prepared` and `ScenarioCtx` each gain a
+> `secret_bindings` field carrying that map to the engine.
+
+### Added
+
+- **Packs can name fragments: `ref:` and `bind:` (ADR-0018).** A macro step's body
+  may be `ref: <fragment>` instead of an inline `hurl:` block, and `bind:` supplies the
+  fragment's `{{…}}` variables at pack, macro and step scope, most specific winning.
+  Fragment names are global, and `file.hurl#name` qualifies one — the same two
+  spellings, resolved the same way, that `use:` already accepts.
+
+  Refused at load, each with its own code: a `ref:` naming no loaded fragment
+  (`unknown_ref`, suggesting the closest, and saying so plainly when *no* fragment file
+  was loaded rather than implying a typo); two files declaring one name
+  (`duplicate_fragment`); a file the engine cannot read (`bad_annotation` — its
+  siblings still load); a step that is both `ref:` and a payload
+  (`body_form_conflict`); and `bind:` on a step with no `ref:`
+  (`bind_without_ref` — an inline block takes `${…}`, so that binding would feed
+  nothing, and a setting silently ignored is the bug this refuses to ship).
+
+  A fragment declaring its own retry alongside a step's `retry:` is the same
+  `option_declared_twice` an inline block gets, so the two body forms behave
+  identically rather than differing by where the hurl text happens to live.
+
+  Discovery arrives below, so a `ref:` resolves end to end.
+
+- **`[run] fragments` — the hurl files a pack may `ref:`.** Names one root, scanned
+  recursively for the extensions the registered engines claim, so discovery never learns
+  a file type of its own. Unset means no fragments: there is no convention fallback,
+  because `unknown_ref` saying *"no fragment files were loaded"* beats guessing at a
+  directory.
+
+  **Relative paths resolve against `proef.toml`'s own directory, not the working
+  directory.** The config is found by walking *up* from the cwd, so a path in a config
+  three levels above must mean "relative to the project" — otherwise `proef flows` from a
+  subdirectory reads the right config and then cannot find anything it names. `[run]
+  suite` predates this and stays cwd-relative; it is only consulted when no path was
+  given, so the difference is not observable there.
+
+  The LSP resolves fragments through the same root, so `ref:` does not read as unknown in
+  an editor while the suite runs green. `--watch` retriggers on `.hurl` edits and watches
+  the fragment root separately, since a corpus may live outside the suite. `proef fmt`
+  still refuses `.hurl` in both discovery branches — it locates hurl blocks *inside* YAML,
+  and a corpus proef did not write is not proef's to rewrite — now pinned by a test.
+
+- **Fragments lower, bind, and execute.** A `ref:` step emits the fragment's own text
+  with its non-secret bindings baked in as per-entry `[Options] variable:` lines, so the
+  artifact stays the executed input and replays identically under the stock CLI
+  (ADR-0010). Values are always quoted: `variable_value` tries null/bool/number before
+  string, so an unquoted `records`, `2` and `true` would become three different types by
+  accident.
+
+  Two refusals guard the parts that could otherwise pass silently:
+
+  - `lower::unbound_placeholder` — a fragment reading a `{{variable}}` that no `bind:`
+    in scope supplies and no earlier step captures. hurl's `[Options] variable:`
+    *assigns into one shared set* rather than scoping, so an unbound name would inherit
+    whatever a previous entry happened to leave and run green against the wrong value.
+  - `lower::secret_in_composite_bind` — a `bind:` value mixing `${secret:…}` into a
+    larger string. To inject that, the composite would have to be materialized into the
+    artifact, which ADR-0005 forbids; bind the secret alone and let the fragment spell
+    the surrounding text.
+
+  Secrets keep their own path: recorded as engine-variable → secret name and injected
+  via `insert_secret` at run time, never as an `[Options]` line. That indirection is
+  what lets `bind: { auth_token: ${secret:apiToken} }` give a secret the variable name a
+  corpus proef did not write already uses.
+
+  Bindings resolve **once per scope instantiation** — pack scope once per scenario,
+  macro scope once per invocation, step scope per step — so one binding is one value and
+  two bindings are two. A macro with no `ref:` step resolves nothing, so an unused table
+  never advances the `${fake:…}` counter.
+
+- **The engine seam can describe fragment files (ADR-0018, groundwork).**
+  `StepKindSpec` gains `file_ext` and `scan_fragments`, and `proef-core` gains
+  `ScannedFragment` / `FragmentScanError` / `FragmentScanner`. The hurl engine implements
+  the scanner over hurl's own AST: the `# @proef <name>` annotation is read from the
+  entry's `line_terminators`, so the annotation↔entry binding is exactly as reliable as
+  hurl's parser and no text is scanned for structure. An entry's required inputs and
+  produced captures are read from the same AST, which is what will let an unbound
+  placeholder be an error rather than a runtime surprise.
+
+  Additive only — the public API diff is 44 lines added, 0 removed, and no hurl type
+  appears anywhere in `proef-core`. Discovery asks the registry for the extension instead
+  of naming `.hurl` itself, so this stays ADR-0002's "adding an engine leaves
+  `proef-core` diff-empty" rather than an exception to it. **Nothing observable ships
+  yet:** no pack can reference a fragment until the schema lands.
+
+  A note for whoever extends the scanner: hurl's `Visitor` treats templates as *leaves*,
+  and `visit_template`, `visit_url` and `visit_filename` are three separate no-op
+  defaults that do not forward to one another. Overriding only `visit_template` silently
+  under-reports an entry's inputs — and a missing input reads as "needs no binding".
+
+### Documentation
+
+- **AUTHORING says which body form to reach for, and why.** A table contrasting
+  splicing against binding — what each can substitute, whether it can be reused, whether
+  stock `hurl` can run it, and when an unknown variable is caught — plus the rule that
+  decides it: inline when you need to splice something hurl cannot template
+  (`${docstring}` as a body has no binding equivalent), `ref:` when the request is
+  shared, foreign, or must stand alone. `CONFIG.md` gains `[run] fragments` with a
+  worked three-file example.
+
+- **The hurl non-goal is about generation, not direction (PRD §3 amendment).** It read
+  "importing/round-tripping *hand-written* hurl files into Gherkin (artifacts flow
+  outward only)" — a clause and a parenthetical saying two different things, the
+  parenthetical forbidding hurl text from being an input at all. What the non-goal
+  protects is that proef never authors a test for you, and that reasoning is untouched
+  (ADR-0016 stays declined on it). It does not extend to hurl being an input *source*,
+  which §1's own framing — "there is no tool that joins the two" — describes as the
+  product's purpose. Recorded honestly: OPEN-FINDINGS M3 asked for this re-examination
+  to arrive with a measured port cost, and it has not.
+
+- **ADR-0018 — named hurl fragments.** A macro step's body may be `ref: <fragment>`
+  naming one entry in a real `.hurl` file, annotated `# @proef <name>`, with proef
+  values supplied by an explicit `bind:` map instead of `${…}` splicing. The file stays
+  valid hurl, so the same file runs under `proef test` and under stock `hurl`. Inline
+  `hurl: |` is unchanged and stays: the two are splicing versus binding, with different
+  capability envelopes, and the 844-line corpus port is recorded in the ADR as evidence
+  the inline path is sufficient for real work. No behaviour ships with this entry — the
+  ADR and the charter amendment land first, deliberately.
+
 ### Fixed
 
 - **A step that set `retry:` twice ran the value it did not name.** A pack could
@@ -24,6 +150,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `name: value` like an option is, so a line-shaped match would have turned an
   ordinary header into a hard error. Pinned by a test that a header named `retry`
   on a step carrying a typed `retry:` still loads.
+
 
 ## [0.9.0] - 2026-08-11 (tool-surface integrity & authoring guidance)
 

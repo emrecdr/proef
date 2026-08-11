@@ -243,6 +243,23 @@ is whether a team with an existing hurl suite can move onto proef and
 **demonstrate** they lost nothing. M1 and M2 are that story. E1 is the first wall
 a real suite hits afterwards.
 
+**ADR-0018 (named hurl fragments) lands into this section — read it against these
+items before assuming what it closes.** It lets a pack `ref:` a named entry in a real
+`.hurl` file, so a corpus file is annotated once instead of transcribed, and stays
+runnable under stock `hurl`. Item by item:
+
+- **M1** is *not* closed and must not be built concurrently — both touch `fmt`
+  discovery. ADR-0018 requires the opposite of M1 at one entry point (directory
+  discovery must never sweep `.hurl` into the pack formatter) while leaving M1's actual
+  ask untouched (an explicitly named `.hurl` may be canonicalized). Sequence them,
+  either order, never at once.
+- **M2** is *not* closed. ADR-0018's integration test runs one fragment both ways,
+  which proves a file is dual-runnable; it does not compare two suites' result sets.
+- **M3** is *unanswered and now overtaken*: the charter re-examination M3 asked for has
+  happened (PRD §3 amendment) without the measurement it asked it to rest on. The
+  amendment argues from the non-goal's own rationale instead, and says so. Measuring
+  the port cost is still worth doing — it now informs priority rather than permission.
+
 ### M1 — `fmt` cannot canonicalize a standalone `.hurl` *(report A2, reframed)*
 
 **The report had this backwards** and it is worth recording why. It claimed `fmt`

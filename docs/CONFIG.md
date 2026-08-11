@@ -22,6 +22,7 @@ active `[env.<name>]` < command-line flags. For a suite variable that means
 # ── runner config (how the tool behaves) ────────────────────────
 [run]
 suite    = "tests"          # default suite path — `proef test` needs no argument
+fragments = "tests/hurl"    # root of the hurl files packs may `ref:` (optional)
 jobs     = 8                # parallel scenario workers
 runs-dir = ".proef-runs"    # where run records land
 setup    = "tests/setup.feature"      # run once before the pool (optional)
@@ -116,6 +117,53 @@ This is distinct from hurl's per-request `duration < <ms>` assert (which fails o
 inside a `hurl:` block): the `[sla]` gate is an aggregate budget over the *whole run*, while
 `duration <` is a targeted per-request check. Use the assert for a hard per-endpoint SLA and
 `[sla]` for a suite-wide budget.
+
+## Hurl fragments (`[run] fragments`)
+
+Names the root directory holding the `.hurl` files a pack may `ref:` (ADR-0018), scanned
+recursively. Those files stay **valid hurl** — the `# @proef <name>` annotation is an
+ordinary comment — so the same file runs under `hurl` and under proef, and a corpus you
+already own is annotated once instead of transcribed into YAML where it drifts.
+
+```toml
+[run]
+fragments = "tests/hurl"
+```
+
+```hurl
+# tests/hurl/admin.hurl — runs as-is under `hurl --variables-file …`
+# @proef admin.search
+GET {{base}}/api/v1/admin/search/{{index}}
+Authorization: Bearer {{apiToken}}
+[Query]
+q: {{q}}
+HTTP 200
+```
+
+```yaml
+# the pack supplies the fragment's variables; nothing is implicit
+bind:
+  base:     ${url:base}          # pack scope — every macro in the file
+  apiToken: ${secret:apiToken}   # injected at run time, never into an artifact
+macros:
+  search:
+    params: [q, index]
+    defaults: { index: records }
+    match: "the operator searches for {q}"
+    bind: { q: "${q}", index: "${index}" }   # macro scope
+    steps:
+      - ref: admin.search
+```
+
+Relative paths resolve against **this file's directory**, not the working directory, so
+the root may sit outside the suite — even outside the repo — and the config still works
+from any subdirectory. There is no convention fallback: with the key unset a `ref:`
+reports `proef::pack::unknown_ref` and says no fragment files were loaded, which beats
+guessing at a directory. Entries with no `# @proef` annotation are inert, so pointing at
+a corpus you did not write costs nothing until a pack names one of its requests.
+
+`proef fmt` never touches these files: it normalizes hurl blocks *inside packs* by
+locating them in YAML, and a corpus you do not own is not proef's to rewrite.
 
 ## Suite setup & teardown (`[run] setup` / `[run] teardown`)
 

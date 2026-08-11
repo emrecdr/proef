@@ -39,11 +39,41 @@ scenarios, `--dry-run` validation gate, and (M5) a libtest-mimic harness so
 ## 3. Non-goals (v1)
 
 Further engines (designed-for, not built — M6+); a desktop dashboard or server
-mode (precedent exists when needed); importing/round-tripping *hand-written* hurl
-files into Gherkin (artifacts flow outward only); OpenTelemetry export (semconv still
+mode (precedent exists when needed); **generating** Gherkin, macros, or prose from
+hand-written hurl files (see the amendment below); OpenTelemetry export (semconv still
 immature — JSONL is the source of truth); dynamic plugin loading; Windows-static or
 musl-static binaries (dynamically linked like hurl's own — consequence of ADR-0001);
 API mocking/contract testing; load testing.
+
+### Amendment (2026-08-11): the hurl non-goal is about *generation*, not direction
+
+This non-goal previously read "importing/round-tripping *hand-written* hurl files into
+Gherkin (artifacts flow outward only)". The clause and its parenthetical said two
+different things, and the parenthetical was the broader of the two: read literally it
+forbids hurl text being an *input* at all, which ADR-0018 (named hurl fragments) needs
+it not to.
+
+What the non-goal protects is that **proef never authors a test for you**. A suite's
+prose and its binding vocabulary are written by people, deliberately; a tool that
+derives them from an existing corpus produces scenarios nobody chose the words for,
+and the review that makes a feature file worth having never happens. That reasoning is
+untouched, and ADR-0016 (OpenAPI generation) stays declined on the same ground.
+
+It does not extend to hurl text being an input *source*. A macro pack is already an
+input written in a non-Gherkin language; a `.hurl` file naming reusable fragments is
+another, and §1's own framing — "the backend team maintains a corpus of hand-written
+Hurl files as its API-testing lingua franca. There is no tool that joins the two" —
+describes joining that corpus as the product's purpose, not as a boundary. Nothing is
+generated: features and macros stay hand-authored, and a fragment is inert until a
+macro names it. The worklist reached the same reading independently for a different
+item (OPEN-FINDINGS M2: "the non-goal forecloses a direction of data flow, not the
+ability to check your own work").
+
+**Recorded honestly:** M3 asked that this charter be re-examined *with* a measured
+port cost, and that measurement does not exist. The narrowing is therefore argued from
+the non-goal's own rationale rather than from evidence that pasting is expensive. If
+the measurement later shows pasting is cheap, that argues about *priority* — it does
+not restore a prohibition this amendment finds was never the point.
 
 ## 4. Users & personas
 
@@ -55,8 +85,10 @@ their line, not internals.
 asserts. Cares about: pack readability (raw hurl blocks, ADR-0004), schema autocomplete,
 load-time validation with did-you-mean hints, safe refactors (duplicate/cycle detection).
 **P3 — Backend engineer** (owns the hurl corpus). Consumes emitted artifacts; pastes
-between corpus and packs. Cares about: artifacts being idiomatic hurl, never containing
-secrets, runnable standalone.
+between corpus and packs, or — since ADR-0018 — annotates a corpus file once and lets
+packs name its entries, so the same file stays runnable under stock `hurl`. Cares
+about: artifacts being idiomatic hurl, never containing secrets, runnable standalone;
+and that proef reading their corpus never edits or reformats it.
 **P4 — CI pipeline** (machine). Cares about: stable exit codes, JUnit/JSONL outputs,
 deterministic behavior, bounded runtime (cancellation/budgets, ADR-0007), the canary job.
 

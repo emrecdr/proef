@@ -9,6 +9,7 @@
 //! executes scenario artifacts via the embedded `run_entries` (see the
 //! `session` module source for the adapter mechanics).
 
+mod fragment;
 mod session;
 
 use proef_core::engine::{
@@ -26,11 +27,14 @@ const PROBE_HURL: &str = "GET http://localhost/health\nHTTP 200\n";
 
 /// Step kinds claimed by this engine: the `hurl:` raw block (ADR-0004,
 /// TECH-SPEC §6 — the pack key doubles as the routing kind). The validate hook
-/// is pack validation pass 7's probe parser.
+/// is pack validation pass 7's probe parser; the fragment hooks are ADR-0018's
+/// `.hurl` scanner, which reads named entries out of real hurl files.
 const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
     prefix: "hurl",
     schema: r#"{ "type": "string", "description": "Raw hurl entries; ${…} lowered at author time, {{…}} resolved by hurl at run time" }"#,
     validate: Some(validate_payload),
+    file_ext: Some("hurl"),
+    scan_fragments: Some(fragment::scan),
 }];
 
 /// The compiled-in hurl engine, registered by `proef-cli` (ADR-0002).

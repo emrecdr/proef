@@ -82,7 +82,17 @@ pub struct StepBatch { pub index: usize /* scenario-wide ordinal */, pub engine:
 
 // engine.rs — the seam (ADR-0002); see ADR text for EngineFactory/EngineSession
 pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* JSON-Schema frag */,
-                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>> }
+                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>>,
+                          // fragment files (ADR-0018): discovery asks for the extension rather
+                          // than naming one, and the engine's own parser does the reading
+                          pub file_ext: Option<&'static str> /* "hurl" */,
+                          pub scan_fragments: Option<FragmentScanner> }
+pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+// Everything here is *read* from the entry — nothing is declared twice, so nothing can drift
+pub struct ScannedFragment { pub name: Option<String> /* `# @proef <name>` */, pub text: String,
+                             pub line: usize, pub placeholders: Vec<String> /* reads */,
+                             pub captures: Vec<String> /* writes */, pub declares_retry: bool }
+pub struct FragmentScanError { pub line: usize, pub column: usize, pub message: String }
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,
@@ -192,6 +202,8 @@ field), the console, JUnit, and the GitHub summary.
 ## 6. Pack schema v1 (normative field reference)
 
 ```yaml
+bind:                         # pack-scope fragment bindings (ADR-0018); macro and
+  <var>: "${…}"               # step scope override, most specific winning
 macros:
   <macroName>:                # unique across packs; qualify as pack.yaml#name on clash
     params: [a, b]            # required unless defaulted
@@ -206,10 +218,14 @@ macros:
         retry: { count: N, interval_ms: M }   # finite only (lint); → [Options] retry
         saveAs: { captureName: global }        # promote capture(s) into the World
                               # (refused with a warning if the value equals a secret)
+        bind: { <var>: "…" }  # step-scope fragment bindings (only with `ref:`)
         hurl: |               # PRIMARY form (ADR-0004): raw hurl, ${…} lowered first,
           …                   # {{…}} left for run time; validated by parse_hurl_file
         # OR structured payload (reserved for future non-hurl engines):
         # <kind>: { … }  (a future engine's structured payload)
+      - ref: file.hurl#name   # ALTERNATE form (ADR-0018): one `# @proef <name>` entry
+                              # of a scanned fragment file; `{{…}}` supplied by bind:,
+                              # every one bound or captured by an earlier step
       - use: pack.yaml#other  # composition, with:/inline args; cycle+depth checked
         with: { a: "${a}" }
     expect:                   # assert-only macro (Then-steps): merges into previous entry

@@ -16,6 +16,7 @@ use proef_core::error::ExitCode;
 pub fn watch_loop(
     path: &Path,
     config_path: Option<&Path>,
+    fragments: Option<&Path>,
     mut once: impl FnMut(CancellationToken) -> ExitCode,
 ) -> ExitCode {
     // `proef.toml` lives above the suite, so the recursive watch below never
@@ -44,6 +45,10 @@ pub fn watch_loop(
                         e.eq_ignore_ascii_case("feature")
                             || e.eq_ignore_ascii_case("yaml")
                             || e.eq_ignore_ascii_case("yml")
+                            // Fragment files are suite inputs too (ADR-0018):
+                            // editing one changes what a `ref:` executes, so a
+                            // watch that ignored them would show stale results.
+                            || e.eq_ignore_ascii_case("hurl")
                     })
             });
             if authored {
@@ -61,6 +66,18 @@ pub fn watch_loop(
         crate::render::errln!("error: cannot watch {}: {err}", path.display());
         return ExitCode::SystemError;
     }
+    // A fragment root may sit outside the suite (a corpus in another repo), so
+    // the recursive suite watch above does not necessarily cover it. Same
+    // warn-do-not-fail rule as the config: the suite watch is the primary one.
+    if let Some(fragments) = fragments
+        && let Err(err) = watcher.watch(fragments, RecursiveMode::Recursive)
+    {
+        crate::render::errln!(
+            "warning: cannot watch {} (fragment edits will not retrigger): {err}",
+            fragments.display()
+        );
+    }
+
     // Watched as a single file, not recursively: its directory is the project
     // root, which may hold anything. A config that cannot be watched is a
     // warning, not a failure — the suite watch above is the primary one.

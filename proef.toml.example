@@ -13,6 +13,14 @@
 # Unset falls back to the `tests/` convention. An explicit path always wins.
 # suite = "tests"
 
+# Root holding the hurl files a pack may `ref:` (ADR-0018), scanned recursively.
+# Those files stay valid hurl — the `# @proef <name>` annotation is a comment — so
+# the same file runs under `hurl` and under proef, and a corpus you already own is
+# annotated once instead of transcribed. Relative paths resolve against this file's
+# directory, so the root may sit outside the suite (even outside the repo).
+# Unset means no fragments; there is no convention fallback.
+# fragments = "tests/hurl"
+
 # Parallel scenario workers. Default: available parallelism, capped by scenario count.
 # jobs = 4
 

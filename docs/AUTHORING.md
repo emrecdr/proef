@@ -103,6 +103,47 @@ run as their own batch so a failure cannot poison neighbours.
 assert lines merge into the *previous* request entry (a `Then` before any
 `When` is an error).
 
+### `hurl:` or `ref:` — two body forms, chosen by capability
+
+A step's body is an inline `hurl:` block **or** a `ref:` naming an entry in a
+real `.hurl` file (ADR-0018). They are not two spellings of one thing, so the
+choice is not a matter of taste:
+
+| | `hurl: \|` | `ref: name` |
+|---|---|---|
+| variables | `${…}` **spliced** before hurl parses | `{{…}}` **bound** via `bind:` |
+| can substitute | anything, anywhere — including a whole multi-line docstring body | only what hurl can template |
+| reuse | none: the block has no name | any number of macros, each binding differently |
+| runs under stock `hurl` | no | yes, unchanged |
+| unknown variable | caught when the artifact is parsed | caught at `--dry-run`, by name |
+
+**Reach for inline** for a request only this macro makes, and always when you
+need to splice something hurl cannot template — `${docstring}` as a request
+body is the clearest case, since a bound value is a single-line scalar.
+
+**Reach for `ref:`** when the same request serves several macros, when the hurl
+was written by somebody else, or when the file must stay runnable on its own.
+
+```yaml
+bind:                              # pack scope — every macro in this file
+  base:     ${url:base}
+  apiToken: ${secret:apiToken}     # injected at run time, never into an artifact
+macros:
+  search:
+    params: [q]
+    match: "the operator searches for {q}"
+    bind: { q: "${q}" }            # macro scope
+    steps:
+      - ref: admin.search
+        bind: { index: records }   # step scope — the most specific wins
+```
+
+Set `[run] fragments` to the directory holding those files (see
+[CONFIG.md](CONFIG.md)). Every `{{variable}}` a fragment reads must be bound in
+one of the three scopes or captured by an earlier step; nothing is implicit,
+because hurl's per-entry `variable:` assigns into one shared set rather than
+scoping, so an unbound name would quietly inherit an earlier entry's value.
+
 ## Asserting responses — the hurl vocabulary
 
 Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the

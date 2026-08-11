@@ -47,6 +47,11 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::adjacent_captures` | `{a} {b}` with no literal between captures | ✓ |
 | `pack::default_not_param` | A `defaults:` key that is not a declared param | ✓ |
 | `pack::bad_save_target` | `saveAs:` target other than `global` | |
+| `pack::unknown_ref` | `ref:` names no loaded fragment (suggests the closest) | ✓ |
+| `pack::duplicate_fragment` | Two fragment files declare the same `# @proef` name | |
+| `pack::bad_annotation` | A fragment file the engine's parser could not read, or an annotation it could not attach | |
+| `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
+| `pack::bind_without_ref` | `bind:` on a step with no `ref:` — an inline block takes `${…}` instead | ✓ |
 | `pack::unknown_use` | `use:` names no known macro | ✓ |
 | `pack::use_cycle` | `use:` composition forms a cycle | ✓ |
 | `pack::use_too_deep` | `use:` nesting exceeds depth 32 | |
@@ -77,6 +82,8 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `lower::bad_status` | `expect: status:` is not an HTTP status number | |
 | `lower::kind_unrouted` | Internal safety net: a lowered step's kind maps to no engine (registry drift — unreachable through the CLI, which is why it has no corpus case) | |
 | `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
+| `lower::unbound_placeholder` | A fragment reads a `{{variable}}` that no `bind:` in scope supplies and no earlier step captures | |
+| `lower::secret_in_composite_bind` | A `bind:` value mixes `${secret:…}` into a larger string — bind the secret alone and put the surrounding text in the fragment | |
 | `lower::dry_run_unknown` | A runtime-only global under `--dry-run` (*warning*) | |
 
 ## `proef::resolve::*` — `${…}` variable resolution
@@ -107,6 +114,11 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 ## Coverage note
 
-27 of the 61 codes carry a seeded corpus case today; the corpus guard asserts
+The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
+`lower::unbound_placeholder`, `lower::secret_in_composite_bind`) are covered in
+`crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
+`[run] fragments` root, and the seeded corpus is deliberately config-independent.
+
+30 of the 68 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
