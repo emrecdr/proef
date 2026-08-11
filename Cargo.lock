@@ -1727,6 +1727,7 @@ dependencies = [
  "proef-engine-hurl",
  "proef-fixture",
  "proef-lsp",
+ "proptest",
  "quick-junit",
  "quick-xml",
  "rpassword",

@@ -434,6 +434,15 @@ Found while fixing the above; each was validated and consciously left out of sco
 - **`fmt`'s tie-break** (equal CRLF/LF → LF) now applies only to the trailing newline
   of a file that lacked one — per-line endings are preserved (#33). Lone-`\r` files are
   still unhandled: the splitter keys on `\n`, so a classic-Mac file is one long line.
+- **`normalize_pack` keeps the skeleton verbatim by construction at each `push`, not
+  by the algorithm's shape.** The "hurl blocks only" promise has broken three times
+  (#18 line endings, #33 mixed endings, #40 trailing whitespace), each caught by an
+  example pinning that one instance. #44 added properties — skeleton-only text round-trips
+  byte-for-byte, and formatting is a fixed point — so a fourth over-reach now fails CI
+  instead of shipping. The structural version would locate each block's byte span and
+  splice the canonicalized body back into the original text, making "bytes outside a
+  span are never visited" a property of the shape. **Not worth the rewrite for a small
+  textual formatter; revisit if a fourth normalization rule is ever added to that loop.**
 - **The stdout latch's single-reader test isolation** is safe under the mandated nextest
   (one process per test) but is a convention, not an enforced invariant.
 - **A disk filling mid-run** still truncates the human console report without reaching the
