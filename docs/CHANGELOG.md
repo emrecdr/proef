@@ -8,6 +8,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A failing run says when the scaffold's *routes* are still placeholders.**
+  The scaffold has two halves to fill in, and a reader can have done either.
+  Someone who follows `init`'s instruction — point `${url:base}` at your API —
+  then hits the other half: `/health` and `/search` 404, and the target-side
+  note deliberately cannot fire, because they *did* configure a target. They had
+  been told about the routes once, parenthetically, two commands earlier. Now
+  they are told at the failure. Decided from the pack's bytes, never from what
+  the server answered: a 404 proves a route is missing, not that it is a
+  placeholder, and inferring the second from the first is the class of claim
+  removed in 0.8.0. The two notes are mutually exclusive — a reader with one
+  unfinished half is told about that half, not handed a list.
+
+### Fixed
+
 - **`--dry-run`'s "next" command is the run that was validated.** After
   `--dry-run --env prod --tags smoke` it printed a bare `proef test`, which is a
   *different* run — another `[url] base` from the profile, and every scenario

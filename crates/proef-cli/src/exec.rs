@@ -74,7 +74,40 @@ fn is_unconfigured_target(
             .is_some_and(|base| base == crate::init::SCAFFOLD_BASE)
 }
 
-fn note_unconfigured_target(config_vars: &BTreeMap<String, String>, summary: &runner::RunSummary) {
+/// Are the suite's macro packs still byte-for-byte what `proef init` wrote?
+///
+/// The scaffold has two halves to fill in — the target and the routes — and a
+/// reader can have done either one. `init` says so once, parenthetically, two
+/// commands before the failure. Someone who follows that instruction and points
+/// `[url] base` at their API then hits the *other* half: the placeholder routes
+/// 404, and the target-side note above deliberately cannot fire, because they
+/// did configure a target.
+///
+/// Decided from the file, never from what the server answered. A 404 proves a
+/// route is missing, not that it is a placeholder — inferring the second from
+/// the first is the class of claim #28 removed.
+fn scaffold_routes_untouched(suite: &Path) -> bool {
+    let pack = suite.join("packs").join("api.yaml");
+    let Ok(text) = std::fs::read_to_string(&pack) else {
+        return false;
+    };
+    // `init` installs the editor modeline as the pack's first line, so the file
+    // is never byte-identical to the template on its own.
+    let body = text
+        .strip_prefix("# yaml-language-server:")
+        .and_then(|rest| rest.split_once('\n'))
+        .map_or(text.as_str(), |(_, rest)| rest);
+    body == crate::init::PACK
+}
+
+/// One note, two mutually exclusive halves: nothing was reachable, or the
+/// routes were never filled in. Never both — a reader with one unfinished half
+/// should be told about that half, not handed a list.
+fn note_scaffold_state(
+    config_vars: &BTreeMap<String, String>,
+    summary: &runner::RunSummary,
+    suite: &Path,
+) {
     let overridden = matches!(crate::envvar::read("PROEF_BASE_URL"), Ok(Some(_)));
     if is_unconfigured_target(config_vars, overridden, summary) {
         crate::render::errln!(
@@ -82,6 +115,13 @@ fn note_unconfigured_target(config_vars: &BTreeMap<String, String>, summary: &ru
              the starter value.\n      \
              point it at your API in proef.toml (or export PROEF_BASE_URL). If this \
              is a fresh `proef init` scaffold, its routes are placeholders too."
+        );
+    } else if scaffold_routes_untouched(suite) {
+        crate::render::errln!(
+            "note: the routes in {} are still the `proef init` placeholders — \
+             `/health` and `/search` are examples, not your API.\n      \
+             edit that pack to name your API's real routes.",
+            suite.join("packs").display()
         );
     }
 }
@@ -598,7 +638,7 @@ pub fn execute(
     // `system error` and no way to know the tool is working as intended. The
     // run's own outcomes decide, not the config alone — see the predicate.
     if exit != ExitCode::Success {
-        note_unconfigured_target(&config_vars, &summary);
+        note_scaffold_state(&config_vars, &summary, path);
     }
 
     // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
