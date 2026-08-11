@@ -30,6 +30,8 @@
 //!             prefix: "null",
 //!             schema: "true",
 //!             validate: None,
+//!             file_ext: None,
+//!             scan_fragments: None,
 //!         }];
 //!         KINDS
 //!     }
@@ -106,10 +108,65 @@ pub struct StepKindSpec {
     /// Probe-validate a lowered payload text (`None` = no static validation).
     /// Keeps the core engine-agnostic: the hurl parser stays behind the seam.
     pub validate: Option<PayloadValidator>,
+    /// File extension of this kind's **fragment** files, without the dot
+    /// (`"hurl"`); `None` when the kind has no fragment form. Source discovery
+    /// asks the registry for this rather than naming a file type itself, so
+    /// adding an engine never teaches the CLI a new extension (ADR-0002).
+    pub file_ext: Option<&'static str>,
+    /// Scan a fragment file into its entries (`None` = no fragment support).
+    /// The engine's own parser does the reading; the core only ever sees the
+    /// neutral [`ScannedFragment`] (ADR-0018).
+    pub scan_fragments: Option<FragmentScanner>,
 }
 
 /// An engine-contributed static payload validator (pack validation pass 7).
 pub type PayloadValidator = fn(&str) -> Result<(), PayloadProbeError>;
+
+/// An engine-contributed reader for one fragment file's whole text (ADR-0018).
+pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+
+/// One entry of a fragment file, as the claiming engine's own parser sees it.
+///
+/// Engine-agnostic by construction: `proef-core` never learns a hurl type, and
+/// a future engine fills the same shape from its own AST. Everything here is
+/// *read* from the entry — nothing is declared separately and nothing can
+/// therefore drift from the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedFragment {
+    /// The `# @proef <name>` annotation, when the entry carries one. `None` is
+    /// an ordinary unannotated entry: inert, and silent — a corpus proef did
+    /// not write is expected to be mostly these.
+    pub name: Option<String>,
+    /// The entry's own source text, annotation included (provenance survives
+    /// into the artifact).
+    pub text: String,
+    /// 1-based line the entry starts on, for diagnostics.
+    pub line: usize,
+    /// Every variable the entry *reads*, in first-seen order — its required
+    /// inputs.
+    pub placeholders: Vec<String>,
+    /// Every variable the entry *produces*, in first-seen order.
+    pub captures: Vec<String>,
+    /// Whether the entry sets its own retry policy, which a referencing step
+    /// may then not also set (`proef::pack::option_declared_twice`).
+    pub declares_retry: bool,
+}
+
+/// A fragment file the claiming engine's parser could not read (1-based
+/// line/column **within that file**).
+///
+/// Distinct from [`PayloadProbeError`] despite the same shape: that one is
+/// positioned inside a pack's payload block and gets mapped onto the pack
+/// file, this one already points at a real file of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FragmentScanError {
+    /// 1-based line within the fragment file.
+    pub line: usize,
+    /// 1-based column within that line.
+    pub column: usize,
+    /// Parser message.
+    pub message: String,
+}
 
 /// A syntax problem found while probe-validating a step payload
 /// (1-based line/column **within the payload text**; the pack loader maps it

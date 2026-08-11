@@ -12,6 +12,8 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
     prefix: "hurl",
     schema: "true",
     validate: None,
+    file_ext: None,
+    scan_fragments: None,
 }];
 
 fuzz_target!(|data: &[u8]| {

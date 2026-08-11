@@ -724,6 +724,8 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        file_ext: None,
+        scan_fragments: None,
     }];
 
     const PACK: &str = r#"macros:
@@ -976,6 +978,8 @@ mod tests {
             prefix: "alt",
             schema: "true",
             validate: None,
+            file_ext: None,
+            scan_fragments: None,
         }];
         let packs = pack::load(
             &[PackSource {

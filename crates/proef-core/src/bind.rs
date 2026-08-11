@@ -285,6 +285,8 @@ mod tests {
         prefix: "hurl",
         schema: "true",
         validate: None,
+        file_ext: None,
+        scan_fragments: None,
     }];
 
     fn packs() -> PackSet {

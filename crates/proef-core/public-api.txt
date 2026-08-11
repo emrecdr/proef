@@ -380,6 +380,25 @@ impl core::marker::Unpin for proef_core::engine::EngineId
 impl core::marker::UnsafeUnpin for proef_core::engine::EngineId
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::EngineId
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::EngineId
+pub struct proef_core::engine::FragmentScanError
+pub proef_core::engine::FragmentScanError::column: usize
+pub proef_core::engine::FragmentScanError::line: usize
+pub proef_core::engine::FragmentScanError::message: alloc::string::String
+impl core::clone::Clone for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::clone(&self) -> proef_core::engine::FragmentScanError
+impl core::cmp::Eq for proef_core::engine::FragmentScanError
+impl core::cmp::PartialEq for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::eq(&self, &proef_core::engine::FragmentScanError) -> bool
+impl core::fmt::Debug for proef_core::engine::FragmentScanError
+pub fn proef_core::engine::FragmentScanError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::FragmentScanError
+impl core::marker::Freeze for proef_core::engine::FragmentScanError
+impl core::marker::Send for proef_core::engine::FragmentScanError
+impl core::marker::Sync for proef_core::engine::FragmentScanError
+impl core::marker::Unpin for proef_core::engine::FragmentScanError
+impl core::marker::UnsafeUnpin for proef_core::engine::FragmentScanError
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::FragmentScanError
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentScanError
 pub struct proef_core::engine::HttpDefaults
 pub proef_core::engine::HttpDefaults::follow_location: bool
 pub proef_core::engine::HttpDefaults::timeout_ms: u64
@@ -416,6 +435,28 @@ impl core::marker::Unpin for proef_core::engine::PayloadProbeError
 impl core::marker::UnsafeUnpin for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeError
+pub struct proef_core::engine::ScannedFragment
+pub proef_core::engine::ScannedFragment::captures: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::declares_retry: bool
+pub proef_core::engine::ScannedFragment::line: usize
+pub proef_core::engine::ScannedFragment::name: core::option::Option<alloc::string::String>
+pub proef_core::engine::ScannedFragment::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::text: alloc::string::String
+impl core::clone::Clone for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::clone(&self) -> proef_core::engine::ScannedFragment
+impl core::cmp::Eq for proef_core::engine::ScannedFragment
+impl core::cmp::PartialEq for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::eq(&self, &proef_core::engine::ScannedFragment) -> bool
+impl core::fmt::Debug for proef_core::engine::ScannedFragment
+pub fn proef_core::engine::ScannedFragment::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::ScannedFragment
+impl core::marker::Freeze for proef_core::engine::ScannedFragment
+impl core::marker::Send for proef_core::engine::ScannedFragment
+impl core::marker::Sync for proef_core::engine::ScannedFragment
+impl core::marker::Unpin for proef_core::engine::ScannedFragment
+impl core::marker::UnsafeUnpin for proef_core::engine::ScannedFragment
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScannedFragment
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScannedFragment
 pub struct proef_core::engine::ScenarioCtx
 pub proef_core::engine::ScenarioCtx::artifact: core::option::Option<proef_core::engine::ArtifactRef>
 pub proef_core::engine::ScenarioCtx::file_root: core::option::Option<std::path::PathBuf>
@@ -435,7 +476,9 @@ impl core::marker::UnsafeUnpin for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScenarioCtx
 pub struct proef_core::engine::StepKindSpec
+pub proef_core::engine::StepKindSpec::file_ext: core::option::Option<&'static str>
 pub proef_core::engine::StepKindSpec::prefix: &'static str
+pub proef_core::engine::StepKindSpec::scan_fragments: core::option::Option<proef_core::engine::FragmentScanner>
 pub proef_core::engine::StepKindSpec::schema: &'static str
 pub proef_core::engine::StepKindSpec::validate: core::option::Option<proef_core::engine::PayloadValidator>
 impl core::clone::Clone for proef_core::engine::StepKindSpec
@@ -459,6 +502,7 @@ pub trait proef_core::engine::EngineSession: core::marker::Send
 pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::step::StepBatch) -> core::option::Option<core::time::Duration>
 pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
+pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<alloc::vec::Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
 pub mod proef_core::error
 pub enum proef_core::error::CoreError

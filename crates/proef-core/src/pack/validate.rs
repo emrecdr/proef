@@ -806,6 +806,8 @@ mod tests {
         prefix: "alt",
         schema: "true",
         validate: Some(deny),
+        file_ext: None,
+        scan_fragments: None,
     }];
 
     /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
@@ -924,6 +926,8 @@ mod tests {
             prefix: "alt",
             schema: "true",
             validate: None,
+            file_ext: None,
+            scan_fragments: None,
         }];
         use std::fmt::Write as _;
         let mut yaml = String::from("macros:\n");

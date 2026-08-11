@@ -82,7 +82,17 @@ pub struct StepBatch { pub index: usize /* scenario-wide ordinal */, pub engine:
 
 // engine.rs — the seam (ADR-0002); see ADR text for EngineFactory/EngineSession
 pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* JSON-Schema frag */,
-                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>> }
+                          pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>>,
+                          // fragment files (ADR-0018): discovery asks for the extension rather
+                          // than naming one, and the engine's own parser does the reading
+                          pub file_ext: Option<&'static str> /* "hurl" */,
+                          pub scan_fragments: Option<FragmentScanner> }
+pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+// Everything here is *read* from the entry — nothing is declared twice, so nothing can drift
+pub struct ScannedFragment { pub name: Option<String> /* `# @proef <name>` */, pub text: String,
+                             pub line: usize, pub placeholders: Vec<String> /* reads */,
+                             pub captures: Vec<String> /* writes */, pub declares_retry: bool }
+pub struct FragmentScanError { pub line: usize, pub column: usize, pub message: String }
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,

@@ -6,6 +6,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The engine seam can describe fragment files (ADR-0018, groundwork).**
+  `StepKindSpec` gains `file_ext` and `scan_fragments`, and `proef-core` gains
+  `ScannedFragment` / `FragmentScanError` / `FragmentScanner`. The hurl engine implements
+  the scanner over hurl's own AST: the `# @proef <name>` annotation is read from the
+  entry's `line_terminators`, so the annotation↔entry binding is exactly as reliable as
+  hurl's parser and no text is scanned for structure. An entry's required inputs and
+  produced captures are read from the same AST, which is what will let an unbound
+  placeholder be an error rather than a runtime surprise.
+
+  Additive only — the public API diff is 44 lines added, 0 removed, and no hurl type
+  appears anywhere in `proef-core`. Discovery asks the registry for the extension instead
+  of naming `.hurl` itself, so this stays ADR-0002's "adding an engine leaves
+  `proef-core` diff-empty" rather than an exception to it. **Nothing observable ships
+  yet:** no pack can reference a fragment until the schema lands.
+
+  A note for whoever extends the scanner: hurl's `Visitor` treats templates as *leaves*,
+  and `visit_template`, `visit_url` and `visit_filename` are three separate no-op
+  defaults that do not forward to one another. Overriding only `visit_template` silently
+  under-reports an entry's inputs — and a missing input reads as "needs no binding".
+
 ### Documentation
 
 - **The hurl non-goal is about generation, not direction (PRD §3 amendment).** It read
