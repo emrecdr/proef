@@ -166,13 +166,18 @@ pub fn execute(
 
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
-    let fragments = config.fragments();
+    // Read once for the whole invocation: this same corpus serves the suite's
+    // validation pass, both phase validations and both phase runs (ADR-0018).
+    let fragments = match crate::commands::corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
     let mut front = match front::run(
         path,
         ResolveMode::DryRun,
         run_id,
         Arc::clone(&config_vars),
-        fragments.as_deref(),
+        &fragments,
     ) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
@@ -191,7 +196,7 @@ pub fn execute(
             Path::new(teardown),
             None,
             &config_vars,
-            fragments.as_deref(),
+            &fragments,
         )
     {
         return code;
@@ -352,7 +357,7 @@ pub fn execute(
             &phase_sink("setup", sink.clone()),
             &cancel,
             &artifacts_dir,
-            fragments.as_deref(),
+            &fragments,
         ) {
             Err(code) => return code,
             Ok(summary) => {
@@ -457,7 +462,7 @@ pub fn execute(
             &phase_sink("teardown", sink.clone()),
             &teardown_cancel,
             &artifacts_dir,
-            fragments.as_deref(),
+            &fragments,
         ) {
             // The phase's own exit code, not a blanket 3: a teardown path that
             // does not exist is a user error like any other, and flattening it
@@ -906,7 +911,7 @@ pub(crate) fn load_phase_feature(
     path: &Path,
     run_id: Option<String>,
     config_vars: &Arc<BTreeMap<String, String>>,
-    fragments: Option<&Path>,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<FrontEnd, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
@@ -949,7 +954,7 @@ fn run_phase(
     sink: &EventSink,
     cancel: &CancellationToken,
     artifacts_dir: &Path,
-    fragments: Option<&Path>,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<runner::RunSummary, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them

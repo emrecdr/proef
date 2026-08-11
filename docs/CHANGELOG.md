@@ -6,9 +6,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
-> **Breaking (library):** `proef_core::pack::load` takes a second
-> `&[PackSource]` of fragment files, between the packs and the step kinds
-> (pass `&[]` for the previous behaviour); `LoweredScenario::secrets` is a
+> **Breaking (library):** `proef_core::pack::load` takes a
+> `&proef_core::pack::FragmentCorpus` between the packs and the step kinds
+> (`&FragmentCorpus::empty()` for the previous behaviour, or
+> `FragmentCorpus::new(sources, kinds)` to supply fragment files), and
+> `PackSet::fragments` is an `Arc<BTreeMap<…>>` so one scan can be shared by
+> every load; `LoweredScenario::secrets` is a
 > `BTreeMap<String, String>` of engine-variable → secret name rather than a
 > `BTreeSet<String>`; `Prepared` and `ScenarioCtx` each gain a
 > `secret_bindings` field carrying that map to the engine; and
@@ -156,6 +159,27 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the names arrived only after a failure. `bind:` exists at three scopes and only
   the step one names a single fragment unambiguously, so the list is a union
   rather than a guess; the owning fragment rides in each item's detail.
+
+- **The fragment corpus is scanned once per command, not once per pack load.**
+  A `proef test` loads packs up to four times — the suite, then `[run] setup` and
+  `[run] teardown`, each validated and then run — against different feature paths but
+  always the same corpus, and each load re-read and re-parsed every `.hurl` file.
+  Measured on a 200-file / 15k-line corpus: **140 ms → 40 ms** warm, with pack loading
+  falling from ~28% of the run to a single pass. The win scales with the corpus, which
+  is the direction adoption goes.
+
+  The corpus is now read once per invocation (`front::fragment_corpus`) into a
+  `FragmentCorpus` that scans itself **lazily, at most once**. Laziness is the part
+  worth guarding: `load_collecting` still scans only when some pack actually has a
+  `ref:`, which is what makes CONFIG.md's "pointing at a corpus you did not write costs
+  nothing" true. Hoisting the scan to the caller to share it would have bought the speed
+  by breaking that promise, so the memo lives with the corpus instead — and a test
+  proves the eager version fails, by pointing an unreferenced corpus at a file that
+  cannot parse and asserting no diagnostic appears.
+
+  Built per invocation rather than in a static: `--watch` re-enters the same process
+  after each edit, and a corpus outliving one run would serve pre-edit fragments to the
+  next.
 
 ### Internal
 

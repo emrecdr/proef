@@ -185,6 +185,7 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
         }
     }
 
+    let fragments = pack::FragmentCorpus::new(fragments, ctx.kinds);
     let (loaded, pack_diags) = pack::load_collecting(&sources, &fragments, ctx.kinds);
     for d in pack_diags {
         let name = d.source_name.clone().unwrap_or_default();

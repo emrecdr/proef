@@ -295,7 +295,7 @@ mod tests {
                 "macros:\n  search:\n    params: [term, index]\n    defaults: { index: records }\n    match: \"I search for {term}\"\n    steps:\n      - hurl: |\n          GET http://x/${index}?q=${term}\n          HTTP 200\n",
             ),
         }];
-        pack::load(&sources, &[], KINDS).unwrap()
+        pack::load(&sources, &crate::pack::FragmentCorpus::empty(), KINDS).unwrap()
     }
 
     fn make_feature(body: &str) -> FeatureFile {
@@ -370,7 +370,7 @@ mod tests {
                 "macros:\n  a:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://x\n  b:\n    params: [x]\n    match: \"do {x} now\"\n    steps:\n      - hurl: |\n          GET http://y\n",
             ),
         }];
-        let packs = pack::load(&sources, &[], KINDS).unwrap();
+        let packs = pack::load(&sources, &crate::pack::FragmentCorpus::empty(), KINDS).unwrap();
         let feature = make_feature("    When do it now\n");
         let errs = bind(&feature, &packs).unwrap_err();
         assert_eq!(errs[0].code, "proef::bind::ambiguous_step");
@@ -385,7 +385,7 @@ mod tests {
                 "macros:\n  create:\n    params: [firstName, lastName]\n    match: I create a record\n    steps:\n      - hurl: |\n          POST http://x/${firstName}/${lastName}\n",
             ),
         }];
-        let packs = pack::load(&sources, &[], KINDS).unwrap();
+        let packs = pack::load(&sources, &crate::pack::FragmentCorpus::empty(), KINDS).unwrap();
         let feature = make_feature("    When I create a record\n");
         let errs = bind(&feature, &packs).unwrap_err();
         assert_eq!(errs.len(), 2);
@@ -403,7 +403,7 @@ mod tests {
                     "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
                 ),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();

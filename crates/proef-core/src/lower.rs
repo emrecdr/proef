@@ -1150,7 +1150,7 @@ mod tests {
                 name: "test.yaml".into(),
                 text: Arc::from(PACK),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();
@@ -1303,7 +1303,7 @@ mod tests {
                 name: "test.yaml".into(),
                 text: Arc::from(PACK),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();
@@ -1367,7 +1367,7 @@ mod tests {
                     "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - name: probe\n        alt:\n          target: \"${url:base}/item\"\n          checks: [\"${url:base}\", 7]\n",
                 ),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             ALT_KINDS,
         )
         .unwrap();
@@ -1415,7 +1415,7 @@ mod tests {
                     "macros:\n  pair:\n    match: both calls run\n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n          [Asserts]\n          status == 200\n          GET http://x/b\n  expectStatus:\n    params: [status]\n    match: \"the response status is {status}\"\n    expect:\n      - status: \"${status}\"\n",
                 ),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();
@@ -1568,7 +1568,7 @@ mod tests {
                 name: "fakes.yaml".into(),
                 text: Arc::from(FAKE_PACK),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();
@@ -1654,7 +1654,7 @@ mod tests {
                 name: "unmirrored.yaml".into(),
                 text: Arc::from(FAKE_PACK),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             KINDS,
         )
         .unwrap();
@@ -1767,10 +1767,13 @@ mod tests {
                 name: "p.yaml".into(),
                 text: Arc::from(pack),
             }],
-            &[PackSource {
-                name: "api.frag".into(),
-                text: Arc::from(fragments),
-            }],
+            &pack::FragmentCorpus::new(
+                vec![PackSource {
+                    name: "api.frag".into(),
+                    text: Arc::from(fragments),
+                }],
+                FRAG_KINDS,
+            ),
             FRAG_KINDS,
         )
         .unwrap_or_else(|err| panic!("pack should load: {err:?}"));

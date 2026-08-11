@@ -31,6 +31,15 @@ fn config_vars_for(
 /// front-end error to its exit code. The shared load path for `flows`,
 /// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
 /// raw `FrontError` to SARIF.
+/// This invocation's fragment corpus, read from `[run] fragments` (ADR-0018).
+///
+/// One helper rather than the same three lines at five call sites: the corpus
+/// is read once per invocation and shared by every load, and a site that built
+/// its own would silently reintroduce the per-load rescan this exists to avoid.
+pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::FragmentCorpus, ExitCode> {
+    front::fragment_corpus(config.fragments().as_deref()).map_err(|err| report_front_error(&err))
+}
+
 fn load_front(
     path: &Path,
     active_env: Option<&str>,
@@ -38,13 +47,13 @@ fn load_front(
     config: &ProjectConfig,
 ) -> Result<front::FrontEnd, ExitCode> {
     let config_vars = config_vars_for(active_env, config)?;
-    let fragments = config.fragments();
+    let fragments = corpus(config)?;
     front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         config_vars,
-        fragments.as_deref(),
+        &fragments,
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -161,16 +170,12 @@ fn validate_phase_features(
     config_vars: &Arc<BTreeMap<String, String>>,
 ) -> Result<usize, ExitCode> {
     let mut scenarios = 0usize;
-    let fragments = config.fragments();
+    // Once for both phases: the corpus does not depend on which one is loading.
+    let fragments = corpus(config)?;
     for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
         let Some(path) = path else { continue };
-        let front = crate::exec::load_phase_feature(
-            label,
-            Path::new(path),
-            None,
-            config_vars,
-            fragments.as_deref(),
-        )?;
+        let front =
+            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, &fragments)?;
         render::print_all(&front.warnings);
         scenarios += front
             .features
@@ -239,6 +244,22 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
+/// SARIF export for a dry run (shift-left gate): serialize the validation
+/// findings before rendering them — warnings when the suite validated, the
+/// diagnostic list when it did not, because a gate reports what it found and
+/// not only what it rejected.
+fn write_sarif(result: &Result<front::FrontEnd, proef_core::diag::FrontError>, sarif_path: &Path) {
+    let diags: Vec<&proef_core::diag::Diag> = match result {
+        Ok(front) => front.warnings.iter().collect(),
+        Err(proef_core::diag::FrontError::Diagnostics(list)) => list.iter().collect(),
+        Err(proef_core::diag::FrontError::Core(_)) => Vec::new(),
+    };
+    match crate::sarif::write(&diags, sarif_path) {
+        Ok(()) => crate::render::errln!("sarif report: {}", sarif_path.display()),
+        Err(message) => crate::render::errln!("error: {message}"),
+    }
+}
+
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
@@ -264,27 +285,20 @@ pub fn dry_run(
         Ok(vars) => vars,
         Err(code) => return code,
     };
-    let fragments = config.fragments();
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
     let result = front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         Arc::clone(&config_vars),
-        fragments.as_deref(),
+        &fragments,
     );
 
-    // SARIF export (shift-left gate): serialize the validation findings —
-    // warnings on success, the diagnostic list on failure — before rendering.
     if let Some(sarif_path) = sarif {
-        let diags: Vec<&proef_core::diag::Diag> = match &result {
-            Ok(front) => front.warnings.iter().collect(),
-            Err(proef_core::diag::FrontError::Diagnostics(list)) => list.iter().collect(),
-            Err(proef_core::diag::FrontError::Core(_)) => Vec::new(),
-        };
-        match crate::sarif::write(&diags, sarif_path) {
-            Ok(()) => crate::render::errln!("sarif report: {}", sarif_path.display()),
-            Err(message) => crate::render::errln!("error: {message}"),
-        }
+        write_sarif(&result, sarif_path);
     }
 
     let front = match result {
@@ -449,7 +463,10 @@ pub fn macros(
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(packs) = front::load_packs(path, config.fragments().as_deref()) else {
+            let Ok(fragments) = corpus(config) else {
+                return code;
+            };
+            let Ok(packs) = front::load_packs(path, &fragments) else {
                 return code;
             };
             crate::render::errln!(

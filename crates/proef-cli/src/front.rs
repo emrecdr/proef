@@ -17,7 +17,7 @@ use proef_core::emit::{self, Artifact};
 use proef_core::error::CoreError;
 use proef_core::feature::{self, FeatureFile};
 use proef_core::lower::{self, LowerCtx, LoweredScenario};
-use proef_core::pack::{self, PackSet, PackSource};
+use proef_core::pack::{self, FragmentCorpus, PackSet, PackSource};
 use proef_core::resolve::ResolveMode;
 use proef_core::world::{GlobalStore, World};
 
@@ -73,9 +73,30 @@ pub struct FrontEnd {
 /// listing a suite whose steps do not bind) would otherwise get nothing. The
 /// packs are complete whenever this returns: pack loading precedes binding and
 /// does not depend on it.
-pub fn load_packs(path: &Path, fragments: Option<&Path>) -> Result<PackSet, FrontError> {
+pub fn load_packs(path: &Path, fragments: &FragmentCorpus) -> Result<PackSet, FrontError> {
     let kinds = registry::step_kinds();
     Ok(load_pack_set(path, fragments, &kinds)?.1)
+}
+
+/// Read the configured fragment root into a [`FragmentCorpus`] — once per CLI
+/// invocation, whatever it is then used for.
+///
+/// A `proef test` loads packs up to four times (the suite, then `[run] setup`
+/// and `[run] teardown`, each validated and then run). Those loads use
+/// different feature paths but always the same corpus, so re-reading and
+/// re-scanning it per load was pure repetition; the corpus is read here and
+/// scans itself at most once, lazily, on first use.
+///
+/// Built per invocation rather than cached in a static: `--watch` re-enters
+/// `execute` after every edit in the same process, and a corpus that outlived
+/// one run would serve the pre-edit corpus to the next.
+pub fn fragment_corpus(root: Option<&Path>) -> Result<FragmentCorpus, FrontError> {
+    let kinds = registry::step_kinds();
+    let sources = match root {
+        Some(root) => fragment_sources(root, &kinds)?,
+        None => Vec::new(),
+    };
+    Ok(FragmentCorpus::new(sources, &kinds))
 }
 
 /// Discover and load a suite's packs — the single place that knows how a
@@ -87,20 +108,13 @@ pub fn load_packs(path: &Path, fragments: Option<&Path>) -> Result<PackSet, Fron
 /// path and forget in the other.
 fn load_pack_set(
     path: &Path,
-    fragments: Option<&Path>,
+    fragments: &FragmentCorpus,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<(usize, PackSet), FrontError> {
     let mut sources = pack::builtin_sources();
     sources.extend(project_packs(path)?);
     let packs_loaded = sources.len();
-    let fragment_sources = match fragments {
-        Some(root) => fragment_sources(root, kinds)?,
-        None => Vec::new(),
-    };
-    Ok((
-        packs_loaded,
-        pack::load(&sources, &fragment_sources, kinds)?,
-    ))
+    Ok((packs_loaded, pack::load(&sources, fragments, kinds)?))
 }
 
 /// Run the front end over `path` (a `.feature` file or a directory tree).
@@ -112,7 +126,7 @@ pub fn run(
     mode: ResolveMode,
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
-    fragments: Option<&Path>,
+    fragments: &FragmentCorpus,
 ) -> Result<FrontEnd, FrontError> {
     let engines = registry::engines();
     let kinds: Vec<proef_core::engine::StepKindSpec> = engines

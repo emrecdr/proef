@@ -31,6 +31,60 @@ pub struct PackSource {
     pub text: Arc<str>,
 }
 
+/// Every fragment file's text, scanned **at most once** however many times the
+/// packs around it are loaded (ADR-0018).
+///
+/// One `proef test` loads packs up to four times — the suite, then `[run] setup`
+/// and `[run] teardown`, each validated and then run — against different feature
+/// paths but always the *same* corpus. Rescanning per load measured ~75% of a
+/// run's total work on a 200-file corpus, and it grows with the corpus, which is
+/// the direction adoption goes.
+///
+/// The memo lives here rather than in the caller because the scan must stay
+/// **lazy**: `load_collecting` runs it only when some pack actually has a
+/// `ref:`, which is what makes CONFIG.md's "pointing at a corpus you did not
+/// write costs nothing" true of the scan. A caller that scanned eagerly in
+/// order to share the result would buy speed by breaking that promise. Nothing
+/// here reads a file — the texts arrive already read, so core stays sans-IO.
+#[derive(Debug)]
+pub struct FragmentCorpus {
+    sources: Vec<PackSource>,
+    /// Captured at construction so the memo cannot be filled under one set of
+    /// kinds and then read under another.
+    kinds: Vec<StepKindSpec>,
+    scanned: std::sync::OnceLock<Scanned>,
+}
+
+/// One scan's product: the named fragments, plus what was wrong with the files.
+#[derive(Debug, Default)]
+pub(crate) struct Scanned {
+    pub(crate) fragments: Arc<BTreeMap<String, Fragment>>,
+    pub(crate) diags: Vec<Diag>,
+}
+
+impl FragmentCorpus {
+    /// A corpus over already-read file texts.
+    pub fn new(sources: Vec<PackSource>, kinds: &[StepKindSpec]) -> Self {
+        Self {
+            sources,
+            kinds: kinds.to_vec(),
+            scanned: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// The empty corpus — no `[run] fragments` configured, so no `ref:` can
+    /// resolve and nothing is ever scanned.
+    pub fn empty() -> Self {
+        Self::new(Vec::new(), &[])
+    }
+
+    /// The scan, run on first use and shared by every load thereafter.
+    pub(crate) fn scanned(&self) -> &Scanned {
+        self.scanned
+            .get_or_init(|| scan_fragments(&self.sources, &self.kinds))
+    }
+}
+
 /// The built-in packs embedded into every proef binary.
 pub fn builtin_sources() -> Vec<PackSource> {
     vec![PackSource {
@@ -133,7 +187,11 @@ pub struct PackSet {
     pub macros: BTreeMap<String, Macro>,
     /// All named fragments by name — globally unique for the same reason macro
     /// names are: a `ref:` names one thing, wherever it was declared (ADR-0018).
-    pub fragments: BTreeMap<String, Fragment>,
+    ///
+    /// Shared rather than owned: one scan serves every load of the same corpus
+    /// (see [`FragmentCorpus`]), so handing it to four loads costs four
+    /// refcounts, not four copies of the corpus.
+    pub fragments: Arc<BTreeMap<String, Fragment>>,
     /// Pack-scope `bind:` tables, keyed by pack name so a binding stays
     /// attributable to the file that declared it.
     pub bind: BTreeMap<String, BTreeMap<String, String>>,
@@ -350,7 +408,7 @@ pub struct ExpectItem {
 /// does not zero the whole suite; `load` is the fail-fast wrapper for a run.
 pub(crate) fn load_collecting(
     sources: &[PackSource],
-    fragments: &[PackSource],
+    fragments: &FragmentCorpus,
     kinds: &[StepKindSpec],
 ) -> (PackSet, Vec<Diag>) {
     let mut diags: Vec<Diag> = Vec::new();
@@ -392,7 +450,9 @@ pub(crate) fn load_collecting(
             .values()
             .any(|m| m.steps.iter().any(|s| s.ref_.is_some()))
     }) {
-        load_fragments(fragments, kinds, &mut set, &mut diags);
+        let scanned = fragments.scanned();
+        set.fragments = Arc::clone(&scanned.fragments);
+        diags.extend(scanned.diags.iter().cloned());
     }
 
     // Normalize each raw macro (structural checks happen inline).
@@ -437,12 +497,9 @@ pub(crate) fn load_collecting(
 ///
 /// A file the engine cannot parse contributes its diagnostic and nothing else —
 /// the same "never sinks its siblings" rule packs get.
-fn load_fragments(
-    sources: &[PackSource],
-    kinds: &[StepKindSpec],
-    set: &mut PackSet,
-    diags: &mut Vec<Diag>,
-) {
+fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
+    let mut fragments: BTreeMap<String, Fragment> = BTreeMap::new();
+    let mut diags: Vec<Diag> = Vec::new();
     for source in sources {
         // The extension decides which kind claims the file. A file no kind
         // claims is skipped rather than handed to whichever scanner happens to
@@ -471,7 +528,7 @@ fn load_fragments(
         };
         for entry in scanned {
             let name = entry.name;
-            if let Some(existing) = set.fragments.get(&name) {
+            if let Some(existing) = fragments.get(&name) {
                 diags.push(
                     Diag::error(
                         "proef::pack::duplicate_fragment",
@@ -489,7 +546,7 @@ fn load_fragments(
                 );
                 continue;
             }
-            set.fragments.insert(
+            fragments.insert(
                 name.clone(),
                 Fragment {
                     name,
@@ -504,6 +561,10 @@ fn load_fragments(
             );
         }
     }
+    Scanned {
+        fragments: Arc::new(fragments),
+        diags,
+    }
 }
 
 /// Parse and validate `sources`, failing on the first error-severity diagnostic
@@ -511,7 +572,7 @@ fn load_fragments(
 /// still collected — one bad pack does not hide problems in another.
 pub fn load(
     sources: &[PackSource],
-    fragments: &[PackSource],
+    fragments: &FragmentCorpus,
     kinds: &[StepKindSpec],
 ) -> Result<PackSet, FrontError> {
     let (set, diags) = load_collecting(sources, fragments, kinds);

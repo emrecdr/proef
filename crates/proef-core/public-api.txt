@@ -974,6 +974,19 @@ impl core::marker::Unpin for proef_core::pack::Fragment
 impl core::marker::UnsafeUnpin for proef_core::pack::Fragment
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Fragment
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Fragment
+pub struct proef_core::pack::FragmentCorpus
+impl proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::empty() -> Self
+pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
+impl core::fmt::Debug for proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for proef_core::pack::FragmentCorpus
+impl core::marker::Send for proef_core::pack::FragmentCorpus
+impl core::marker::Sync for proef_core::pack::FragmentCorpus
+impl core::marker::Unpin for proef_core::pack::FragmentCorpus
+impl core::marker::UnsafeUnpin for proef_core::pack::FragmentCorpus
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::FragmentCorpus
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::FragmentCorpus
 pub struct proef_core::pack::Macro
 pub proef_core::pack::Macro::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::Macro::body: proef_core::pack::MacroBody
@@ -1022,7 +1035,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::MacroStep
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::MacroStep
 pub struct proef_core::pack::PackSet
 pub proef_core::pack::PackSet::bind: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
-pub proef_core::pack::PackSet::fragments: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
+pub proef_core::pack::PackSet::fragments: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>>
 pub proef_core::pack::PackSet::macros: alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Macro>
 impl proef_core::pack::PackSet
 pub fn proef_core::pack::PackSet::find_fragment(&self, &str) -> core::option::Option<&proef_core::pack::Fragment>
@@ -1055,7 +1068,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PackSource
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSource
 pub fn proef_core::pack::builtin_sources() -> alloc::vec::Vec<proef_core::pack::PackSource>
 pub fn proef_core::pack::json_schema(&[proef_core::engine::StepKindSpec]) -> serde_json::value::Value
-pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &[proef_core::pack::PackSource], &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
+pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &proef_core::pack::FragmentCorpus, &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
 pub mod proef_core::provider
 pub struct proef_core::provider::ProviderError(pub alloc::string::String)
 impl core::clone::Clone for proef_core::provider::ProviderError

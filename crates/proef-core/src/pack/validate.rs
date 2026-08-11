@@ -1019,7 +1019,7 @@ mod tests {
                 "macros:\n  empty:\n    match: nothing binds this\n    expect:\n      - hurl: |\n\n",
             ),
         };
-        let err = pack::load(&[source], &[], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -1063,7 +1063,7 @@ mod tests {
             name: "mixed.yaml".into(),
             text: Arc::clone(&text),
         };
-        let err = pack::load(&[source], &[], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -1100,7 +1100,7 @@ mod tests {
                 "macros:\n  probe:\n    match: the alternate step runs\n    steps:\n      - alt:\n          bogus: 1\n",
             ),
         };
-        let err = pack::load(&[source], &[], KINDS).unwrap_err();
+        let err = pack::load(&[source], &crate::pack::FragmentCorpus::empty(), KINDS).unwrap_err();
         let FrontError::Diagnostics(diags) = err else {
             panic!("diagnostics expected");
         };
@@ -1144,7 +1144,7 @@ mod tests {
                 name: "chain.yaml".into(),
                 text: Arc::from(yaml.as_str()),
             }],
-            &[],
+            &crate::pack::FragmentCorpus::empty(),
             PLAIN,
         )
         .unwrap();
@@ -1181,7 +1181,9 @@ mod tests {
                 "          HTTP 200\n",
             )),
         };
-        let FrontError::Diagnostics(diags) = pack::load(&[source], &[], RAW).unwrap_err() else {
+        let FrontError::Diagnostics(diags) =
+            pack::load(&[source], &crate::pack::FragmentCorpus::empty(), RAW).unwrap_err()
+        else {
             panic!("diagnostics expected");
         };
         let diag = diags
@@ -1228,7 +1230,7 @@ mod tests {
                 "          HTTP 200\n",
             )),
         };
-        pack::load(&[source], &[], RAW)
+        pack::load(&[source], &crate::pack::FragmentCorpus::empty(), RAW)
             .unwrap_or_else(|err| panic!("a header named `retry` must not clash: {err:?}"));
     }
 
@@ -1293,7 +1295,8 @@ mod tests {
     }
 
     fn diags_of(packs: &[PackSource], fragments: &[PackSource]) -> Vec<crate::diag::Diag> {
-        match pack::load(packs, fragments, SCANNING) {
+        let corpus = pack::FragmentCorpus::new(fragments.to_vec(), SCANNING);
+        match pack::load(packs, &corpus, SCANNING) {
             Ok(_) => Vec::new(),
             Err(FrontError::Diagnostics(diags)) => diags,
             Err(other) => panic!("diagnostics expected, got {other:?}"),
@@ -1311,7 +1314,7 @@ mod tests {
                 "p.yaml",
                 "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
             )],
-            &[source("api.frag", "@admin.search\n")],
+            &pack::FragmentCorpus::new(vec![source("api.frag", "@admin.search\n")], SCANNING),
             SCANNING,
         )
         .unwrap_or_else(|err| panic!("should load: {err:?}"));
@@ -1479,7 +1482,7 @@ mod tests {
                 "p.yaml",
                 "bind:\n  base: ${url:base}\nmacros:\n  m:\n    match: it runs\n    bind:\n      q: ${q}\n    steps:\n      - ref: f\n        bind:\n          id: \"{{recordId}}\"\n",
             )],
-            &[source("api.frag", "@f\n")],
+            &pack::FragmentCorpus::new(vec![source("api.frag", "@f\n")], SCANNING),
             SCANNING,
         )
         .unwrap_or_else(|err| panic!("should load: {err:?}"));
@@ -1490,5 +1493,71 @@ mod tests {
             panic!("steps expected");
         };
         assert_eq!(steps[0].bind["id"], "{{recordId}}");
+    }
+
+    /// A corpus is scanned **at most once**, however many times packs are loaded
+    /// against it.
+    ///
+    /// One `proef test` loads packs up to four times — the suite, then
+    /// `[run] setup`/`teardown`, each validated and then run — always against
+    /// the same corpus. Rescanning per load measured ~75% of a 200-file run's
+    /// total work, so this is a performance property, and performance nothing
+    /// asserts is performance that quietly comes back.
+    #[test]
+    fn one_corpus_is_scanned_once_however_many_loads_read_it() {
+        let packs = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: admin.search\n",
+        )];
+        let corpus =
+            pack::FragmentCorpus::new(vec![source("api.frag", "@admin.search\n")], SCANNING);
+
+        let (first, _) = pack::load_collecting(&packs, &corpus, SCANNING);
+        let (second, _) = pack::load_collecting(&packs, &corpus, SCANNING);
+
+        assert!(first.find_fragment("admin.search").is_some());
+        assert!(
+            Arc::ptr_eq(&first.fragments, &second.fragments),
+            "a second load must reuse the first scan, not repeat it"
+        );
+    }
+
+    /// A corpus nothing `ref:`s is never scanned — CONFIG.md's promise that
+    /// pointing proef at a corpus you did not write costs nothing.
+    ///
+    /// Proven by making the scan *observable*: the file would fail to parse, so
+    /// a `bad_annotation` diagnostic appears exactly when the scan ran. Sharing
+    /// one corpus across loads must not have turned the scan eager.
+    #[test]
+    fn a_corpus_no_pack_refs_is_never_scanned() {
+        let unreadable = vec![source("api.frag", "@!boom\n")];
+
+        let no_ref = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - alt: GET /x\n",
+        )];
+        let corpus = pack::FragmentCorpus::new(unreadable.clone(), SCANNING);
+        let (_, diags) = pack::load_collecting(&no_ref, &corpus, SCANNING);
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.code == "proef::pack::bad_annotation"),
+            "no `ref:` anywhere, so the corpus must never be read: {diags:?}"
+        );
+
+        // Control: the same corpus, with a `ref:` present, *is* scanned — so the
+        // assertion above is about laziness, not about a scanner that never runs.
+        let with_ref = [source(
+            "p.yaml",
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: whatever\n",
+        )];
+        let corpus = pack::FragmentCorpus::new(unreadable, SCANNING);
+        let (_, diags) = pack::load_collecting(&with_ref, &corpus, SCANNING);
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "proef::pack::bad_annotation"),
+            "a pack with a `ref:` must reach the scanner: {diags:?}"
+        );
     }
 }
