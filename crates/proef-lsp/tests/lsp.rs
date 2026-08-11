@@ -911,3 +911,113 @@ fn native_abs(rel: &str) -> String {
         format!("/{rel}")
     }
 }
+
+/// A `bind:` table completes against what the fragments this pack refs actually
+/// read (ADR-0018).
+///
+/// The names live in the `.hurl` file, which is exactly the file an author
+/// adopting a foreign corpus has not memorised. Without this the only way to
+/// learn them is to run the suite and read `lower::unbound_placeholder` — an
+/// error that arrives at lower time, i.e. after a failure.
+#[test]
+fn completion_inside_bind_offers_the_fragments_variables() {
+    use lsp_types::{CompletionParams, CompletionResponse};
+
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let fragment_name = native_abs("corpus/api.hurl");
+    // Two placeholders on the reffed fragment, one on a fragment nothing refs —
+    // the unreferenced one must not be offered.
+    let fragment_text = "@task.search\n?q\n?index\n@task.delete\n?doomed\n";
+    let pack_text = "macros:\n  search:\n    match: the wrapper\n    steps:\n      - ref: task.search\n        bind:\n          \n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    files.insert(fragment_name.clone(), Arc::from(fragment_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: vec![fragment_name],
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: Some(proef_core::engine::FragmentSupport {
+            ext: "hurl",
+            scan: fake_scan,
+        }),
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, pack_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    // Line 6 is the indented blank line under `bind:` — its parent is `bind:`,
+    // which is what puts the cursor in a bind table.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(30),
+            method: "textDocument/completion".to_owned(),
+            params: serde_json::to_value(CompletionParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: pack_url.clone(),
+                    },
+                    position: Position {
+                        line: 6,
+                        character: 10,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+                context: None,
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let resp = wait_for_response::<CompletionResponse>(&client, &RequestId::from(30));
+    let items = match resp {
+        CompletionResponse::Array(v) => v,
+        CompletionResponse::List(l) => l.items,
+    };
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"q") && labels.contains(&"index"),
+        "the reffed fragment's reads must be offered: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"doomed"),
+        "a fragment this pack never refs must not be offered: {labels:?}"
+    );
+    let q = items.iter().find(|i| i.label == "q").unwrap();
+    assert_eq!(q.detail.as_deref(), Some("read by task.search"));
+    assert_eq!(
+        q.insert_text.as_deref(),
+        Some("q: "),
+        "the completion writes the key, ready for its value"
+    );
+
+    shutdown(&client, server);
+}

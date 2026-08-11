@@ -88,6 +88,15 @@ pub struct FragmentDef {
     /// a consumer converting the span needs a line index built from *these*
     /// bytes, and a fresh read could observe a newer edit and mis-anchor.
     pub source: Arc<str>,
+    /// Every variable the entry reads, in first-seen order — exactly the names a
+    /// `bind:` in scope has to supply (ADR-0018).
+    ///
+    /// Read off the engine's own AST at scan time, so an editor offering them is
+    /// offering the file's real interface rather than a second description of it
+    /// that could disagree. Without this the only way to learn a foreign
+    /// corpus's variable names is to run the suite and read
+    /// `proef::lower::unbound_placeholder`.
+    pub placeholders: Vec<String>,
 }
 
 /// The product of one wholesale recompute: every feature's read from here.
@@ -274,6 +283,7 @@ fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
             file: f.file.clone(),
             span: crate::pack::locate::line_span(&f.source, f.line),
             source: Arc::clone(&f.source),
+            placeholders: f.placeholders.clone(),
         })
         .collect()
 }

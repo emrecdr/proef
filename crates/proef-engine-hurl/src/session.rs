@@ -223,6 +223,7 @@ impl EngineSession for HurlSession {
                     detail: Some("skipped by `when:` guard".to_owned()),
                     attempt_details: Vec::new(),
                     reproduce_hint: None,
+                    fragment: step.fragment.clone(),
                 });
                 emit_step(
                     events,
@@ -616,6 +617,7 @@ impl EngineSession for HurlSession {
                     detail: detail.clone(),
                     attempt_details: attempt_details.clone(),
                     reproduce_hint,
+                    fragment: step.fragment.clone(),
                 });
                 emit_step(
                     events,
@@ -757,6 +759,7 @@ fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
         detail: None,
         attempt_details: Vec::new(),
         reproduce_hint: None,
+        fragment: step.fragment.clone(),
     }
 }
 

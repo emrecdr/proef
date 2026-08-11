@@ -734,6 +734,7 @@ fn run_scenario(
                 detail: Some(unreached_reason.to_owned()),
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
+                fragment: step.fragment.clone(),
             });
         }
     }

@@ -153,3 +153,62 @@ fn timeline_renders_from_injected_timing() {
     );
     assert!(html.contains("60ms"), "run length is the max end: {html}");
 }
+
+/// A `ref:` step's fragment reaches the HTML report, under the failure reason —
+/// same order `explain` uses (ADR-0018). CI artifacts are read by people who
+/// cannot grep the checkout, so this is the sink that matters most.
+#[test]
+fn the_html_report_names_the_fragment_a_step_ran() {
+    let with_fragment = Event::StepFinished {
+        scenario: Arc::from("S"),
+        engine: Arc::from("http"),
+        step: StepRef {
+            file: Arc::from("tests/features/a.feature"),
+            line: 3,
+            text: Arc::from("the operator searches"),
+        },
+        status: Status::Failed,
+        attempts: 1,
+        duration_ms: 4,
+        captures: Vec::new(),
+        fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
+        detail: Some("Assert status code".to_owned()),
+        attempt_details: Vec::new(),
+    };
+    let events = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("run-1"),
+        },
+        with_fragment,
+        finished("S", "tests/features/a.feature", Status::Failed),
+    ];
+    let html = render_html(&events, "artifacts");
+    assert!(
+        html.contains("<p class=\"via\">via tests/hurl/admin.hurl#admin.search</p>"),
+        "the fragment must render under the step: {html}"
+    );
+
+    // An inline step carries none, and must not render an empty marker.
+    let inline = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("run-1"),
+        },
+        step(
+            "tests/features/a.feature",
+            3,
+            "the operator searches",
+            "S",
+            Status::Failed,
+            1,
+            4,
+            Some("Assert status code"),
+        ),
+        finished("S", "tests/features/a.feature", Status::Failed),
+    ];
+    assert!(
+        !render_html(&inline, "artifacts").contains("class=\"via\""),
+        "an inline step has no fragment to name"
+    );
+}

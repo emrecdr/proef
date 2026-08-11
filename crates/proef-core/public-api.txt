@@ -32,6 +32,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::Binding
 pub struct proef_core::analyze::FragmentDef
 pub proef_core::analyze::FragmentDef::file: alloc::string::String
 pub proef_core::analyze::FragmentDef::name: alloc::string::String
+pub proef_core::analyze::FragmentDef::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::analyze::FragmentDef::source: alloc::sync::Arc<str>
 pub proef_core::analyze::FragmentDef::span: core::option::Option<proef_core::diag::Span>
 impl core::clone::Clone for proef_core::analyze::FragmentDef
@@ -1529,6 +1530,7 @@ pub proef_core::step::StepOutcome::attempt_details: alloc::vec::Vec<alloc::strin
 pub proef_core::step::StepOutcome::attempts: u32
 pub proef_core::step::StepOutcome::detail: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::duration: core::time::Duration
+pub proef_core::step::StepOutcome::fragment: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::reproduce_hint: core::option::Option<alloc::string::String>
 pub proef_core::step::StepOutcome::status: proef_core::step::Status
 pub proef_core::step::StepOutcome::step: proef_core::step::StepRef

@@ -155,6 +155,13 @@ macro-scope `bind:` does **not** reach a `use:` target — the target resolves i
 own pack and macro scopes — so the table belongs on the macro that actually
 carries the `ref:`.
 
+You do not have to memorise a corpus you did not write: with `proef lsp` running,
+completing inside a `bind:` table offers the `{{variables}}` the fragments this
+pack `ref:`s actually read, each labelled with the fragment that wants it. The
+names are read off the `.hurl` file itself, so they cannot drift from it. If a
+name still goes unsupplied, `proef::lower::unbound_placeholder` names it at lower
+time — `--dry-run` is enough to surface that, no server needed.
+
 ## Asserting responses — the hurl vocabulary
 
 Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the

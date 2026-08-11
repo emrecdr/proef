@@ -10,6 +10,21 @@ use proef_core::runner::{Fault, RunSummary, ScenarioOutcome};
 use proef_core::step::Status;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, TestSuite};
 
+/// A failing step's fragment as a trailing ` (via file.hurl#name)`, empty for an
+/// inline block (ADR-0018).
+///
+/// One helper rather than a format string per sink. `JUnit`, the job summary and
+/// the `::error` annotations all answer the same question — *which file did this
+/// request come from* — and CI is precisely where the reader cannot go looking
+/// for themselves. Three copies is how one of them quietly stops agreeing with
+/// `explain` and the run record.
+fn via(step: &proef_core::step::StepOutcome) -> String {
+    step.fragment
+        .as_deref()
+        .map(|name| format!(" (via {name})"))
+        .unwrap_or_default()
+}
+
 /// Write `report.junit.xml` for the run: one suite per feature file, one test
 /// case per scenario, engine-measured times, failure details inline.
 pub fn write_junit(
@@ -77,7 +92,7 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
                         .steps
                         .iter()
                         .filter(|s| s.status == Status::Failed)
-                        .filter_map(|s| s.detail.clone())
+                        .filter_map(|s| Some(format!("{}{}", s.detail.as_deref()?, via(s))))
                         .collect::<Vec<_>>()
                         .join("; "),
                 ),
@@ -106,6 +121,22 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
     let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
         return;
     };
+    let body = summary_body(summary, run_id);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(path)
+    {
+        use std::io::Write as _;
+        // One pass over the final body covers names and details alike.
+        let _ = writeln!(file, "{}", redactions.apply(&body));
+    }
+}
+
+/// The summary's markdown, separated from the file append so it can be asserted
+/// without an env var — `std::env::set_var` is `unsafe` in edition 2024, and a
+/// sink that can only be tested by mutating process state tends not to be.
+fn summary_body(summary: &RunSummary, run_id: &str) -> String {
     let mut body = format!(
         "## proef run `{run_id}`\n\n**{} passed · {} failed · {} skipped**\n\n| scenario | status | steps |\n|---|---|---|\n",
         summary.passed, summary.failed, summary.skipped
@@ -132,8 +163,10 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
                 };
                 let _ = writeln!(
                     failures,
-                    "- `{}:{}`{attempts} — {detail}",
-                    step.step.file, step.step.line
+                    "- `{}:{}`{attempts} — {detail}{}",
+                    step.step.file,
+                    step.step.line,
+                    via(step)
                 );
             }
         }
@@ -159,15 +192,7 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
         body.push_str("\n### flaky passes\n\n");
         body.push_str(&flaky);
     }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-    {
-        use std::io::Write as _;
-        // One pass over the final body covers names and details alike.
-        let _ = writeln!(file, "{}", redactions.apply(&body));
-    }
+    body
 }
 
 /// Emit GitHub Actions `::error` annotations to stdout for failures, so each one
@@ -188,7 +213,7 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                     enc_prop(&step.step.file),
                     step.step.line,
                     enc_prop(&format!("{}: {}", outcome.name, step.step.text)),
-                    enc_msg(&redactions.apply(detail)),
+                    enc_msg(&redactions.apply(&format!("{detail}{}", via(step)))),
                 );
             }
         }
@@ -242,6 +267,81 @@ mod tests {
         // Property values additionally escape `:` and `,` so a title cannot break
         // the `key=value,key=value` parse.
         assert_eq!(enc_prop("Scenario: a, b"), "Scenario%3A a%2C b");
+    }
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{github_annotations, summary_body};
+    use proef_core::report::Redactions;
+    use proef_core::runner::{RunSummary, ScenarioOutcome};
+    use proef_core::step::{Status, StepOutcome, StepRef};
+    use std::sync::Arc;
+
+    fn failed_run(fragment: Option<&str>) -> RunSummary {
+        RunSummary {
+            outcomes: vec![ScenarioOutcome {
+                file: "tests/features/a.feature".into(),
+                name: "S".into(),
+                line: 2,
+                status: Status::Failed,
+                steps: vec![StepOutcome {
+                    step: StepRef {
+                        file: Arc::from("tests/features/a.feature"),
+                        line: 3,
+                        text: Arc::from("the operator searches"),
+                    },
+                    status: Status::Failed,
+                    attempts: 1,
+                    duration: std::time::Duration::from_millis(1),
+                    detail: Some("Assert status code".to_owned()),
+                    attempt_details: Vec::new(),
+                    reproduce_hint: None,
+                    fragment: fragment.map(ToOwned::to_owned),
+                }],
+                fault: None,
+                artifact_slug: None,
+            }],
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        }
+    }
+
+    /// CI is where a reader is least able to go looking, so every CI-facing
+    /// sink names the fragment a failure came from (ADR-0018) — and an inline
+    /// step, which has none, adds nothing rather than an empty `via`.
+    #[test]
+    fn every_ci_sink_names_the_fragment_a_failure_came_from() {
+        let none = Redactions::new(std::iter::empty());
+
+        let summary = failed_run(Some("tests/hurl/admin.hurl#admin.search"));
+        let annotations = github_annotations(&summary, &none);
+        // In the *message* body, not a property: `enc_msg` encodes only `%`,
+        // CR and LF, so the `#` of `file.hurl#name` survives verbatim and the
+        // line stays copy-pasteable back into a pack's `ref:`.
+        assert!(
+            annotations.contains("(via tests/hurl/admin.hurl#admin.search)"),
+            "the annotation must carry it: {annotations}"
+        );
+        let summary_md = summary_body(&summary, "run-1");
+        assert!(
+            summary_md.contains("(via tests/hurl/admin.hurl#admin.search)"),
+            "the job summary must carry it: {summary_md}"
+        );
+
+        let inline = failed_run(None);
+        assert!(
+            !github_annotations(&inline, &none).contains("via "),
+            "an inline step has no fragment and must not render an empty one"
+        );
+        assert!(
+            !summary_body(&inline, "run-1").contains("via "),
+            "an inline step has no fragment and must not render an empty one"
+        );
     }
 }
 

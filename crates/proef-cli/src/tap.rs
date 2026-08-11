@@ -113,6 +113,7 @@ mod tests {
                     detail: Some(d.to_owned()),
                     attempt_details: Vec::new(),
                     reproduce_hint: None,
+                    fragment: None,
                 }]
             })
             .unwrap_or_default();

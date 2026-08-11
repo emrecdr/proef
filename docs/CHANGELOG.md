@@ -17,10 +17,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 > silently disabled fragments for a provider that forwarded the other two; and
 > `ScannedFragment::name` is a `String` rather than `Option<String>`, because a
 > scanner now reports only the entries it found an annotation on; and both
-> `LoweredStep` and `Event::StepFinished` gain a `fragment: Option<String>`
-> field, so a literal construction of either needs one more line (`None`
-> reproduces the previous behaviour). The *wire* schema is unaffected — the
-> field is skipped when absent, which is what keeps existing records byte-equal.
+> `LoweredStep`, `StepOutcome` and `Event::StepFinished` gain a
+> `fragment: Option<String>` field and `analyze::FragmentDef` gains
+> `placeholders: Vec<String>`, so a literal construction of any of them needs
+> one more line (`None` / `Vec::new()` reproduces the previous behaviour). The
+> *wire* schema is unaffected — the event field is skipped when absent, which is
+> what keeps existing records byte-equal.
 
 ### Added
 
@@ -134,6 +136,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   back, and only go-to-definition had. The name is qualified at lowering rather than
   by the reader, because a record has to stand alone: by the time it is read, the pack
   that named the fragment may say something else.
+
+  **`JUnit`, the GitHub job summary and the `::error` annotations name it too**,
+  as a trailing `(via file.hurl#name)` on the failure message, and the HTML
+  report renders it under the reason. CI is where a reader is least able to go
+  looking for themselves, so it is the last place provenance should drop out —
+  and all three sinks share one helper rather than a format string each, because
+  three copies is how one of them quietly stops agreeing with the run record.
+
+- **`bind:` completes against what the fragment actually reads.** With the cursor
+  in a `bind:` table — flow or block style — the editor offers the `{{variables}}`
+  of the fragments that pack `ref:`s, nearest `ref:` ranked first, each labelled
+  with the fragment that wants it. The names come off the engine's own AST at
+  scan time (`analyze::FragmentDef::placeholders`), so this is the file's real
+  interface rather than a second description that could disagree with it.
+
+  Until now the only route to a foreign corpus's variable names was to run the
+  suite and read `proef::lower::unbound_placeholder` — a *lower-time* error, so
+  the names arrived only after a failure. `bind:` exists at three scopes and only
+  the step one names a single fragment unambiguously, so the list is a union
+  rather than a guess; the owning fragment rides in each item's detail.
 
 ### Internal
 

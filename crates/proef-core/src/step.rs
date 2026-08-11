@@ -169,6 +169,15 @@ pub struct StepOutcome {
     /// it with the redacted `curl` of the failing request). Set only on failure;
     /// `None` otherwise and for engines that offer no hint.
     pub reproduce_hint: Option<String>,
+    /// The fragment this step ran, copied from [`LoweredStep::fragment`]
+    /// (ADR-0018); `None` for an inline block.
+    ///
+    /// Carried on the outcome as well as the event because the two feed
+    /// different readers: the event stream reaches `explain`, while `JUnit` and
+    /// the GitHub summary are built from [`crate::runner::RunSummary`]. CI is
+    /// where a reader is *least* able to go looking, so it is the last place
+    /// provenance should drop out.
+    pub fragment: Option<String>,
 }
 
 /// Result of dispatching one [`StepBatch`] to an engine.
