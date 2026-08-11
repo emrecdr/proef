@@ -84,6 +84,7 @@ re-reported after it is fixed.
 | P3 | `--sarif` emitted no `startLine`, so it annotated nothing | #37 |
 | P5 | `--watch` did not retrigger on `proef.toml` | #37 |
 | — | a run against untouched scaffold *routes* got no coaching (round-8 §5) | #38 |
+| — | truncated-record fallback totals dropped `Warned` scenarios (round-7) | #39 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -97,9 +98,20 @@ revalidation re-reproduced its findings against v0.8.0. §2.2, §2.3, §2.4 and 
 `diff` item shipped in #30/#31. What remains, carried on that report's evidence
 rather than re-reproduced here:
 
-- **The early-error record** writes `Completed 0/0/0` and a `summary:` line after
-  the error.
-- **`Warned` scenarios** are dropped from truncated-record fallback totals.
+- **The early-error record** — *reproduced 2026-08-11, needs a decision.*
+  `proef test --tags <nothing-matches>` prints the error and then a
+  `summary: 0 passed · 0 failed · 0 skipped` line, and the record it leaves is
+  `run_started` + `run_finished 0/0/0` — byte-indistinguishable from a clean run
+  of an empty suite. A post-mortem reader cannot tell "errored before dispatch"
+  from "ran nothing successfully".
+
+  The fix is a design call, not a patch. Suppressing the tail on this path would
+  leave the record *incomplete*, which the tooling already banners correctly —
+  but `RunRecord` emits its tail structurally, on `Drop`, precisely so no return
+  path has to remember it, and adding an exception reintroduces the fragility
+  that design removed. Opening the record later is blocked by setup, whose
+  scenario events need it. The third option is an additive event carrying the
+  early error (ADR-0008 permits it) — the most honest and the most work.
 
 ## Open — residue of the two UX reviews
 

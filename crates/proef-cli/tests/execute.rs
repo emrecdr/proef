@@ -2495,3 +2495,50 @@ fn the_json_body_reports_the_exit_code_the_process_uses() {
         "the body must not report a verdict the process exits past:\n{stdout}"
     );
 }
+
+/// A truncated record has no `run_finished`, so `explain` recounts the
+/// scenarios present. That fallback counted `Passed`/`Failed`/`Skipped` and
+/// not `Warned` — so a scenario whose `optional:` step warned vanished from
+/// every column, and the reconstructed total silently disagreed with the run
+/// it was reconstructing. The live path counts `Passed | Warned` together
+/// (`RunSummary::passed` is "passed, warnings allowed"), and `optional:` exists
+/// precisely so a scenario can warn and still pass.
+#[test]
+fn a_truncated_record_counts_a_warned_scenario_as_passed() {
+    use proef_core::event::Event;
+    use proef_core::step::Status;
+
+    let cwd = tempfile::tempdir().unwrap();
+    let runs = cwd.path().join(".proef-runs");
+    // No `RunFinished`: the run died mid-write, which is what makes `explain`
+    // fall back to counting.
+    write_run(
+        &runs,
+        "00000000-0000-0000-0000-0000000000aa",
+        &[
+            diff_run_started("00000000-0000-0000-0000-0000000000aa"),
+            Event::ScenarioFinished {
+                scenario: std::sync::Arc::from("warns but passes"),
+                file: std::sync::Arc::from("case.feature"),
+                status: Status::Warned,
+                timestamp_ms: None,
+                worker: None,
+                phase: None,
+            },
+        ],
+    );
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .arg("explain")
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("1 passed"),
+        "a warned scenario must be counted, not dropped:\n{stdout}"
+    );
+    assert!(stdout.contains("run incomplete"), "{stdout}");
+}

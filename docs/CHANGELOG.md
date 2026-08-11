@@ -8,6 +8,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A truncated record no longer drops a warned scenario from its totals.**
+  With no `run_finished` to read, `explain` recounts the scenarios present —
+  and counted `Passed`/`Failed`/`Skipped` but not `Warned`, so a scenario whose
+  `optional:` step warned vanished from every column. The live path counts
+  `Passed | Warned` together (`RunSummary::passed` is "passed, warnings
+  allowed"), so the reconstruction silently disagreed with the run it was
+  reconstructing — and `optional:` exists precisely so a scenario can warn and
+  still pass.
+
+### Fixed
+
 - **A failing run says when the scaffold's *routes* are still placeholders.**
   The scaffold has two halves to fill in, and a reader can have done either.
   Someone who follows `init`'s instruction — point `${url:base}` at your API —
