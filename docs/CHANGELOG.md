@@ -6,6 +6,27 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Documentation
+
+- **The hurl non-goal is about generation, not direction (PRD §3 amendment).** It read
+  "importing/round-tripping *hand-written* hurl files into Gherkin (artifacts flow
+  outward only)" — a clause and a parenthetical saying two different things, the
+  parenthetical forbidding hurl text from being an input at all. What the non-goal
+  protects is that proef never authors a test for you, and that reasoning is untouched
+  (ADR-0016 stays declined on it). It does not extend to hurl being an input *source*,
+  which §1's own framing — "there is no tool that joins the two" — describes as the
+  product's purpose. Recorded honestly: OPEN-FINDINGS M3 asked for this re-examination
+  to arrive with a measured port cost, and it has not.
+
+- **ADR-0018 — named hurl fragments.** A macro step's body may be `ref: <fragment>`
+  naming one entry in a real `.hurl` file, annotated `# @proef <name>`, with proef
+  values supplied by an explicit `bind:` map instead of `${…}` splicing. The file stays
+  valid hurl, so the same file runs under `proef test` and under stock `hurl`. Inline
+  `hurl: |` is unchanged and stays: the two are splicing versus binding, with different
+  capability envelopes, and the 844-line corpus port is recorded in the ADR as evidence
+  the inline path is sufficient for real work. No behaviour ships with this entry — the
+  ADR and the charter amendment land first, deliberately.
+
 ## [0.9.0] - 2026-08-11 (tool-surface integrity & authoring guidance)
 
 > **Breaking:** `proef secret set --value` was removed in favour of `--stdin`,

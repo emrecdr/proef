@@ -58,6 +58,7 @@ repo-root `CLAUDE.md` carry the live status.
 | [0015](adr/ADR-0015-injected-observability-timestamps.md) | Injected run-relative timestamps + worker id (sink-stamped, sans-IO core) for the HTML timeline | Accepted |
 | [0016](adr/ADR-0016-openapi-suite-generator.md) | OpenAPI → suite generator: one-shot seed allowed under a bright line; oracle/drift mode permanently rejected | Proposed (defer) |
 | [0017](adr/ADR-0017-lsp-language-server.md) | `proef lsp` language server: sync lsp-server, whole-suite wholesale recompute, injectable-provider + collect-all front-end refactor | Accepted |
+| [0018](adr/ADR-0018-named-hurl-fragments.md) | Named hurl fragments: `ref:` as a second macro body form, `# @proef <name>` in real `.hurl` files, explicit `bind:` scopes | Accepted |
 
 ## Naming & identifiers
 
