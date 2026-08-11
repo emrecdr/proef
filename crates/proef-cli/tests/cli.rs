@@ -389,6 +389,58 @@ fn fmt_rewrites_a_dirty_crlf_pack_preserving_crlf_throughout() {
         .stdout(contains("all pack blocks already canonical"));
 }
 
+/// `fmt` took an explicit file on trust, so it rewrote whatever it was pointed
+/// at — `proef fmt src/main.rs` stripped trailing whitespace from Rust source
+/// and reported success. A formatter that writes without parsing turns a
+/// mistyped path into a silent edit.
+#[test]
+fn fmt_refuses_a_file_that_is_not_a_pack() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("notes.rs");
+    let original = "fn main() {   \n    println!(\"hi\");   \n}\n";
+    std::fs::write(&source, original).unwrap();
+
+    proef()
+        .arg("fmt")
+        .arg(&source)
+        // No path fragment in the expectation: the message interpolates a path,
+        // and its separator differs by platform.
+        .assert()
+        .code(2)
+        .stderr(contains("is not a pack file"));
+    assert_eq!(
+        std::fs::read(&source).unwrap(),
+        original.as_bytes(),
+        "a refused file must come back byte-for-byte"
+    );
+}
+
+/// `fmt`'s promise is hurl blocks; its module doc says the YAML skeleton,
+/// comments included, is never touched. It trimmed every line anyway, so a
+/// trailing space in a comment failed `--check` on a pack whose blocks were
+/// already canonical — a CI red an author cannot explain from the documented
+/// scope, which is the same defect the line-ending fix removed.
+#[test]
+fn fmt_check_ignores_trailing_whitespace_outside_a_hurl_block() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack_path = tmp.path().join("pack.yaml");
+    let canonical_blocks_dirty_skeleton = "# a comment with a trailing space   \nmacros:\n  ping:\n    match: I ping   \n    steps:\n      - hurl: |\n          GET http://x/a\n          HTTP 200\n";
+    std::fs::write(&pack_path, canonical_blocks_dirty_skeleton).unwrap();
+
+    proef()
+        .arg("fmt")
+        .arg(&pack_path)
+        .arg("--check")
+        .assert()
+        .code(0)
+        .stdout(contains("all pack blocks already canonical"));
+    assert_eq!(
+        std::fs::read(&pack_path).unwrap(),
+        canonical_blocks_dirty_skeleton.as_bytes(),
+        "the skeleton is not this command's to normalize"
+    );
+}
+
 /// `doctor` reports a missing pack schema. `init` installs it automatically,
 /// but the other half of that finding — noticing when it is absent — never
 /// shipped, so a suite whose editor completion was silently off had nothing
