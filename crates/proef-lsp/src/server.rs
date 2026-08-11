@@ -459,6 +459,9 @@ mod tests {
         fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
             Ok(Vec::new())
         }
+        fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(Vec::new())
+        }
         fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
             Err(ProviderError(format!("no {name}")))
         }

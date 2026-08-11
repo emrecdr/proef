@@ -11,7 +11,10 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 > (pass `&[]` for the previous behaviour); `LoweredScenario::secrets` is a
 > `BTreeMap<String, String>` of engine-variable → secret name rather than a
 > `BTreeSet<String>`; `Prepared` and `ScenarioCtx` each gain a
-> `secret_bindings` field carrying that map to the engine.
+> `secret_bindings` field carrying that map to the engine; and
+> `SourceProvider::discover_fragments` is a **required** method (return
+> `Ok(Vec::new())` to serve none) — it was briefly defaulted, and the default
+> silently disabled fragments for a provider that forwarded the other two.
 
 ### Added
 
@@ -142,6 +145,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   ADR and the charter amendment land first, deliberately.
 
 ### Fixed
+
+- **Every `ref:` was an error in the editor while the same suite ran green.**
+  `SourceProvider::discover_fragments` shipped with a default `Ok(Vec::new())`, and the
+  LSP's overlay provider — which forwards feature and pack discovery to disk — never
+  overrode it. So the analyzer saw no fragments at all: go-to-definition on a `ref:` did
+  nothing, `ref:` completion returned nothing, and every `ref:` rendered as
+  `proef::pack::unknown_ref`. Exactly the diagnostics-you-cannot-trust drift the
+  fragment-aware analysis was added to prevent.
+
+  The default is gone; `discover_fragments` is a required method. Every implementation
+  lives in this workspace, so the default bought no compatibility — it only let a
+  forwarding provider inherit "no fragments" silently instead of failing to compile.
+  An integration test now drives the real provider chain and asserts a `ref:` jump lands
+  on the annotation in the `.hurl` file.
 
 - **A `ref:` step's `name:` reported a `${fake:…}` value it never sent.** A label is a
   *replay* of what the request was built from, not a fresh use of it: the inline path

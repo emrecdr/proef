@@ -445,6 +445,7 @@ mod tests {
     struct MemProvider {
         features: Vec<String>,
         packs: Vec<String>,
+        fragments: Vec<String>,
         files: BTreeMap<String, Arc<str>>,
     }
     impl SourceProvider for MemProvider {
@@ -453,6 +454,9 @@ mod tests {
         }
         fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
             Ok(self.packs.clone())
+        }
+        fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+            Ok(self.fragments.clone())
         }
         fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
             self.files
@@ -511,6 +515,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -554,6 +559,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -602,6 +608,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["bad.feature".to_owned(), "good.feature".to_owned()],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -666,6 +673,7 @@ mod tests {
         let provider = MemProvider {
             features: vec!["f.feature".to_owned()],
             packs: vec!["packs/good.yaml".to_owned(), "packs/broken.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -708,6 +716,7 @@ mod tests {
         let provider = MemProvider {
             features: vec![],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
@@ -758,6 +767,7 @@ mod tests {
         let provider = MemProvider {
             features: vec![],
             packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
             files,
         };
         let empty = BTreeMap::new();
