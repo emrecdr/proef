@@ -63,7 +63,7 @@ fn fake_scan(
         let line = line.trim();
         if let Some(name) = line.strip_prefix('@') {
             out.push(proef_core::engine::ScannedFragment {
-                name: Some(name.to_owned()),
+                name: name.to_owned(),
                 text: format!("GET http://x/{name}\nHTTP 200\n"),
                 line: index + 1,
                 placeholders: Vec::new(),

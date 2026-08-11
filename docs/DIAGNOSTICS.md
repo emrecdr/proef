@@ -51,7 +51,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::duplicate_fragment` | Two fragment files declare the same `# @proef` name | |
 | `pack::bad_annotation` | A fragment file the engine's parser could not read, or an annotation it could not attach | |
 | `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
-| `pack::bind_without_ref` | `bind:` on a step with no `ref:` — an inline block takes `${…}` instead | ✓ |
+| `pack::bind_without_ref` | `bind:` with no `ref:` to read it — on a step (an inline block takes `${…}` instead), or on a macro whose steps have none (a `use:` target resolves its own) | ✓ |
 | `pack::unknown_use` | `use:` names no known macro | ✓ |
 | `pack::use_cycle` | `use:` composition forms a cycle | ✓ |
 | `pack::use_too_deep` | `use:` nesting exceeds depth 32 | |

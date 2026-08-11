@@ -74,8 +74,18 @@ macros:
   does, and routes to `insert_secret` as it always has, so no secret value enters an
   artifact (ADR-0005 intact).
 - **Every `{{placeholder}}` must be bound, or produced as a `[Captures]` name by a
-  preceding step.** Both sets are read off hurl's own AST, so a fragment's interface
-  needs no declaration anywhere.
+  preceding step.** A fragment's interface needs no declaration anywhere: what it
+  *reads* is read off hurl's own AST and crosses the seam as
+  `ScannedFragment::placeholders`.
+
+  What earlier steps *produce* is derived differently, and deliberately: the core
+  scans the emitted text of the steps it has already lowered (`emit::capture_names`).
+  It has to, because a preceding step may be an inline `hurl:` block, which no
+  scanner ever saw — there is no `ScannedFragment` for it. So the two halves of this
+  check reach the core by different routes, and the produced half is the one that
+  knows hurl's `[Captures]` syntax inside `proef-core`. A second engine would need
+  produced names on the seam instead; nothing is scheduled, and the note is here so
+  the asymmetry is a recorded decision rather than a discovery.
 
 ### Both body forms stay, because they are not two spellings
 

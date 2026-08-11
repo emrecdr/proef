@@ -140,10 +140,13 @@ pub struct FragmentSupport {
 /// therefore drift from the file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedFragment {
-    /// The `# @proef <name>` annotation, when the entry carries one. `None` is
-    /// an ordinary unannotated entry: inert, and silent — a corpus proef did
-    /// not write is expected to be mostly these.
-    pub name: Option<String>,
+    /// The name its `# @proef <name>` annotation gave it.
+    ///
+    /// A scanner reports **only annotated entries**. An unannotated one is not a
+    /// fragment — nothing can `ref:` it — and a corpus proef did not write is
+    /// expected to be mostly those, so building them only to be discarded is
+    /// the bulk of a scan for no one's benefit.
+    pub name: String,
     /// The entry's own source text, annotation included (provenance survives
     /// into the artifact).
     pub text: String,
@@ -152,13 +155,31 @@ pub struct ScannedFragment {
     /// Every variable the entry *reads*, in first-seen order — its required
     /// inputs.
     pub placeholders: Vec<String>,
-    /// Option families the entry sets for itself (`"retry"`, `"delay"`), which
-    /// a referencing step may then not also set
-    /// (`proef::pack::option_declared_twice`). A list rather than one flag per
-    /// option, so the core applies its general rule to whatever it knows about
-    /// and a new family costs no engine change.
+    /// Option families the entry sets for itself, which a referencing step may
+    /// then not also set (`proef::pack::option_declared_twice`). A list rather
+    /// than one flag per option, so the core applies its general rule to
+    /// whatever it knows about and a new family costs no engine change.
+    ///
+    /// **Every element must be one of [`OPTION_FAMILIES`]** — these strings are
+    /// matched against the pack's own option keys, so a spelling only the engine
+    /// knows silences the check rather than failing it.
     pub declared_options: Vec<String>,
 }
+
+/// The option families a pack step and a fragment can *both* declare, spelled as
+/// the pack spells them.
+///
+/// This is the vocabulary [`ScannedFragment::declared_options`] must use: the
+/// double-declaration rule works by string equality against the keys a step
+/// writes in YAML, so an engine reporting hurl's own spelling (`retry-interval`,
+/// say) would match nothing and the clash would go quiet — which is exactly the
+/// silent last-wins `proef::pack::option_declared_twice` exists to refuse.
+/// Engines fold their spellings into these (hurl's `retry-interval` is `retry`:
+/// one policy, and a step's `retry:` sets both).
+///
+/// Kept in step with `MacroStep::declared_options`, which derives the other half
+/// of the same comparison.
+pub const OPTION_FAMILIES: &[&str] = &["retry", "delay"];
 
 /// A fragment file the claiming engine's parser could not read (1-based
 /// line/column **within that file**).
@@ -267,16 +288,41 @@ pub struct ScenarioCtx {
     /// them via their redacting mechanisms (`insert_secret`); values never
     /// enter events or artifacts (ADR-0005).
     pub secrets: Arc<std::collections::BTreeMap<String, String>>,
-    /// Engine variable name → secret name for this scenario. Inject each under
-    /// its *variable* name, taking the value from `secrets` by its *secret*
-    /// name: a fragment binding may deliberately give a secret the variable
-    /// name a foreign corpus already uses (ADR-0018).
+    /// Engine variable name → secret name for this scenario. Do not join this
+    /// against `secrets` by hand — call [`secret_variables`], the one place
+    /// that knows how (ADR-0018).
     pub secret_bindings: Arc<std::collections::BTreeMap<String, String>>,
     /// Engine option defaults from project config (`timeout-ms`, …).
     pub http: HttpDefaults,
     /// Root directory for file bodies (`context_dir` confinement, §13) —
     /// the feature file's directory.
     pub file_root: Option<std::path::PathBuf>,
+}
+
+/// Every engine variable a scenario must inject as a secret, paired with its
+/// value — [`ScenarioCtx::secret_bindings`] joined against
+/// [`ScenarioCtx::secrets`]. **The one place that join is written.**
+///
+/// It lives in core, not in each engine, because it is easy to get subtly
+/// wrong: inject under the *secret* name rather than the *variable* name and a
+/// renamed binding (ADR-0018) resolves to nothing, so the request goes out with
+/// an unresolved `{{…}}` and fails far from the cause.
+///
+/// It yields borrows on purpose. Returning an owned variable→value map would put
+/// a second copy of every secret value in memory for each scenario; ADR-0005
+/// keeps values in exactly one place, the run-level `secrets` map.
+///
+/// A binding whose secret is absent is skipped — the CLI already refuses a run
+/// whose secrets it cannot resolve, so that is defence in depth, not a path.
+pub fn secret_variables<'a>(
+    bindings: &'a std::collections::BTreeMap<String, String>,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+) -> impl Iterator<Item = (&'a str, &'a str)> {
+    bindings.iter().filter_map(|(variable, secret)| {
+        secrets
+            .get(secret)
+            .map(|value| (variable.as_str(), value.as_str()))
+    })
 }
 
 /// Batch-level HTTP defaults (per-entry `[Options]` in artifacts override them

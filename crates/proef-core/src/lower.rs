@@ -144,9 +144,8 @@ fn scope_bindings(
     macro_: &Macro,
     ctx: &LowerCtx<'_>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    sinks: &mut Sinks,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
     at: &impl Fn(Diag) -> Diag,
 ) -> Bindings {
     let mut scoped = Bindings::new();
@@ -155,21 +154,14 @@ fn scope_bindings(
     }
     if let Some(table) = ctx.packs.bind.get(&macro_.pack) {
         if !refs.pack_bindings.contains_key(&macro_.pack) {
-            let resolved = resolve_bindings(table, refs, warnings, diags, resolve_in, at);
+            let resolved = resolve_bindings(table, refs, sinks, resolve_in, at);
             refs.pack_bindings.insert(macro_.pack.clone(), resolved);
         }
         if let Some(cached) = refs.pack_bindings.get(&macro_.pack) {
             scoped.extend(cached.clone());
         }
     }
-    scoped.extend(resolve_bindings(
-        &macro_.bind,
-        refs,
-        warnings,
-        diags,
-        resolve_in,
-        at,
-    ));
+    scoped.extend(resolve_bindings(&macro_.bind, refs, sinks, resolve_in, at));
     scoped
 }
 
@@ -177,9 +169,8 @@ fn scope_bindings(
 fn resolve_bindings(
     table: &BTreeMap<String, String>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    sinks: &mut Sinks,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
     at: &impl Fn(Diag) -> Diag,
 ) -> Bindings {
     let mut out = Bindings::new();
@@ -189,7 +180,7 @@ fn resolve_bindings(
             continue;
         }
         if mentions_secret(value) {
-            diags.push(
+            sinks.errors.push(
                 at(Diag::error(
                     "proef::lower::secret_in_composite_bind",
                     format!(
@@ -203,7 +194,7 @@ fn resolve_bindings(
             );
             continue;
         }
-        if let Some(resolved) = resolve_in(value, refs, warnings, diags) {
+        if let Some(resolved) = resolve_in(value, refs, sinks) {
             out.insert(name.clone(), Bound::Value(resolved));
         }
     }
@@ -221,6 +212,21 @@ fn captures_before(out: &[LoweredStep]) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// The two diagnostic sinks a lowering pass fills.
+///
+/// Bundled rather than passed as two parameters, because they are the same type
+/// and were adjacent: transposing them at any of a dozen call sites compiled
+/// cleanly and routed every error into `warnings`, so a scenario that should
+/// have failed lowered "successfully" and the run exited 0. Named fields make
+/// that mistake unspellable.
+#[derive(Debug, Default)]
+struct Sinks {
+    /// Non-fatal notes surfaced beside a scenario that still runs.
+    warnings: Vec<Diag>,
+    /// Failures — any one of these aborts the scenario.
+    errors: Vec<Diag>,
 }
 
 /// What resolution referenced while lowering one scenario.
@@ -246,8 +252,7 @@ struct Refs {
 
 /// Lower one bound scenario into engine batches.
 pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScenario, Vec<Diag>> {
-    let mut diags: Vec<Diag> = Vec::new();
-    let mut warnings: Vec<Diag> = Vec::new();
+    let mut sinks = Sinks::default();
     let mut refs = Refs::default();
     let mut lowered: Vec<LoweredStep> = Vec::new();
     for step in &scenario.steps {
@@ -271,8 +276,7 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
             0,
             &mut lowered,
             &mut refs,
-            &mut warnings,
-            &mut diags,
+            &mut sinks,
             &at,
         );
     }
@@ -287,7 +291,7 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
             continue; // glued to its host batch — no engine of its own
         }
         if !ctx.kind_to_engine.contains_key(step.kind.as_str()) {
-            diags.push(
+            sinks.errors.push(
                 Diag::error(
                     "proef::lower::kind_unrouted",
                     format!(
@@ -301,8 +305,8 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
         }
     }
 
-    if diags.iter().any(|d| d.severity == Severity::Error) {
-        return Err(diags);
+    if sinks.errors.iter().any(|d| d.severity == Severity::Error) {
+        return Err(sinks.errors);
     }
 
     Ok(LoweredScenario {
@@ -312,7 +316,7 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
         batches: segment(lowered, ctx.kind_to_engine),
         secrets: refs.secrets,
         globals: refs.globals,
-        warnings,
+        warnings: sinks.warnings,
     })
 }
 
@@ -326,12 +330,11 @@ fn expand_macro(
     depth: usize,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
+    sinks: &mut Sinks,
     at: &impl Fn(Diag) -> Diag,
 ) {
     if depth > MAX_EXPANSION_DEPTH {
-        diags.push(at(Diag::error(
+        sinks.errors.push(at(Diag::error(
             "proef::lower::expansion_too_deep",
             format!(
                 "macro expansion exceeded depth {MAX_EXPANSION_DEPTH} at `{}`",
@@ -341,11 +344,7 @@ fn expand_macro(
         return;
     }
 
-    let resolve_in = |text: &str,
-                      refs: &mut Refs,
-                      warnings: &mut Vec<Diag>,
-                      diags: &mut Vec<Diag>|
-     -> Option<String> {
+    let resolve_in = |text: &str, refs: &mut Refs, sinks: &mut Sinks| -> Option<String> {
         let resolve_ctx = ResolveCtx {
             args,
             defaults: &macro_.defaults,
@@ -363,11 +362,11 @@ fn expand_macro(
                 refs.secrets
                     .extend(resolution.secrets.into_iter().map(|s| (s.clone(), s)));
                 refs.globals.extend(resolution.globals);
-                push_warnings(warnings, &resolution.warnings, ctx, &macro_.name);
+                push_warnings(sinks, &resolution.warnings, ctx, &macro_.name);
                 Some(resolution.text)
             }
             Err(err) => {
-                diags.push(at(Diag::error(
+                sinks.errors.push(at(Diag::error(
                     err.code(),
                     format!("in macro `{}`: {err}", macro_.name),
                 )));
@@ -379,28 +378,28 @@ fn expand_macro(
     // Bindings in scope for this macro's `ref:` steps: pack scope (resolved
     // once per scenario, cached) then macro scope (once per invocation, which
     // is here). Step scope is applied per step in `expand_step`.
-    let scoped = scope_bindings(macro_, ctx, refs, warnings, diags, &resolve_in, at);
+    let scoped = scope_bindings(macro_, ctx, refs, sinks, &resolve_in, at);
 
     match &macro_.body {
         MacroBody::Expect(items) => {
             let mut merged: Option<(StepKindId, bool, usize)> = None;
             for item in items {
                 let status = match &item.status {
-                    Some(status) => match resolve_in(status, refs, warnings, diags) {
+                    Some(status) => match resolve_in(status, refs, sinks) {
                         Some(status) => Some(status),
                         None => continue,
                     },
                     None => None,
                 };
                 let fragment = match &item.fragment {
-                    Some(fragment) => match resolve_in(fragment, refs, warnings, diags) {
+                    Some(fragment) => match resolve_in(fragment, refs, sinks) {
                         Some(fragment) => Some(fragment),
                         None => continue,
                     },
                     None => None,
                 };
                 if let Some((kind, optional, lines)) =
-                    merge_expect(status.as_deref(), fragment.as_deref(), out, diags, at)
+                    merge_expect(status.as_deref(), fragment.as_deref(), out, sinks, at)
                 {
                     let entry = merged.get_or_insert((kind, optional, 0));
                     entry.2 += lines;
@@ -430,8 +429,7 @@ fn expand_macro(
                     depth,
                     out,
                     refs,
-                    warnings,
-                    diags,
+                    sinks,
                     at,
                     &resolve_in,
                     &scoped,
@@ -450,15 +448,14 @@ fn expand_step(
     depth: usize,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
+    sinks: &mut Sinks,
     at: &impl Fn(Diag) -> Diag,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
     scoped: &Bindings,
 ) {
     match &macro_step.kind {
         MacroStepKind::Ref { target } => expand_ref_step(
-            target, macro_step, step_ref, ctx, out, refs, warnings, diags, at, resolve_in, scoped,
+            target, macro_step, step_ref, ctx, out, refs, sinks, at, resolve_in, scoped,
         ),
         MacroStepKind::Use { target, with } => {
             let Some(target_macro) = ctx.packs.find_use_target(target) else {
@@ -468,7 +465,7 @@ fn expand_step(
             // child's args (child defaults fill the rest).
             let mut child_args = BTreeMap::new();
             for (key, value) in with {
-                if let Some(resolved) = resolve_in(value, refs, warnings, diags) {
+                if let Some(resolved) = resolve_in(value, refs, sinks) {
                     child_args.insert(key.clone(), resolved);
                 }
             }
@@ -480,13 +477,12 @@ fn expand_step(
                 depth + 1,
                 out,
                 refs,
-                warnings,
-                diags,
+                sinks,
                 at,
             );
         }
         MacroStepKind::Payload { kind, payload } => expand_payload_step(
-            macro_step, kind, payload, step_ref, out, refs, warnings, diags, resolve_in,
+            macro_step, kind, payload, step_ref, out, refs, sinks, resolve_in,
         ),
     }
 }
@@ -501,10 +497,9 @@ fn expand_ref_step(
     ctx: &LowerCtx<'_>,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
+    sinks: &mut Sinks,
     at: &impl Fn(Diag) -> Diag,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
     scoped: &Bindings,
 ) {
     let Some(fragment) = ctx.packs.find_fragment(target) else {
@@ -520,8 +515,7 @@ fn expand_ref_step(
     bindings.extend(resolve_bindings(
         &macro_step.bind,
         refs,
-        warnings,
-        diags,
+        sinks,
         resolve_in,
         at,
     ));
@@ -561,7 +555,7 @@ fn expand_ref_step(
             fragment.name,
             missing.join("`, `"),
         );
-        diags.push(
+        sinks.errors.push(
             Diag::error("proef::lower::unbound_placeholder", message)
                 .with_source(fragment.file.clone(), Arc::clone(&fragment.source))
                 .maybe_span(crate::pack::locate::line_span(
@@ -606,8 +600,7 @@ fn expand_ref_step(
         label_fakes_start,
         out,
         refs,
-        warnings,
-        diags,
+        sinks,
         resolve_in,
     );
 }
@@ -622,9 +615,8 @@ fn expand_payload_step(
     step_ref: &StepRef,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    sinks: &mut Sinks,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
 ) {
     // The label annotates *this* step for humans (artifact comments,
     // events) — it must report the fake values the step actually
@@ -635,7 +627,7 @@ fn expand_payload_step(
     let label_fakes_start = refs.fakes;
     let payload = match payload {
         PayloadForm::Raw(text) => {
-            let Some(resolved) = resolve_in(text, refs, warnings, diags) else {
+            let Some(resolved) = resolve_in(text, refs, sinks) else {
                 return;
             };
             // Bake `retry:`/`delay:` into hurl `[Options]` so artifacts
@@ -663,7 +655,7 @@ fn expand_payload_step(
                 if !text.contains('$') {
                     return Some(text.to_owned());
                 }
-                resolve_in(text, refs, warnings, diags)
+                resolve_in(text, refs, sinks)
             };
             match resolve_structured(value, &mut resolve) {
                 Some(resolved) => StepPayload::Structured(resolved),
@@ -679,8 +671,7 @@ fn expand_payload_step(
         label_fakes_start,
         out,
         refs,
-        warnings,
-        diags,
+        sinks,
         resolve_in,
     );
 }
@@ -702,12 +693,11 @@ fn finish_step(
     label_fakes_start: usize,
     out: &mut Vec<LoweredStep>,
     refs: &mut Refs,
-    warnings: &mut Vec<Diag>,
-    diags: &mut Vec<Diag>,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    sinks: &mut Sinks,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
 ) {
     let when = match &macro_step.when {
-        Some(guard) => match resolve_in(guard, refs, warnings, diags) {
+        Some(guard) => match resolve_in(guard, refs, sinks) {
             Some(resolved) => Some(Guard(resolved)),
             None => return,
         },
@@ -738,7 +728,7 @@ fn finish_step(
     let label = match &macro_step.name {
         Some(name) => {
             refs.fakes = label_fakes_start;
-            let resolved = resolve_in(name, refs, warnings, diags);
+            let resolved = resolve_in(name, refs, sinks);
             refs.fakes = functional_fakes_end.max(refs.fakes);
             match resolved {
                 Some(resolved) => Some(resolved),
@@ -918,7 +908,7 @@ fn merge_expect(
     status: Option<&str>,
     fragment: Option<&str>,
     out: &mut [LoweredStep],
-    diags: &mut Vec<Diag>,
+    sinks: &mut Sinks,
     at: &impl Fn(Diag) -> Diag,
 ) -> Option<(StepKindId, bool, usize)> {
     let Some(previous) = out
@@ -926,7 +916,7 @@ fn merge_expect(
         .rev()
         .find(|s| matches!(s.payload, StepPayload::HurlEntries(_)))
     else {
-        diags.push(
+        sinks.errors.push(
             at(Diag::error(
                 "proef::lower::then_before_when",
                 "this assert-only step has no previous request entry to attach to",
@@ -939,7 +929,7 @@ fn merge_expect(
     if let Some(status) = status
         && (!status.chars().all(|c| c.is_ascii_digit()) || status.is_empty())
     {
-        diags.push(at(Diag::error(
+        sinks.errors.push(at(Diag::error(
             "proef::lower::bad_status",
             format!("expected an HTTP status number, got `{status}`"),
         )));
@@ -1077,9 +1067,9 @@ fn segment(steps: Vec<LoweredStep>, kind_to_engine: &BTreeMap<String, String>) -
     batches
 }
 
-fn push_warnings(warnings: &mut Vec<Diag>, texts: &[String], ctx: &LowerCtx<'_>, where_: &str) {
+fn push_warnings(sinks: &mut Sinks, texts: &[String], ctx: &LowerCtx<'_>, where_: &str) {
     for text in texts {
-        warnings.push(
+        sinks.warnings.push(
             Diag::warning("proef::lower::dry_run_unknown", format!("{where_}: {text}"))
                 .with_source(ctx.feature.path.clone(), Arc::clone(&ctx.feature.source)),
         );
@@ -1721,7 +1711,7 @@ mod tests {
             let line = line.trim();
             if let Some(name) = line.strip_prefix('@') {
                 out.push(crate::engine::ScannedFragment {
-                    name: Some(name.to_owned()),
+                    name: name.to_owned(),
                     text: format!("GET http://x/{name}\nHTTP 200\n"),
                     line: index + 1,
                     placeholders: Vec::new(),

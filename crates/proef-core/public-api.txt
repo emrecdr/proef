@@ -486,7 +486,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeEr
 pub struct proef_core::engine::ScannedFragment
 pub proef_core::engine::ScannedFragment::declared_options: alloc::vec::Vec<alloc::string::String>
 pub proef_core::engine::ScannedFragment::line: usize
-pub proef_core::engine::ScannedFragment::name: core::option::Option<alloc::string::String>
+pub proef_core::engine::ScannedFragment::name: alloc::string::String
 pub proef_core::engine::ScannedFragment::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::engine::ScannedFragment::text: alloc::string::String
 impl core::clone::Clone for proef_core::engine::ScannedFragment
@@ -540,6 +540,7 @@ impl core::marker::Unpin for proef_core::engine::StepKindSpec
 impl core::marker::UnsafeUnpin for proef_core::engine::StepKindSpec
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::StepKindSpec
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::StepKindSpec
+pub const proef_core::engine::OPTION_FAMILIES: &[&str]
 pub trait proef_core::engine::EngineFactory: core::marker::Send + core::marker::Sync
 pub fn proef_core::engine::EngineFactory::doctor(&self) -> alloc::vec::Vec<proef_core::engine::DoctorCheck>
 pub fn proef_core::engine::EngineFactory::id(&self) -> &'static str
@@ -549,6 +550,7 @@ pub trait proef_core::engine::EngineSession: core::marker::Send
 pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::step::StepBatch) -> core::option::Option<core::time::Duration>
 pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
+pub fn proef_core::engine::secret_variables<'a>(&'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>, &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>) -> impl core::iter::traits::iterator::Iterator<Item = (&'a str, &'a str)>
 pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<alloc::vec::Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
 pub mod proef_core::error
@@ -1003,6 +1005,8 @@ pub proef_core::pack::MacroStep::optional: bool
 pub proef_core::pack::MacroStep::retry: core::option::Option<proef_core::step::Retry>
 pub proef_core::pack::MacroStep::save_as: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::pack::MacroStep::when: core::option::Option<alloc::string::String>
+impl proef_core::pack::MacroStep
+pub fn proef_core::pack::MacroStep::declared_options(&self) -> impl core::iter::traits::iterator::Iterator<Item = &'static str>
 impl core::clone::Clone for proef_core::pack::MacroStep
 pub fn proef_core::pack::MacroStep::clone(&self) -> proef_core::pack::MacroStep
 impl core::fmt::Debug for proef_core::pack::MacroStep

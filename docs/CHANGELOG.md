@@ -14,7 +14,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 > `secret_bindings` field carrying that map to the engine; and
 > `SourceProvider::discover_fragments` is a **required** method (return
 > `Ok(Vec::new())` to serve none) — it was briefly defaulted, and the default
-> silently disabled fragments for a provider that forwarded the other two.
+> silently disabled fragments for a provider that forwarded the other two; and
+> `ScannedFragment::name` is a `String` rather than `Option<String>`, because a
+> scanner now reports only the entries it found an annotation on.
 
 ### Added
 
@@ -115,6 +117,32 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   defaults that do not forward to one another. Overriding only `visit_template` silently
   under-reports an entry's inputs — and a missing input reads as "needs no binding".
 
+### Internal
+
+- **The secret-name join has one home.** `proef_core::engine::secret_variables` pairs a
+  scenario's `secret_bindings` (variable → secret name) with its `secrets` (name → value)
+  and is the only place that join is written. Doing it engine-side invited injecting
+  under the *secret* name, which makes a renamed binding (ADR-0018) resolve to nothing —
+  the request then leaves with an unresolved `{{…}}` and fails far from the cause. It
+  yields borrows on purpose: an owned variable → value map would put a second copy of
+  every secret value in memory per scenario, and ADR-0005 keeps values in one place.
+
+- **`engine::OPTION_FAMILIES` names the vocabulary the double-declaration check compares
+  against**, and `MacroStep::declared_options` derives the other half of that comparison
+  once for both body forms. The two sides were previously hardcoded lists that met by
+  string equality with no test spanning the crates — a spelling only the engine knew
+  would have matched nothing and quietly disabled `option_declared_twice`, reinstating
+  the hurl last-wins it exists to refuse. A `proef-engine-hurl` test now asserts every
+  family the real scanner emits is one the pack can declare; `delay` was untested there
+  entirely.
+
+- **Lowering's two diagnostic sinks are one `Sinks` value.** They were adjacent
+  parameters of the same type threaded through seven functions and a closure:
+  transposing them at any of a dozen call sites compiled cleanly and routed every error
+  into `warnings`, so a scenario that should have failed lowered "successfully" and the
+  run exited 0. No `&mut Vec<Diag>` parameter remains in `lower.rs`, which makes the
+  mistake unspellable rather than merely unmade.
+
 ### Documentation
 
 - **AUTHORING says which body form to reach for, and why.** A table contrasting
@@ -159,6 +187,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   forwarding provider inherit "no fragments" silently instead of failing to compile.
   An integration test now drives the real provider chain and asserts a `ref:` jump lands
   on the annotation in the `.hurl` file.
+
+- **A fragment file saved with a BOM failed at line 1, blaming the request.** Every other
+  text entry point (`feature::parse`, the inline-payload probe) strips a leading
+  `U+FEFF`; the fragment scanner did not, so the mark reached hurl's parser as the first
+  character of the first request. The file is now normalized by the same rule, and the
+  mark cannot travel into an artifact that has to be valid hurl.
+
+- **A macro-scope `bind:` with no `ref:` step was silently dropped.** The step-scope
+  version of this mistake has been a hard error since `bind:` landed; one scope up it
+  vanished at lower time. That is the half authors actually hit, because factoring
+  plumbing upward is the habit — and the tempting reading, that a `use:` target will
+  pick the table up, is wrong: the child resolves its own scopes. Now
+  `proef::pack::bind_without_ref` at both scopes, with a message that says so.
 
 - **A `ref:` step's `name:` reported a `${fake:…}` value it never sent.** A label is a
   *replay* of what the request was built from, not a fresh use of it: the inline path

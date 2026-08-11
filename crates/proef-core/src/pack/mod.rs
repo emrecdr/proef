@@ -185,9 +185,9 @@ pub struct Fragment {
     /// Source file name as authored — the `file.hurl#name` qualifier and the
     /// diagnostic source.
     pub file: String,
-    /// The step kind whose engine scanned this file, taken from the `file_ext`
-    /// that claimed it. A `ref:` step routes by this exactly as an inline step
-    /// routes by its payload key (ADR-0002).
+    /// The step kind whose engine scanned this file, taken from the
+    /// `StepKindSpec` whose `fragments.ext` claimed it. A `ref:` step routes by
+    /// this exactly as an inline step routes by its payload key (ADR-0002).
     pub kind: String,
     /// The entry's own text, annotation included.
     pub text: String,
@@ -270,6 +270,27 @@ pub struct MacroStep {
     pub save_as: BTreeMap<String, String>,
     /// Step-scope fragment bindings (ADR-0018), the most specific of the three.
     pub bind: BTreeMap<String, String>,
+}
+
+impl MacroStep {
+    /// The [`crate::engine::OPTION_FAMILIES`] this step sets for itself.
+    ///
+    /// The single derivation of "which options does the YAML declare", so the
+    /// double-declaration rule reads the same answer for both body forms —
+    /// an inline block's `[Options]` and a fragment's `declared_options` are
+    /// checked against *this*, not against two hand-written lists that could
+    /// drift apart and let hurl's silent last-wins back in.
+    ///
+    /// A new family is added here and in `OPTION_FAMILIES` together; both
+    /// call sites then cover it with no further edit.
+    pub fn declared_options(&self) -> impl Iterator<Item = &'static str> {
+        [
+            ("retry", self.retry.is_some()),
+            ("delay", self.delay_ms.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(family, declared)| declared.then_some(family))
+    }
 }
 
 /// Payload or composition of a [`MacroStep`].
@@ -449,7 +470,7 @@ fn load_fragments(
             }
         };
         for entry in scanned {
-            let Some(name) = entry.name else { continue };
+            let name = entry.name;
             if let Some(existing) = set.fragments.get(&name) {
                 diags.push(
                     Diag::error(

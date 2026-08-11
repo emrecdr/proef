@@ -73,6 +73,21 @@ pub(crate) fn normalize_macro(
         }
     }
 
+    // Pass 2b: a macro-scope `bind:` needs something in this macro to bind.
+    // Same rule as the step-scope check, at the scope above it: a `bind:` no
+    // `ref:` can read is silently dropped at lower time, and a setting quietly
+    // ignored is the bug both halves refuse to ship. The predicate is *this
+    // macro's own* steps because a `use:` target resolves its own scopes — a
+    // parent's macro-scope table never reaches the child (ADR-0018).
+    if !raw.bind.is_empty() && !raw.steps.iter().any(|step| step.ref_.is_some()) {
+        diags.push(at(Diag::error(
+            "proef::pack::bind_without_ref",
+            format!(
+                "macro `{name}`: `bind:` supplies a fragment's `{{{{…}}}}` variables, but no step here has a `ref:` — a `use:` target resolves its own bindings, so this table would go unread"
+            ),
+        )));
+    }
+
     // Body shape: steps XOR expect.
     let body = match (&raw.steps.is_empty(), &raw.expect) {
         (false, Some(_)) => {
@@ -453,15 +468,13 @@ fn ref_target_passes(
         );
         return;
     };
-    // Every option family the step can also set, not just retry: `delay:` bakes
-    // into the same `[Options]` section through the same code path, so leaving
-    // it unchecked reproduces exactly the silent last-wins the inline half of
-    // this rule exists to refuse.
-    for (family, declared_by_step) in [
-        ("retry", step.retry.is_some()),
-        ("delay", step.delay_ms.is_some()),
-    ] {
-        if declared_by_step && fragment.declared_options.iter().any(|o| o == family) {
+    // Every option family the step sets, not just retry: `delay:` bakes into the
+    // same `[Options]` section through the same code path, so leaving it
+    // unchecked reproduces exactly the silent last-wins the inline half of this
+    // rule exists to refuse. The families come from the step itself, so this and
+    // `lint_raw_options` cannot disagree about what a step declared.
+    for family in step.declared_options() {
+        if fragment.declared_options.iter().any(|o| o == family) {
             diags.push(at(Diag::error(
                 "proef::pack::option_declared_twice",
                 format!(
@@ -657,7 +670,8 @@ fn lint_raw_options(
     let mut in_options = false;
     // One report per option family is enough to act on; a block whose every
     // entry repeats the clash would otherwise bury the step in duplicates.
-    let (mut said_retry, mut said_delay) = (false, false);
+    // A list rather than a flag per family, so a new family needs no latch.
+    let mut said: Vec<&'static str> = Vec::new();
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
@@ -720,16 +734,18 @@ fn lint_raw_options(
         if !in_options {
             continue;
         }
-        let is_retry = trimmed.starts_with("retry:") || trimmed.starts_with("retry-interval:");
-        let (option, twinned, said) = if is_retry {
-            ("retry", step.retry.is_some(), &mut said_retry)
+        // hurl's `retry-interval` folds into `retry` — one policy, and a step's
+        // `retry:` sets both — so the two spellings map to the one family the
+        // pack knows (`engine::OPTION_FAMILIES`).
+        let option = if trimmed.starts_with("retry:") || trimmed.starts_with("retry-interval:") {
+            "retry"
         } else if trimmed.starts_with("delay:") {
-            ("delay", step.delay_ms.is_some(), &mut said_delay)
+            "delay"
         } else {
             continue;
         };
-        if twinned && !*said {
-            *said = true;
+        if step.declared_options().any(|f| f == option) && !said.contains(&option) {
+            said.push(option);
             diags.push(
                 at(Diag::error(
                     "proef::pack::option_declared_twice",
@@ -1228,7 +1244,7 @@ mod tests {
             }
             if let Some(name) = line.strip_prefix('@') {
                 out.push(crate::engine::ScannedFragment {
-                    name: Some(name.to_owned()),
+                    name: name.to_owned(),
                     text: format!("GET http://x/{name}\n"),
                     line: index + 1,
                     placeholders: Vec::new(),
@@ -1357,6 +1373,37 @@ mod tests {
             &[],
         );
         assert!(has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// The same rule one scope up. A macro-scope `bind:` on a macro with no
+    /// `ref:` step is unreadable — and the tempting reading, that a `use:`
+    /// target will pick it up, is wrong: the child resolves its own scopes.
+    /// Left unchecked this is the *silent* half of the same mistake, and it is
+    /// the one authors hit, because factoring plumbing upward is the habit.
+    #[test]
+    fn a_macro_scope_bind_with_no_ref_step_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  target:\n    match: the target\n    steps:\n      - ref: f\n  m:\n    match: it runs\n    bind:\n      a: b\n    steps:\n      - use: target\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// …and it must not fire on a macro that does have one, or the rule would
+    /// refuse the feature it exists to protect.
+    #[test]
+    fn a_macro_scope_bind_beside_a_ref_step_is_accepted() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    bind:\n      a: b\n    steps:\n      - ref: f\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(!has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
     }
 
     #[test]

@@ -21,14 +21,22 @@ use proef_core::engine::{FragmentScanError, ScannedFragment};
 /// configuration language beside the pack (ADR-0018).
 const MARKER: &str = "@proef";
 
-/// Scan one fragment file into its entries, annotated or not.
+/// Scan one fragment file into the entries it *annotates*.
 pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError> {
-    // Appending to the end cannot move any line, so positions stay valid — and
-    // a file that already ends in one (nearly all of them) is not copied.
-    let normalized = if text.ends_with('\n') {
-        Cow::Borrowed(text)
+    // Same normalization rule as every other text entry point (`feature::parse`,
+    // `validate_payload`): drop a leading BOM, guarantee a trailing newline.
+    // A BOM would otherwise reach hurl's parser as content and fail the whole
+    // file at line 1 column 1, blaming the request rather than the encoding.
+    // Neither edit moves a line, so reported positions stay valid.
+    //
+    // Unlike those two this keeps a `Cow`: it runs over an entire corpus, and
+    // the LSP re-scans that corpus on every recompute, so not copying the
+    // already-well-formed majority is worth the branch.
+    let stripped = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let normalized = if stripped.ends_with('\n') {
+        Cow::Borrowed(stripped)
     } else {
-        Cow::Owned(format!("{text}\n"))
+        Cow::Owned(format!("{stripped}\n"))
     };
     let file =
         hurl_core::parser::parse_hurl_file(&normalized).map_err(|err| FragmentScanError {
@@ -56,7 +64,16 @@ pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError
     let mut out = Vec::with_capacity(file.entries.len());
 
     for (index, entry) in file.entries.iter().enumerate() {
-        let name = annotation(entry)?;
+        // Unannotated entries are not fragments and nothing downstream can use
+        // one, so they are dropped here rather than built and discarded. The
+        // `starts` table above still covers them, which is what keeps an
+        // annotated entry's text ending where the *next* entry begins — named
+        // or not. A corpus proef did not write is mostly unannotated, and the
+        // LSP re-scans it on every recompute, so this is the majority of the
+        // work in the common case.
+        let Some(name) = annotation(entry)? else {
+            continue;
+        };
         let start = starts[index];
         // Each entry owns its lines up to where the next one begins, so no byte
         // of the file belongs to two fragments or to none.
@@ -250,23 +267,34 @@ mod tests {
     #[test]
     fn an_annotated_entry_reports_its_name_reads_and_writes() {
         let found = scan(FILE).unwrap();
-        assert_eq!(found.len(), 2, "both entries are reported");
+        assert_eq!(found.len(), 1, "only the annotated entry is reported");
 
         let search = &found[0];
-        assert_eq!(search.name.as_deref(), Some("admin.search"));
+        assert_eq!(search.name, "admin.search");
         // The URL is reached through `visit_url`, the header and query through
         // `visit_template` — a scanner overriding only one would miss the rest.
         assert_eq!(search.placeholders, ["base", "index", "apiToken", "q"]);
         assert!(search.declared_options.is_empty());
     }
 
-    /// An unannotated entry is reported, not dropped: a corpus proef does not
-    /// own is mostly these, and the caller decides what to do about them.
+    /// An unannotated entry is not a fragment, so it is not reported — but it
+    /// must still *bound* the one before it. Dropping it from the output while
+    /// keeping it in the entry table is what stops `admin.search` swallowing
+    /// the `DELETE` that follows it.
     #[test]
-    fn an_unannotated_entry_is_inert_but_present() {
+    fn an_unannotated_entry_is_dropped_but_still_ends_the_one_before_it() {
         let found = scan(FILE).unwrap();
-        assert_eq!(found[1].name, None);
-        assert_eq!(found[1].placeholders, ["base", "recordId"]);
+        assert_eq!(found.len(), 1);
+        assert!(
+            !found[0].text.contains("DELETE"),
+            "the dropped entry still marks where the annotated one stops: {}",
+            found[0].text
+        );
+        assert!(
+            !found[0].placeholders.contains(&"recordId".to_owned()),
+            "nor may its reads be attributed to the fragment: {:?}",
+            found[0].placeholders
+        );
     }
 
     /// Fragment text runs from the annotation to just before the next entry:
@@ -294,9 +322,8 @@ mod tests {
             found[0].line, 2,
             "the annotation line, not the header above it"
         );
-        assert_eq!(found[1].line, 11);
         // Each fragment parses on its own — that is what makes it referenceable.
-        assert!(hurl_core::parser::parse_hurl_file(&found[1].text).is_ok());
+        assert!(hurl_core::parser::parse_hurl_file(&found[0].text).is_ok());
     }
 
     #[test]
@@ -305,11 +332,61 @@ mod tests {
         assert_eq!(found[0].declared_options, ["retry"]);
     }
 
+    /// The seam's contract, checked across the crate boundary rather than
+    /// assumed on each side of it.
+    ///
+    /// `declared_options` is compared by **string equality** against the pack's
+    /// own option keys, so a spelling only this engine knows would match
+    /// nothing and silently disable `option_declared_twice` — reinstating
+    /// hurl's last-wins, which is the bug that rule exists to refuse. Both of
+    /// hurl's retry spellings must therefore arrive folded into one family.
+    #[test]
+    fn every_option_family_the_scanner_emits_is_one_the_pack_knows() {
+        let found = scan(concat!(
+            "# @proef every\n",
+            "GET http://x\n",
+            "[Options]\n",
+            "retry: 3\n",
+            "retry-interval: 500\n",
+            "delay: 100\n",
+            "HTTP 200\n",
+        ))
+        .unwrap();
+        assert_eq!(
+            found[0].declared_options,
+            ["retry", "delay"],
+            "`retry-interval` folds into `retry`; both families are reported once"
+        );
+        for family in &found[0].declared_options {
+            assert!(
+                proef_core::engine::OPTION_FAMILIES.contains(&family.as_str()),
+                "`{family}` is not a family the pack can declare, so the clash check cannot see it"
+            );
+        }
+    }
+
     #[test]
     fn the_marker_must_be_its_own_word() {
-        // `@proefX` is somebody else's comment, not a malformed annotation.
+        // `@proefX` is somebody else's comment, not a malformed annotation — so
+        // the entry is unannotated and reported by nobody.
         let found = scan("# @proefX note\nGET http://x\n").unwrap();
-        assert_eq!(found[0].name, None);
+        assert!(found.is_empty());
+    }
+
+    /// A BOM is an encoding artifact, not content. Left in place it reaches
+    /// hurl's parser as the first character of the first request and fails the
+    /// whole file at 1:1 — blaming the request for the editor that saved it.
+    #[test]
+    fn a_leading_byte_order_mark_is_stripped_before_parsing() {
+        // Unwraps deliberately: an `Err` here *is* the regression — the scan
+        // failing on the encoding rather than reading the request.
+        let found = scan("\u{feff}# @proef ping\nGET http://x\nHTTP 200\n").unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "ping");
+        assert!(
+            !found[0].text.starts_with('\u{feff}'),
+            "and it must not travel into the artifact, which has to be valid hurl"
+        );
     }
 
     #[test]

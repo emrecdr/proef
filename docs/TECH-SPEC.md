@@ -88,11 +88,22 @@ pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* 
                           pub fragments: Option<FragmentSupport> }
 pub struct FragmentSupport { pub ext: &'static str /* "hurl" */, pub scan: FragmentScanner }
 pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
-// Everything here is *read* from the entry — nothing is declared twice, so nothing can drift
-pub struct ScannedFragment { pub name: Option<String> /* `# @proef <name>` */, pub text: String,
+// Everything here is *read* from the entry — nothing is declared twice, so nothing can drift.
+// A scanner reports ONLY annotated entries: an unannotated one is not a fragment, and a
+// foreign corpus is mostly those, so building them only to be discarded is the bulk of a scan
+pub struct ScannedFragment { pub name: String /* from `# @proef <name>` */, pub text: String,
                              pub line: usize, pub placeholders: Vec<String> /* reads */,
-                             pub declared_options: Vec<String> /* "retry", "delay" */ }
+                             pub declared_options: Vec<String> /* ⊆ OPTION_FAMILIES */ }
 pub struct FragmentScanError { pub line: usize, pub column: usize, pub message: String }
+// The vocabulary `declared_options` must use: matched by string equality against the pack's
+// own option keys, so an engine-only spelling silences `option_declared_twice` rather than
+// firing it. `MacroStep::declared_options()` derives the other half of that comparison.
+pub const OPTION_FAMILIES: &[&str] = &["retry", "delay"];
+// The one place `secret_bindings` (variable → secret) is joined with `secrets` (name → value).
+// Yields borrows: an owned map would copy every secret value per scenario (ADR-0005)
+pub fn secret_variables<'a>(bindings: &'a BTreeMap<String, String>,
+                            secrets: &'a BTreeMap<String, String>)
+                            -> impl Iterator<Item = (&'a str, &'a str)>;
 pub struct DoctorCheck { pub name: &'static str, pub run: fn() -> DoctorResult }
 pub struct BatchResult { pub steps: Vec<StepOutcome>, pub error: Option<EngineError> }
 pub struct StepOutcome { pub step: StepRef, pub status: Status, pub attempts: u32,

@@ -136,13 +136,12 @@ impl HurlSession {
             variables.insert(name.to_owned(), to_hurl_value(value));
         }
         // Keyed by the *variable* name the artifact reads, with the value taken
-        // by *secret* name. They match unless a fragment binding renamed one
-        // (ADR-0018), and the map covers every secret the scenario references —
-        // an inline `${secret:X}` maps `X` to itself.
-        for (variable, secret) in self.secret_bindings.iter() {
-            if let Some(value) = self.secrets.get(secret) {
-                variables.insert_secret(variable.clone(), value.clone());
-            }
+        // by *secret* name — they differ when a fragment binding renamed one
+        // (ADR-0018). Core owns that join so no engine can invert it.
+        for (variable, value) in
+            proef_core::engine::secret_variables(&self.secret_bindings, &self.secrets)
+        {
+            variables.insert_secret(variable.to_owned(), value.to_owned());
         }
         variables
     }

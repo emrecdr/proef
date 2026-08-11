@@ -144,6 +144,17 @@ one of the three scopes or captured by an earlier step; nothing is implicit,
 because hurl's per-entry `variable:` assigns into one shared set rather than
 scoping, so an unbound name would quietly inherit an earlier entry's value.
 
+Bindings resolve **once per scope instantiation** — pack scope once per scenario,
+macro scope once per invocation, step scope per step — so one `bind:` entry is one
+value, and two are two. That is what makes a pack-scope `${fake:email}` a single
+identity for the whole scenario.
+
+A `bind:` that nothing can read is refused (`proef::pack::bind_without_ref`)
+rather than dropped, at every scope. Note the one that surprises people: a
+macro-scope `bind:` does **not** reach a `use:` target — the target resolves its
+own pack and macro scopes — so the table belongs on the macro that actually
+carries the `ref:`.
+
 ## Asserting responses — the hurl vocabulary
 
 Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the

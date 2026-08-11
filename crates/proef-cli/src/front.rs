@@ -403,7 +403,7 @@ pub fn fragment_extensions(kinds: &[proef_core::engine::StepKindSpec]) -> Vec<&'
 /// Every fragment file under `root`, recursively (ADR-0018). Unlike packs
 /// there is no directory convention: the root is named in `[run] fragments`,
 /// so everything beneath it with a claimed extension is in scope. The
-/// extensions come from the registered engines' `file_ext`, so discovery never
+/// extensions come from the registered engines' `fragments.ext`, so discovery never
 /// learns a file type of its own (ADR-0002).
 pub fn fragment_files(
     root: &Path,
