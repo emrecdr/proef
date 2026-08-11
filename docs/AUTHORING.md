@@ -176,6 +176,78 @@ convenience layer over the predicates above — they deliberately do not cover
 whole-body structural matching; reach for a raw `expect:` `hurl:` block for
 anything they omit.
 
+### Negative cases — one macro per malformation, one shared expectation
+
+A validation suite is naturally combinatorial, and its cases differ
+*structurally* rather than by value: one omits a key, one empties it, one adds a
+key the caller may not set. A single parameterised macro cannot express that —
+the bodies are different shapes, not one shape with a hole in it. Outline
+placeholders do substitute into docstrings, but an `Examples` cell cannot
+practically hold JSON, and a raw body in the feature file defeats the prose the
+design exists to protect.
+
+**Name each malformation.** One macro per case, each sentence saying what is
+wrong in business terms:
+
+```yaml
+macros:
+  createWithEmptyTitle:
+    match: creating a task with an empty title is refused
+    steps:
+      - hurl: |
+          POST ${url:base}/tasks
+          Content-Type: application/json
+          {"title": "", "priority": "high"}
+
+  createWithServerOwnedField:
+    match: creating a task that sets its own id is refused
+    steps:
+      - hurl: |
+          POST ${url:base}/tasks
+          Content-Type: application/json
+          {"title": "ok", "id": "caller-chosen"}
+```
+
+**Then let one `expect:` macro serve the whole catalogue.** Because an `expect:`
+merges its asserts into the *previous* request entry, a single parameterised
+expectation covers every case in the set — typically the largest de-duplicator
+in a validation pack:
+
+```yaml
+  expectErrorCode:
+    params: [code]
+    match: "the error code is {code}"
+    expect:
+      - hurl: |
+          jsonpath "$.error.code" == "${code}"
+```
+
+The scenarios then read as the specification they are, and each one's asserts
+land on its own request:
+
+```gherkin
+  Scenario: An empty title is rejected
+    When creating a task with an empty title is refused
+    Then the response status is 422
+    And the error code is TITLE_REQUIRED
+```
+
+```
+# emitted
+POST http://127.0.0.1:8787/tasks
+Content-Type: application/json
+{"title": "", "priority": "high"}
+HTTP *
+[Asserts]
+status == 422
+jsonpath "$.error.code" == "TITLE_REQUIRED"
+```
+
+**The trade, stated plainly:** the pack grows with the malformation catalogue —
+one macro per case, where a value-driven test would have used one row. That is
+the cost of feature files that read as prose, and it buys a suite a
+non-engineer can review. The expectation side does not grow with it.
+
 ## Variables — the two tiers
 
 | Syntax | Resolves | When | Examples |
