@@ -78,6 +78,8 @@ re-reported after it is fixed.
 | P11 | ADR-0015 described a `worker` on `ScenarioFinished` that is always `None` | #34 |
 | B2 | a templated `retry:`/`delay:` under-counted the batch budget, abandoning healthy scenarios | #35 |
 | B4 | `--output json`'s `exit_code` disagreed with the real exit after a JUnit failure | #35 |
+| B6 | LSP completion snippets did not escape `$`/`}`/`\` | #36 |
+| B9 | GitHub annotation `file=` and job-summary table cells were unescaped | #36 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -192,12 +194,6 @@ Only `byteOffset`/`byteLength`, which defeats inline GitHub annotations. Repro'd
 `proef.toml` is unwatched, and the runs-dir self-triggers — both reproduced. The
 "single file dies after an atomic save" half did **not** reproduce on macOS/FSEvents;
 `notify`'s docs confirm it is real but platform-dependent, worst on inotify.
-
-### B6 — LSP completion snippets do not escape `$` / `\`
-
-A macro name containing either produces a malformed snippet.
-
-### B9 — GitHub annotation `file=` unescaped; `|` unescaped in the job-summary table
 
 ---
 
