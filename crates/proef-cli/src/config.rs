@@ -266,28 +266,19 @@ impl ProjectConfig {
     /// directory holding `proef.toml`. There is no convention fallback: a
     /// `ref:` with nothing configured reports `unknown_ref` and says so, which
     /// beats guessing at a directory.
-    /// Resolution is against the config file's directory so a `ref:` keeps
-    /// working from a subdirectory; the *spelling* is then shortened back to
-    /// cwd-relative when it can be, because these paths become **names**.
-    /// `[run] suite` never needed this — it is used as written — but a
-    /// fragment path reaches `Fragment::file`, and from there a diagnostic,
-    /// the artifact map and the run record. An absolute one makes a record
-    /// machine-specific: two runs of the same suite on two checkouts stop
-    /// comparing equal, and a temp-dir path leaks into a durable artifact.
-    /// Shortening never changes *which* file is read.
+    /// Returns a **resolvable** path, never a display spelling. `proef lsp`
+    /// feeds this straight to `DiskSourceProvider`, which keys document
+    /// identity on absolute source names (`documents::name_to_url` yields
+    /// `None` for anything relative), so shortening it here silently costs
+    /// go-to-definition and `.hurl`-positioned diagnostics. How a fragment
+    /// path is *spelled* in artifacts is a naming question and lives at the
+    /// naming boundary — `front::fragment_sources`.
     pub fn fragments(&self) -> Option<PathBuf> {
         let raw = PathBuf::from(self.run.fragments.as_deref()?);
         if raw.is_absolute() {
             return Some(raw);
         }
-        let resolved = self.root.clone().unwrap_or_default().join(raw);
-        let shortened = match std::env::current_dir() {
-            Ok(cwd) => resolved
-                .strip_prefix(&cwd)
-                .map_or_else(|_| resolved.clone(), Path::to_path_buf),
-            Err(_) => resolved,
-        };
-        Some(shortened)
+        Some(self.root.clone().unwrap_or_default().join(raw))
     }
 
     /// The default suite directory: `[run] suite` if set, else the `tests/`
@@ -445,39 +436,32 @@ mod tests {
         std::env::set_current_dir(prev).expect("restore cwd");
     }
 
-    /// The fragment root resolves against the config directory but is *named*
-    /// relative to the working directory when it can be. The spelling is not
-    /// cosmetic: it becomes `Fragment::file`, and from there the run record —
-    /// where an absolute path makes two checkouts' records differ for no
-    /// reason and can bake a temp directory into a durable artifact.
+    /// `fragments()` returns a **resolvable** path, always — never a display
+    /// spelling.
+    ///
+    /// `proef lsp` hands this to `DiskSourceProvider`, which keys document
+    /// identity on absolute source names: `documents::name_to_url` returns
+    /// `None` for a relative path, so a shortened root silently costs
+    /// go-to-definition on every `ref:` and drops `.hurl`-positioned
+    /// diagnostics — the exact capability the fragment LSP work shipped. It
+    /// regressed once by shortening here for the sake of the run record; how a
+    /// path is *spelled* in artifacts belongs to `front::fragment_sources`.
     #[test]
-    fn a_fragment_root_under_the_working_directory_is_named_relative_to_it() {
-        let tmp = tempfile::tempdir().expect("create tempdir");
-        let prev = std::env::current_dir().expect("read cwd");
-        std::env::set_current_dir(&tmp).expect("cd into tempdir");
-        // `current_dir()` reports the resolved path (macOS maps /var to
-        // /private/var), so take the root from there rather than from the
-        // handle — otherwise this asserts the symlink, not the behaviour.
-        let here = std::env::current_dir().expect("read cwd");
-
+    fn the_fragment_root_stays_resolvable_for_the_editor() {
         let mut config = parse("[run]\nfragments = \"tests/hurl\"\n");
-        config.root = Some(here.clone());
-        assert_eq!(
-            config.fragments(),
-            Some(PathBuf::from("tests/hurl")),
-            "a root under cwd keeps the spelling the author wrote"
+        config.root = Some(PathBuf::from("/proj"));
+        let root = config.fragments().expect("configured");
+        assert_eq!(root, PathBuf::from("/proj/tests/hurl"));
+        assert!(
+            root.is_absolute(),
+            "a relative root makes every fragment URI unformable: {root:?}"
         );
 
-        // Outside the working directory there is nothing to shorten against,
-        // and an absolute path is still correct — just not portable.
-        config.root = Some(PathBuf::from("/elsewhere/project"));
-        assert_eq!(
-            config.fragments(),
-            Some(PathBuf::from("/elsewhere/project/tests/hurl")),
-            "an unrelated root resolves absolutely rather than guessing"
-        );
-
-        std::env::set_current_dir(prev).expect("restore cwd");
+        // An absolute `[run] fragments` is taken as written — the corpus may
+        // sit outside the project entirely.
+        let mut config = parse("[run]\nfragments = \"/corpus/hurl\"\n");
+        config.root = Some(PathBuf::from("/proj"));
+        assert_eq!(config.fragments(), Some(PathBuf::from("/corpus/hurl")));
     }
 
     #[test]

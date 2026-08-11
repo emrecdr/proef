@@ -58,24 +58,34 @@ fn complete_fragment_ref(
 /// and we are in a bind table exactly when that parent is `bind:`. Which also
 /// means the `bind:` line itself answers no — its own parent is the step.
 fn cursor_is_in_bind(raw: &str, position: Position) -> bool {
-    let lines: Vec<&str> = raw.lines().collect();
     let row = position.line as usize;
-    let Some(line) = lines.get(row) else {
+    // `nth`, as `complete_fragment_ref` does: this runs per completion request,
+    // so the flow-style answer below should not first materialise every line of
+    // the document.
+    let Some(line) = raw.lines().nth(row) else {
         return false;
     };
-    if let Some(brace) = line
-        .find("bind:")
-        .and_then(|at| line[at..].find('{').map(|b| at + b))
+    // Anchored like `complete_fragment_ref`'s `ref:` check, not a substring
+    // search: `rebind: {…}` is not a bind table, and a value that merely
+    // contains `bind:` is not one either.
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("bind:")
+        && let Some(brace) = line.find('{')
+        && let Some(close) = line.rfind('}')
     {
-        return position.character as usize > brace;
+        let at = position.character as usize;
+        return at > brace && at <= close;
     }
     let indent = |s: &str| s.len() - s.trim_start().len();
     let here = indent(line);
-    lines[..row]
-        .iter()
-        .rev()
-        .filter(|l| !l.trim().is_empty())
-        .find(|l| indent(l) < here)
+    // The parent is the *nearest* line above with a smaller indent. Taken as
+    // the last such line scanning forward rather than the first scanning back,
+    // which is the same line without needing a reversible (i.e. collected)
+    // iterator.
+    raw.lines()
+        .take(row)
+        .filter(|l| !l.trim().is_empty() && indent(l) < here)
+        .last()
         .is_some_and(|parent| parent.trim() == "bind:")
 }
 
@@ -327,6 +337,12 @@ mod bind_scope_tests {
             !at(flow, 2, 6),
             "on the key itself is not yet inside the table"
         );
+        assert!(!at(flow, 2, 18), "past the closing brace is outside again");
+
+        // The key is matched anchored, not as a substring: another key that
+        // merely ends in `bind:` is a different setting entirely.
+        let lookalike = "macros:\n  m:\n    rebind: { q: 1 }\n";
+        assert!(!at(lookalike, 2, 15), "`rebind:` is not `bind:`");
 
         // A sibling key nested just as deeply, under a different parent.
         let sibling = "macros:\n  m:\n    defaults:\n      index: records\n";

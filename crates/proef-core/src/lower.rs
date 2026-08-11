@@ -605,7 +605,7 @@ fn expand_ref_step(
         // Qualified here rather than at the reader: `target` is what the pack
         // wrote, which may be the bare name, and a record has to stand on its
         // own — by the time anyone reads it the pack may say something else.
-        Some(format!("{}#{}", fragment.file, fragment.name)),
+        Some(fragment.qualified()),
         label_fakes_start,
         out,
         refs,

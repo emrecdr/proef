@@ -5,25 +5,11 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
+use crate::render::via;
 use proef_core::report::Redactions;
 use proef_core::runner::{Fault, RunSummary, ScenarioOutcome};
 use proef_core::step::Status;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, TestSuite};
-
-/// A failing step's fragment as a trailing ` (via file.hurl#name)`, empty for an
-/// inline block (ADR-0018).
-///
-/// One helper rather than a format string per sink. `JUnit`, the job summary and
-/// the `::error` annotations all answer the same question — *which file did this
-/// request come from* — and CI is precisely where the reader cannot go looking
-/// for themselves. Three copies is how one of them quietly stops agreeing with
-/// `explain` and the run record.
-fn via(step: &proef_core::step::StepOutcome) -> String {
-    step.fragment
-        .as_deref()
-        .map(|name| format!(" (via {name})"))
-        .unwrap_or_default()
-}
 
 /// Write `report.junit.xml` for the run: one suite per feature file, one test
 /// case per scenario, engine-measured times, failure details inline.
@@ -92,7 +78,11 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
                         .steps
                         .iter()
                         .filter(|s| s.status == Status::Failed)
-                        .filter_map(|s| Some(format!("{}{}", s.detail.as_deref()?, via(s))))
+                        .filter_map(|s| {
+                            s.detail
+                                .as_deref()
+                                .map(|d| format!("{d}{}", via(s.fragment.as_deref())))
+                        })
                         .collect::<Vec<_>>()
                         .join("; "),
                 ),
@@ -166,7 +156,7 @@ fn summary_body(summary: &RunSummary, run_id: &str) -> String {
                     "- `{}:{}`{attempts} — {detail}{}",
                     step.step.file,
                     step.step.line,
-                    via(step)
+                    via(step.fragment.as_deref())
                 );
             }
         }
@@ -213,7 +203,9 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                     enc_prop(&step.step.file),
                     step.step.line,
                     enc_prop(&format!("{}: {}", outcome.name, step.step.text)),
-                    enc_msg(&redactions.apply(&format!("{detail}{}", via(step)))),
+                    enc_msg(
+                        &redactions.apply(&format!("{detail}{}", via(step.fragment.as_deref())))
+                    ),
                 );
             }
         }

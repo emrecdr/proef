@@ -283,8 +283,10 @@ fn render_block(
         if let Some(detail) = &step.detail {
             let _ = write!(html, "<pre class=\"detail\">{}</pre>", esc(detail));
         }
-        // Provenance sits under the reason, matching `explain`'s order: what
-        // failed, why, then which file the request came from (ADR-0018).
+        // Every `ref:` step, not only failing ones: this is a per-step listing
+        // rather than a failure list, so a green report answers "which file did
+        // this run" too. It sits last so a failure still reads reason-first
+        // (ADR-0018).
         if let Some(fragment) = &step.fragment {
             let _ = write!(html, "<p class=\"via\">via {}</p>", esc(fragment));
         }

@@ -235,3 +235,122 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
     drop(stdin);
     let _ = child.wait();
 }
+
+/// Go-to-definition on a `ref:` line reaches the `.hurl` file, with the
+/// fragment root coming from a **real `proef.toml`** rather than a test double.
+///
+/// This is the seam the unit tests cannot cover: `proef-lsp`'s own tests inject
+/// absolute source names through `FakeDisk`, so they never exercise
+/// `ProjectConfig::fragments()` → `DiskSourceProvider` → `name_to_url`. That gap
+/// let a regression ship — shortening the configured root to a cwd-relative
+/// spelling (for the sake of portable run records) made every fragment name
+/// relative, and `name_to_url` yields `None` for those, so this request returned
+/// null while the suite still ran green.
+#[test]
+fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
+    let bin = assert_cmd::cargo::cargo_bin("proef");
+    let dir = tempfile::tempdir().unwrap();
+    // Canonicalized deliberately: on macOS a tempdir is `/var/...` whose real
+    // path is `/private/var/...`, so an uncanonicalized root disagrees with the
+    // server's own `current_dir()` and any cwd-relative path handling silently
+    // no-ops — the test would pass without ever reaching the behaviour. A real
+    // editor announces the same path the process runs in.
+    let root = &std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
+    std::fs::create_dir_all(root.join("tests/hurl")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/hurl/admin.hurl"),
+        "# corpus header\n# @proef admin.search\nGET http://127.0.0.1:1/x\nHTTP 200\n",
+    )
+    .unwrap();
+    let pack = "macros:\n  search:\n    match: \"the operator searches\"\n    steps:\n      - ref: admin.search\n";
+    std::fs::write(root.join("tests/features/packs/api.yaml"), pack).unwrap();
+    std::fs::write(
+        root.join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches\n",
+    )
+    .unwrap();
+
+    let mut child = Command::new(bin)
+        .arg("lsp")
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let uri = file_uri(root);
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"capabilities":{{}},"workspaceFolders":[{{"uri":"{uri}","name":"w"}}]}}}}"#
+        ),
+    );
+    assert!(read_msg(&mut stdout).contains("\"id\":1"));
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
+    );
+
+    // Open the pack, then ask where its `ref:` points. Line 4 is
+    // "      - ref: admin.search"; character 20 sits inside the target name.
+    let pack_uri = file_uri(&root.join("tests/features/packs/api.yaml"));
+    let escaped = pack.replace('\n', "\\n").replace('"', "\\\"");
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{{"textDocument":{{"uri":"{pack_uri}","languageId":"yaml","version":1,"text":"{escaped}"}}}}}}"#
+        ),
+    );
+    write_msg(
+        &mut stdin,
+        &format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{{"textDocument":{{"uri":"{pack_uri}"}},"position":{{"line":4,"character":20}}}}}}"#
+        ),
+    );
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        loop {
+            let msg = read_msg(&mut stdout);
+            if tx.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut answer = None;
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(remaining) {
+            Ok(msg) if msg.contains("\"id\":2") => {
+                answer = Some(msg);
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+
+    let answer = answer.expect("the definition request must be answered");
+    assert!(
+        answer.contains("admin.hurl"),
+        "go-to-definition must land in the fragment file, not return null: {answer}"
+    );
+
+    write_msg(
+        &mut stdin,
+        r#"{"jsonrpc":"2.0","id":3,"method":"shutdown","params":null}"#,
+    );
+    write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
+    drop(stdin);
+    let _ = child.wait();
+}

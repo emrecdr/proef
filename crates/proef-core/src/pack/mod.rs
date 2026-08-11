@@ -197,6 +197,20 @@ pub struct PackSet {
     pub bind: BTreeMap<String, BTreeMap<String, String>>,
 }
 
+impl Fragment {
+    /// This fragment as `file.hurl#name` — the spelling a `ref:` accepts, and
+    /// what a run record carries so it can be read back long after the pack
+    /// that named it changed.
+    ///
+    /// Next to [`PackSet::find_fragment`], which parses the same form via
+    /// `pack_ref_matches`: producing it 400 lines from where it is consumed is
+    /// how the two stop agreeing on what the separator means.
+    #[must_use]
+    pub fn qualified(&self) -> String {
+        format!("{}#{}", self.file, self.name)
+    }
+}
+
 impl PackSet {
     /// `(pattern, macro name)` pairs for the step binder — macros with a
     /// `match:` only.

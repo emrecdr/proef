@@ -181,6 +181,31 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   after each edit, and a corpus outliving one run would serve pre-edit fragments to the
   next.
 
+- **Go-to-definition on a `ref:` worked again, then briefly did not.** Shortening the
+  `[run] fragments` root to a cwd-relative spelling — done so a run record would not
+  carry an absolute, machine-specific path — also shortened the root `proef lsp` hands
+  to its source provider. The LSP keys document identity on absolute names
+  (`name_to_url` yields `None` for anything relative), so every `ref:` go-to-definition
+  returned null and `.hurl`-positioned diagnostics stopped publishing, while the suite
+  still ran green. That is the capability restored two commits earlier.
+
+  Resolution and spelling are now separate concerns: `ProjectConfig::fragments()`
+  returns a resolvable path, and the shortening happens at the naming boundary in
+  `front::fragment_sources`, which only CLI runs pass through. Both properties hold at
+  once — the editor resolves, the record stays portable.
+
+  Covered by an end-to-end `proef lsp` stdio test with a real `proef.toml`, the seam the
+  unit tests could not reach: they inject absolute names through a fake provider, so
+  they never exercise config → provider → URI. The test canonicalizes its temp root
+  deliberately — on macOS a tempdir is `/var/…` whose real path is `/private/var/…`, and
+  without that the cwd comparison silently no-ops and the test passes vacuously.
+
+- **Every failure sink names the fragment, not just the CI ones.** `via()` moved from
+  `ci_reports` to `render`, and the console failure list and TAP diagnostic now carry it
+  too. A helper scoped to one delivery channel was how `proef test` printed no
+  provenance on stderr while `report.junit.xml` from that same run printed it — the
+  drift the helper's own comment says it exists to prevent.
+
 ### Internal
 
 - **The secret-name join has one home.** `proef_core::engine::secret_variables` pairs a

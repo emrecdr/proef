@@ -538,10 +538,11 @@ pub fn execute(
                 && let Some(detail) = &step.detail
             {
                 crate::render::errln!(
-                    "  ✗ {}:{} — {}",
+                    "  ✗ {}:{} — {}{}",
                     step.step.file,
                     step.step.line,
-                    redactions.apply(detail)
+                    redactions.apply(detail),
+                    crate::render::via(step.fragment.as_deref())
                 );
                 if let Some(hint) = &step.reproduce_hint {
                     crate::render::errln!("    curl: {}", redactions.apply(hint));

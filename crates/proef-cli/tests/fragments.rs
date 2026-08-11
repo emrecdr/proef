@@ -429,3 +429,30 @@ fn explain_names_the_fragment_a_failed_step_came_from() {
          accepts:\n{out}"
     );
 }
+
+/// The CI artifacts name the fragment too — `JUnit` here, standing in for the
+/// whole `RunSummary`-derived family (job summary, `::error` annotations, TAP,
+/// console).
+///
+/// Those read `StepOutcome`, not the event stream, so they are fed by a
+/// *second* copy of the provenance that every engine fills in itself. Without
+/// an end-to-end assertion, blanking that copy in the engine leaves the whole
+/// suite green while every CI artifact silently loses the fragment — the half
+/// of the feature a reader who cannot grep the checkout depends on.
+#[test]
+fn junit_names_the_fragment_a_failure_came_from() {
+    let fixture = Fixture::start().unwrap();
+    let dir = project(FAILING_CORPUS, PACK);
+    let junit = dir.path().join("report.junit.xml");
+
+    proef_in(dir.path(), &fixture)
+        .args(["test", "--junit", &junit.display().to_string()])
+        .assert()
+        .code(1);
+
+    let xml = std::fs::read_to_string(&junit).unwrap();
+    assert!(
+        xml.contains("(via tests/hurl/admin.hurl#admin.search)"),
+        "the JUnit failure message must name the fragment: {xml}"
+    );
+}

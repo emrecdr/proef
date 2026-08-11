@@ -148,6 +148,22 @@ impl Diagnostic for Rendered {
     }
 }
 
+/// A step's fragment as a trailing ` (via file.hurl#name)`, empty when the step
+/// ran an inline `hurl:` block (ADR-0018).
+///
+/// Lives here, not beside one sink, because every place that renders a failing
+/// step answers the same question — *which file did this request come from* —
+/// and a helper scoped to a delivery channel is how `proef test` ends up
+/// printing no provenance on stderr while `report.junit.xml` from that same run
+/// prints it. Takes the name rather than a step so the `Event`-driven readers
+/// (`explain`) and the `StepOutcome`-driven ones (console, TAP, `JUnit`, the job
+/// summary) share one spelling.
+pub fn via(fragment: Option<&str>) -> String {
+    fragment
+        .map(|name| format!(" (via {name})"))
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

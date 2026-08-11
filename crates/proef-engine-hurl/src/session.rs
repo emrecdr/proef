@@ -216,14 +216,8 @@ impl EngineSession for HurlSession {
                 .is_some_and(proef_core::step::Guard::skips);
             if guarded_off {
                 outcomes.push(StepOutcome {
-                    step: step.step.clone(),
-                    status: Status::Skipped,
-                    attempts: 0,
-                    duration: Duration::ZERO,
                     detail: Some("skipped by `when:` guard".to_owned()),
-                    attempt_details: Vec::new(),
-                    reproduce_hint: None,
-                    fragment: step.fragment.clone(),
+                    ..skipped_outcome(step)
                 });
                 emit_step(
                     events,

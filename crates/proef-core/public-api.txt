@@ -963,6 +963,8 @@ pub proef_core::pack::Fragment::name: alloc::string::String
 pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::source: alloc::sync::Arc<str>
 pub proef_core::pack::Fragment::text: alloc::string::String
+impl proef_core::pack::Fragment
+pub fn proef_core::pack::Fragment::qualified(&self) -> alloc::string::String
 impl core::clone::Clone for proef_core::pack::Fragment
 pub fn proef_core::pack::Fragment::clone(&self) -> proef_core::pack::Fragment
 impl core::fmt::Debug for proef_core::pack::Fragment

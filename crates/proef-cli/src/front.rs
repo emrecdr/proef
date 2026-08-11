@@ -454,7 +454,26 @@ pub fn fragment_sources(
             root.display()
         ))));
     }
-    read_sources(fragment_files(root, kinds)?, "fragment file")
+    let mut sources = read_sources(fragment_files(root, kinds)?, "fragment file")?;
+    // Spell the names the way every other source is spelled: relative to where
+    // the command was run. Features and packs get that free — their paths are
+    // the ones the caller typed — but a fragment path is *derived* from
+    // `[run] fragments`, which resolves against the config file's directory and
+    // is therefore absolute. Left that way it reaches `Fragment::file`, and
+    // from there diagnostics, the artifact map and the run record, making a
+    // record machine-specific: two checkouts of one suite stop comparing equal,
+    // and a temp directory can end up in a durable artifact.
+    //
+    // Naming only. The path used to *read* the file stays absolute, which is
+    // what `proef lsp` needs to turn a source name back into a document URI.
+    if let Ok(cwd) = std::env::current_dir() {
+        for source in &mut sources {
+            if let Ok(rest) = Path::new(&source.name).strip_prefix(&cwd) {
+                source.name = portable_display(rest);
+            }
+        }
+    }
+    Ok(sources)
 }
 
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the

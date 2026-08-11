@@ -83,7 +83,13 @@ fn failure_detail(outcome: &ScenarioOutcome) -> Option<String> {
         .steps
         .iter()
         .find(|step| step.status == Status::Failed)
-        .and_then(|step| step.detail.clone())
+        .and_then(|step| {
+            let detail = step.detail.as_deref()?;
+            Some(format!(
+                "{detail}{}",
+                crate::render::via(step.fragment.as_deref())
+            ))
+        })
 }
 
 #[cfg(test)]
