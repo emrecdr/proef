@@ -28,6 +28,12 @@ the CLI *generates* it. The same pattern extends to timing.
   **worker thread** (emit is synchronous, called from the scenario worker), so it reads the
   run-start `Instant` and maps `thread::current().id()` → a stable 0-based index there, at
   the edge. The core never sees a clock or a thread id.
+- **Errata (2026-08-11): only `ScenarioStarted` carries a `worker`.** As implemented,
+  `ScenarioFinished` is emitted from the main dispatcher thread, not the worker that ran the
+  scenario, so stamping a thread index there would name the wrong one; it carries the end
+  timestamp and `worker: None`. The worker identity comes from `ScenarioStarted`, which *is*
+  emitted on the worker thread, and the timeline pairs the two. `EVENTS.md` has always
+  described it this way — the bullet above did not.
 - The HTML report gains a **run-level timeline**: a lane per worker, each scenario a bar from
   its start to its finish timestamp — the Gantt/occupancy view. It renders only when the
   stamps are present; a record without them falls back to the N6a per-scenario waterfall

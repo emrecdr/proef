@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Documentation
+
+- **The docs-drift backlog is closed.** `EDITORS.md` said go-to-definition
+  cannot land on a `match:` line — it has since 0.5.1, and
+  `definition_on_a_step_lands_on_the_match_line` proves it; the bullet now
+  names the gap that is real (built-in macros live in a pack compiled into the
+  binary, so there is nothing to open). TECH-SPEC §10's command surface gained
+  `--run-id`/`--rerun`/`--sarif`. `GETTING-STARTED` no longer shows a scaffold
+  comment with a word the scaffold does not write. ADR-0015 described a
+  `worker` on `ScenarioFinished` that is always `None`, because that event is
+  emitted from the dispatcher thread rather than the worker — an errata records
+  what shipped, which `EVENTS.md` had right all along.
+
+  Two entries did not reproduce and are recorded as such rather than dropped:
+  `CONFIG.md` carries no claim that `[env.<name>.run]` overrides any section,
+  and the 0.5.2 changelog does mention the directory-valued-phase error.
+
 ### Fixed
 
 - **`proef fmt` keeps each line's own ending.** Its scope is hurl blocks, not

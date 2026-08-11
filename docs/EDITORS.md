@@ -99,9 +99,10 @@ This is the first release of the language server. Known boundaries:
   `PROEF_ENV`), **restart the server** to pick up the change; until then those
   references analyze against the old (or, if the file could not be loaded at
   startup, an empty) scope and may warn.
-- **Go-to-definition lands on the macro name.** The jump targets the macro's name
-  key in its pack, not a specific `match:` line (macros bind by pattern, so there
-  is no single match span to point at).
+- **Built-in macros have no jump target and no hover.** The `expect*` family
+  lives in a pack compiled into the binary, not a file on disk, so there is
+  nothing for go-to-definition to open. `proef macros` lists them with the
+  sentence each binds, which is the answer that question usually wants.
 - **Completion ranking is best-effort.** All of the suite's macros are offered;
   ranking is a lightweight edit-distance heuristic. Full context-aware ranking is
   a follow-up.

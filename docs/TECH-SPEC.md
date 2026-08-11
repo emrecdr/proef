@@ -268,6 +268,7 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
+                      [--run-id ID] [--rerun] [--sarif PATH (with --dry-run)]
 proef flows [file|dir] [--env NAME] [--output json]
 proef macros [file|dir] [--env NAME] [--output json]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]

@@ -121,7 +121,7 @@ directory (like cargo/git):
 ```toml
 # proef.toml
 [run]
-suite = "suite"                    # `proef test` now needs no path argument
+suite = "suite"                    # `proef test` needs no path argument
 
 [url]
 base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"   # → ${url:base} (env override wins)
