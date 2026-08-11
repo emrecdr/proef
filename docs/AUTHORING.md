@@ -12,6 +12,27 @@ data tables (rows become step arguments), and docstrings (delivered to the
 macro as the `docstring` param). Keywords (`Given/When/Then/And`) don't affect
 binding — only the sentence text does.
 
+An outline's `<column>` placeholders substitute into **the docstring too**, not
+just the scenario name, step text and table cells. That is how a request body
+gets data-driven without leaving the feature file:
+
+```gherkin
+  Scenario Outline: Posting <label>
+    When a record is posted
+      """
+      {"label": "<label>", "priority": "<priority>"}
+      """
+    Then the response status is 201
+
+    Examples:
+      | label | priority |
+      | alpha | high     |
+      | beta  | low      |
+```
+
+A `<name>` that is not an Examples column is a parse-time error wherever it
+appears, docstrings included.
+
 **Variables** are declared in `proef.toml` (`[url]` / `[vars]`), never in the
 feature file, and referenced from packs as `${url:key}` / `${vars:key}` — see
 [CONFIG.md](CONFIG.md). Feature files stay free of URLs and environment data.
