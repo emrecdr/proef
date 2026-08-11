@@ -1,6 +1,9 @@
 # proef — Product Requirements Document
 
-**Status:** approved; delivered through M5 (US-1…US-12 in service, multi-engine architectural only) · **Date:** 2026-07-28 · **Owner:** Emre
+**Status:** approved; US-1…US-12 all in service (multi-engine architectural only), plus
+post-M5 work: external config/environments (ADR-0012), the v0.6–v0.8 correctness series,
+v0.9.0, and named hurl fragments (ADR-0018 — see the §3 amendment) · **Date:** 2026-07-28
+· **Owner:** Emre
 **Companion docs:** [ADRs](adr/) for the *why*, [TECH-SPEC](TECH-SPEC.md) for the *how*,
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) for the *when*.
 

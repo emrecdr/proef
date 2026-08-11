@@ -1,6 +1,9 @@
 # proef — Technical Specification
 
-**Status:** normative for M0–M5 · **Date:** 2026-07-28 · decisions referenced as ADR-XXXX.
+**Status:** normative · **Date:** 2026-07-28, current through ADR-0018 (named hurl
+fragments) · decisions referenced as ADR-XXXX. Post-M5 work — external config and
+environments (ADR-0012), the v0.6–v0.8 correctness series, v0.9.0, and fragments — is
+specified here too; "M0–M5" described this file's scope only until those landed.
 Verified upstream facts cite hurl master @ `03fcb84c` (2026-07-27) as `file:line`.
 
 ## 1. System overview

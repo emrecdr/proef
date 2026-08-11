@@ -9,8 +9,10 @@ This folder is the project corpus: the product requirements, the decision log, t
 normative technical spec, the milestone plan, and the testing strategy. Written
 2026-07-28 from a validated research round (a working spike ran 5/5 scenarios green
 under both a prototype native runner and stock hurl 8.0.1 on identical generated
-artifacts); implementation has since delivered milestones M0–M5 — the plan and the
-repo-root `CLAUDE.md` carry the live status.
+artifacts); implementation has since delivered milestones M0–M5 and everything after
+them — external config and environments, the correctness series, v0.9.0, and named hurl
+fragments. Only M6 (a second engine) is unscheduled. The repo-root `CLAUDE.md` carries
+the live status.
 
 ## Reading order
 

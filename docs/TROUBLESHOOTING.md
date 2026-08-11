@@ -75,6 +75,28 @@ starts fresh. Values are re-enterable; nothing else references the file.
 nothing; exit 2 by design so a typo'd filter can never produce a silent
 green CI run.
 
+**A failure line ends in `via tests/hurl/admin.hurl#admin.search`** — not an error. The
+step ran a *named fragment* (ADR-0018) rather than an inline `hurl:` block, and that is
+the third file involved: the request lives there, not in the feature or the pack. The
+spelling is the one `ref:` accepts, so it pastes straight back into a pack. Every failure
+sink carries it — console, `explain`, TAP, `JUnit`, the GitHub summary, the HTML report.
+
+**"`ref:` names no loaded fragment"** (`pack::unknown_ref`) — either the name is a typo
+(the message suggests the closest) or **no fragment files were loaded at all**, which the
+message says plainly. The usual cause is a missing `[run] fragments` in `proef.toml`:
+without it nothing is scanned, so every `ref:` is unknown. Note the root resolves against
+the **config file's directory**, not your working directory.
+
+**"reads `{{name}}` that no `bind:` supplies"** (`lower::unbound_placeholder`) — a
+fragment's variables are not implicit: what the `.hurl` file reads must be bound at pack,
+macro or step scope, or captured by an earlier step. `--dry-run` reports it without a
+network. With `proef lsp` running, completing inside a `bind:` table offers exactly the
+names that fragment reads.
+
+**Go-to-definition on a `ref:` does nothing** — check that `[run] fragments` is set and
+that the editor's workspace root matches where `proef.toml` lives; the server resolves the
+corpus relative to that file's directory.
+
 **"payload does not parse: contains no hurl entries"** — the `hurl:` block is
 comments/blank lines only (a temporarily commented-out request). proef
 refuses it at load: a step that executes nothing must not report green.

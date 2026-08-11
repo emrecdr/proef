@@ -32,6 +32,17 @@ attempt to defend a compromised host.
 - Request file bodies are confined to the suite directory (hurl's
   `context_dir` sandbox); artifact asset copying rejects absolute and `..`
   paths.
+- A **fragment corpus is read, never written** (ADR-0018). Pointing
+  `[run] fragments` at `.hurl` files somebody else owns is one-directional:
+  `proef fmt` refuses them in both discovery branches, and the declared root
+  is the confinement boundary — nothing outside it is scanned. Files come back
+  byte-identical, which an integration test asserts.
+- A **renamed secret is still never materialized**. `bind: { token: ${secret:x} }`
+  lets a foreign corpus keep its own variable name; the value still travels via
+  `insert_secret` and never enters the artifact. Mixing a secret into a larger
+  bound value is *refused* (`lower::secret_in_composite_bind`) rather than
+  quietly written out, because injecting the joined string would require putting
+  it in the artifact.
 - Release binaries are built with `cargo auditable` (dependency trees stay
   scannable) on cache-isolated CI runners.
 
