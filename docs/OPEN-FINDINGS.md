@@ -85,6 +85,8 @@ re-reported after it is fixed.
 | P5 | `--watch` did not retrigger on `proef.toml` | #37 |
 | — | a run against untouched scaffold *routes* got no coaching (round-8 §5) | #38 |
 | — | truncated-record fallback totals dropped `Warned` scenarios (round-7) | #39 |
+| — | `fmt` rewrote any file handed to it, not just a pack | #40 |
+| — | `fmt` trimmed the YAML skeleton, turning `--check` red outside its scope | #40 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -188,9 +190,7 @@ Recorded as decisions, so they are not rediscovered as fresh ideas.
 
 ## Open — correctness
 
-Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26. The lettered IDs
-belong to the external review rounds; the two `fmt` entries below carry none
-because they were found here, reproducing a report's claim rather than reading one.
+Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26.
 
 ### Q2 — the walk still happens twice per request *(remainder)*
 
@@ -221,36 +221,6 @@ filter is an allowlist of `.feature`/`.yaml`/`.yml`, and no run-record file
 reproduce on macOS/FSEvents; `notify`'s own docs say it is real but
 platform-dependent and worst on inotify. Do not chase it on a Mac — that is how it
 gets "fixed" by coincidence. It needs a Linux reproduction first.
-
-### `fmt` rewrites whatever file it is handed *(reproduced 2026-08-11)*
-
-`discover` returns an explicit file path unexamined (`fmt.rs:55-56`), so
-`proef fmt src/main.rs` strips trailing whitespace from Rust source, prints
-`formatted:`, and exits 0. Reproduced on `.rs` and on a standalone `.hurl`.
-
-**The directory branch is safe** — it filters to `.yaml`/`.yml` and otherwise
-exits 2 with "no pack files found", verified against a directory holding a `.rs`
-that came back byte-identical. So the gap is exactly the one-arm `is_file()`
-shortcut, not the discovery rule.
-
-Every established formatter parses before it writes: `rustfmt plain.txt` exits 1
-and leaves the file untouched. `fmt` writes first and never parses at all, so a
-mistyped path silently edits the file it lands on.
-
-### `fmt`'s scope exceeds what its own module doc promises
-
-`fmt.rs:6-7` promises "The YAML skeleton (comments included) is never touched",
-but `fmt.rs:119` applies `line.trim_end()` to *every* line, before the block scan
-narrows anything. A pack whose hurl blocks are already canonical is reported
-`needs formatting` and fails `fmt --check` with exit 1 on nothing but a trailing
-space in a **YAML comment** — reproduced.
-
-**This is the same over-reach #33 already fixed once**, for line endings, and for
-the same reason: `fmt --check` is a CI gate, so a red that an author cannot
-explain from the documented scope is a false red. That fix landed in
-`dominant_ending`/`split_lines` and never reached the `trim_end` a few lines
-above them. Either narrow the strip to block bodies or widen the doc — but the
-two have to agree.
 
 ---
 
