@@ -448,10 +448,22 @@ mod tests {
     /// path is *spelled* in artifacts belongs to `front::fragment_sources`.
     #[test]
     fn the_fragment_root_stays_resolvable_for_the_editor() {
+        // Spelled for the host platform. A bare `/proj` is **not** absolute on
+        // Windows — absolute there means a drive or UNC prefix — so a
+        // Unix-shaped fixture would assert nothing on the one platform whose
+        // path rules differ, which is the vacuity this test exists to prevent.
+        // The corpus root is a TOML *literal* string (single quotes): `\c` is
+        // not a valid escape in a basic string.
+        let (project, corpus) = if cfg!(windows) {
+            (r"C:\proj", r"C:\corpus\hurl")
+        } else {
+            ("/proj", "/corpus/hurl")
+        };
+
         let mut config = parse("[run]\nfragments = \"tests/hurl\"\n");
-        config.root = Some(PathBuf::from("/proj"));
+        config.root = Some(PathBuf::from(project));
         let root = config.fragments().expect("configured");
-        assert_eq!(root, PathBuf::from("/proj/tests/hurl"));
+        assert_eq!(root, Path::new(project).join("tests/hurl"));
         assert!(
             root.is_absolute(),
             "a relative root makes every fragment URI unformable: {root:?}"
@@ -459,9 +471,9 @@ mod tests {
 
         // An absolute `[run] fragments` is taken as written — the corpus may
         // sit outside the project entirely.
-        let mut config = parse("[run]\nfragments = \"/corpus/hurl\"\n");
-        config.root = Some(PathBuf::from("/proj"));
-        assert_eq!(config.fragments(), Some(PathBuf::from("/corpus/hurl")));
+        let mut config = parse(&format!("[run]\nfragments = '{corpus}'\n"));
+        config.root = Some(PathBuf::from(project));
+        assert_eq!(config.fragments(), Some(PathBuf::from(corpus)));
     }
 
     #[test]

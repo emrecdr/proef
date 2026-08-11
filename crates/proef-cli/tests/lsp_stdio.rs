@@ -129,13 +129,48 @@ fn stdio_server_exits_after_shutdown_and_exit() {
 /// cannot parse, so it dies during the handshake and the test sees an empty
 /// reply rather than a useful failure. Separators become `/`, and a drive
 /// letter gets the third slash (`file:///C:/...`) the URI form requires.
+///
+/// The `\\?\` verbatim prefix is stripped first. `std::fs::canonicalize` returns
+/// one on Windows, and left in place it survives the separator swap as a leading
+/// `//?/`, which then takes the `starts_with('/')` branch and yields a
+/// four-slash `file:////?/C:/…` no client can resolve — the workspace root
+/// silently points nowhere and every request answers `null`. Production never
+/// produces a verbatim path (`disk_provider` and `lsp` both keep source names
+/// uncanonicalized on purpose), so this is the test's own hazard to clear.
 fn file_uri(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
+    let raw = path.to_string_lossy();
+    let text = raw.strip_prefix(r"\\?\").unwrap_or(&raw).replace('\\', "/");
     if text.starts_with('/') {
         format!("file://{text}")
     } else {
         format!("file:///{text}")
     }
+}
+
+/// [`file_uri`] is pure string work, so its Windows-shaped inputs are checked on
+/// **every** platform. The alternative is what already happened once: the
+/// verbatim-prefix bug was invisible on macOS and only surfaced on Windows CI,
+/// as a `null` answer three requests later with nothing pointing at the URI.
+#[test]
+fn file_uri_renders_windows_shapes_a_client_can_resolve() {
+    use std::path::PathBuf;
+
+    // `std::fs::canonicalize` returns this shape on Windows.
+    assert_eq!(
+        file_uri(&PathBuf::from(r"\\?\C:\proj\tests\hurl")),
+        "file:///C:/proj/tests/hurl",
+        "a verbatim prefix must not survive into the URI"
+    );
+    assert_eq!(
+        file_uri(&PathBuf::from(r"C:\proj\a.hurl")),
+        "file:///C:/proj/a.hurl",
+        "a drive letter takes the third slash"
+    );
+    assert_eq!(
+        file_uri(&PathBuf::from("/proj/a.hurl")),
+        "file:///proj/a.hurl",
+        "a unix path keeps exactly three slashes"
+    );
 }
 
 #[test]
