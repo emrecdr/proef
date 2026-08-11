@@ -53,8 +53,12 @@ pub struct LoweredScenario {
     pub line: usize,
     /// Contiguous same-engine batches, in authored order.
     pub batches: Vec<StepBatch>,
-    /// Secret names referenced anywhere in the scenario (values never appear).
-    pub secrets: BTreeSet<String>,
+    /// Secrets referenced anywhere in the scenario, as **hurl variable name →
+    /// secret name** (values never appear). The two differ only when a
+    /// fragment binding renames one — `bind: { auth_token: ${secret:apiToken} }`
+    /// — which is what lets a corpus proef did not write keep its own variable
+    /// names (ADR-0018). Inline `${secret:X}` maps `X` to itself.
+    pub secrets: BTreeMap<String, String>,
     /// Global keys read anywhere in the scenario (drives `.vars`, ADR-0010).
     pub globals: BTreeSet<String>,
     /// Soft findings (dry-run globals, …) as warning diagnostics.
@@ -64,11 +68,155 @@ pub struct LoweredScenario {
 /// Runtime backstop for `use:` recursion (statically checked at pack load).
 const MAX_EXPANSION_DEPTH: usize = 32;
 
+/// Resolved fragment bindings in scope, by hurl variable name (ADR-0018).
+type Bindings = BTreeMap<String, Bound>;
+
+/// One resolved binding, split by how its value reaches hurl.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Bound {
+    /// A literal, injected as a per-entry `[Options] variable:` — so it lands
+    /// in the artifact and replays identically under the stock CLI.
+    Value(String),
+    /// A secret, named here and injected by the engine at run time. It must
+    /// **not** take the `[Options]` path: that would write the value into the
+    /// artifact, which ADR-0005 forbids outright.
+    Secret(String),
+}
+
+/// `${secret:NAME}` as an *entire* binding value — the only shape a secret may
+/// take. Anything composite (`Bearer ${secret:token}`) would have to be
+/// materialized to be injected, putting the value in the artifact; the fragment
+/// should spell the literal part itself and bind the secret alone.
+fn whole_secret(value: &str) -> Option<&str> {
+    let inner = value
+        .trim()
+        .strip_prefix("${secret:")?
+        .strip_suffix('}')?
+        .trim();
+    (!inner.is_empty() && !inner.contains(['{', '}', '$'])).then_some(inner)
+}
+
+/// Escape a bound value for a quoted hurl option value. `\` and `"` are the
+/// two characters that would end or re-open the literal; `{{…}}` is left alone
+/// on purpose, since hurl expanding it is the point.
+fn quote_option(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Does this macro reference any fragment? Bindings resolve only when they can
+/// be used — otherwise a pack-scope `${fake:…}` would advance for macros that
+/// never bind anything, and an unresolvable one would fail a macro it does not
+/// concern.
+fn macro_has_ref(macro_: &Macro) -> bool {
+    match &macro_.body {
+        MacroBody::Steps(steps) => steps
+            .iter()
+            .any(|step| matches!(step.kind, MacroStepKind::Ref { .. })),
+        MacroBody::Expect(_) => false,
+    }
+}
+
+/// The bindings a macro's `ref:` steps see before their own: pack scope,
+/// resolved once per scenario and cached, then macro scope, resolved once per
+/// invocation — which is what makes "one binding, one value" mean something
+/// different at each level (ADR-0018). Empty for a macro with no `ref:` step,
+/// so an unused table never advances the `${fake:…}` counter.
+#[allow(clippy::too_many_arguments)]
+fn scope_bindings(
+    macro_: &Macro,
+    ctx: &LowerCtx<'_>,
+    refs: &mut Refs,
+    warnings: &mut Vec<Diag>,
+    diags: &mut Vec<Diag>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    at: &impl Fn(Diag) -> Diag,
+) -> Bindings {
+    let mut scoped = Bindings::new();
+    if !macro_has_ref(macro_) {
+        return scoped;
+    }
+    if let Some(table) = ctx.packs.bind.get(&macro_.pack) {
+        if !refs.pack_bindings.contains_key(&macro_.pack) {
+            let resolved = resolve_bindings(table, refs, warnings, diags, resolve_in, at);
+            refs.pack_bindings.insert(macro_.pack.clone(), resolved);
+        }
+        if let Some(cached) = refs.pack_bindings.get(&macro_.pack) {
+            scoped.extend(cached.clone());
+        }
+    }
+    scoped.extend(resolve_bindings(
+        &macro_.bind,
+        refs,
+        warnings,
+        diags,
+        resolve_in,
+        at,
+    ));
+    scoped
+}
+
+/// Resolve one `bind:` table in the caller's scope.
+#[allow(clippy::too_many_arguments)]
+fn resolve_bindings(
+    table: &BTreeMap<String, String>,
+    refs: &mut Refs,
+    warnings: &mut Vec<Diag>,
+    diags: &mut Vec<Diag>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    at: &impl Fn(Diag) -> Diag,
+) -> Bindings {
+    let mut out = Bindings::new();
+    for (name, value) in table {
+        if let Some(secret) = whole_secret(value) {
+            out.insert(name.clone(), Bound::Secret(secret.to_owned()));
+            continue;
+        }
+        if value.contains("${secret:") {
+            diags.push(
+                at(Diag::error(
+                    "proef::lower::secret_in_composite_bind",
+                    format!(
+                        "binding `{name}` mixes a secret into a larger value — the result would have to be written into the artifact to be injected"
+                    ),
+                ))
+                .with_help(
+                    "bind the secret on its own and put the surrounding text in the fragment \
+                     (`Authorization: Bearer {{token}}` with `bind: { token: ${secret:…} }`)",
+                ),
+            );
+            continue;
+        }
+        if let Some(resolved) = resolve_in(value, refs, warnings, diags) {
+            out.insert(name.clone(), Bound::Value(resolved));
+        }
+    }
+    out
+}
+
+/// Every capture name produced by the steps lowered so far — what a fragment
+/// may read without binding it.
+fn captures_before(out: &[LoweredStep]) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for step in out {
+        if let StepPayload::HurlEntries(text) = &step.payload {
+            let lines: Vec<&str> = text.lines().collect();
+            names.extend(crate::emit::capture_names(&lines));
+        }
+    }
+    names
+}
+
 /// What resolution referenced while lowering one scenario.
 #[derive(Debug, Default)]
 struct Refs {
-    secrets: BTreeSet<String>,
+    /// hurl variable name → secret name (see [`LoweredScenario::secrets`]).
+    secrets: BTreeMap<String, String>,
     globals: BTreeSet<String>,
+    /// Pack-scope `bind:` tables resolved once per scenario, by pack name.
+    /// Scope decides *when* a binding resolves: one binding is one value, so a
+    /// pack-scope `${fake:email}` is one identity for the whole scenario, a
+    /// macro-scope one is per invocation, a step-scope one is per step.
+    pack_bindings: BTreeMap<String, Bindings>,
     /// `${fake:*}` occurrence counter, shared across every step in the
     /// scenario (not reset per `resolve()` call) so two steps each asking
     /// for a fresh `${fake:email}` get distinct values. Scoped to one
@@ -192,7 +340,11 @@ fn expand_macro(
         };
         match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
             Ok(resolution) => {
-                refs.secrets.extend(resolution.secrets);
+                // Inline `${secret:X}` lowers to the literal `{{X}}`, so the
+                // hurl variable and the secret share a name; only a fragment
+                // binding can make them differ.
+                refs.secrets
+                    .extend(resolution.secrets.into_iter().map(|s| (s.clone(), s)));
                 refs.globals.extend(resolution.globals);
                 push_warnings(warnings, &resolution.warnings, ctx, &macro_.name);
                 Some(resolution.text)
@@ -206,6 +358,11 @@ fn expand_macro(
             }
         }
     };
+
+    // Bindings in scope for this macro's `ref:` steps: pack scope (resolved
+    // once per scenario, cached) then macro scope (once per invocation, which
+    // is here). Step scope is applied per step in `expand_step`.
+    let scoped = scope_bindings(macro_, ctx, refs, warnings, diags, &resolve_in, at);
 
     match &macro_.body {
         MacroBody::Expect(items) => {
@@ -260,6 +417,7 @@ fn expand_macro(
                     diags,
                     at,
                     &resolve_in,
+                    &scoped,
                 );
             }
         }
@@ -279,25 +437,12 @@ fn expand_step(
     diags: &mut Vec<Diag>,
     at: &impl Fn(Diag) -> Diag,
     resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    scoped: &Bindings,
 ) {
     match &macro_step.kind {
-        MacroStepKind::Ref { target } => {
-            let Some(fragment) = ctx.packs.find_fragment(target) else {
-                return; // pack validation reported it
-            };
-            // Binding a fragment's variables is not wired yet, and a fragment
-            // emitted without its bindings would run with unresolved `{{…}}` —
-            // green output from a request nobody described. Refuse loudly
-            // instead. Unreachable while no fragment file is ever loaded; this
-            // exists so wiring discovery early fails here rather than silently.
-            diags.push(at(Diag::error(
-                "proef::lower::fragment_unlowered",
-                format!(
-                    "internal: fragment `{}` cannot be lowered yet — `bind:` resolution is not wired",
-                    fragment.name
-                ),
-            )));
-        }
+        MacroStepKind::Ref { target } => expand_ref_step(
+            target, macro_step, step_ref, ctx, out, refs, warnings, diags, at, resolve_in, scoped,
+        ),
         MacroStepKind::Use { target, with } => {
             let Some(target_macro) = ctx.packs.find_use_target(target) else {
                 return; // pack validation reported it
@@ -323,99 +468,227 @@ fn expand_step(
                 at,
             );
         }
-        MacroStepKind::Payload { kind, payload } => {
-            // The label annotates *this* step for humans (artifact comments,
-            // events) — it must report the fake values the step actually
-            // used, not mint fresh ones of its own. Remember where the
-            // occurrence counter stood before the functional resolves
-            // (payload, then guard) so the label can replay from the same
-            // base afterward.
-            let label_fakes_start = refs.fakes;
-            let payload = match payload {
-                PayloadForm::Raw(text) => {
-                    let Some(resolved) = resolve_in(text, refs, warnings, diags) else {
-                        return;
-                    };
-                    // Bake `retry:`/`delay:` into hurl `[Options]` so artifacts
-                    // replay with identical semantics under the stock CLI
-                    // (ADR-0010); per-entry [Options] override batch defaults.
-                    let resolved = if macro_step.retry.is_some() || macro_step.delay_ms.is_some() {
-                        bake_entry_options(&resolved, macro_step.retry, macro_step.delay_ms)
-                    } else {
-                        resolved
-                    };
-                    StepPayload::HurlEntries(resolved)
-                }
-                PayloadForm::Structured(value) => {
-                    // `${…}` resolves inside structured payloads exactly as in
-                    // raw ones (ADR-0005): every string value, recursively.
-                    // Keys are schema, not data — they stay literal.
-                    let mut resolve = |text: &str| {
-                        // No `$` ⇒ no placeholders and no `$${` escapes: skip
-                        // the resolver's copy passes for the common case.
-                        if !text.contains('$') {
-                            return Some(text.to_owned());
-                        }
-                        resolve_in(text, refs, warnings, diags)
-                    };
-                    match resolve_structured(value, &mut resolve) {
-                        Some(resolved) => StepPayload::Structured(resolved),
-                        None => return,
-                    }
-                }
-            };
-            let when = match &macro_step.when {
-                Some(guard) => match resolve_in(guard, refs, warnings, diags) {
-                    Some(resolved) => Some(Guard(resolved)),
-                    None => return,
-                },
-                None => None,
-            };
-            // Labels resolve like payloads (same scope, same strictness) —
-            // otherwise raw `${…}` leaks into artifact comments and events.
-            // But a label is a *replay*, not a new use: it shares whatever
-            // `${…}` text the payload/guard already resolved (typically the
-            // same captured arg, e.g. `name: search ${term}` next to
-            // `q: ${term}`), so it resolves from a scratch copy of the
-            // counter rewound to `label_fakes_start` — reproducing the
-            // payload's own fake values instead of consuming fresh
-            // occurrences that would then shift every later step's fakes by
-            // one. Restoring to a *fixed* end (wherever payload/guard left
-            // off) is only correct when the label is an exact mirror: a
-            // label with a `${fake:…}` the payload never had still consumes
-            // real occurrences during the replay, and blindly rewinding past
-            // them would hand those numbers back out to a later step —
-            // colliding with a value this label already displayed. So the
-            // real counter is restored to the *high-water mark* of the two —
-            // wherever payload/guard left off, or wherever the label's own
-            // replay reached, whichever is further — never below either.
-            // Mirrored references replay with no trace (unaffected, the
-            // common case); any extra reference the label consumes stays
-            // consumed and can never be reissued.
-            let functional_fakes_end = refs.fakes;
-            let label = match &macro_step.name {
-                Some(name) => {
-                    refs.fakes = label_fakes_start;
-                    let resolved = resolve_in(name, refs, warnings, diags);
-                    refs.fakes = functional_fakes_end.max(refs.fakes);
-                    match resolved {
-                        Some(resolved) => Some(resolved),
-                        None => return,
-                    }
-                }
-                None => None,
-            };
-            out.push(LoweredStep {
-                step: step_ref.clone(),
-                kind: StepKindId::from(kind.as_str()),
-                payload,
-                optional: macro_step.optional,
-                when,
-                label,
-                save_as: macro_step.save_as.clone(),
-            });
+        MacroStepKind::Payload { kind, payload } => expand_payload_step(
+            macro_step, kind, payload, step_ref, out, refs, warnings, diags, resolve_in,
+        ),
+    }
+}
+
+/// One `ref:` step: bind, check every read is supplied, then emit the
+/// fragment's own text with the bindings baked in (ADR-0018).
+#[allow(clippy::too_many_arguments)]
+fn expand_ref_step(
+    target: &str,
+    macro_step: &MacroStep,
+    step_ref: &StepRef,
+    ctx: &LowerCtx<'_>,
+    out: &mut Vec<LoweredStep>,
+    refs: &mut Refs,
+    warnings: &mut Vec<Diag>,
+    diags: &mut Vec<Diag>,
+    at: &impl Fn(Diag) -> Diag,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+    scoped: &Bindings,
+) {
+    let Some(fragment) = ctx.packs.find_fragment(target) else {
+        return; // pack validation reported it
+    };
+    // Step scope is the most specific, so it lands last and wins.
+    let mut bindings = scoped.clone();
+    bindings.extend(resolve_bindings(
+        &macro_step.bind,
+        refs,
+        warnings,
+        diags,
+        resolve_in,
+        at,
+    ));
+
+    // Every variable the fragment reads must be bound here or captured
+    // by a step before it. hurl's `[Options] variable:` *assigns* into
+    // one shared set (it does not scope), so an unbound name would
+    // silently inherit whatever an earlier entry happened to leave —
+    // running green against the wrong value.
+    let available = captures_before(out);
+    let missing: Vec<&str> = fragment
+        .placeholders
+        .iter()
+        .filter(|name| {
+            !bindings.contains_key(name.as_str())
+                && !available.contains(name.as_str())
+                && !refs.secrets.contains_key(name.as_str())
+        })
+        .map(String::as_str)
+        .collect();
+    if !missing.is_empty() {
+        diags.push(
+                    at(Diag::error(
+                        "proef::lower::unbound_placeholder",
+                        format!(
+                            "fragment `{}` reads `{}`, which nothing supplies — no `bind:` in scope gives a value, and no earlier step captures it",
+                            fragment.name,
+                            missing.join("`, `"),
+                        ),
+                    ))
+                    .with_help(format!(
+                        "add `bind: {{ {}: … }}` to the step, its macro, or the pack",
+                        missing[0]
+                    )),
+                );
+        return;
+    }
+
+    for (name, bound) in &bindings {
+        if let Bound::Secret(secret) = bound {
+            refs.secrets.insert(name.clone(), secret.clone());
         }
     }
+    // Only literals take the `[Options]` path; a secret's value must
+    // never be written into an artifact (ADR-0005).
+    let literals: BTreeMap<String, String> = bindings
+        .iter()
+        .filter_map(|(name, bound)| match bound {
+            Bound::Value(value) => Some((name.clone(), value.clone())),
+            Bound::Secret(_) => None,
+        })
+        .collect();
+    let text = bake_entry_options(
+        &fragment.text,
+        macro_step.retry,
+        macro_step.delay_ms,
+        &literals,
+    );
+    let when = match &macro_step.when {
+        Some(guard) => match resolve_in(guard, refs, warnings, diags) {
+            Some(resolved) => Some(Guard(resolved)),
+            None => return,
+        },
+        None => None,
+    };
+    let label = match &macro_step.name {
+        Some(name) => resolve_in(name, refs, warnings, diags),
+        None => None,
+    };
+    out.push(LoweredStep {
+        step: step_ref.clone(),
+        kind: StepKindId::from(fragment.kind.as_str()),
+        payload: StepPayload::HurlEntries(text),
+        optional: macro_step.optional,
+        when,
+        label,
+        save_as: macro_step.save_as.clone(),
+    });
+}
+
+/// One inline-payload step: resolve `${…}` in place, then bake the step's own
+/// `retry:`/`delay:` into `[Options]` (ADR-0010 — artifacts replay identically).
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn expand_payload_step(
+    macro_step: &MacroStep,
+    kind: &str,
+    payload: &PayloadForm,
+    step_ref: &StepRef,
+    out: &mut Vec<LoweredStep>,
+    refs: &mut Refs,
+    warnings: &mut Vec<Diag>,
+    diags: &mut Vec<Diag>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+) {
+    // The label annotates *this* step for humans (artifact comments,
+    // events) — it must report the fake values the step actually
+    // used, not mint fresh ones of its own. Remember where the
+    // occurrence counter stood before the functional resolves
+    // (payload, then guard) so the label can replay from the same
+    // base afterward.
+    let label_fakes_start = refs.fakes;
+    let payload = match payload {
+        PayloadForm::Raw(text) => {
+            let Some(resolved) = resolve_in(text, refs, warnings, diags) else {
+                return;
+            };
+            // Bake `retry:`/`delay:` into hurl `[Options]` so artifacts
+            // replay with identical semantics under the stock CLI
+            // (ADR-0010); per-entry [Options] override batch defaults.
+            let resolved = if macro_step.retry.is_some() || macro_step.delay_ms.is_some() {
+                bake_entry_options(
+                    &resolved,
+                    macro_step.retry,
+                    macro_step.delay_ms,
+                    &BTreeMap::new(),
+                )
+            } else {
+                resolved
+            };
+            StepPayload::HurlEntries(resolved)
+        }
+        PayloadForm::Structured(value) => {
+            // `${…}` resolves inside structured payloads exactly as in
+            // raw ones (ADR-0005): every string value, recursively.
+            // Keys are schema, not data — they stay literal.
+            let mut resolve = |text: &str| {
+                // No `$` ⇒ no placeholders and no `$${` escapes: skip
+                // the resolver's copy passes for the common case.
+                if !text.contains('$') {
+                    return Some(text.to_owned());
+                }
+                resolve_in(text, refs, warnings, diags)
+            };
+            match resolve_structured(value, &mut resolve) {
+                Some(resolved) => StepPayload::Structured(resolved),
+                None => return,
+            }
+        }
+    };
+    let when = match &macro_step.when {
+        Some(guard) => match resolve_in(guard, refs, warnings, diags) {
+            Some(resolved) => Some(Guard(resolved)),
+            None => return,
+        },
+        None => None,
+    };
+    // Labels resolve like payloads (same scope, same strictness) —
+    // otherwise raw `${…}` leaks into artifact comments and events.
+    // But a label is a *replay*, not a new use: it shares whatever
+    // `${…}` text the payload/guard already resolved (typically the
+    // same captured arg, e.g. `name: search ${term}` next to
+    // `q: ${term}`), so it resolves from a scratch copy of the
+    // counter rewound to `label_fakes_start` — reproducing the
+    // payload's own fake values instead of consuming fresh
+    // occurrences that would then shift every later step's fakes by
+    // one. Restoring to a *fixed* end (wherever payload/guard left
+    // off) is only correct when the label is an exact mirror: a
+    // label with a `${fake:…}` the payload never had still consumes
+    // real occurrences during the replay, and blindly rewinding past
+    // them would hand those numbers back out to a later step —
+    // colliding with a value this label already displayed. So the
+    // real counter is restored to the *high-water mark* of the two —
+    // wherever payload/guard left off, or wherever the label's own
+    // replay reached, whichever is further — never below either.
+    // Mirrored references replay with no trace (unaffected, the
+    // common case); any extra reference the label consumes stays
+    // consumed and can never be reissued.
+    let functional_fakes_end = refs.fakes;
+    let label = match &macro_step.name {
+        Some(name) => {
+            refs.fakes = label_fakes_start;
+            let resolved = resolve_in(name, refs, warnings, diags);
+            refs.fakes = functional_fakes_end.max(refs.fakes);
+            match resolved {
+                Some(resolved) => Some(resolved),
+                None => return,
+            }
+        }
+        None => None,
+    };
+    out.push(LoweredStep {
+        step: step_ref.clone(),
+        kind: StepKindId::from(kind),
+        payload,
+        optional: macro_step.optional,
+        when,
+        label,
+        save_as: macro_step.save_as.clone(),
+    });
 }
 
 /// Every string *value* in a structured payload resolved through `resolve`
@@ -454,6 +727,7 @@ fn bake_entry_options(
     text: &str,
     retry: Option<crate::step::Retry>,
     delay_ms: Option<u64>,
+    bindings: &BTreeMap<String, String>,
 ) -> String {
     let mut option_lines: Vec<String> = Vec::new();
     if let Some(retry) = retry {
@@ -462,6 +736,14 @@ fn bake_entry_options(
     }
     if let Some(delay_ms) = delay_ms {
         option_lines.push(format!("delay: {delay_ms}ms"));
+    }
+    // Always quoted: an unquoted value that happens to read as a number or a
+    // boolean would be stored as one (`variable_value` tries those first), and
+    // `records` vs `2` vs `true` must not become three different types by
+    // accident. hurl evaluates the quoted form as a template, which is what
+    // lets a bound `${url:…}` containing `{{captured}}` finish resolving.
+    for (name, value) in bindings {
+        option_lines.push(format!("variable: {name}=\"{}\"", quote_option(value)));
     }
     let retry_lines = option_lines.join("\n");
     // Pre-scan: entries whose author already wrote an `[Options]` section only
@@ -730,7 +1012,7 @@ fn push_warnings(warnings: &mut Vec<Diag>, texts: &[String], ctx: &LowerCtx<'_>,
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
     use crate::engine::StepKindSpec;
@@ -865,7 +1147,7 @@ mod tests {
             auth.contains("Bearer {{apiToken}}"),
             "secret placeholder: {auth}"
         );
-        assert!(lowered.secrets.contains("apiToken"));
+        assert!(lowered.secrets.contains_key("apiToken"));
 
         // The expect macro merged `status == 200` into the *search* entry.
         let StepPayload::HurlEntries(search) = &lowered.batches[1].steps[1].payload else {
@@ -1105,7 +1387,7 @@ mod tests {
         });
         let body =
             "GET http://x/a\n[QueryStringParams]\nq: 1\n[Options]\nverbose: true\nHTTP 200\n";
-        let baked = bake_entry_options(body, retry, None);
+        let baked = bake_entry_options(body, retry, None, &BTreeMap::new());
         assert_eq!(baked.matches("[Options]").count(), 1, "{baked}");
         assert!(
             baked.contains("[Options]\nretry: 2\nretry-interval: 100ms\nverbose: true"),
@@ -1126,7 +1408,7 @@ mod tests {
             "POST http://x/a\n<root xmlns:x=\"urn:example\">\n  <child>hi</child>\n</root>\nHTTP 200\n",
             "POST http://x/a\n{\"note\": \"FOR REVIEW\"}\nHTTP 200\n",
         ] {
-            let baked = bake_entry_options(body, retry, None);
+            let baked = bake_entry_options(body, retry, None, &BTreeMap::new());
             assert_eq!(
                 baked.matches("[Options]").count(),
                 1,
@@ -1347,5 +1629,187 @@ mod tests {
              displayed: {ping}"
         );
         assert!(ping.contains(&format!("v: {occurrence_2}")), "ping: {ping}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fragments (ADR-0018)
+    // -----------------------------------------------------------------------
+
+    /// Stands in for an engine's scanner (core cannot depend on one). `@name`
+    /// opens a fragment, `?var` is a read, `!var` a capture. The `Result` is
+    /// never `Err` here but the seam's signature requires one.
+    #[allow(clippy::unnecessary_wraps)]
+    fn frag_scan(
+        text: &str,
+    ) -> Result<Vec<crate::engine::ScannedFragment>, crate::engine::FragmentScanError> {
+        let mut out: Vec<crate::engine::ScannedFragment> = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let line = line.trim();
+            if let Some(name) = line.strip_prefix('@') {
+                out.push(crate::engine::ScannedFragment {
+                    name: Some(name.to_owned()),
+                    text: format!("GET http://x/{name}\nHTTP 200\n"),
+                    line: index + 1,
+                    placeholders: Vec::new(),
+                    captures: Vec::new(),
+                    declares_retry: false,
+                });
+            } else if let Some(last) = out.last_mut() {
+                if let Some(read) = line.strip_prefix('?') {
+                    last.placeholders.push(read.to_owned());
+                } else if let Some(write) = line.strip_prefix('!') {
+                    last.captures.push(write.to_owned());
+                    // A real scanner reads the captures *out of* the entry, so
+                    // the text and the declared list can never disagree. Keep
+                    // the stand-in honest about that.
+                    if !last.text.contains("[Captures]") {
+                        last.text.push_str("[Captures]\n");
+                    }
+                    last.text.push_str(write);
+                    last.text.push_str(": jsonpath \"$.id\"\n");
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    const FRAG_KINDS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        file_ext: Some("frag"),
+        scan_fragments: Some(frag_scan),
+    }];
+
+    /// Lower a one-step scenario over the given pack and fragment file.
+    fn lower_fragments(pack: &str, fragments: &str) -> Result<LoweredScenario, Vec<Diag>> {
+        let packs = pack::load(
+            &[PackSource {
+                name: "p.yaml".into(),
+                text: Arc::from(pack),
+            }],
+            &[PackSource {
+                name: "api.frag".into(),
+                text: Arc::from(fragments),
+            }],
+            FRAG_KINDS,
+        )
+        .unwrap_or_else(|err| panic!("pack should load: {err:?}"));
+        let feature =
+            crate::feature::parse("t.feature", "Feature: F\n  Scenario: S\n    When it runs\n")
+                .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+        let env = BTreeMap::new();
+        let config_vars = BTreeMap::from([("url:base".to_owned(), "http://api".to_owned())]);
+        let world = World::new(crate::world::GlobalStore::default());
+        let ctx = ctx(
+            &feature,
+            &packs,
+            &kind_to_engine,
+            &env,
+            &config_vars,
+            &world,
+        );
+        lower(&scenario, &ctx)
+    }
+
+    fn only_entry(lowered: &LoweredScenario) -> &str {
+        let step = lowered
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .find(|s| matches!(s.payload, StepPayload::HurlEntries(_)))
+            .expect("one hurl entry");
+        let StepPayload::HurlEntries(text) = &step.payload else {
+            unreachable!()
+        };
+        text
+    }
+
+    /// The three scopes cascade, most specific winning, and every literal lands
+    /// as a per-entry `[Options] variable:` so the artifact replays identically
+    /// under the stock CLI.
+    #[test]
+    fn bindings_cascade_and_are_injected_as_entry_options() {
+        let lowered = lower_fragments(
+            "bind:\n  base: ${url:base}\n  who: pack\nmacros:\n  m:\n    match: it runs\n    bind:\n      who: macro\n      extra: yes\n    steps:\n      - ref: f\n        bind:\n          who: step\n",
+            "@f\n?base\n?who\n?extra\n",
+        )
+        .expect("lowers");
+        let text = only_entry(&lowered);
+        assert!(text.contains("[Options]"), "{text}");
+        assert!(text.contains(r#"variable: base="http://api""#), "{text}");
+        assert!(
+            text.contains(r#"variable: who="step""#),
+            "step scope wins: {text}"
+        );
+        assert!(!text.contains(r#"who="macro""#) && !text.contains(r#"who="pack""#));
+        assert!(text.contains(r#"variable: extra="yes""#), "{text}");
+    }
+
+    /// A secret binding never reaches the artifact; it is recorded as
+    /// variable→secret so the engine injects it at run time (ADR-0005), which
+    /// is what lets a fragment keep the variable name its corpus already uses.
+    #[test]
+    fn a_secret_binding_is_renamed_not_written() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    bind:\n      auth_token: ${secret:apiToken}\n    steps:\n      - ref: f\n",
+            "@f\n?auth_token\n",
+        )
+        .expect("lowers");
+        let text = only_entry(&lowered);
+        assert!(
+            !text.contains("auth_token=") && !text.contains("apiToken"),
+            "no secret may reach the artifact: {text}"
+        );
+        assert_eq!(
+            lowered.secrets.get("auth_token").map(String::as_str),
+            Some("apiToken")
+        );
+    }
+
+    #[test]
+    fn a_secret_mixed_into_a_larger_value_is_refused() {
+        let diags = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    bind:\n      auth: \"Bearer ${secret:apiToken}\"\n    steps:\n      - ref: f\n",
+            "@f\n?auth\n",
+        )
+        .expect_err("should refuse");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "proef::lower::secret_in_composite_bind"),
+            "{diags:?}"
+        );
+    }
+
+    /// hurl's `[Options] variable:` assigns into one shared set rather than
+    /// scoping, so an unbound name would silently inherit whatever an earlier
+    /// entry left behind — green, against the wrong value.
+    #[test]
+    fn a_placeholder_nothing_supplies_is_refused() {
+        let diags = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            "@f\n?missingOne\n",
+        )
+        .expect_err("should refuse");
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::lower::unbound_placeholder")
+            .unwrap_or_else(|| panic!("expected unbound_placeholder in {diags:?}"));
+        assert!(diag.message.contains("missingOne"), "{}", diag.message);
+        assert!(diag.help.is_some());
+    }
+
+    /// A capture from an earlier step counts as supplied — that is the whole
+    /// point of chaining requests, and requiring a `bind:` for it would be wrong.
+    #[test]
+    fn a_capture_from_an_earlier_step_supplies_a_later_fragment() {
+        lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n      - ref: second\n",
+            "@first\n!recordId\n@second\n?recordId\n",
+        )
+        .expect("a preceding capture supplies it");
     }
 }

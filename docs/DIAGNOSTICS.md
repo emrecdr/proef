@@ -81,7 +81,8 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `lower::bad_status` | `expect: status:` is not an HTTP status number | |
 | `lower::kind_unrouted` | Internal safety net: a lowered step's kind maps to no engine (registry drift — unreachable through the CLI, which is why it has no corpus case) | |
 | `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
-| `lower::fragment_unlowered` | Internal safety net: a `ref:` reached lowering before `bind:` resolution is wired (transitional — unreachable while no fragment file loads) | |
+| `lower::unbound_placeholder` | A fragment reads a `{{variable}}` that no `bind:` in scope supplies and no earlier step captures | |
+| `lower::secret_in_composite_bind` | A `bind:` value mixes `${secret:…}` into a larger string — bind the secret alone and put the surrounding text in the fragment | |
 | `lower::dry_run_unknown` | A runtime-only global under `--dry-run` (*warning*) | |
 
 ## `proef::resolve::*` — `${…}` variable resolution

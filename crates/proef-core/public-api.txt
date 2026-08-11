@@ -463,6 +463,7 @@ pub proef_core::engine::ScenarioCtx::file_root: core::option::Option<std::path::
 pub proef_core::engine::ScenarioCtx::http: proef_core::engine::HttpDefaults
 pub proef_core::engine::ScenarioCtx::run_id: alloc::sync::Arc<str>
 pub proef_core::engine::ScenarioCtx::scenario: alloc::sync::Arc<str>
+pub proef_core::engine::ScenarioCtx::secret_bindings: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 pub proef_core::engine::ScenarioCtx::secrets: alloc::sync::Arc<alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 impl core::clone::Clone for proef_core::engine::ScenarioCtx
 pub fn proef_core::engine::ScenarioCtx::clone(&self) -> proef_core::engine::ScenarioCtx
@@ -768,7 +769,7 @@ pub proef_core::lower::LoweredScenario::batches: alloc::vec::Vec<proef_core::ste
 pub proef_core::lower::LoweredScenario::globals: alloc::collections::btree::set::BTreeSet<alloc::string::String>
 pub proef_core::lower::LoweredScenario::line: usize
 pub proef_core::lower::LoweredScenario::name: alloc::string::String
-pub proef_core::lower::LoweredScenario::secrets: alloc::collections::btree::set::BTreeSet<alloc::string::String>
+pub proef_core::lower::LoweredScenario::secrets: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::lower::LoweredScenario::tags: alloc::vec::Vec<alloc::string::String>
 pub proef_core::lower::LoweredScenario::warnings: alloc::vec::Vec<proef_core::diag::Diag>
 impl core::fmt::Debug for proef_core::lower::LoweredScenario
@@ -907,6 +908,7 @@ pub struct proef_core::pack::Fragment
 pub proef_core::pack::Fragment::captures: alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::declares_retry: bool
 pub proef_core::pack::Fragment::file: alloc::string::String
+pub proef_core::pack::Fragment::kind: alloc::string::String
 pub proef_core::pack::Fragment::line: usize
 pub proef_core::pack::Fragment::name: alloc::string::String
 pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
@@ -1227,6 +1229,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::Fault
 pub struct proef_core::runner::Prepared
 pub proef_core::runner::Prepared::artifact: core::option::Option<proef_core::engine::ArtifactRef>
 pub proef_core::runner::Prepared::batches: alloc::vec::Vec<proef_core::step::StepBatch>
+pub proef_core::runner::Prepared::secret_bindings: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 impl core::marker::Freeze for proef_core::runner::Prepared
 impl core::marker::Send for proef_core::runner::Prepared
 impl core::marker::Sync for proef_core::runner::Prepared

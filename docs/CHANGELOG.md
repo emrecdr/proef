@@ -7,8 +7,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 ## [Unreleased]
 
 > **Breaking (library):** `proef_core::pack::load` takes a second
-> `&[PackSource]` of fragment files, between the packs and the step kinds.
-> Pass `&[]` for the previous behaviour.
+> `&[PackSource]` of fragment files, between the packs and the step kinds
+> (pass `&[]` for the previous behaviour); `LoweredScenario::secrets` is a
+> `BTreeMap<String, String>` of engine-variable → secret name rather than a
+> `BTreeSet<String>`; `Prepared` and `ScenarioCtx` each gain a
+> `secret_bindings` field carrying that map to the engine.
 
 ### Added
 
@@ -32,7 +35,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   identically rather than differing by where the hurl text happens to live.
 
   **Not yet runnable:** no fragment file is discovered yet, so every `ref:` currently
-  reports `unknown_ref`. Discovery and lowering follow.
+  reports `unknown_ref`. Discovery follows.
+
+- **Fragments lower, bind, and execute.** A `ref:` step emits the fragment's own text
+  with its non-secret bindings baked in as per-entry `[Options] variable:` lines, so the
+  artifact stays the executed input and replays identically under the stock CLI
+  (ADR-0010). Values are always quoted: `variable_value` tries null/bool/number before
+  string, so an unquoted `records`, `2` and `true` would become three different types by
+  accident.
+
+  Two refusals guard the parts that could otherwise pass silently:
+
+  - `lower::unbound_placeholder` — a fragment reading a `{{variable}}` that no `bind:`
+    in scope supplies and no earlier step captures. hurl's `[Options] variable:`
+    *assigns into one shared set* rather than scoping, so an unbound name would inherit
+    whatever a previous entry happened to leave and run green against the wrong value.
+  - `lower::secret_in_composite_bind` — a `bind:` value mixing `${secret:…}` into a
+    larger string. To inject that, the composite would have to be materialized into the
+    artifact, which ADR-0005 forbids; bind the secret alone and let the fragment spell
+    the surrounding text.
+
+  Secrets keep their own path: recorded as engine-variable → secret name and injected
+  via `insert_secret` at run time, never as an `[Options]` line. That indirection is
+  what lets `bind: { auth_token: ${secret:apiToken} }` give a secret the variable name a
+  corpus proef did not write already uses.
+
+  Bindings resolve **once per scope instantiation** — pack scope once per scenario,
+  macro scope once per invocation, step scope per step — so one binding is one value and
+  two bindings are two. A macro with no `ref:` step resolves nothing, so an unused table
+  never advances the `${fake:…}` counter.
 
 - **The engine seam can describe fragment files (ADR-0018, groundwork).**
   `StepKindSpec` gains `file_ext` and `scan_fragments`, and `proef-core` gains

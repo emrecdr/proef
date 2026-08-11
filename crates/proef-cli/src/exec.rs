@@ -188,7 +188,9 @@ pub fn execute(
         .features
         .iter()
         .flat_map(|f| f.scenarios.iter())
-        .flat_map(|s| s.lowered.secrets.iter().cloned())
+        // The *values* are the secret names to look up; the keys are the hurl
+        // variables a binding may have renamed them to (ADR-0018).
+        .flat_map(|s| s.lowered.secrets.values().cloned())
         .collect();
     let secrets = match crate::secretstore::resolve_all(&secret_names) {
         Ok(secrets) => Arc::new(secrets),
@@ -936,7 +938,7 @@ fn run_phase(
         .features
         .iter()
         .flat_map(|feature| feature.scenarios.iter())
-        .flat_map(|scenario| scenario.lowered.secrets.iter().cloned())
+        .flat_map(|scenario| scenario.lowered.secrets.values().cloned())
         .collect();
     let secrets = match crate::secretstore::resolve_all(&names) {
         Ok(secrets) => Arc::new(secrets),
@@ -1100,6 +1102,7 @@ fn build_specs(
                 Ok(Prepared {
                     batches: lowered.batches,
                     artifact,
+                    secret_bindings: lowered.secrets,
                 })
             });
             specs.push(ScenarioSpec {

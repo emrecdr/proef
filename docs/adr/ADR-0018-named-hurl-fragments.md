@@ -103,12 +103,25 @@ Costs, stated rather than discovered later:
 
 - **A test spans three files** (`.feature` → pack → `.hurl`) instead of two. `explain`
   and LSP go-to-definition have to earn that back.
-- **Fragment URLs cannot come from `${url:<name>}` when the value contains `{{…}}`.**
-  hurl's `eval_template` is a single non-recursive pass — a rendered variable's value is
-  never re-templated — so `channelState = "${url:base}/…/{{channelId}}/state"` would put
-  the literal characters `{{channelId}}` on the wire. Paths therefore live in the
-  `.hurl` file and `[url]` supplies `base`. **Fragments only**; inline blocks keep the
-  full path table (amends ADR-0012).
+- **A bound value gets exactly one expansion pass, and no more.** hurl's `eval_template`
+  is a single non-recursive pass, so a *rendered* variable's value is never re-parsed as
+  a template. But a `[Options] variable:` value is itself evaluated as a template before
+  it is stored (`hurl-8.0.1/src/runner/options.rs:508-511`), which is one pass more than
+  the entry body gets. So `bind: { recordUrl: ${url:record} }`, where `record` is
+  `"${url:base}/api/v1/records/{{recordId}}"`, does work: `{{recordId}}` expands at
+  option-eval time from a preceding capture, and `GET {{recordUrl}}` then renders the
+  finished URL. `[url]`'s path table keeps working for fragments, and ADR-0012 is
+  unchanged.
+
+  The limit is the *second* level: a value that expands to text still containing `{{…}}`
+  will emit those characters literally. In practice that is the same requirement the
+  bound-or-captured rule already enforces — every placeholder must be in scope at the
+  entry that reads it.
+
+  *(An earlier draft of this ADR concluded that fragment paths had to move into the
+  `.hurl` file and that `[url]` would narrow to `base`. That was wrong: it read the
+  non-recursive `eval_template` as applying to the binding path too. Recorded because
+  the wrong version would have forced a needless `proef.toml` migration.)*
 - **Two ways to write a request body** — accepted deliberately above, and the reason is
   recorded so the 844-line evidence is not forgotten by someone later tempted to
   deprecate the inline form.

@@ -185,6 +185,10 @@ pub struct Fragment {
     /// Source file name as authored — the `file.hurl#name` qualifier and the
     /// diagnostic source.
     pub file: String,
+    /// The step kind whose engine scanned this file, taken from the `file_ext`
+    /// that claimed it. A `ref:` step routes by this exactly as an inline step
+    /// routes by its payload key (ADR-0002).
+    pub kind: String,
     /// The entry's own text, annotation included.
     pub text: String,
     /// 1-based line the entry starts on.
@@ -407,7 +411,16 @@ fn load_fragments(
     for source in sources {
         // The extension decided which kind claims the file, so the scanner that
         // reads it is the one whose engine owns that extension.
-        let Some(scan) = kinds.iter().find_map(|kind| kind.scan_fragments) else {
+        let claimed = kinds.iter().find(|kind| {
+            kind.scan_fragments.is_some()
+                && kind
+                    .file_ext
+                    .is_some_and(|ext| source.name.rsplit('.').next() == Some(ext))
+        });
+        let Some((kind_name, scan)) = claimed
+            .or_else(|| kinds.iter().find(|kind| kind.scan_fragments.is_some()))
+            .and_then(|kind| kind.scan_fragments.map(|scan| (kind.prefix, scan)))
+        else {
             continue;
         };
         let scanned = match scan(&source.text) {
@@ -449,6 +462,7 @@ fn load_fragments(
                 Fragment {
                     name,
                     file: source.name.clone(),
+                    kind: kind_name.to_owned(),
                     text: entry.text,
                     line: entry.line,
                     placeholders: entry.placeholders,

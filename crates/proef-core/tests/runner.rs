@@ -245,6 +245,7 @@ fn spec(name: &str, engines_by_batch: &[&'static str]) -> ScenarioSpec {
             Ok(Prepared {
                 batches,
                 artifact: None,
+                secret_bindings: std::collections::BTreeMap::default(),
             })
         }),
     }
@@ -404,6 +405,7 @@ fn optional_batch_error_does_not_rereport_later_batches() {
             Ok(Prepared {
                 batches,
                 artifact: None,
+                secret_bindings: std::collections::BTreeMap::default(),
             })
         }),
     };

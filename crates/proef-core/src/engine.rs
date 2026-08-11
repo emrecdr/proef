@@ -259,6 +259,11 @@ pub struct ScenarioCtx {
     /// them via their redacting mechanisms (`insert_secret`); values never
     /// enter events or artifacts (ADR-0005).
     pub secrets: Arc<std::collections::BTreeMap<String, String>>,
+    /// Engine variable name → secret name for this scenario. Inject each under
+    /// its *variable* name, taking the value from `secrets` by its *secret*
+    /// name: a fragment binding may deliberately give a secret the variable
+    /// name a foreign corpus already uses (ADR-0018).
+    pub secret_bindings: Arc<std::collections::BTreeMap<String, String>>,
     /// Engine option defaults from project config (`timeout-ms`, …).
     pub http: HttpDefaults,
     /// Root directory for file bodies (`context_dir` confinement, §13) —
