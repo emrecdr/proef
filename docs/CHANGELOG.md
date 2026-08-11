@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-11 (tool-surface integrity & authoring guidance)
+
+> **Breaking:** `proef secret set --value` was removed in favour of `--stdin`,
+> and `proef macros --output json`'s `pattern` field changed from a boolean to
+> `string|null`.
+
 ### Documentation
 
 - **AUTHORING shows how to write a validation-error catalogue.** Two patterns
@@ -242,11 +248,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   recomputes the totals from the scenarios present, and says the record predates
   0.6.0. A reader must be able to consume a record *or* detect that it cannot;
   quietly doing neither was the one unacceptable option.
-
-> **Contains breaking changes — the next release is a MINOR bump, not a patch**
-> (`docs/RELEASING.md`): `proef secret set --value` was removed in favour of
-> `--stdin`, and `proef macros --output json`'s `pattern` field changed from a
-> boolean to `string|null`.
 
 ### Fixed
 

@@ -151,3 +151,17 @@ before `proef`, which depends on it non-optionally) and is **not** automated.
   `diff` stops inventing flakiness for a step with no baseline — breaking: a
   failed stdout write now exits 3 where it exited 0, and a malformed environment
   variable exits 2 where it was silently ignored
+- `v0.9.0` — tool-surface integrity & authoring guidance: values interpolated
+  into LSP snippets, GitHub annotations and job-summary tables are escaped,
+  `proef fmt` refuses a file that is not a pack and stops trimming the YAML
+  skeleton, `--sarif` carries `startLine` so annotations land, `--watch`
+  retriggers on `proef.toml`, `--dry-run`'s nudge echoes the run that was
+  actually validated, a templated `retry:` stops under-counting the batch
+  budget, `--output json` reports the real exit, a truncated record counts its
+  warned scenarios, a failing run says when the scaffold's routes are still
+  placeholders, `macros` prints the sentence an author needs, `proef lsp`
+  adopts the client's workspace root, and AUTHORING documents docstring
+  placeholders and the validation-catalogue pattern — breaking:
+  `proef secret set --value` was removed in favour of `--stdin` (a secret in
+  argv is visible to `ps`), and `proef macros --output json`'s `pattern` field
+  changed from a boolean to `string|null`
