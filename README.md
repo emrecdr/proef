@@ -12,10 +12,11 @@
 
 **proef** (Dutch: *test/trial* — and *tasting*) is a declarative, modular,
 multi-engine end-to-end test runner. Tests are Gherkin `.feature` files in plain
-business prose; YAML macro packs (with embedded raw [Hurl](https://hurl.dev) blocks)
-bind that prose to executable steps; an engine-agnostic core batches the steps and
-dispatches them through a stable engine seam. The engine embeds hurl **in-process**
-for API testing.
+business prose; YAML macro packs bind that prose to executable steps — either as
+embedded raw [Hurl](https://hurl.dev) blocks or by naming an entry of a `.hurl`
+file you already own; an engine-agnostic core batches the steps and dispatches
+them through a stable engine seam. The engine embeds hurl **in-process** for API
+testing.
 
 ## What it looks like
 
@@ -65,6 +66,23 @@ macros:
 be a declared `params:` entry, and quoted arguments in the feature sentence
 shed their quotes once captured.
 
+A step may instead **name an entry of a real `.hurl` file** — for a corpus you
+already maintain, or one you want to keep runnable on its own:
+
+```yaml
+  searchTasks:
+    match: the operator searches tasks
+    steps:
+      - ref: task.search           # one `# @proef task.search` entry, in a real .hurl file
+        bind:
+          q: laptop
+          token: ${secret:apiToken}
+```
+
+The fragment file is untouched, valid hurl — the same bytes run under stock
+`hurl` and under proef. `bind:` supplies its `{{…}}` variables and may be set at
+pack, macro, or step scope, most specific winning (ADR-0018).
+
 Running it validates everything statically, executes against the embedded engine, and
 leaves a complete record:
 
@@ -101,17 +119,25 @@ summary: 12 passed · 0 failed · 0 skipped
 
 These are settled non-goals, not gaps awaiting a contribution:
 
-- **No importing or round-tripping hand-written hurl files.** Artifacts flow
-  outward only: `proef artifacts` emits `.hurl` you can run with stock hurl,
-  and nothing reads `.hurl` back in.
+- **No generating Gherkin or packs from hurl files.** Features and macros are
+  hand-authored; proef writes no `.hurl` you own. It *reads* annotated fragment
+  files as inputs (below), but nothing flows the other way (ADR-0018).
 - **No API mocking or contract testing**, and no load testing.
 - **No second engine.** The factory/session seam exists for dependency
   hygiene (ADR-0002), not as a roadmap.
 - **No desktop dashboard or server mode**, and no dynamic plugin loading.
 
-**Already have a hurl corpus?** The supported path is pasting your existing
-request bodies into a pack's `steps[].hurl` blocks — they are raw hurl,
-validated by the real parser at pack load, so they carry over unmodified.
+**Already have a hurl corpus?** Two supported paths, and neither is going away:
+
+- **Reference it where it lives.** Mark an entry `# @proef <name>`, point
+  `[run] fragments` at the corpus root, and a step says `ref: <name>` with a
+  `bind:` map for its variables. The file stays valid hurl, so the *same bytes*
+  run under stock `hurl` and under proef — one source of truth, no transcription
+  ([`docs/CONFIG.md`](docs/CONFIG.md), ADR-0018).
+- **Paste it into a pack.** `steps[].hurl` blocks are raw hurl, parse-validated
+  at load, so bodies carry over unmodified — and `${…}` substitutes anywhere in
+  them, including a whole multi-line docstring body, which a bound variable
+  cannot express.
 
 ## Installation
 
@@ -210,7 +236,8 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 `proef.toml.example`) holds runner settings **and** suite variables, so test files stay
 pure prose:
 
-- **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path) and
+- **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path,
+  `fragments` = the `.hurl` corpus root scanned for `ref:` targets) and
   `[http]` (`timeout-ms`, `follow-location`).
 - **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /
   `${vars:apiVersion}`. Secrets stay in the encrypted store (`${secret:…}`), never here.
@@ -254,7 +281,7 @@ Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
 [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md), and — for CI consumers of the
 run record — [`docs/EVENTS.md`](docs/EVENTS.md).
 The maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
-(ADR-0001…0017), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
+(ADR-0001…0018), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.
 
 ## Releases

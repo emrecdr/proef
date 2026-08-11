@@ -28,24 +28,26 @@ fn complete_fragment_ref(
     let after_dash = trimmed.strip_prefix("- ").unwrap_or(trimmed);
     let typed = after_dash.strip_prefix("ref:")?.trim();
 
-    let width = analysis.suite.fragments.len().to_string().len();
-    let mut items: Vec<CompletionItem> = analysis
-        .suite
-        .fragments
-        .iter()
-        .filter(|f| typed.is_empty() || f.name.starts_with(typed))
-        .enumerate()
-        .map(|(index, f)| CompletionItem {
-            label: f.name.clone(),
-            kind: Some(CompletionItemKind::REFERENCE),
-            detail: Some(format!("fragment in {}", f.file)),
-            insert_text: Some(f.name.clone()),
-            sort_text: Some(format!("{index:0width$}")),
-            ..CompletionItem::default()
-        })
-        .collect();
-    items.sort_by(|a, b| a.label.cmp(&b.label));
-    Some(items)
+    // No `sort_text`: fragments are indexed from a name-keyed `BTreeMap`, so this
+    // list is already in label order and the labels are unique. Pinning a rank
+    // here would only restate the client's own default ordering — and the
+    // ranked completions elsewhere in this file need `sort_text` precisely
+    // because *their* order is not the label's.
+    Some(
+        analysis
+            .suite
+            .fragments
+            .iter()
+            .filter(|f| typed.is_empty() || f.name.starts_with(typed))
+            .map(|f| CompletionItem {
+                label: f.name.clone(),
+                kind: Some(CompletionItemKind::REFERENCE),
+                detail: Some(format!("fragment in {}", f.file)),
+                insert_text: Some(f.name.clone()),
+                ..CompletionItem::default()
+            })
+            .collect(),
+    )
 }
 
 /// Escape one literal character for LSP snippet syntax.

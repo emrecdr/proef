@@ -65,10 +65,7 @@ impl SourceProvider for DiskSourceProvider {
         let Some(root) = &self.fragments else {
             return Ok(Vec::new());
         };
-        let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
-            .iter()
-            .flat_map(|e| e.step_kinds().iter().copied())
-            .collect();
+        let kinds = crate::registry::step_kinds();
         front::fragment_files(root, &kinds)
             .map(names)
             .map_err(|e| ProviderError(e.to_string()))

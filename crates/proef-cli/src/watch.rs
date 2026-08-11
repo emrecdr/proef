@@ -19,10 +19,7 @@ use proef_core::error::ExitCode;
 /// editor swap files — must not requeue, or a watched tree containing proef's
 /// own output reruns itself forever.
 fn watched_extensions() -> Vec<&'static str> {
-    let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
+    let kinds = crate::registry::step_kinds();
     let mut exts = vec!["feature", "yaml", "yml"];
     exts.extend(crate::front::fragment_extensions(&kinds));
     exts

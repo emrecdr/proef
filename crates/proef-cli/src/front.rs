@@ -74,10 +74,7 @@ pub struct FrontEnd {
 /// packs are complete whenever this returns: pack loading precedes binding and
 /// does not depend on it.
 pub fn load_packs(path: &Path, fragments: Option<&Path>) -> Result<PackSet, FrontError> {
-    let kinds: Vec<proef_core::engine::StepKindSpec> = registry::engines()
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
+    let kinds = registry::step_kinds();
     Ok(load_pack_set(path, fragments, &kinds)?.1)
 }
 
@@ -443,20 +440,7 @@ pub fn fragment_sources(
             root.display()
         ))));
     }
-    let mut sources = Vec::new();
-    for path in fragment_files(root, kinds)? {
-        let text = std::fs::read_to_string(&path).map_err(|err| {
-            FrontError::Core(CoreError::system_with(
-                format!("cannot read fragment file {}", path.display()),
-                err,
-            ))
-        })?;
-        sources.push(PackSource {
-            name: portable_display(&path),
-            text: Arc::from(text.as_str()),
-        });
-    }
-    Ok(sources)
+    read_sources(fragment_files(root, kinds)?, "fragment file")
 }
 
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the
@@ -467,16 +451,23 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
     } else {
         crate::fsutil::parent_dir(path)
     };
-    let mut sources = Vec::new();
-    for pack_path in pack_files(&base)? {
-        let text = std::fs::read_to_string(&pack_path).map_err(|err| {
+    read_sources(pack_files(&base)?, "pack")
+}
+
+/// Read discovered files into [`PackSource`]s. `what` names them in the read
+/// error, which is the only thing that differs between the kinds of input the
+/// front end loads — the naming and `Arc` sharing must not.
+fn read_sources(paths: Vec<PathBuf>, what: &str) -> Result<Vec<PackSource>, FrontError> {
+    let mut sources = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = std::fs::read_to_string(&path).map_err(|err| {
             FrontError::Core(CoreError::system_with(
-                format!("cannot read pack {}", pack_path.display()),
+                format!("cannot read {what} {}", path.display()),
                 err,
             ))
         })?;
         sources.push(PackSource {
-            name: portable_display(&pack_path),
+            name: portable_display(&path),
             text: Arc::from(text.as_str()),
         });
     }

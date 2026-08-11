@@ -655,10 +655,7 @@ pub fn artifacts(
 pub fn schema(add_to: &[PathBuf], overwrite_existing: bool) -> ExitCode {
     const MODELINE: &str = "# yaml-language-server: $schema=./proef-pack.schema.json";
 
-    let kinds: Vec<proef_core::engine::StepKindSpec> = crate::registry::engines()
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
+    let kinds = crate::registry::step_kinds();
     let schema = proef_core::pack::json_schema(&kinds);
     let rendered = match serde_json::to_string_pretty(&schema) {
         Ok(rendered) => rendered,

@@ -32,6 +32,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::Binding
 pub struct proef_core::analyze::FragmentDef
 pub proef_core::analyze::FragmentDef::file: alloc::string::String
 pub proef_core::analyze::FragmentDef::name: alloc::string::String
+pub proef_core::analyze::FragmentDef::source: alloc::sync::Arc<str>
 pub proef_core::analyze::FragmentDef::span: core::option::Option<proef_core::diag::Span>
 impl core::clone::Clone for proef_core::analyze::FragmentDef
 pub fn proef_core::analyze::FragmentDef::clone(&self) -> proef_core::analyze::FragmentDef

@@ -84,6 +84,10 @@ pub struct FragmentDef {
     /// Byte span of its `# @proef` annotation line, when locatable — the
     /// landing anchor.
     pub span: Option<Span>,
+    /// The exact text `span` was measured against. Carried rather than re-read:
+    /// a consumer converting the span needs a line index built from *these*
+    /// bytes, and a fresh read could observe a newer edit and mis-anchor.
+    pub source: Arc<str>,
 }
 
 /// The product of one wholesale recompute: every feature's read from here.
@@ -258,14 +262,9 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     out
 }
 
-/// Index every `use:` reference → its resolved target, for go-to-def from a
-/// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
-/// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
-/// counts come from the macro's own steps and source, a mismatch means the line
-/// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
-/// pairing is unreliable and that macro is skipped entirely rather than risk a
-/// wrong `Some`.
 /// Every fragment definition, with its annotation line as the landing anchor.
+/// Names are unique across the corpus (pass 10), so unlike the `use:`/`ref:`
+/// indexes below this one needs no positional pairing and no guard.
 fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
     packs
         .fragments
@@ -274,6 +273,7 @@ fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
             name: f.name.clone(),
             file: f.file.clone(),
             span: crate::pack::locate::line_span(&f.source, f.line),
+            source: Arc::clone(&f.source),
         })
         .collect()
 }
@@ -315,6 +315,13 @@ fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
     refs
 }
 
+/// Index every `use:` reference → its resolved target, for go-to-def from a
+/// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
+/// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
+/// counts come from the macro's own steps and source, a mismatch means the line
+/// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
+/// pairing is unreliable and that macro is skipped entirely rather than risk a
+/// wrong `Some`.
 fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
     let mut use_refs = Vec::new();
     for m in packs.macros.values() {

@@ -356,12 +356,16 @@ pub(crate) fn load_collecting(
         }
     }
 
-    // Fragments load only when some pack actually names one. Scanning a corpus
-    // means walking, reading and hurl-parsing every file in it, and the root may
-    // be large and external — a suite that references none must not pay for it
-    // on every `test`, `dry-run`, `flows` and `macros`. This is what makes
-    // "pointing at a corpus costs nothing until a pack names one of its
-    // requests" (CONFIG.md) true of the code rather than only of the semantics.
+    // Fragments parse only when some pack actually names one. hurl-parsing a
+    // corpus is the dominant cost of loading it and the root may be large and
+    // external, so a suite that references none must not pay it on every
+    // `test`, `dry-run`, `flows` and `macros`.
+    //
+    // This skips the *parse*, not the read: `sources` and `fragments` both
+    // arrive already read, because core performs no IO (the caller does, and
+    // hands the bytes in). So "pointing at a corpus you did not write costs
+    // nothing" (CONFIG.md) is exact about the scan and approximate about the
+    // file read — do not restate it here as though the whole cost were gated.
     if raw_packs.iter().any(|(_, _, raw)| {
         raw.macros
             .values()

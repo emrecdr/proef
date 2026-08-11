@@ -85,7 +85,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   never advances the `${fake:…}` counter.
 
 - **The engine seam can describe fragment files (ADR-0018, groundwork).**
-  `StepKindSpec` gains `file_ext` and `scan_fragments`, and `proef-core` gains
+  `StepKindSpec` gains `fragments: Option<FragmentSupport>`, and `proef-core` gains
   `ScannedFragment` / `FragmentScanError` / `FragmentScanner`. The hurl engine implements
   the scanner over hurl's own AST: the `# @proef <name>` annotation is read from the
   entry's `line_terminators`, so the annotation↔entry binding is exactly as reliable as
@@ -93,8 +93,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   produced captures are read from the same AST, which is what will let an unbound
   placeholder be an error rather than a runtime surprise.
 
-  Additive only — the public API diff is 44 lines added, 0 removed, and no hurl type
-  appears anywhere in `proef-core`. Discovery asks the registry for the extension instead
+  Additive only — nothing was removed from `proef-core`'s surface, and no hurl type
+  appears anywhere in it. Discovery asks the registry for the extension instead
   of naming `.hurl` itself, so this stays ADR-0002's "adding an engine leaves
   `proef-core` diff-empty" rather than an exception to it. **Nothing observable ships
   yet:** no pack can reference a fragment until the schema lands.
@@ -142,6 +142,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   ADR and the charter amendment land first, deliberately.
 
 ### Fixed
+
+- **A `ref:` step's `name:` reported a `${fake:…}` value it never sent.** A label is a
+  *replay* of what the request was built from, not a fresh use of it: the inline path
+  rewinds the `${fake:…}` occurrence counter, resolves the label, then restores it to
+  the high-water mark. The `ref:` path reproduced that tail without the rewind, so a step
+  binding `${fake:email}` and naming `${fake:email}` minted two identities — the console
+  and the event stream announced one address while the request sent another, and every
+  later step's fake values shifted by one. Both body forms now end in one shared
+  `finish_step`, so the rule is stated and enforced in a single place rather than copied.
+
+- **An escaped `$${secret:…}` in a `bind:` value was refused as a composite.** `$${` is
+  the escape (ADR-0005), so `$${secret:token}` is the literal text `${secret:token}` and
+  names no secret — but the composite check searched for the substring `"${secret:"`,
+  matched at offset 1, and rejected the binding with `secret_in_composite_bind`. Both the
+  whole-value and composite tests now read the value through the resolver's own
+  reference scanner, so there is one thing that knows what a `${…}` is and `$${` stays an
+  escape everywhere.
 
 - **A step that set `retry:` twice ran the value it did not name.** A pack could
   declare `retry:` (or `delay:`) as a step key *and* again inside the block's own

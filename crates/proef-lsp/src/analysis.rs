@@ -83,13 +83,13 @@ pub fn recompute(inputs: &RecomputeInputs<'_>) -> Analysis {
 
     // Fragment files too: go-to-definition into one needs its text to turn a
     // byte span into a range, and a fragment file with no diagnostic would
-    // otherwise never be captured above.
+    // otherwise never be captured above. The analysis already holds the exact
+    // bytes it measured the spans against, so this takes them rather than
+    // re-reading — no second read per fragment per recompute, and no window in
+    // which a span is converted against text it was not computed from.
     for f in &suite.fragments {
-        if !raw.contains_key(&f.file)
-            && let Ok(text) = overlay.read(&f.file)
-        {
-            raw.insert(f.file.clone(), text);
-        }
+        raw.entry(f.file.clone())
+            .or_insert_with(|| Arc::clone(&f.source));
     }
 
     Analysis { suite, raw }

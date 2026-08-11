@@ -159,8 +159,9 @@ Relative paths resolve against **this file's directory**, not the working direct
 the root may sit outside the suite — even outside the repo — and the config still works
 from any subdirectory. There is no convention fallback: with the key unset a `ref:`
 reports `proef::pack::unknown_ref` and says no fragment files were loaded, which beats
-guessing at a directory. Entries with no `# @proef` annotation are inert, so pointing at
-a corpus you did not write costs nothing until a pack names one of its requests.
+guessing at a directory. Entries with no `# @proef` annotation are inert, and the files
+are not scanned at all until some pack names a fragment — so pointing at a corpus you did
+not write neither changes what runs nor costs anything to parse.
 
 `proef fmt` never touches these files: it normalizes hurl blocks *inside packs* by
 locating them in YAML, and a corpus you do not own is not proef's to rewrite.

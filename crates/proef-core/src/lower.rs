@@ -87,13 +87,32 @@ enum Bound {
 /// take. Anything composite (`Bearer ${secret:token}`) would have to be
 /// materialized to be injected, putting the value in the artifact; the fragment
 /// should spell the literal part itself and bind the secret alone.
+///
+/// Both this and [`mentions_secret`] read the value through the resolver's own
+/// [`crate::resolve::first_reference`], so there is exactly one thing that knows
+/// what a `${…}` reference is — and `$${` stays an escape here too, rather than
+/// a second scanner mistaking an escaped literal for a live secret.
 fn whole_secret(value: &str) -> Option<&str> {
-    let inner = value
-        .trim()
-        .strip_prefix("${secret:")?
-        .strip_suffix('}')?
-        .trim();
-    (!inner.is_empty() && !inner.contains(['{', '}', '$'])).then_some(inner)
+    let trimmed = value.trim();
+    let (name, start, end) = crate::resolve::first_reference(trimmed)?;
+    if start != 0 || end != trimmed.len() {
+        return None; // something surrounds it — composite
+    }
+    let inner = name.strip_prefix("secret:")?.trim();
+    (!inner.is_empty() && !inner.contains(['{', '$'])).then_some(inner)
+}
+
+/// Does any *live* reference in `value` name the secret namespace? Used to
+/// refuse a composite once [`whole_secret`] has ruled out the sole legal shape.
+fn mentions_secret(value: &str) -> bool {
+    let mut rest = value;
+    while let Some((name, _, end)) = crate::resolve::first_reference(rest) {
+        if name.starts_with("secret:") {
+            return true;
+        }
+        rest = &rest[end..];
+    }
+    false
 }
 
 /// Escape a bound value for a quoted hurl option value. `\` and `"` are the
@@ -169,7 +188,7 @@ fn resolve_bindings(
             out.insert(name.clone(), Bound::Secret(secret.to_owned()));
             continue;
         }
-        if value.contains("${secret:") {
+        if mentions_secret(value) {
             diags.push(
                 at(Diag::error(
                     "proef::lower::secret_in_composite_bind",
@@ -491,6 +510,11 @@ fn expand_ref_step(
     let Some(fragment) = ctx.packs.find_fragment(target) else {
         return; // pack validation reported it
     };
+    // A `ref:` step's functional resolves are its step-scope bindings — those
+    // are what the request is built from — so the label replays from here
+    // (see `finish_step`). Pack- and macro-scope bindings resolved earlier and
+    // are shared, so they are deliberately not replayed.
+    let label_fakes_start = refs.fakes;
     // Step scope is the most specific, so it lands last and wins.
     let mut bindings = scoped.clone();
     bindings.extend(resolve_bindings(
@@ -552,46 +576,40 @@ fn expand_ref_step(
         return;
     }
 
-    for (name, bound) in &bindings {
-        if let Bound::Secret(secret) = bound {
-            refs.secrets.insert(name.clone(), secret.clone());
+    // Split the bindings by how each reaches hurl. Only literals take the
+    // `[Options]` path; a secret's value must never be written into an
+    // artifact (ADR-0005), so it is recorded by name and injected at run time.
+    // `bindings` is consumed here — it is dead afterwards, so neither half
+    // needs to be cloned back out of it.
+    let mut literals: BTreeMap<String, String> = BTreeMap::new();
+    for (name, bound) in bindings {
+        match bound {
+            Bound::Secret(secret) => {
+                refs.secrets.insert(name, secret);
+            }
+            Bound::Value(value) => {
+                literals.insert(name, value);
+            }
         }
     }
-    // Only literals take the `[Options]` path; a secret's value must
-    // never be written into an artifact (ADR-0005).
-    let literals: BTreeMap<String, String> = bindings
-        .iter()
-        .filter_map(|(name, bound)| match bound {
-            Bound::Value(value) => Some((name.clone(), value.clone())),
-            Bound::Secret(_) => None,
-        })
-        .collect();
     let text = bake_entry_options(
         &fragment.text,
         macro_step.retry,
         macro_step.delay_ms,
         &literals,
     );
-    let when = match &macro_step.when {
-        Some(guard) => match resolve_in(guard, refs, warnings, diags) {
-            Some(resolved) => Some(Guard(resolved)),
-            None => return,
-        },
-        None => None,
-    };
-    let label = match &macro_step.name {
-        Some(name) => resolve_in(name, refs, warnings, diags),
-        None => None,
-    };
-    out.push(LoweredStep {
-        step: step_ref.clone(),
-        kind: StepKindId::from(fragment.kind.as_str()),
-        payload: StepPayload::HurlEntries(text),
-        optional: macro_step.optional,
-        when,
-        label,
-        save_as: macro_step.save_as.clone(),
-    });
+    finish_step(
+        macro_step,
+        step_ref,
+        StepKindId::from(fragment.kind.as_str()),
+        StepPayload::HurlEntries(text),
+        label_fakes_start,
+        out,
+        refs,
+        warnings,
+        diags,
+        resolve_in,
+    );
 }
 
 /// One inline-payload step: resolve `${…}` in place, then bake the step's own
@@ -653,6 +671,41 @@ fn expand_payload_step(
             }
         }
     };
+    finish_step(
+        macro_step,
+        step_ref,
+        StepKindId::from(kind),
+        payload,
+        label_fakes_start,
+        out,
+        refs,
+        warnings,
+        diags,
+        resolve_in,
+    );
+}
+
+/// The tail every expanded step shares: resolve `when:`, resolve `name:` as a
+/// *replay*, and push. Both body forms (ADR-0018) end here, so the label rules
+/// below are stated and enforced exactly once — a second copy that resolved the
+/// label plainly would silently mint fresh `${fake:…}` values.
+///
+/// `label_fakes_start` is where the occurrence counter stood before *this
+/// step's* functional resolves (the payload for an inline step, the step-scope
+/// `bind:` for a `ref:` one).
+#[allow(clippy::too_many_arguments)]
+fn finish_step(
+    macro_step: &MacroStep,
+    step_ref: &StepRef,
+    kind: StepKindId,
+    payload: StepPayload,
+    label_fakes_start: usize,
+    out: &mut Vec<LoweredStep>,
+    refs: &mut Refs,
+    warnings: &mut Vec<Diag>,
+    diags: &mut Vec<Diag>,
+    resolve_in: &impl Fn(&str, &mut Refs, &mut Vec<Diag>, &mut Vec<Diag>) -> Option<String>,
+) {
     let when = match &macro_step.when {
         Some(guard) => match resolve_in(guard, refs, warnings, diags) {
             Some(resolved) => Some(Guard(resolved)),
@@ -696,7 +749,7 @@ fn expand_payload_step(
     };
     out.push(LoweredStep {
         step: step_ref.clone(),
-        kind: StepKindId::from(kind),
+        kind,
         payload,
         optional: macro_step.optional,
         when,
@@ -1805,6 +1858,29 @@ mod tests {
         );
     }
 
+    /// `$${` is the escape (ADR-0005), so `$${secret:x}` is the literal text
+    /// `${secret:x}` and names no secret at all. Reading the value with the
+    /// resolver's own scanner is what keeps that true here — a second scanner
+    /// that merely searched for `"${secret:"` refused this as a composite.
+    #[test]
+    fn an_escaped_secret_reference_is_a_literal_not_a_secret() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    bind:\n      hint: $${secret:apiToken}\n    steps:\n      - ref: f\n",
+            "@f\n?hint\n",
+        )
+        .expect("an escaped reference is ordinary text");
+        assert!(
+            lowered.secrets.is_empty(),
+            "nothing was bound to a secret: {:?}",
+            lowered.secrets
+        );
+        assert!(
+            only_entry(&lowered).contains(r#"variable: hint="${secret:apiToken}""#),
+            "the literal is injected verbatim: {}",
+            only_entry(&lowered)
+        );
+    }
+
     /// hurl's `[Options] variable:` assigns into one shared set rather than
     /// scoping, so an unbound name would silently inherit whatever an earlier
     /// entry left behind — green, against the wrong value.
@@ -1867,6 +1943,59 @@ mod tests {
             own(entries[0]),
             own(entries[1]),
             "two step-scope bindings are two values"
+        );
+    }
+
+    /// A `ref:` step's `name:` is a **replay** of what the request was built
+    /// from, exactly as an inline step's is: it must display the value the
+    /// request actually sent, and must not consume an occurrence that shifts
+    /// every later step's fakes by one. Both halves regressed when this path
+    /// copied the inline tail without its counter rewind.
+    #[test]
+    fn a_ref_steps_label_replays_its_binding_instead_of_minting_a_fresh_value() {
+        let labelled = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n        name: signup ${fake:email}\n        bind:\n          who: ${fake:email}\n      - ref: second\n        bind:\n          who: ${fake:email}\n",
+            "@first\n?who\n@second\n?who\n",
+        )
+        .expect("lowers");
+        let steps: Vec<&LoweredStep> = labelled
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .collect();
+        assert_eq!(steps.len(), 2);
+        let who = |step: &LoweredStep| {
+            let StepPayload::HurlEntries(text) = &step.payload else {
+                unreachable!()
+            };
+            text.lines()
+                .find_map(|l| l.strip_prefix("variable: who="))
+                .expect("who binding")
+                .trim_matches('"')
+                .to_owned()
+        };
+        assert_eq!(
+            steps[0].label.as_deref(),
+            Some(format!("signup {}", who(steps[0])).as_str()),
+            "the label must report the value its own binding sent"
+        );
+
+        // Same pack without the label: a label is a replay, so removing it
+        // cannot change what any later step resolves to.
+        let control = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n        bind:\n          who: ${fake:email}\n      - ref: second\n        bind:\n          who: ${fake:email}\n",
+            "@first\n?who\n@second\n?who\n",
+        )
+        .expect("lowers");
+        let control_steps: Vec<&LoweredStep> = control
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .collect();
+        assert_eq!(
+            who(steps[1]),
+            who(control_steps[1]),
+            "a label must not shift a later step's fake values"
         );
     }
 
