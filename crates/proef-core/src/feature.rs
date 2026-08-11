@@ -53,7 +53,10 @@ pub struct StepDefn {
     pub text: String,
     /// Data-table rows (outline placeholders substituted), when present.
     pub table: Option<Vec<Vec<String>>>,
-    /// Docstring, when present (raw request bodies).
+    /// Docstring, when present (raw request bodies; outline placeholders
+    /// substituted, exactly as in `text` and `table`). Naming the substitution
+    /// on the two fields above and not this one read as a deliberate exception:
+    /// a data-driven request body is the reason to reach for it.
     pub docstring: Option<String>,
     /// 1-based line of the step (anchors + events).
     pub line: usize,
@@ -609,6 +612,51 @@ mod tests {
         let text = "Feature: F\n  Background:\n    Given the api is available\n\n  Scenario: S\n";
         let feature = parse("f.feature", text).unwrap();
         assert_eq!(feature.scenarios[0].steps.len(), 1);
+    }
+
+    /// An outline substitutes into the docstring as well as the step text —
+    /// the way a request body gets data-driven. Specified in TECH-SPEC §4.4 and
+    /// implemented since, but pinned by nothing until now: every other outline
+    /// test asserts on step text, so a regression here would have emitted the
+    /// literal `<label>` into an artifact with the suite still green.
+    #[test]
+    fn outline_placeholders_substitute_into_a_docstring() {
+        let text = "Feature: F\n  Scenario Outline: Posting <label>\n    \
+            When a record is posted\n      \"\"\"\n      \
+            {\"label\": \"<label>\", \"priority\": \"<priority>\"}\n      \"\"\"\n\n    \
+            Examples:\n      | label | priority |\n      | alpha | high     |\n      \
+            | beta  | low      |\n";
+        let feature = parse("f.feature", text).unwrap();
+        assert_eq!(feature.scenarios.len(), 2);
+        // Both columns land, and the scenario name substitutes alongside them.
+        // The delimiting newlines are kept: a pack interpolating `${docstring}`
+        // straight after its headers relies on the leading one to separate
+        // headers from body in the emitted hurl.
+        assert_eq!(feature.scenarios[0].name, "Posting alpha");
+        assert_eq!(
+            feature.scenarios[0].steps[0].docstring.as_deref(),
+            Some("\n{\"label\": \"alpha\", \"priority\": \"high\"}\n")
+        );
+        assert_eq!(
+            feature.scenarios[1].steps[0].docstring.as_deref(),
+            Some("\n{\"label\": \"beta\", \"priority\": \"low\"}\n")
+        );
+    }
+
+    /// The error covers docstrings too, so an author who typos a column inside
+    /// a body is told at parse time rather than shipping the literal.
+    #[test]
+    fn unknown_placeholder_in_a_docstring_is_an_error() {
+        let text = "Feature: F\n  Scenario Outline: S\n    When a record is posted\n      \
+            \"\"\"\n      {\"label\": \"<wrong>\"}\n      \"\"\"\n\n    \
+            Examples:\n      | label |\n      | alpha |\n";
+        let errs = parse("f.feature", text).unwrap_err();
+        assert_eq!(errs[0].code, "proef::feature::unknown_placeholder");
+        assert!(
+            errs[0].message.contains("docstring"),
+            "the message must name where it looked: {}",
+            errs[0].message
+        );
     }
 
     #[test]

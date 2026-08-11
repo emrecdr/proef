@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Documentation
+
+- **An outline's `<column>` placeholders substitute into the docstring, and
+  AUTHORING now says so.** They always have — TECH-SPEC §4.4 specifies it and
+  the code has done it since — but the author-facing guide named only step
+  text and table cells, and `StepDefn`'s own doc comment named the
+  substitution on `text` and `table` while describing `docstring` as just
+  "raw request bodies". Naming it twice and omitting it once reads as a
+  deliberate exception, so a reader concludes the opposite of the truth: this
+  is exactly the capability an author reaches for to data-drive a request
+  body without leaving the feature file. AUTHORING gains a worked example.
+  Pinned by tests for the first time — every other outline test asserts on
+  step text, so a regression would have emitted a literal `<label>` into an
+  artifact with the suite green.
+
 ### Fixed
 
 - **`proef fmt` refuses a file that is not a pack.** It took an explicit path on
