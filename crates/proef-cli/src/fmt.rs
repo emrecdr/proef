@@ -14,21 +14,19 @@ use proef_core::error::ExitCode;
 /// Format pack files under `path` (a pack file or a directory containing
 /// `packs/`). `check` reports instead of rewriting (exit 1 when dirty).
 pub fn fmt(path: &Path, check: bool) -> ExitCode {
-    // An explicit file is taken on trust by `discover`, so without this the
-    // command rewrites whatever it is pointed at — a mistyped `proef fmt
-    // src/main.rs` strips trailing whitespace from source and reports success.
-    // Formatters parse before they write and refuse what they cannot parse;
-    // this one locates blocks textually, so the extension is the check it has.
-    if path.is_file() && !is_pack_file(path) {
-        crate::render::errln!(
-            "error: `{}` is not a pack file — `fmt` normalizes the hurl blocks inside `.yaml`/`.yml` packs",
-            path.display()
-        );
-        return ExitCode::UserError;
-    }
     let packs = discover(path);
     if packs.is_empty() {
-        crate::render::errln!("error: no pack files found under `{}`", path.display());
+        // Two ways to find nothing, and they deserve different advice: a path
+        // that is a file at all was named deliberately, so say what it should
+        // have been rather than reporting an empty search.
+        if path.is_file() {
+            crate::render::errln!(
+                "error: `{}` is not a pack file — `fmt` normalizes the hurl blocks inside `.yaml`/`.yml` packs",
+                path.display()
+            );
+        } else {
+            crate::render::errln!("error: no pack files found under `{}`", path.display());
+        }
         return ExitCode::UserError;
     }
     let mut dirty = false;
@@ -72,7 +70,17 @@ fn is_pack_file(path: &Path) -> bool {
 
 fn discover(path: &Path) -> Vec<PathBuf> {
     if path.is_file() {
-        return vec![path.to_path_buf()];
+        // Enforced here, not in the caller: this branch taking any path on
+        // trust is what let `fmt` rewrite whatever it was pointed at, and a
+        // guard bolted in front of the call leaves the next caller to
+        // rediscover that. Formatters parse before they write and refuse what
+        // they cannot parse; this one locates blocks textually, so the
+        // extension is the check it has.
+        return if is_pack_file(path) {
+            vec![path.to_path_buf()]
+        } else {
+            Vec::new()
+        };
     }
     // Same location rule as pack loading (front::pack_files) — fmt must
     // format exactly what a run would load; a plain directory of yaml files
@@ -284,5 +292,44 @@ mod tests {
             !out.contains("   \n"),
             "trailing whitespace must go: {out:?}"
         );
+    }
+
+    // The "hurl blocks only" promise has now broken three times — line endings
+    // rewritten wholesale, mixed endings homogenized, and trailing whitespace
+    // trimmed off the skeleton — each caught after the fact by an example
+    // pinning that one instance. These two properties pin the *class*: a
+    // fourth normalization added to this loop has to survive arbitrary input,
+    // not just the three shapes we happened to think of.
+    proptest::proptest! {
+        /// Text with no `hurl:` block is entirely skeleton, so it must come
+        /// back byte-for-byte. Stated this way rather than "lines outside a
+        /// block are unchanged" deliberately: the latter would have to locate
+        /// blocks to check itself, reimplementing the code under test.
+        #[test]
+        fn skeleton_only_text_is_returned_verbatim(
+            lines in proptest::collection::vec("[ \t]*[a-z:# \t-]{0,24}", 0..12)
+        ) {
+            let mut text = String::new();
+            for line in &lines {
+                text.push_str(line);
+                text.push('\n');
+            }
+            // The one documented normalization outside a block is supplying a
+            // missing final newline; give it one so the property is exact.
+            if text.is_empty() {
+                text.push('\n');
+            }
+            proptest::prop_assert_eq!(normalize_pack(&text), text.clone());
+        }
+
+        /// Formatting is a fixed point: running it twice changes nothing more
+        /// than running it once. A rule that reformats its own output would
+        /// make `fmt --check` unsatisfiable — permanently dirty however often
+        /// the author runs `fmt`.
+        #[test]
+        fn normalizing_is_idempotent(text in ".{0,400}") {
+            let once = normalize_pack(&text);
+            proptest::prop_assert_eq!(normalize_pack(&once), once.clone());
+        }
     }
 }
