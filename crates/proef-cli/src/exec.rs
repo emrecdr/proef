@@ -594,13 +594,23 @@ pub fn execute(
         exit
     };
 
-    // A freshly scaffolded suite cannot pass: its target and its routes are both
     // A run that never reached its target leaves a first-time reader with a bare
     // `system error` and no way to know the tool is working as intended. The
     // run's own outcomes decide, not the config alone — see the predicate.
     if exit != ExitCode::Success {
         note_unconfigured_target(&config_vars, &summary);
     }
+
+    // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
+    // It used to be applied as a `return` after the machine-readable body had
+    // already been printed, so `--output json` reported an `exit_code` the
+    // process then exited past — a body that disagrees with its own program is
+    // worse than no body, because a consumer has no way to notice.
+    let exit = if junit_failed {
+        ExitCode::SystemError
+    } else {
+        exit
+    };
 
     match output {
         Some(OutputFormat::Json) => {
@@ -623,9 +633,6 @@ pub fn execute(
         None => {}
     }
 
-    if junit_failed {
-        return ExitCode::SystemError;
-    }
     exit
 }
 

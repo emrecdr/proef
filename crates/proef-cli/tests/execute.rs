@@ -2455,3 +2455,43 @@ fn rerun_after_a_phase_only_failure_says_there_is_nothing_to_rerun() {
         .stdout(predicate::str::contains("nothing to rerun"))
         .stderr(predicate::str::contains("no scenarios matched the filters").not());
 }
+
+/// `--output json`'s `exit_code` must be the code the process actually exits
+/// with. A failed JUnit write escalates to 3, and that escalation used to be
+/// applied by a `return` *after* the body had already been printed — so a
+/// machine consumer read a verdict the program then exited past, with no way
+/// to notice the disagreement.
+#[test]
+fn the_json_body_reports_the_exit_code_the_process_uses() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: fails\n    When the suite expects a teapot\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  teapot:\n    match: the suite expects a teapot\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 418\n",
+    )
+    .unwrap();
+
+    // A JUnit path whose parent does not exist: the write fails, which is a
+    // system fault (3) outranking the suite's test failure (1).
+    let unwritable = cwd.path().join("no-such-dir").join("report.junit.xml");
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json", "--junit"])
+        .arg(&unwritable)
+        .assert()
+        .code(3);
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).expect("a json body");
+    assert_eq!(
+        body["exit_code"], 3,
+        "the body must not report a verdict the process exits past:\n{stdout}"
+    );
+}

@@ -6,6 +6,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A templated `retry:`/`delay:`/`repeat:`/`max-time:` no longer under-counts
+  the batch budget.** The estimator matched literal values only, so a
+  `{{var}}`-driven option fell through and read as *no retries* — the budget was
+  then computed for a single attempt, and the watchdog abandoned a scenario that
+  was retrying exactly as authored, reporting it as an environment fault (exit
+  3). A placeholder resolves inside hurl at run time and cannot be estimated, so
+  the engine now says so: `batch_budget` returns `None`, whose contract already
+  routes the batch to the orchestrator's default budget. An infinite count is
+  treated the same way, since it is unbounded by definition. `TROUBLESHOOTING`
+  described the old behaviour as if the budget could see these values; it now
+  says what actually happens.
+
+- **`--output json`'s `exit_code` is the code the process exits with.** A failed
+  JUnit write escalates the run to 3, and that escalation was applied by a
+  `return` *after* the body had been printed — so a machine consumer read a
+  verdict the program then exited past, with nothing to signal the
+  disagreement. The escalation is now folded in before anything serializes it.
+
 ### Documentation
 
 - **The docs-drift backlog is closed.** `EDITORS.md` said go-to-definition

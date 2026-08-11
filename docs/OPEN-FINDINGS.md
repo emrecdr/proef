@@ -76,6 +76,8 @@ re-reported after it is fixed.
 | A1 | `EDITORS.md` claimed go-to-definition cannot land on a `match:` line | #34 |
 | A7 | `GETTING-STARTED`'s copy of the scaffold comment had a word the scaffold does not | #34 |
 | P11 | ADR-0015 described a `worker` on `ScenarioFinished` that is always `None` | #34 |
+| B2 | a templated `retry:`/`delay:` under-counted the batch budget, abandoning healthy scenarios | #35 |
+| B4 | `--output json`'s `exit_code` disagreed with the real exit after a JUnit failure | #35 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -179,16 +181,6 @@ stop it happening twice. Halving it means either caching per analysis pass or a
 combined discovery call — both need a way to invalidate, which the
 `SourceProvider` trait has no hook for today. Purely a cost item now that the
 root is correct: no wrong answers depend on it.
-
-### B2 — templated `retry:`/`delay:` under-count the batch budget
-
-Code-verified. A templated value is not counted toward the budget the way a literal is,
-so a pack can exceed the intended ceiling.
-
-### B4 — `--output json` serializes `exit_code` before the JUnit escalation
-
-The JSON body can carry a verdict the process then escalates past, so the embedded
-`exit_code` and the real exit disagree.
 
 ### P3 — `--sarif` emits no `startLine`
 
