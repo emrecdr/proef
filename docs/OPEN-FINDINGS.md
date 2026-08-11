@@ -153,31 +153,23 @@ Recorded as decisions, so they are not rediscovered as fresh ideas.
 
 Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26.
 
-### Q2 — LSP ignores the client's workspace root *(partly shipped)*
+### Q2 — the walk still happens twice per request *(remainder)*
 
-**This entry was written stale and is corrected here.** "Roots at the process working
-directory" stopped being true in `3e90f5a` (v0.5.1, root-at-suite): the order is
-`[run] suite` → the `tests/` convention → *then* cwd (`proef-cli/src/lsp.rs`). The
-`$HOME` repro still works, but only with **no `proef.toml` in any ancestor and no
-`$HOME/tests/`** — not for anyone with a project config above cwd.
+**Shipped in #27:** the walk skips `target/`, `node_modules/`, `vendor/` and
+dot-directories, is depth-bounded, and no longer aborts the whole discovery on
+one unreadable subdirectory (which `analyze.rs` swallowed into a silently empty
+analysis). **Shipped in #32:** the server adopts the workspace root the client
+announces — `workspaceFolders`, else `rootUri`, else the previous
+config-then-cwd resolution — so an editor launched outside the project no longer
+analyses the wrong tree.
 
-**Shipped in #27:** the walk no longer descends `target/`, `node_modules/`, `vendor/` or
-any dot-directory, has a depth bound, and no longer aborts on one unreadable subdirectory
-— that abort was swallowed by `unwrap_or_default()` in `analyze.rs`, so a single
-permission-denied directory silently emptied the whole analysis.
-
-**Still open, both verified 2026-08-10:**
-
-- **The `initialize` params are discarded** (`proef-lsp/src/server.rs`, bound to
-  `_init_params`), so `workspaceFolders`/`rootUri` are never read and the narrow
-  cwd-fallback case above stands. Per LSP 3.16+ the order should be `workspaceFolders`
-  → `rootUri` → the existing config resolution → cwd. `lsp-types` 0.97 is already a
-  dependency and `documents.rs` already has the `Uri`→path bridge, so this needs no new
-  crate — what it needs is a seam: root is resolved in the CLI *before* `proef_lsp::run`,
-  and the client's root only arrives during the handshake inside it.
-- **Two full walks per request** — `analyze.rs` discovers packs and features
-  independently, and completion requests are not debounced. The excludes cut what each
-  walk costs; they do not stop it happening twice.
+**Still open.** `analyze.rs` discovers packs and features with two independent
+walks, on every completion/definition/references request, and completion
+requests are not debounced. The excludes cut what each walk costs; they do not
+stop it happening twice. Halving it means either caching per analysis pass or a
+combined discovery call — both need a way to invalidate, which the
+`SourceProvider` trait has no hook for today. Purely a cost item now that the
+root is correct: no wrong answers depend on it.
 
 ### B2 — templated `retry:`/`delay:` under-count the batch budget
 

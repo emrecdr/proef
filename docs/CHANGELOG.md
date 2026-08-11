@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`proef lsp` adopts the workspace root the client announces.** The root was
+  resolved at the process edge, before the handshake, from the working
+  directory — so an editor launched anywhere but the project analysed the wrong
+  tree, and `nvim ~/proj/x.feature` from `$HOME` rooted the analyser at `$HOME`.
+  The `initialize` params were bound and discarded. The server now reads
+  `workspaceFolders`, falling back to `rootUri` (deprecated since LSP 3.16, and
+  the spec is explicit that folders win when both are present) and then to the
+  previous config-then-cwd resolution. `proef-lsp` still knows nothing about
+  `proef.toml`: it calls back into the CLI, which owns config (ADR-0012).
+
 ### Added
 
 - **The run record says which scenarios were lifecycle phases.** `phase`

@@ -98,6 +98,28 @@ pub fn run() -> ExitCode {
         env,
         config_vars,
         debounce: Duration::from_millis(200),
+        // Re-resolve once the client says where its workspace is. The root
+        // above is a guess from the process working directory, which is wrong
+        // whenever the editor was launched somewhere other than the project —
+        // `nvim ~/proj/x.feature` from `$HOME` rooted the analyser at `$HOME`.
+        // Same resolution order as above, just anchored on the client's root:
+        // `[run] suite`, else the `tests/` convention, else the root itself.
+        resolve_root: Some(Box::new(|client_root: &std::path::Path| {
+            let config = ProjectConfig::load_from(client_root).unwrap_or_default();
+            let root = config.default_suite_path().map_or_else(
+                || client_root.to_path_buf(),
+                |rel| {
+                    if rel.is_absolute() {
+                        rel
+                    } else {
+                        client_root.join(rel)
+                    }
+                },
+            );
+            let disk: Box<dyn proef_core::provider::SourceProvider + Send> =
+                Box::new(DiskSourceProvider::new(root.clone()));
+            (root, disk)
+        })),
     };
 
     match proef_lsp::run(cfg) {
