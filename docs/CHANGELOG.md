@@ -8,6 +8,31 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`--dry-run`'s "next" command is the run that was validated.** After
+  `--dry-run --env prod --tags smoke` it printed a bare `proef test`, which is a
+  *different* run — another `[url] base` from the profile, and every scenario
+  rather than the tagged subset. The operator could not tell: the command works
+  and simply tests something else. Every selector that chose what ran is echoed
+  now (`--env`, `--tags`, `--scenario`, `--scenario-file`, and the path), quoted
+  so a tag expression or a scenario name with spaces survives a paste.
+  Deliberately selectors only — a general "reprint the invocation" is how
+  secret-bearing arguments reach stdout.
+
+- **`--sarif` emits `startLine`.** GitHub keys inline annotations on it, so a
+  log carrying only `byteOffset`/`byteLength` uploaded cleanly and annotated
+  nothing — the flag looked wired up and delivered none of what it advertises.
+  Sources are read once each at the IO edge and only to count newlines; `Diag`
+  keeps carrying byte spans, and no column arithmetic is introduced.
+
+- **`--watch` retriggers on `proef.toml`.** It watched the suite path
+  recursively, and the config lives above it — so editing a `[url]`/`[vars]`/
+  `[env.*]` value that every scenario resolves through changed nothing, which
+  reads as the watcher being broken. Matched by exact path rather than by a
+  `.toml` extension, so an unrelated manifest in the tree still does not
+  requeue.
+
+### Fixed
+
 - **Three places interpolated a value into a format without escaping it.** Same
   shape each time, so they are fixed together:
   - **LSP completion snippets.** `$`, `}` and `\` are LSP snippet syntax, and a
