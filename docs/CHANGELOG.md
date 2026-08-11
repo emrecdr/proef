@@ -278,6 +278,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`proef lsp` answered every URI-keyed request with `null` on Windows.** A source
+  name is an identity compared as a string, and the two sides spelled it differently:
+  `Path::join` appends without rewriting what is already there, so a `proef.toml`
+  saying `suite = "tests/features"` — the portable spelling the docs use — produced
+  `C:\proj\tests/features\packs\api.yaml` from discovery while the client's document
+  URI produced `C:\proj\tests\features\packs\api.yaml`. The two never matched, so
+  go-to-definition, find-references and completion all found nothing while the suite
+  itself ran green. Discovered names are now rebuilt in native form. Unix has one
+  separator and was never affected, which is why every gate stayed green.
+
 - **A fragment's path was absolute everywhere it was named.** `[run] fragments`
   resolves against the config file's directory, so `fragments = "tests/hurl"` became
   `/home/you/project/tests/hurl` — and that spelling then *named* the file in every

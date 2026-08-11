@@ -405,34 +405,11 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
         }
     });
 
-    // Wait for the suite to be analyzed before asking anything about it. The
-    // server debounces recompute (`lsp.rs`: 200ms), so a definition request sent
-    // straight after `didOpen` races it and is answered `null` from an empty
-    // index — a green run here would only mean the machine was slow enough.
-    // `publishDiagnostics` for the pack is the completion signal, exactly as the
-    // in-process suite's `wait_for_any_diagnostics` uses it.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let mut analyzed = None;
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(remaining) {
-            Ok(msg) if msg.contains("publishDiagnostics") => {
-                analyzed = Some(msg);
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => break,
-        }
-    }
-    let diagnostics =
-        analyzed.expect("the server never published diagnostics, so the suite was never analyzed");
-    // What the pack's own diagnostics say settles the question a `null` answer
-    // cannot: an `unknown_ref` here means the fragment corpus never loaded (a
-    // config or discovery problem), while clean diagnostics mean it loaded and
-    // the *definition* lookup is what failed.
-    assert!(
-        !diagnostics.contains("unknown_ref"),
-        "the fragment corpus never loaded, so `ref:` resolved to nothing: {diagnostics}"
-    );
+    // No synchronization before the request, deliberately. A feature request
+    // recomputes the analysis itself (`server::current_analysis`: "every
+    // on-demand feature request … all call this"), so the 200ms diagnostics
+    // debounce cannot race it, and `didOpen` is already in the overlay because
+    // one stream delivers both in order.
 
     write_msg(
         &mut stdin,
@@ -462,7 +439,6 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
          root:        {root:?}\n\
          workspace:   {uri}\n\
          pack uri:    {pack_uri}\n\
-         diagnostics: {diagnostics}\n\
          server said: {}",
         stderr_log.lock().map(|g| g.clone()).unwrap_or_default(),
     );

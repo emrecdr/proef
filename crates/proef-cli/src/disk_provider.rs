@@ -41,10 +41,30 @@ impl DiskSourceProvider {
     }
 }
 
+/// Source names, spelled the way [`proef_lsp::documents::url_to_name`] spells a
+/// document URI — separators normalized to the platform's own.
+///
+/// A source name is an **identity**, compared as a string: the LSP looks a
+/// document up by the name it derives from the client's URI, and any other
+/// spelling of the same file is a different key. `Path::join` appends without
+/// rewriting what is already there, so a `proef.toml` saying
+/// `suite = "tests/features"` — the portable spelling, and the one the docs
+/// use — yields `C:\proj\tests/features\packs\api.yaml` on Windows while the URI
+/// side yields `C:\proj\tests\features\packs\api.yaml`. The two never match, and
+/// every URI-keyed request (go-to-definition, references, completion) answers
+/// `null` while the suite itself runs green.
+///
+/// Re-collecting the components rebuilds the path in native form, which is a
+/// no-op on Unix (one separator exists) and the whole fix on Windows.
 fn names(paths: Vec<PathBuf>) -> Vec<String> {
     paths
         .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|p| {
+            p.components()
+                .collect::<PathBuf>()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect()
 }
 
@@ -94,6 +114,25 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf()
+    }
+
+    /// A discovered name must be spelled the way the LSP spells a document URI,
+    /// or the two are different keys for one file and every URI-keyed request
+    /// answers `null` while the suite runs green.
+    ///
+    /// Windows-only because it is the only platform with two separators: a
+    /// `proef.toml` saying `suite = "tests/features"` reaches `join` as-is, and
+    /// the result must still come back native. This is asserted rather than
+    /// assumed because the local gate cannot run it — the bug it pins shipped
+    /// green on macOS and Linux.
+    #[cfg(windows)]
+    #[test]
+    fn a_discovered_name_is_spelled_natively_whatever_the_config_said() {
+        let mixed = PathBuf::from(r"C:\proj").join("tests/features/packs/api.yaml");
+        assert_eq!(
+            names(vec![mixed]),
+            [r"C:\proj\tests\features\packs\api.yaml"],
+        );
     }
 
     #[test]
