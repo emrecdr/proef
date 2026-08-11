@@ -96,7 +96,16 @@ pub struct FragmentDef {
     /// that could disagree. Without this the only way to learn a foreign
     /// corpus's variable names is to run the suite and read
     /// `proef::lower::unbound_placeholder`.
+    ///
+    /// Faithful to what the entry *reads*, so subtract [`Self::supplied_variables`]
+    /// before offering these as `bind:` keys.
     pub placeholders: Vec<String>,
+    /// Every variable the entry supplies to itself (`[Options] variable:`).
+    ///
+    /// A name here needs no `bind:` and may not have one
+    /// (`proef::pack::option_declared_twice`), so an editor offering it as a
+    /// completion would be proposing an edit its own diagnostics then reject.
+    pub supplied_variables: Vec<String>,
 }
 
 /// The product of one wholesale recompute: every feature's read from here.
@@ -285,6 +294,7 @@ fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
             span: crate::pack::locate::line_span(&f.source, f.line),
             source: Arc::clone(&f.source),
             placeholders: f.placeholders.clone(),
+            supplied_variables: f.supplied_variables.clone(),
         })
         .collect()
 }

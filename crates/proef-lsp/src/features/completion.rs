@@ -143,6 +143,13 @@ fn complete_bind_key(
             continue;
         };
         for placeholder in &def.placeholders {
+            // A variable the fragment supplies itself needs no `bind:` and may
+            // not have one, so offering it would propose an edit the next
+            // `option_declared_twice` rejects. The list is what still needs a
+            // value, not everything the file mentions.
+            if def.supplied_variables.contains(placeholder) {
+                continue;
+            }
             if !seen.insert(placeholder.as_str()) {
                 continue;
             }

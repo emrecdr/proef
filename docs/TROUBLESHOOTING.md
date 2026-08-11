@@ -89,9 +89,16 @@ the **config file's directory**, not your working directory.
 
 **"reads `{{name}}` that no `bind:` supplies"** (`lower::unbound_placeholder`) — a
 fragment's variables are not implicit: what the `.hurl` file reads must be bound at pack,
-macro or step scope, or captured by an earlier step. `--dry-run` reports it without a
-network. With `proef lsp` running, completing inside a `bind:` table offers exactly the
-names that fragment reads.
+macro or step scope, captured by an earlier step, or supplied by the fragment's own
+`[Options] variable:`. `--dry-run` reports it without a network. With `proef lsp`
+running, completing inside a `bind:` table offers exactly the names that fragment reads.
+
+**"`index` is supplied twice"** (`pack::option_declared_twice`) — the fragment sets the
+name in its own `[Options] variable:` *and* a `bind:` supplies it. Both reach the entry
+as `variable: index=` and hurl takes the last, which is the fragment's — so the bound
+value would silently never be sent. Delete whichever is not authoritative: the `bind:`
+if the file's own default is right, the `variable:` line if the pack should decide. The
+same rule already applies to `retry:`/`delay:`.
 
 **Go-to-definition on a `ref:` does nothing** — check that `[run] fragments` is set and
 that the editor's workspace root matches where `proef.toml` lives; the server resolves the

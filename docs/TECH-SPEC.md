@@ -99,7 +99,12 @@ pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScan
 // foreign corpus is mostly those, so building them only to be discarded is the bulk of a scan
 pub struct ScannedFragment { pub name: String /* from `# @proef <name>` */, pub text: String,
                              pub line: usize, pub placeholders: Vec<String> /* reads */,
-                             pub declared_options: Vec<String> /* ⊆ OPTION_FAMILIES */ }
+                             pub declared_options: Vec<String> /* ⊆ OPTION_FAMILIES */,
+                             // `[Options] variable:` — what the entry supplies to itself.
+                             // Answers its own placeholders (so the file runs standalone)
+                             // and clashes name-to-name with a `bind:` of that name; kept
+                             // apart from declared_options, which clashes family-to-family
+                             pub supplied_variables: Vec<String> }
 pub struct FragmentScanError { pub line: usize, pub column: usize, pub message: String }
 // The vocabulary `declared_options` must use: matched by string equality against the pack's
 // own option keys, so an engine-only spelling silences `option_declared_twice` rather than
@@ -152,15 +157,22 @@ mean" over the scanned names, or a pointer at `[run] fragments` when none loaded
 (10) duplicate fragment name across files → error (qualify `file.hurl#name`, the same
 suffix matching `pack.yaml#name` uses); (11) a step is `ref:` **xor** a payload/`use:`;
 (12) an option family declared both in the fragment's own `[Options]` and as the step's
-YAML key → error (pass 6's twinned-option rule, applied across the file boundary);
+YAML key → error (pass 6's twinned-option rule, applied across the file boundary), and
+the same rule name-to-name for a variable both supplied by the fragment's `[Options]
+variable:` and given by a `bind:` — the pair reaches one entry as two `variable: k=`
+lines, where hurl's last-wins would drop the bound value into every later entry too;
 (13) a fragment file the engine's `FragmentSupport::scan` could not read, or an
 annotation it could not attach, positioned in the `.hurl` file itself.
 
 Fragments **skip pass 7**: they parse as authored, so the probe instantiation has
-nothing to guess. Whether every `{{…}}` a fragment reads is actually supplied is
-checked at lower time (§4.4, `proef::lower::unbound_placeholder`) — only lowering
-knows what the preceding steps captured, and a load-time half-check would be worse
-than one complete one.
+nothing to guess. Whether every `{{…}}` a fragment reads is actually supplied — by a
+`bind:` in scope, by an earlier step's `[Captures]`, or by the fragment's own
+`[Options] variable:` — is checked at lower time (§4.4,
+`proef::lower::unbound_placeholder`) — only lowering knows what the preceding steps
+captured, and a load-time half-check would be worse than one complete one. The
+self-supplied source is scoped to the fragment that declares it: a name another entry
+left in hurl's shared set is the implicit inheritance this check exists to refuse, so
+only `[Captures]` carries a value forward.
 
 **4.2 Parse features.** `gherkin` 0.16 (`Feature::parse`); tags from
 Feature/Rule/Scenario accumulate. Localized (`# language:`) features are
@@ -269,7 +281,9 @@ macros:
         # <kind>: { … }  (a future engine's structured payload)
       - ref: file.hurl#name   # ALTERNATE form (ADR-0018): one `# @proef <name>` entry
                               # of a scanned fragment file; `{{…}}` supplied by bind:,
-                              # every one bound or captured by an earlier step
+                              # every one bound, captured by an earlier step, or set
+                              # by the fragment's own [Options] variable: (which then
+                              # may not also be bound — option_declared_twice)
       - use: pack.yaml#other  # composition, with:/inline args; cycle+depth checked
         with: { a: "${a}" }
     expect:                   # assert-only macro (Then-steps): merges into previous entry

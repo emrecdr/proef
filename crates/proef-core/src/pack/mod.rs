@@ -269,6 +269,9 @@ pub struct Fragment {
     pub placeholders: Vec<String>,
     /// Option families the entry sets for itself (`"retry"`, `"delay"`).
     pub declared_options: Vec<String>,
+    /// Variables the entry supplies to itself (`[Options] variable:`): both an
+    /// answer to its own placeholders and a clash with a `bind:` of that name.
+    pub supplied_variables: Vec<String>,
     /// The fragment file's text (for diagnostics).
     pub source: Arc<str>,
 }
@@ -570,6 +573,7 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
                     line: entry.line,
                     placeholders: entry.placeholders,
                     declared_options: entry.declared_options,
+                    supplied_variables: entry.supplied_variables,
                     source: Arc::clone(&source.text),
                 },
             );

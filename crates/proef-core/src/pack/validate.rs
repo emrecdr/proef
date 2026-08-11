@@ -14,8 +14,10 @@
 //! Fragments (ADR-0018) add five more: 9. a `ref:` names a loaded fragment ·
 //! 10. no two fragment files declare the same name (in `mod.rs`, at insertion) ·
 //! 11. a step is `ref:` **xor** a payload/`use:` · 12. an option family is not
-//! declared both in the fragment's own `[Options]` and as the step's key —
-//! pass 6's rule applied across the file boundary · 13. a fragment file the
+//! declared both in the fragment's own `[Options]` and as the step's key, and no
+//! variable is both supplied by the fragment's `[Options] variable:` and given by
+//! a `bind:` — pass 6's rule applied across the file boundary, family-to-family
+//! for options and name-to-name for variables · 13. a fragment file the
 //! engine's scanner could not read, or an annotation it could not attach (in
 //! `mod.rs`, at scan time).
 //!
@@ -445,10 +447,14 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
     use_graph_passes(set, diags);
 }
 
-/// Target existence for one `ref:`, plus the retry double-declaration check
-/// against the fragment's own `[Options]` — the same rule `lint_raw_options`
-/// applies to an inline block, so the two body forms behave identically rather
-/// than differing by where the hurl text happens to live.
+/// Target existence for one `ref:`, plus the double-declaration checks against
+/// the fragment's own `[Options]` — the same rule `lint_raw_options` applies to
+/// an inline block, so the two body forms behave identically rather than
+/// differing by where the hurl text happens to live.
+///
+/// Two comparisons, because the two halves of an `[Options]` section clash on
+/// different keys: option *families* (`retry:`, `delay:`) family-to-family, and
+/// supplied *variables* name-to-name.
 fn ref_target_passes(
     set: &PackSet,
     macro_: &Macro,
@@ -499,6 +505,54 @@ fn ref_target_passes(
                 "an entry carries one policy per option — delete whichever of the two is not authoritative",
             ));
         }
+    }
+    // The same rule one level down. A `bind:` reaches hurl as `[Options]
+    // variable:`, so a fragment supplying that name is the identical silent
+    // last-wins — except here the *fragment's* line lands last and wins,
+    // discarding the value the pack author wrote. Worse than the retry case:
+    // hurl assigns `variable:` into the run-level set rather than scoping it,
+    // so the discarded value stays discarded for every later entry too.
+    for name in &fragment.supplied_variables {
+        let Some(scope) = binding_scope(set, macro_, step, name) else {
+            continue;
+        };
+        diags.push(
+            at(Diag::error(
+                "proef::pack::option_declared_twice",
+                format!(
+                    "macro `{}` step {index}: `{name}` is supplied twice — by fragment `{}` (`{}` line {}) and by the {scope} `bind:`",
+                    macro_.name, fragment.name, fragment.file, fragment.line
+                ),
+            ))
+            .with_help(format!(
+                "delete whichever is not authoritative — both reach the entry as \
+                 `variable: {name}=`, where the fragment's own line lands last and the bound \
+                 value would never reach the request",
+            )),
+        );
+    }
+}
+
+/// Which `bind:` scope supplies `name`, most specific first — the half of a
+/// double-supply diagnostic that says where to look for the other declaration.
+fn binding_scope(
+    set: &PackSet,
+    macro_: &Macro,
+    step: &MacroStep,
+    name: &str,
+) -> Option<&'static str> {
+    if step.bind.contains_key(name) {
+        Some("step's")
+    } else if macro_.bind.contains_key(name) {
+        Some("macro's")
+    } else if set
+        .bind
+        .get(&macro_.pack)
+        .is_some_and(|table| table.contains_key(name))
+    {
+        Some("pack's")
+    } else {
+        None
     }
 }
 
@@ -1265,12 +1319,17 @@ mod tests {
                     line: index + 1,
                     placeholders: Vec::new(),
                     declared_options: Vec::new(),
+                    supplied_variables: Vec::new(),
                 });
             } else if let Some(last) = out.last_mut() {
                 if line == "retry" {
                     last.declared_options.push("retry".to_owned());
                 } else if let Some(read) = line.strip_prefix('?') {
                     last.placeholders.push(read.to_owned());
+                } else if let Some(supplied) = line.strip_prefix('=') {
+                    use std::fmt::Write as _;
+                    let _ = write!(last.text, "[Options]\nvariable: {supplied}=from-fragment\n");
+                    last.supplied_variables.push(supplied.to_owned());
                 }
             }
         }
@@ -1421,6 +1480,61 @@ mod tests {
             &[source("api.frag", "@f\n")],
         );
         assert!(!has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
+    }
+
+    /// `bind:` reaches hurl as `[Options] variable:`, so a fragment supplying
+    /// the same name is the same silent last-wins `option_declared_twice` was
+    /// built for — and it lands the wrong way round: the fragment's literal
+    /// wins and the bound value never reaches the request. Checked at each
+    /// scope, because the diagnostic has to say where the other half lives.
+    #[test]
+    fn a_variable_the_fragment_supplies_and_the_pack_binds_is_refused() {
+        for (scope, pack) in [
+            (
+                "step's",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          token: v\n",
+            ),
+            (
+                "macro's",
+                "macros:\n  m:\n    match: it runs\n    bind:\n      token: v\n    steps:\n      - ref: f\n",
+            ),
+            (
+                "pack's",
+                "bind:\n  token: v\nmacros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            ),
+        ] {
+            let diags = diags_of(
+                &[source("p.yaml", pack)],
+                &[source("api.frag", "@f\n=token\n")],
+            );
+            let diag = diags
+                .iter()
+                .find(|d| d.code == "proef::pack::option_declared_twice")
+                .unwrap_or_else(|| panic!("expected {scope} clash in {diags:?}"));
+            assert!(
+                diag.message.contains("token") && diag.message.contains(scope),
+                "{scope}: {}",
+                diag.message
+            );
+        }
+    }
+
+    /// The other half of the same rule: a fragment may supply a variable no one
+    /// binds. That is how the file stays runnable under stock `hurl` with no
+    /// variables file, so refusing it would break ADR-0018's premise.
+    #[test]
+    fn a_variable_only_the_fragment_supplies_is_accepted() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            )],
+            &[source("api.frag", "@f\n=token\n")],
+        );
+        assert!(
+            !has(&diags, "proef::pack::option_declared_twice"),
+            "{diags:?}"
+        );
     }
 
     #[test]

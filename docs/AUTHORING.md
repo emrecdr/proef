@@ -140,9 +140,28 @@ macros:
 
 Set `[run] fragments` to the directory holding those files (see
 [CONFIG.md](CONFIG.md)). Every `{{variable}}` a fragment reads must be bound in
-one of the three scopes or captured by an earlier step; nothing is implicit,
-because hurl's per-entry `variable:` assigns into one shared set rather than
-scoping, so an unbound name would quietly inherit an earlier entry's value.
+one of the three scopes, captured by an earlier step, or supplied by the fragment
+itself; nothing is implicit, because hurl's per-entry `variable:` assigns into one
+shared set rather than scoping, so an unbound name would quietly inherit an
+earlier entry's value.
+
+A fragment supplies its own value with an ordinary `[Options] variable:` line —
+which is how a corpus file stays runnable on its own, with fewer variables to
+pass in:
+
+```hurl
+# @proef admin.search
+GET {{base}}/api/v1/admin/search/{{index}}
+[Options]
+variable: index=records      # the file answers its own question
+HTTP 200
+```
+
+Do **not** then also `bind:` that name. Both spellings reach the entry as
+`variable: index=`, hurl takes the last, and the fragment's own line is last — so
+the bound value would never reach the request. Proef refuses the pair
+(`pack::option_declared_twice`) rather than picking one silently; delete whichever
+is not authoritative.
 
 Bindings resolve **once per scope instantiation** — pack scope once per scenario,
 macro scope once per invocation, step scope per step — so one `bind:` entry is one

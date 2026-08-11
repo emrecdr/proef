@@ -164,6 +164,23 @@ pub struct ScannedFragment {
     /// matched against the pack's own option keys, so a spelling only the engine
     /// knows silences the check rather than failing it.
     pub declared_options: Vec<String>,
+    /// Every variable the entry *supplies to itself*, in first-seen order — the
+    /// engine equivalent of a `bind:`, written into the fragment file.
+    ///
+    /// Kept apart from [`Self::declared_options`] because the two clash on
+    /// different keys: an option family is a closed vocabulary compared
+    /// family-to-family, while a supplied variable is an open set compared
+    /// *name to name* — `token` clashes with a `bind:` of `token` and with
+    /// nothing else. Folding them together would make [`OPTION_FAMILIES`]'
+    /// "every element is one of these" invariant unstatable.
+    ///
+    /// Both halves of this field are load-bearing. A name here **satisfies** a
+    /// placeholder of the same name (the fragment answers its own question, so
+    /// the file still runs standalone under the engine's own binary — ADR-0018's
+    /// premise), and it **collides** with a `bind:` of that name
+    /// (`proef::pack::option_declared_twice`), because the engine may resolve
+    /// the pair silently rather than refusing it.
+    pub supplied_variables: Vec<String>,
 }
 
 /// The option families a pack step and a fragment can *both* declare, spelled as

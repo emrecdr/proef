@@ -161,7 +161,10 @@ never import each other. The structural acceptance test: *adding an engine leave
   and the inline path is backed by a measured 844-line corpus port — do not deprecate it.
   The annotation carries **a name and nothing else, permanently**; all orchestration
   stays in YAML. Fragment files are *inputs proef never writes*: `fmt` refuses them.
-  Every `{{…}}` a fragment reads must be bound or captured by an earlier step, because
+  Every `{{…}}` a fragment reads must be bound, captured by an earlier step, or supplied
+  by the fragment's own `[Options] variable:` (which keeps the file runnable standalone —
+  and which therefore *collides* with a `bind:` of that name, refused as
+  `option_declared_twice`), because
   hurl's per-entry `variable:` **assigns into one shared set rather than scoping**. A
   bound `[Options] variable:` value *is* templated once before storage, so a bound
   `${url:…}` containing `{{captured}}` resolves — `eval_template` being non-recursive

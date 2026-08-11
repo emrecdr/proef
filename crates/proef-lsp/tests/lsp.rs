@@ -68,11 +68,16 @@ fn fake_scan(
                 line: index + 1,
                 placeholders: Vec::new(),
                 declared_options: Vec::new(),
+                supplied_variables: Vec::new(),
             });
-        } else if let Some(last) = out.last_mut()
-            && let Some(read) = line.strip_prefix('?')
-        {
-            last.placeholders.push(read.to_owned());
+        } else if let Some(last) = out.last_mut() {
+            if let Some(read) = line.strip_prefix('?') {
+                last.placeholders.push(read.to_owned());
+            } else if let Some(supplied) = line.strip_prefix('=') {
+                // `[Options] variable:` — read *and* supplied by the entry.
+                last.placeholders.push(supplied.to_owned());
+                last.supplied_variables.push(supplied.to_owned());
+            }
         }
     }
     Ok(out)
@@ -927,8 +932,10 @@ fn completion_inside_bind_offers_the_fragments_variables() {
     let pack_name = native_abs("suite/packs/p.yaml");
     let fragment_name = native_abs("corpus/api.hurl");
     // Two placeholders on the reffed fragment, one on a fragment nothing refs —
-    // the unreferenced one must not be offered.
-    let fragment_text = "@task.search\n?q\n?index\n@task.delete\n?doomed\n";
+    // the unreferenced one must not be offered. `region` is read *and* supplied
+    // by the fragment itself, so it needs no `bind:` and must not be offered
+    // either: binding it would be refused as `option_declared_twice`.
+    let fragment_text = "@task.search\n?q\n?index\n=region\n@task.delete\n?doomed\n";
     let pack_text = "macros:\n  search:\n    match: the wrapper\n    steps:\n      - ref: task.search\n        bind:\n          \n";
     let mut files = BTreeMap::new();
     files.insert(feature_name.clone(), Arc::from(feature_text()));
@@ -1010,6 +1017,11 @@ fn completion_inside_bind_offers_the_fragments_variables() {
     assert!(
         !labels.contains(&"doomed"),
         "a fragment this pack never refs must not be offered: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"region"),
+        "a variable the fragment supplies itself needs no `bind:` — offering it \
+         would propose an edit `option_declared_twice` then rejects: {labels:?}"
     );
     let q = items.iter().find(|i| i.label == "q").unwrap();
     assert_eq!(q.detail.as_deref(), Some("read by task.search"));

@@ -265,6 +265,46 @@ fn a_variable_nothing_supplies_is_refused() {
     );
 }
 
+/// A fragment may answer its own question. `[Options] variable:` is how a
+/// corpus file stays runnable on its own — fewer variables to pass in — and
+/// ADR-0018's premise is that proef runs the file the backend team already has.
+/// Proef once refused exactly these files, reporting the self-supplied name as
+/// unsupplied.
+#[test]
+fn a_variable_the_fragment_supplies_itself_needs_no_binding() {
+    let fixture = Fixture::start().unwrap();
+    let hurl = CORPUS.replace("[Query]", "[Options]\nvariable: index=records\n[Query]");
+    // The pack no longer says anything about `index`; the file does.
+    let pack = PACK.replace(
+        r#"bind: { q: "${q}", index: "${index}" }"#,
+        r#"bind: { q: "${q}" }"#,
+    );
+    let dir = project(&hurl, &pack);
+
+    proef_in(dir.path(), &fixture)
+        .args(["test", "tests/features"])
+        .assert()
+        .code(0);
+}
+
+/// The other edge of the same rule. Both a `bind:` and the fragment's own line
+/// reach the entry as `variable: index=`, where hurl takes the last — the
+/// fragment's — so the bound value would never reach the request. Refused
+/// rather than resolved, exactly as a doubly-declared `retry:` is.
+#[test]
+fn a_variable_the_fragment_supplies_and_the_pack_binds_is_refused() {
+    let hurl = CORPUS.replace("[Query]", "[Options]\nvariable: index=records\n[Query]");
+    let stderr = dry_run_error(&hurl, PACK);
+    assert!(
+        stderr.contains("proef::pack::option_declared_twice"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("index") && stderr.contains("admin.hurl"),
+        "it must name the variable and the file it came from: {stderr}"
+    );
+}
+
 #[test]
 fn a_secret_mixed_into_a_larger_binding_is_refused() {
     let pack = PACK.replace(

@@ -534,7 +534,17 @@ fn expand_ref_step(
         .placeholders
         .iter()
         .filter(|name| {
-            !bindings.contains_key(name.as_str()) && !refs.secrets.contains_key(name.as_str())
+            !bindings.contains_key(name.as_str())
+                && !refs.secrets.contains_key(name.as_str())
+                // A fragment that answers its own question is answered. This is
+                // what lets the file run standalone under the engine's own
+                // binary with no variables file — ADR-0018's premise — so
+                // refusing it here would reject valid input that the engine
+                // itself accepts. Scoped to *this* fragment: a name another
+                // entry happened to leave in hurl's shared set is exactly the
+                // implicit inheritance this whole check exists to refuse, so
+                // only `[Captures]` carries a value forward.
+                && !fragment.supplied_variables.contains(name)
         })
         .map(String::as_str)
         .collect();
@@ -1715,8 +1725,9 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// Stands in for an engine's scanner (core cannot depend on one). `@name`
-    /// opens a fragment, `?var` is a read, `!var` a capture. The `Result` is
-    /// never `Err` here but the seam's signature requires one.
+    /// opens a fragment, `?var` is a read, `!var` a capture, `=var` a variable
+    /// the fragment supplies itself. The `Result` is never `Err` here but the
+    /// seam's signature requires one.
     #[allow(clippy::unnecessary_wraps)]
     fn frag_scan(
         text: &str,
@@ -1731,10 +1742,25 @@ mod tests {
                     line: index + 1,
                     placeholders: Vec::new(),
                     declared_options: Vec::new(),
+                    supplied_variables: Vec::new(),
                 });
             } else if let Some(last) = out.last_mut() {
                 if let Some(read) = line.strip_prefix('?') {
                     last.placeholders.push(read.to_owned());
+                } else if let Some(supplied) = line.strip_prefix('=') {
+                    // Honest text, as with captures — and `[Options]` belongs to
+                    // the *request* half, so it is inserted before the status
+                    // line rather than appended. `bake_entry_options` slots
+                    // proef's own lines against this header, so putting it in
+                    // the wrong half would test a shape hurl cannot parse.
+                    let head = last.text.find("HTTP ").unwrap_or(last.text.len());
+                    let section = if last.text[..head].contains("[Options]") {
+                        format!("variable: {supplied}=from-fragment\n")
+                    } else {
+                        format!("[Options]\nvariable: {supplied}=from-fragment\n")
+                    };
+                    last.text.insert_str(head, &section);
+                    last.supplied_variables.push(supplied.to_owned());
                 } else if let Some(write) = line.strip_prefix('!') {
                     // A real scanner reads captures out of the entry text, and
                     // so does the core (`emit::capture_names`) — one mechanism,
@@ -1886,6 +1912,35 @@ mod tests {
             only_entry(&lowered).contains(r#"variable: hint="${secret:apiToken}""#),
             "the literal is injected verbatim: {}",
             only_entry(&lowered)
+        );
+    }
+
+    /// A fragment that answers its own question needs no `bind:`. This is what
+    /// keeps the file runnable under stock `hurl` with no variables file —
+    /// ADR-0018's whole premise — so treating a self-supplied variable as
+    /// unsupplied would refuse valid input that hurl itself accepts.
+    #[test]
+    fn a_variable_the_fragment_supplies_itself_needs_no_binding() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n",
+            "@first\n=token\n?token\n",
+        )
+        .expect("a fragment that supplies its own variable lowers");
+        let text = lowered
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .find_map(|s| match &s.payload {
+                StepPayload::HurlEntries(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("hurl entries");
+        // The fragment's own line is the only one: proef must not also inject a
+        // `variable: token=`, or the pair would resolve last-wins in the dark.
+        assert_eq!(
+            text.matches("variable: token=").count(),
+            1,
+            "exactly one supplier reaches the entry: {text}"
         );
     }
 

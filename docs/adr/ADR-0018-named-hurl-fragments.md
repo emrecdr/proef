@@ -73,10 +73,23 @@ macros:
 - **Non-secret bindings emit as per-entry `[Options] variable:`**; `${secret:…}` never
   does, and routes to `insert_secret` as it always has, so no secret value enters an
   artifact (ADR-0005 intact).
-- **Every `{{placeholder}}` must be bound, or produced as a `[Captures]` name by a
-  preceding step.** A fragment's interface needs no declaration anywhere: what it
-  *reads* is read off hurl's own AST and crosses the seam as
-  `ScannedFragment::placeholders`.
+- **Every `{{placeholder}}` must be bound, produced as a `[Captures]` name by a
+  preceding step, or supplied by the fragment's own `[Options] variable:`.** A
+  fragment's interface needs no declaration anywhere: what it *reads* is read off
+  hurl's own AST and crosses the seam as `ScannedFragment::placeholders`.
+
+  The third source was missing from this list until it was found by audit, and its
+  absence contradicted the decision above it: a file that answers its own question
+  needs fewer variables passed in, which is precisely what makes it runnable on its
+  own — so refusing those files refused the ones this ADR exists to accept. What a
+  fragment supplies itself crosses the seam as `ScannedFragment::supplied_variables`.
+
+  It is a *supplier*, so it also **collides** with a `bind:` of that name. Both reach
+  the entry as `variable: <name>=`, hurl takes the last, and the fragment's own line
+  is last — so the bound value would never be sent, and hurl's `variable:` assigning
+  into the run-level set rather than scoping means the loss persists into every later
+  entry. Refused as `pack::option_declared_twice`, the same rule a doubly-declared
+  `retry:` gets, rather than resolved by an implicit precedence nobody wrote down.
 
   What earlier steps *produce* is derived differently, and deliberately: the core
   scans the emitted text of the steps it has already lowered (`emit::capture_names`).

@@ -19,7 +19,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 > `Ok(Vec::new())` to serve none) — it was briefly defaulted, and the default
 > silently disabled fragments for a provider that forwarded the other two; and
 > `ScannedFragment::name` is a `String` rather than `Option<String>`, because a
-> scanner now reports only the entries it found an annotation on; and both
+> scanner now reports only the entries it found an annotation on; and
+> `ScannedFragment` and `pack::Fragment` each gain a
+> `supplied_variables: Vec<String>` (`Vec::new()` for none), which an engine's
+> scanner must fill from the entry's `[Options] variable:` lines — leaving it empty
+> reinstates the silent last-wins it exists to refuse; and both
 > `LoweredStep`, `StepOutcome` and `Event::StepFinished` gain a
 > `fragment: Option<String>` field and `analyze::FragmentDef` gains
 > `placeholders: Vec<String>`, so a literal construction of any of them needs
@@ -47,6 +51,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   A fragment declaring its own retry alongside a step's `retry:` is the same
   `option_declared_twice` an inline block gets, so the two body forms behave
   identically rather than differing by where the hurl text happens to live.
+
+  A fragment may also supply a variable to itself with an ordinary
+  `[Options] variable:` line — that is how a corpus file stays runnable on its own,
+  so it counts as an answer to that fragment's own `{{…}}` and needs no `bind:`.
+  Supplying *and* binding the same name is refused (`option_declared_twice`): both
+  reach the entry as `variable: k=`, hurl takes the last, and the fragment's own
+  line is last — so the bound value would silently never be sent, and would stay
+  unsent for every later entry, since hurl's `variable:` assigns into the run-level
+  set rather than scoping.
 
   Discovery arrives below, so a `ref:` resolves end to end.
 
@@ -120,6 +133,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   *families* rather than flagging retry alone, so the core applies its
   double-declaration rule to `delay:` too — through the same `bake_entry_options` path,
   so leaving it out reproduced the very last-wins bug the rule exists to refuse.
+  `supplied_variables` is separate from it because the two clash on different keys:
+  an option family family-to-family, a variable name-to-name.
 
   A note for whoever extends the scanner: hurl's `Visitor` treats templates as *leaves*,
   and `visit_template`, `visit_url` and `visit_filename` are three separate no-op

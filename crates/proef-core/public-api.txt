@@ -35,6 +35,7 @@ pub proef_core::analyze::FragmentDef::name: alloc::string::String
 pub proef_core::analyze::FragmentDef::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::analyze::FragmentDef::source: alloc::sync::Arc<str>
 pub proef_core::analyze::FragmentDef::span: core::option::Option<proef_core::diag::Span>
+pub proef_core::analyze::FragmentDef::supplied_variables: alloc::vec::Vec<alloc::string::String>
 impl core::clone::Clone for proef_core::analyze::FragmentDef
 pub fn proef_core::analyze::FragmentDef::clone(&self) -> proef_core::analyze::FragmentDef
 impl core::fmt::Debug for proef_core::analyze::FragmentDef
@@ -489,6 +490,7 @@ pub proef_core::engine::ScannedFragment::declared_options: alloc::vec::Vec<alloc
 pub proef_core::engine::ScannedFragment::line: usize
 pub proef_core::engine::ScannedFragment::name: alloc::string::String
 pub proef_core::engine::ScannedFragment::placeholders: alloc::vec::Vec<alloc::string::String>
+pub proef_core::engine::ScannedFragment::supplied_variables: alloc::vec::Vec<alloc::string::String>
 pub proef_core::engine::ScannedFragment::text: alloc::string::String
 impl core::clone::Clone for proef_core::engine::ScannedFragment
 pub fn proef_core::engine::ScannedFragment::clone(&self) -> proef_core::engine::ScannedFragment
@@ -962,6 +964,7 @@ pub proef_core::pack::Fragment::line: usize
 pub proef_core::pack::Fragment::name: alloc::string::String
 pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::source: alloc::sync::Arc<str>
+pub proef_core::pack::Fragment::supplied_variables: alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::text: alloc::string::String
 impl proef_core::pack::Fragment
 pub fn proef_core::pack::Fragment::qualified(&self) -> alloc::string::String

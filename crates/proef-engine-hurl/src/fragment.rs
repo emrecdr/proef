@@ -96,6 +96,7 @@ pub(crate) fn scan(text: &str) -> Result<Vec<ScannedFragment>, FragmentScanError
             line: start,
             placeholders: collect.placeholders,
             declared_options: declared_options(entry),
+            supplied_variables: supplied_variables(entry),
         });
     }
     Ok(out)
@@ -115,6 +116,24 @@ fn declared_options(entry: &Entry) -> Vec<String> {
         };
         if !out.iter().any(|seen| seen == family) {
             out.push(family.to_owned());
+        }
+    }
+    out
+}
+
+/// The variables an entry supplies to itself via `[Options] variable:`.
+///
+/// This is how a fragment stays runnable under stock `hurl` with no
+/// `--variables-file`, so it must count as an answer to its own
+/// `{{placeholder}}` — and it must clash with a `bind:` of the same name, since
+/// hurl resolves that pair last-wins rather than refusing it.
+fn supplied_variables(entry: &Entry) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for option in entry.request.options() {
+        if let OptionKind::Variable(definition) = &option.kind
+            && !out.contains(&definition.name)
+        {
+            out.push(definition.name.clone());
         }
     }
     out
@@ -330,6 +349,37 @@ mod tests {
     fn a_retry_option_is_reported_for_the_double_declaration_check() {
         let found = scan("# @proef poll\nGET http://x\n[Options]\nretry: 3\nHTTP 200\n").unwrap();
         assert_eq!(found[0].declared_options, ["retry"]);
+    }
+
+    /// A variable an entry sets for itself is read back by name, and is *not*
+    /// mistaken for one the entry reads. Both halves matter: the name answers
+    /// that entry's own `{{token}}` (so the file still runs under stock `hurl`
+    /// with no variables file) and collides with a `bind:` of the same name
+    /// (so the pair is refused rather than resolved last-wins).
+    #[test]
+    fn a_supplied_variable_is_reported_by_name() {
+        let found = scan(concat!(
+            "# @proef auth\n",
+            "GET http://x\n",
+            "[Options]\n",
+            "variable: token=local-default\n",
+            "variable: token=again\n",
+            "[Query]\n",
+            "t: {{token}}\n",
+            "u: {{other}}\n",
+            "HTTP 200\n",
+        ))
+        .unwrap();
+        assert_eq!(found[0].supplied_variables, ["token"], "deduped by name");
+        assert_eq!(
+            found[0].placeholders,
+            ["token", "other"],
+            "supplying a variable does not stop the entry from reading it"
+        );
+        assert!(
+            found[0].declared_options.is_empty(),
+            "`variable:` is not an option *family* — it clashes name-to-name"
+        );
     }
 
     /// The seam's contract, checked across the crate boundary rather than

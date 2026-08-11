@@ -38,7 +38,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::bad_reference` | A `${…}` reference in the payload cannot resolve at probe time | |
 | `pack::retry_not_finite` | `retry`/`repeat` is `-1`, `0`, or above the 10000 cap | ✓ |
 | `pack::delay_unbounded` | `delay` exceeds the 1-hour cap | |
-| `pack::option_declared_twice` | `retry`/`delay` set both in the block's `[Options]` and as the step's own key | ✓ |
+| `pack::option_declared_twice` | `retry`/`delay` set both in the block's `[Options]` and as the step's own key, or a variable both supplied by a fragment's `[Options] variable:` and given by a `bind:` | ✓ |
 | `pack::pattern_braces` | Unbalanced `{`/`}` in a `match:` pattern | |
 | `pack::pattern_empty_capture` | `{}` with no capture name | |
 | `pack::pattern_no_anchor` | A pattern with no literal word (capture-only) | ✓ |
