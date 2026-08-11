@@ -19,6 +19,12 @@ use serde::Deserialize;
 
 use crate::sla::SlaThresholds;
 
+/// The `proef.toml` this process would load, if any — exposed so `--watch` can
+/// watch the file whose values every scenario resolves through.
+pub fn config_path() -> Option<PathBuf> {
+    find_config()
+}
+
 /// The nearest `proef.toml` walking up from the working directory (like
 /// cargo/git), or `None` if none exists in any ancestor.
 fn find_config() -> Option<PathBuf> {

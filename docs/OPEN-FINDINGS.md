@@ -95,8 +95,6 @@ rather than re-reproduced here:
 
 - **The early-error record** writes `Completed 0/0/0` and a `summary:` line after
   the error.
-- **The dry-run nudge** drops `--env`/`--tags` from the command it echoes, so the
-  printed command is not the one that was run.
 - **`Warned` scenarios** are dropped from truncated-record fallback totals.
 
 ## Open — residue of the two UX reviews
@@ -189,11 +187,17 @@ root is correct: no wrong answers depend on it.
 Only `byteOffset`/`byteLength`, which defeats inline GitHub annotations. Repro'd.
 *Feature-defeating.*
 
-### P5 — watch gaps *(partial)*
+### P5 — watch: the atomic-save half *(remainder)*
 
-`proef.toml` is unwatched, and the runs-dir self-triggers — both reproduced. The
-"single file dies after an atomic save" half did **not** reproduce on macOS/FSEvents;
-`notify`'s docs confirm it is real but platform-dependent, worst on inotify.
+**Shipped in #37:** `--watch` now also watches `proef.toml`, matched by exact path.
+**Closed by inspection:** the runs-dir self-trigger cannot happen — the retrigger
+filter is an allowlist of `.feature`/`.yaml`/`.yml`, and no run-record file
+(`.jsonl`, `.log`, `.hurl`, `.vars`, `.json`, `.xml`, `.html`) matches it.
+
+**Still open:** "a single watched file dies after an atomic save". It did **not**
+reproduce on macOS/FSEvents; `notify`'s own docs say it is real but
+platform-dependent and worst on inotify. Do not chase it on a Mac — that is how it
+gets "fixed" by coincidence. It needs a Linux reproduction first.
 
 ---
 

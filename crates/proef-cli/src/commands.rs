@@ -172,6 +172,64 @@ fn validate_phase_features(
     Ok(scenarios)
 }
 
+/// The `proef test` command that reproduces *this* validation run.
+///
+/// Every selector that decided what was validated is echoed, because the point
+/// of the nudge is "now run what you just checked". Printing a bare
+/// `proef test` after `--dry-run --env prod --tags smoke` offers a different
+/// run — a different `[url] base` and every scenario rather than the tagged
+/// subset — and the operator cannot tell: the command works, and simply tests
+/// something else.
+///
+/// **Selectors only.** This is deliberately not a general "reprint the
+/// invocation": `--junit`, `--output` and friends are not selectors, and a
+/// blanket reprint is how secret-bearing arguments end up on stdout.
+///
+/// A bare `proef test` rediscovers the suite on its own only when this run
+/// resolved a *default* path; an explicit one must be echoed or the printed
+/// command exits 2 with "no path given and no default suite found".
+fn next_command(
+    path: Option<&str>,
+    tags: Option<&str>,
+    scenario: Option<&str>,
+    scenario_file: Option<&str>,
+    active_env: Option<&str>,
+) -> String {
+    let mut out = String::from("proef test");
+    if let Some(path) = path {
+        out.push(' ');
+        out.push_str(&shell_quote(path));
+    }
+    for (flag, value) in [
+        ("--env", active_env),
+        ("--tags", tags),
+        ("--scenario", scenario),
+        ("--scenario-file", scenario_file),
+    ] {
+        if let Some(value) = value {
+            out.push(' ');
+            out.push_str(flag);
+            out.push(' ');
+            out.push_str(&shell_quote(value));
+        }
+    }
+    out
+}
+
+/// Single-quote a value the operator is expected to paste back into a shell.
+/// A tag expression (`@a and not @b`) and a scenario name both carry spaces,
+/// and an unquoted one silently becomes several arguments.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/-@:".contains(c))
+    {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
 /// `proef test --dry-run` — the validation gate: everything through lowering
 /// and emission, every emitted artifact parsed with the engine's real parser
 /// (TECH-SPEC §10) — no files written, no execution, no network.
@@ -185,6 +243,7 @@ pub fn dry_run(
     path: &Path,
     path_given: bool,
     tags: Option<&proef_core::tags::TagExpr>,
+    tags_raw: Option<&str>,
     scenario: Option<&str>,
     scenario_file: Option<&str>,
     active_env: Option<&str>,
@@ -286,14 +345,16 @@ pub fn dry_run(
         totals.4,
         front.warnings.len()
     );
-    // A bare `proef test` only rediscovers the suite on its own when this run
-    // resolved a *default* path — an explicit path must be echoed, or the
-    // printed command exits 2 with "no path given and no default suite found".
-    if path_given {
-        crate::render::outln!("next: proef test {}", path.display());
-    } else {
-        crate::render::outln!("next: proef test");
-    }
+    crate::render::outln!(
+        "next: {}",
+        next_command(
+            path_given.then(|| path.display().to_string()).as_deref(),
+            tags_raw,
+            scenario,
+            scenario_file,
+            active_env,
+        )
+    );
     ExitCode::Success
 }
 
@@ -686,4 +747,46 @@ pub(crate) fn report_front_error(err: &proef_core::diag::FrontError) -> ExitCode
         }
     }
     err.exit_code()
+}
+
+#[cfg(test)]
+mod nudge_tests {
+    use super::next_command;
+
+    /// The nudge must offer the run that was just validated. Printing a bare
+    /// `proef test` after `--dry-run --env prod --tags smoke` offers a
+    /// different one — another `[url] base` and every scenario instead of the
+    /// tagged subset — and the operator cannot tell, because the command works
+    /// and simply tests something else.
+    #[test]
+    fn the_nudge_echoes_every_selector_that_chose_what_ran() {
+        assert_eq!(next_command(None, None, None, None, None), "proef test");
+        assert_eq!(
+            next_command(None, Some("smoke"), None, None, Some("prod")),
+            "proef test --env prod --tags smoke"
+        );
+        assert_eq!(
+            next_command(Some("suite"), None, None, None, None),
+            "proef test suite"
+        );
+    }
+
+    /// A tag expression and a scenario name both carry spaces; unquoted they
+    /// become several arguments and the pasted command means something else.
+    #[test]
+    fn values_that_would_split_into_arguments_are_quoted() {
+        assert_eq!(
+            next_command(None, Some("@a and not @b"), None, None, None),
+            "proef test --tags '@a and not @b'"
+        );
+        assert_eq!(
+            next_command(None, None, Some("A known record"), None, None),
+            "proef test --scenario 'A known record'"
+        );
+        // An apostrophe in a name must not end the quoting early.
+        assert_eq!(
+            next_command(None, None, Some("it's fine"), None, None),
+            r"proef test --scenario 'it'\''s fine'"
+        );
+    }
 }

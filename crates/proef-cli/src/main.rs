@@ -348,6 +348,7 @@ fn main() -> std::process::ExitCode {
                                         &path,
                                         path_given,
                                         tag_filter.as_ref(),
+                                        tags.as_deref(),
                                         scenario.as_deref(),
                                         scenario_file.as_deref(),
                                         active_env.as_deref(),
@@ -374,7 +375,11 @@ fn main() -> std::process::ExitCode {
                             };
                             if watch_mode {
                                 // The loop owns Ctrl-C and hands each run its token.
-                                watch::watch_loop(&path, |token| run_once(Some(token)))
+                                watch::watch_loop(
+                                    &path,
+                                    config::config_path().as_deref(),
+                                    |token| run_once(Some(token)),
+                                )
                             } else {
                                 run_once(None)
                             }
