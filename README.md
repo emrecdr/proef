@@ -83,6 +83,24 @@ The fragment file is untouched, valid hurl — the same bytes run under stock
 `hurl` and under proef. `bind:` supplies its `{{…}}` variables and may be set at
 pack, macro, or step scope, most specific winning (ADR-0018).
 
+**The choice is per step, not per suite.** A macro mixes both forms freely — which is
+what adopting an existing corpus actually looks like: reference the requests it already
+has, write inline for the ones it doesn't.
+
+```yaml
+  archiveFirstResult:
+    match: the operator archives the first result
+    steps:
+      - ref: admin.search        # the corpus already has this request
+      - hurl: |                  # this one is new, and splices ${…}
+          POST ${url:base}/api/v1/admin/records/{{recordId}}/archive
+          HTTP 204
+```
+
+`recordId` is captured by the fragment and read by the inline step: the World threads
+captures across both forms, and contiguous same-engine steps batch together regardless
+of which form they were written in.
+
 Running it validates everything statically, executes against the embedded engine, and
 leaves a complete record:
 

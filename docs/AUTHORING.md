@@ -138,6 +138,28 @@ macros:
         bind: { index: records }   # step scope — the most specific wins
 ```
 
+**`hurl:` and `ref:` are chosen per step, not per suite.** A step is one or the
+other, but a macro mixes them freely — which is what adopting an existing corpus
+looks like in practice: `ref:` the requests the corpus already has, write inline
+for the ones it doesn't.
+
+```yaml
+  archiveFirstResult:
+    match: the operator archives the first result
+    steps:
+      - ref: admin.search        # the corpus already has this request
+      - hurl: |                  # this one is new, and splices ${…}
+          POST ${url:base}/api/v1/admin/records/{{recordId}}/archive
+          HTTP 204
+```
+
+`recordId` is captured by the fragment and read by the inline step: the World
+threads captures across both forms, and contiguous same-engine steps batch
+together whichever form they were written in. Pick per step by capability —
+inline splices `${…}` anywhere (including a multi-line `${docstring}` body, which
+a single-line bound scalar cannot express); `ref:` keeps the file runnable on its
+own and checks its interface by name.
+
 Set `[run] fragments` to the directory holding those files (see
 [CONFIG.md](CONFIG.md)). Every `{{variable}}` a fragment reads must be bound in
 one of the three scopes, captured by an earlier step, or supplied by the fragment

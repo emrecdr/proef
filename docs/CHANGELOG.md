@@ -33,6 +33,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **The docs are checked mechanically, not only read.** `xtask docs-check` gained two
+  passes — every relative link resolves, and every fenced `toml`/`yaml` example parses
+  with the product's own parsers, so the check means "proef would accept this example"
+  rather than "some parser would". A third pass, whether a documented command or long
+  flag actually exists, needs a built binary and so lives in
+  `crates/proef-cli/tests/docs.rs`.
+
+  All three were written against defects already in the tree: ADR-0018's first example
+  could not load (an unquoted `${…}` inside a YAML *flow* mapping, where `{` opens a
+  nested mapping), and a row marked *shipped* documented `proef report --html`, a flag
+  that never existed. Both had correct prose around wrong code — the failure mode review
+  does not catch.
+
 - **Packs can name fragments: `ref:` and `bind:` (ADR-0018).** A macro step's body
   may be `ref: <fragment>` instead of an inline `hurl:` block, and `bind:` supplies the
   fragment's `{{…}}` variables at pack, macro and step scope, most specific winning.
@@ -103,7 +116,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
   Secrets keep their own path: recorded as engine-variable → secret name and injected
   via `insert_secret` at run time, never as an `[Options]` line. That indirection is
-  what lets `bind: { auth_token: ${secret:apiToken} }` give a secret the variable name a
+  what lets `bind: { auth_token: "${secret:apiToken}" }` give a secret the variable name a
   corpus proef did not write already uses.
 
   Bindings resolve **once per scope instantiation** — pack scope once per scenario,

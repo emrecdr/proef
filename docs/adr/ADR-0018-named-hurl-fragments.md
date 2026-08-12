@@ -52,7 +52,7 @@ macros:
   searchRecords:
     params: [q, index]
     defaults: { index: records }
-    bind: { q: ${q}, index: ${index} }   # macro scope
+    bind: { q: "${q}", index: "${index}" }   # macro scope (quote in flow style)
     steps:
       - ref: admin.search
 ```
@@ -142,7 +142,7 @@ Costs, stated rather than discovered later:
   is a single non-recursive pass, so a *rendered* variable's value is never re-parsed as
   a template. But a `[Options] variable:` value is itself evaluated as a template before
   it is stored (`hurl-8.0.1/src/runner/options.rs:508-511`), which is one pass more than
-  the entry body gets. So `bind: { recordUrl: ${url:record} }`, where `record` is
+  the entry body gets. So `bind: { recordUrl: "${url:record}" }`, where `record` is
   `"${url:base}/api/v1/records/{{recordId}}"`, does work: `{{recordId}}` expands at
   option-eval time from a preceding capture, and `GET {{recordUrl}}` then renders the
   finished URL. `[url]`'s path table keeps working for fragments, and ADR-0012 is

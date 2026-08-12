@@ -2959,6 +2959,8 @@ name = "xtask"
 version = "0.9.0"
 dependencies = [
  "proef-fixture",
+ "serde_norway",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]

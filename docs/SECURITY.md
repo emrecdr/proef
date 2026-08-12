@@ -37,7 +37,7 @@ attempt to defend a compromised host.
   `proef fmt` refuses them in both discovery branches, and the declared root
   is the confinement boundary — nothing outside it is scanned. Files come back
   byte-identical, which an integration test asserts.
-- A **renamed secret is still never materialized**. `bind: { token: ${secret:x} }`
+- A **renamed secret is still never materialized**. `bind: { token: "${secret:x}" }`
   lets a foreign corpus keep its own variable name; the value still travels via
   `insert_secret` and never enters the artifact. Mixing a secret into a larger
   bound value is *refused* (`lower::secret_in_composite_bind`) rather than
