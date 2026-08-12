@@ -6,6 +6,36 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A pack-scope `bind:` with no `ref:` anywhere was silently dropped.**
+  `AUTHORING.md` said `bind_without_ref` applies "at every scope" while only the
+  macro and step scopes were checked — and a setting ignored in silence is the
+  bug those two exist to refuse. The check was the better half of the
+  disagreement, so the pack scope now has it too.
+
+- **A multi-line `bind:` value blamed the artifact.** A hurl
+  `[Options] variable:` value is a single-line scalar, so a newline could never
+  reach the entry — but it surfaced one stage later as `emit::invalid_artifact`,
+  pointing at generated text the author never wrote. Refused by name at lower
+  time as `lower::multiline_bind`, naming the inline `hurl: |` form that *is*
+  what splices a multi-line body (ADR-0018's splicing-versus-binding boundary,
+  enforced where it can be explained).
+
+### Documentation
+
+- **The release runbook could not work as written.** `main` is a protected
+  branch, and step 4's `git push origin main --follow-tags` fails in the
+  dangerous direction: `--follow-tags` is not atomic, so the branch is rejected
+  while the tag still lands — and the tag is what `release.yml` triggers on,
+  starting a release build from a commit that is not on `main`. It happened
+  cutting 0.10.0. The runbook now routes the release commit through a PR and tags
+  the merged commit, and the `cargo publish` section carries the dry-run,
+  tag-check and `--locked` sequence plus why only four crates go
+  (`[workspace.package] publish = false` is the default). Also drops step 1's
+  reference to changelog "bottom links", which do not exist.
+
+
 ## [0.10.0] - 2026-08-12 (named hurl fragments)
 
 > **Breaking (library):** `proef_core::pack::load` takes a

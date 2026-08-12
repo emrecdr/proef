@@ -50,6 +50,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::unknown_ref` | `ref:` names no loaded fragment (suggests the closest) | ✓ |
 | `pack::duplicate_fragment` | Two fragment files declare the same `# @proef` name | |
 | `pack::bad_annotation` | A fragment file the engine's parser could not read, an annotation it could not attach, or a name containing `#` (which could never be referenced) | |
+| `lower::multiline_bind` | A `bind:` value that resolves to multiple lines — a hurl `[Options] variable:` is a single-line scalar; the inline `hurl: \|` form is what splices a multi-line body | |
 | `pack::unreadable_fragment_file` | A fragment file that could not be read at all (encoding, permissions) — its siblings still load, and it is silent until something `ref:`s the corpus | |
 | `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
 | `pack::bind_without_ref` | `bind:` with no `ref:` to read it — on a step (an inline block takes `${…}` instead), or on a macro whose steps have none (a `use:` target resolves its own) | ✓ |
@@ -117,6 +118,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 
 The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
 `pack::unreadable_fragment_file`, `lower::unbound_placeholder`,
+`lower::multiline_bind`,
 `lower::secret_in_composite_bind`) are covered in
 `crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
 `[run] fragments` root, and the seeded corpus is deliberately config-independent.

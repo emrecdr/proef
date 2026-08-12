@@ -53,10 +53,23 @@ milestone or a coherent series lands — not on a calendar.
 
 ## Release runbook
 
-From a clean, green `main` (all gates local + CI):
+From a clean, green `main` (all gates local + CI).
+
+> **`main` is protected — the release commit goes through a pull request, and the
+> tag is pushed only after it merges.** Do not `git push origin main`, and do not
+> tag before the merge. `git push --follow-tags` is **not atomic**: git pushes
+> refs independently, so a protected-branch rejection stops the branch while the
+> tag still lands — and a tag is exactly what `release.yml` triggers on. That
+> combination starts a release build from a commit that is not on `main`. It
+> happened cutting 0.10.0; the run was cancelled and the tag deleted before
+> anything published, but the recovery is avoidable and this ordering avoids it.
 
 ```bash
-# 1. Cut the changelog: move [Unreleased] → [X.Y.Z] - date, update bottom links.
+# 1. On a release branch, cut the changelog: move [Unreleased] → [X.Y.Z] - date
+#    with a short parenthetical theme, and leave a fresh empty [Unreleased].
+#    (There is no link-reference section at the bottom of CHANGELOG.md — nothing
+#    to update there.)
+git switch -c release/vX.Y.Z
 # 2. Bump the version in the root Cargo.toml — BOTH places:
 #      [workspace.package] version = "X.Y.Z"       (the crates' own version)
 #      [workspace.dependencies] proef-core / proef-engine-hurl / proef-lsp
@@ -73,11 +86,24 @@ cargo check --manifest-path fuzz/Cargo.toml --all-targets
 cargo nextest run && cargo test --doc
 cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all --check
 cargo deny check && cargo audit
-# 4. Commit + tag + push:
+# 4. Commit and open the release PR (no tag yet):
 git commit -am "release: vX.Y.Z"
+git push -u origin release/vX.Y.Z
+gh pr create --base main --title "release: vX.Y.Z"
+
+# 5. After CI is green and the PR is MERGED, tag the *merged* commit and push
+#    only the tag. The squash merge creates a new commit, so tagging the branch
+#    would leave the tag off `main`'s history.
+git switch main && git pull --ff-only
+git describe --tags --exact-match HEAD 2>/dev/null && echo "already tagged — stop"
 git tag -a vX.Y.Z -m "proef X.Y.Z"
-git push origin main --follow-tags
+git push origin vX.Y.Z            # this, and only this, starts release.yml
 ```
+
+If the release commit was made on `main` locally before branching, `git pull
+--ff-only` refuses afterwards: the squash merge superseded it. Confirm the merged
+commit carries the version bump, check `git diff --quiet HEAD origin/main`, then
+`git reset --hard origin/main`.
 
 The tag push triggers `.github/workflows/release.yml`, which:
 
@@ -98,6 +124,27 @@ The tag push triggers `.github/workflows/release.yml`, which:
 publishing. crates.io publication remains a deliberate manual `cargo publish`
 per crate in dependency order (core → engine-hurl → lsp → proef — `proef-lsp`
 before `proef`, which depends on it non-optionally) and is **not** automated.
+
+Manual because it is the one step nothing undoes: a published version can be
+yanked, never replaced or re-uploaded. So publish from the tag, not from a
+working tree that merely resembles it:
+
+```bash
+git describe --tags --exact-match HEAD     # must print vX.Y.Z
+git status --short                         # must be empty
+cargo publish -p proef-core --dry-run --locked
+cargo publish -p proef-core --locked
+cargo publish -p proef-engine-hurl --locked
+cargo publish -p proef-lsp --locked
+cargo publish -p proef --locked
+```
+
+`--locked` throughout, so what ships is what the committed lockfile resolves.
+Only these four go: `[workspace.package] publish = false` is the default and each
+publishable crate overrides it, so `proef-fixture`, `proef-harness` and `xtask`
+are excluded by construction rather than by remembering to skip them. Each
+command waits for the registry before returning, which is what makes the next
+one resolvable.
 
 ## History
 
