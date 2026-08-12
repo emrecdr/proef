@@ -198,11 +198,22 @@ macro scope once per invocation, step scope per step — so one `bind:` entry is
 value, and two are two. That is what makes a pack-scope `${fake:email}` a single
 identity for the whole scenario.
 
-A `bind:` that nothing can read is refused (`proef::pack::bind_without_ref`)
-rather than dropped, at every scope. Note the one that surprises people: a
-macro-scope `bind:` does **not** reach a `use:` target — the target resolves its
-own pack and macro scopes — so the table belongs on the macro that actually
-carries the `ref:`.
+A binding nothing can read is refused rather than dropped, at two levels:
+
+- **The table** — a `bind:` with no `ref:` in scope to read it
+  (`proef::pack::bind_without_ref`), checked at all three scopes.
+- **One key** — a `bind:` entry no fragment in that scope reads
+  (`proef::pack::unread_bind_key`), with did-you-mean over the names that *are*
+  read. This is the one a typo produces: `bind: { token: …, toekn: … }` binds one
+  real key and one that never arrives.
+
+The key check is a union over the scope, never against a single fragment — a
+pack-scope table is the plumbing every macro in the file needs, so a key serving
+one macro and not its siblings is correct usage.
+
+Note the one that surprises people: a macro-scope `bind:` does **not** reach a
+`use:` target — the target resolves its own pack and macro scopes — so the table
+belongs on the macro that actually carries the `ref:`.
 
 You do not have to memorise a corpus you did not write: with `proef lsp` running,
 completing inside a `bind:` table offers the `{{variables}}` the fragments this
