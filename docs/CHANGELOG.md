@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-08-12 (the gaps 0.11.0 shipped with)
+
 ### Fixed
 
 - **An output path creates the directories it names.** `--junit`, `--sarif` and
