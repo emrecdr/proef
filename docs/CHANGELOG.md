@@ -92,6 +92,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **Breaking (library):** `AnalyzeCtx` takes the fragment corpus instead of
+  building one. Building it internally meant a fresh scan memo per call, so the
+  LSP re-read and re-hurl-parsed the **whole corpus on every request** — each
+  completion popup, each go-to-definition, each debounce tick. The server now
+  holds one and rebuilds it only when a fragment file changes; editing a pack or
+  a feature, which is nearly every keystroke, leaves it alone. It is also what
+  core purity already required: the caller does the IO.
+
+- **Breaking (library):** `StepKindSpec` gained `options`, an engine-contributed
+  recogniser mapping a raw option key to what ADR-0007's budget rules should make
+  of it. The fragment half of that rule already crossed the seam while the inline
+  half matched `"retry-interval:"` as a literal inside `proef-core` — one rule at
+  two altitudes, and a second engine would have had its fragments linted and its
+  inline blocks not. A kind contributing no recogniser is not linted, since the
+  core has no way to know what its option keys mean.
+
 - **Breaking (library):** `proef_core::engine::FragmentScanner` returns
   `ScannedFile { fragments, unannotated }` rather than `Vec<ScannedFragment>`.
   An engine's scanner now also reports the 1-based lines of entries carrying no

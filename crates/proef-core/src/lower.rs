@@ -1146,6 +1146,7 @@ mod tests {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
 
     const PACK: &str = r#"macros:
@@ -1401,6 +1402,7 @@ mod tests {
             schema: "true",
             validate: None,
             fragments: None,
+            options: None,
         }];
         let packs = pack::load(
             &[PackSource {
@@ -1819,6 +1821,7 @@ mod tests {
             ext: "frag",
             scan: frag_scan,
         }),
+        options: None,
     }];
 
     /// Lower a one-step scenario over the given pack and fragment file.

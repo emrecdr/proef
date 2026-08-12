@@ -31,6 +31,7 @@
 //!             schema: "true",
 //!             validate: None,
 //!             fragments: None,
+//!             options: None,
 //!         }];
 //!         KINDS
 //!     }
@@ -112,10 +113,49 @@ pub struct StepKindSpec {
     /// so the two can never disagree: a kind that claims `.http` files but
     /// cannot read them is not expressible.
     pub fragments: Option<FragmentSupport>,
+    /// Recognise this kind's raw option keys, so the core can apply ADR-0007's
+    /// budget rules without knowing how the engine spells them.
+    pub options: Option<OptionRecogniser>,
 }
 
 /// An engine-contributed static payload validator (pack validation pass 7).
 pub type PayloadValidator = fn(&str) -> Result<(), PayloadProbeError>;
+
+/// How the core bounds one raw option's value (ADR-0007 budgets).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawOptionValue {
+    /// A repetition count: `-1` is infinite and anything over the cap is
+    /// budget-hostile. hurl has no cancellation, so an unbounded count leaves
+    /// the watchdog abandoning a thread it cannot stop.
+    Count,
+    /// A duration, capped so one entry cannot outlast a run.
+    Duration,
+}
+
+/// What a raw option key means to the core's budget and double-declaration
+/// rules — the engine's vocabulary translated into the core's policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RawOption {
+    /// The pack-visible family a step may *also* declare, when there is one.
+    /// Always an element of [`OPTION_FAMILIES`]. `None` for an option with no
+    /// YAML twin, which is therefore value-capped but cannot be declared twice.
+    pub family: Option<&'static str>,
+    /// How the value is bounded, or `None` when the core has no policy for it.
+    pub value: Option<RawOptionValue>,
+}
+
+/// An engine-contributed recogniser: a raw option key (the text left of the
+/// `:` in an `[Options]` line) → what the core's rules should make of it.
+///
+/// The seam that keeps option *spellings* out of `proef-core`. The fragment
+/// half of this rule already crossed the seam — an engine maps its own AST to
+/// [`ScannedFragment::declared_options`] — while the inline half matched
+/// `"retry-interval:"` as a literal in core, so one rule lived at two
+/// altitudes and a second engine would have got its fragments linted and its
+/// inline blocks not.
+///
+/// `None` = the kind has no raw options the core bounds.
+pub type OptionRecogniser = fn(&str) -> Option<RawOption>;
 
 /// An engine-contributed reader for one fragment file's whole text (ADR-0018).
 pub type FragmentScanner = fn(&str) -> Result<ScannedFile, FragmentScanError>;

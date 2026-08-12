@@ -36,7 +36,7 @@ use super::{
     RawMacro, RawStep,
 };
 use crate::diag::Diag;
-use crate::engine::StepKindSpec;
+use crate::engine::{OptionRecogniser, RawOptionValue, StepKindSpec};
 use crate::lower::macro_has_ref;
 use crate::matcher;
 use crate::resolve::{self, Resolution, ResolveCtx, ResolveMode};
@@ -449,7 +449,7 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                     use_target_passes(set, macro_, index, target, with, &at, diags);
                 }
                 MacroStepKind::Ref { target } => {
-                    ref_target_passes(set, macro_, index, step, target, &at, diags);
+                    ref_target_passes(set, kinds, macro_, index, step, target, &at, diags);
                 }
                 MacroStepKind::Payload { kind, payload } => {
                     let ordinal = *payload_ordinals
@@ -476,8 +476,10 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
 /// Two comparisons, because the two halves of an `[Options]` section clash on
 /// different keys: option *families* (`retry:`, `delay:`) family-to-family, and
 /// supplied *variables* name-to-name.
+#[allow(clippy::too_many_arguments)]
 fn ref_target_passes(
     set: &PackSet,
+    kinds: &[StepKindSpec],
     macro_: &Macro,
     index: usize,
     step: &MacroStep,
@@ -515,7 +517,10 @@ fn ref_target_passes(
     // uncancellable thread exactly as it would inline. Anchored on the `ref:`
     // line, since that is what the pack author can edit, and the message names
     // the fragment file and line so the other half is findable.
-    for violation in scan_option_values(&fragment.text) {
+    for violation in recogniser(kinds, &fragment.kind)
+        .map(|recognise| scan_option_values(&fragment.text, recognise))
+        .unwrap_or_default()
+    {
         diags.push(
             at(Diag::error(
                 violation.code,
@@ -764,7 +769,7 @@ fn payload_passes(
         }
     };
 
-    lint_raw_options(macro_, index, kind, step, ordinal, text, at, diags);
+    lint_raw_options(macro_, index, kind, step, ordinal, text, kinds, at, diags);
 
     // Pass 7: probe-instantiation parse via the engine's validator.
     let Some(validate) = spec.validate else {
@@ -811,6 +816,18 @@ fn payload_passes(
     }
 }
 
+/// The option recogniser contributed by the kind named `kind`, if it has one.
+///
+/// Routed by kind rather than by "the first engine that has one": a step's kind
+/// names its engine (ADR-0002), so a second engine's `[Options]` vocabulary
+/// applies to its own steps and to nothing else.
+fn recogniser(kinds: &[StepKindSpec], kind: &str) -> Option<OptionRecogniser> {
+    kinds
+        .iter()
+        .find(|spec| spec.prefix == kind)
+        .and_then(|spec| spec.options)
+}
+
 /// One ADR-0007 value-cap violation in hurl text: which line, which code, and
 /// the sentence describing it — but not where it lives, because that differs
 /// between the two body forms.
@@ -835,7 +852,7 @@ struct OptionViolation {
 ///
 /// Returns findings rather than diagnostics so each caller can anchor them in
 /// its own source — the one thing the two genuinely disagree about.
-fn scan_option_values(text: &str) -> Vec<OptionViolation> {
+fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViolation> {
     let mut found = Vec::new();
     let mut in_fence = false;
     for (line_no, line) in text.lines().enumerate() {
@@ -847,6 +864,15 @@ fn scan_option_values(text: &str) -> Vec<OptionViolation> {
         if in_fence {
             continue; // fenced body data — a literal `retry: -1` is payload, not an option
         }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        // The engine names its own options; the core only decides what a value
+        // may be. A key this engine does not claim is somebody else's line.
+        let Some(option) = recognise(key.trim()) else {
+            continue;
+        };
+        let key = key.trim();
         let mut push = |code: &'static str, detail: String| {
             found.push(OptionViolation {
                 line: line_no + 1,
@@ -854,34 +880,32 @@ fn scan_option_values(text: &str) -> Vec<OptionViolation> {
                 detail,
             });
         };
-        for option in ["retry", "repeat"] {
-            if let Some(value) = trimmed.strip_prefix(&format!("{option}:")) {
-                match value.trim().parse::<i64>() {
-                    Ok(-1) => push(
-                        "proef::pack::retry_not_finite",
+        match option.value {
+            Some(RawOptionValue::Count) => match value.trim().parse::<i64>() {
+                Ok(-1) => push(
+                    "proef::pack::retry_not_finite",
+                    format!("`{key}: -1` is infinite — budgets require a finite count (ADR-0007)"),
+                ),
+                Ok(n) if n > MAX_COUNT => push(
+                    "proef::pack::retry_not_finite",
+                    format!("`{key}: {n}` is budget-hostile — the cap is {MAX_COUNT}"),
+                ),
+                _ => {}
+            },
+            Some(RawOptionValue::Duration) => {
+                if let Some(ms) = raw_duration_ms(value)
+                    && ms > MAX_DELAY_MS
+                {
+                    push(
+                        "proef::pack::delay_unbounded",
                         format!(
-                            "`{option}: -1` is infinite — budgets require a finite count (ADR-0007)"
+                            "`{key}: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
+                            value.trim()
                         ),
-                    ),
-                    Ok(n) if n > MAX_COUNT => push(
-                        "proef::pack::retry_not_finite",
-                        format!("`{option}: {n}` is budget-hostile — the cap is {MAX_COUNT}"),
-                    ),
-                    _ => {}
+                    );
                 }
             }
-        }
-        if let Some(value) = trimmed.strip_prefix("delay:")
-            && let Some(ms) = raw_duration_ms(value)
-            && ms > MAX_DELAY_MS
-        {
-            push(
-                "proef::pack::delay_unbounded",
-                format!(
-                    "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
-                    value.trim()
-                ),
-            );
+            None => {}
         }
     }
     found
@@ -910,10 +934,14 @@ fn lint_raw_options(
     step: &MacroStep,
     ordinal: usize,
     text: &str,
+    kinds: &[StepKindSpec],
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
-    for violation in scan_option_values(text) {
+    let Some(recognise) = recogniser(kinds, kind) else {
+        return;
+    };
+    for violation in scan_option_values(text, recognise) {
         diags.push(
             at(Diag::error(
                 violation.code,
@@ -953,14 +981,14 @@ fn lint_raw_options(
         if !in_options {
             continue;
         }
-        // hurl's `retry-interval` folds into `retry` — one policy, and a step's
-        // `retry:` sets both — so the two spellings map to the one family the
-        // pack knows (`engine::OPTION_FAMILIES`).
-        let option = if trimmed.starts_with("retry:") || trimmed.starts_with("retry-interval:") {
-            "retry"
-        } else if trimmed.starts_with("delay:") {
-            "delay"
-        } else {
+        // The engine maps its own spellings onto the families a pack knows
+        // (`engine::OPTION_FAMILIES`) — several keys may share one policy, which
+        // is the engine's business, not the core's.
+        let Some(option) = trimmed
+            .split_once(':')
+            .and_then(|(key, _)| recognise(key.trim()))
+            .and_then(|option| option.family)
+        else {
             continue;
         };
         if step.declared_options().any(|f| f == option) && !said.contains(&option) {
@@ -1295,6 +1323,7 @@ mod tests {
         schema: "true",
         validate: Some(deny),
         fragments: None,
+        options: None,
     }];
 
     /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
@@ -1414,6 +1443,7 @@ mod tests {
             schema: "true",
             validate: None,
             fragments: None,
+            options: None,
         }];
         use std::fmt::Write as _;
         let mut yaml = String::from("macros:\n");
@@ -1448,6 +1478,11 @@ mod tests {
         schema: "true",
         validate: None,
         fragments: None,
+        // A kind with raw `[Options]`, so the budget rules have a vocabulary to
+        // apply. A kind contributing no recogniser is deliberately not linted —
+        // the core has no way to know what its option keys mean — so a fixture
+        // without one would test that silence rather than the rule.
+        options: Some(fake_recognise),
     }];
 
     /// Setting an option in both the block's `[Options]` and its YAML twin
@@ -1591,7 +1626,24 @@ mod tests {
             ext: "frag",
             scan: fake_scan,
         }),
+        options: Some(fake_recognise),
     }];
+
+    /// The stub engine's option vocabulary. Deliberately spelled like hurl's, so
+    /// these tests exercise the same shapes the real engine contributes — the
+    /// point of the seam is that the core never learns them, not that the core
+    /// stops enforcing anything.
+    fn fake_recognise(key: &str) -> Option<crate::engine::RawOption> {
+        use crate::engine::{RawOption, RawOptionValue};
+        let (family, value) = match key {
+            "retry" => (Some("retry"), Some(RawOptionValue::Count)),
+            "repeat" => (None, Some(RawOptionValue::Count)),
+            "delay" => (Some("delay"), Some(RawOptionValue::Duration)),
+            "retry-interval" => (Some("retry"), None),
+            _ => return None,
+        };
+        Some(RawOption { family, value })
+    }
 
     fn source(name: &str, text: &str) -> PackSource {
         PackSource {

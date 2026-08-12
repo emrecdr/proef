@@ -3,6 +3,7 @@ pub mod proef_core::analyze
 pub struct proef_core::analyze::AnalyzeCtx<'a>
 pub proef_core::analyze::AnalyzeCtx::config_vars: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::analyze::AnalyzeCtx::env: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+pub proef_core::analyze::AnalyzeCtx::fragments: &'a proef_core::pack::FragmentCorpus
 pub proef_core::analyze::AnalyzeCtx::kind_to_engine: &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::analyze::AnalyzeCtx::kinds: &'a [proef_core::engine::StepKindSpec]
 pub proef_core::analyze::AnalyzeCtx::provider: &'a dyn proef_core::provider::SourceProvider
@@ -342,6 +343,25 @@ impl core::marker::Unpin for proef_core::engine::DoctorStatus
 impl core::marker::UnsafeUnpin for proef_core::engine::DoctorStatus
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::DoctorStatus
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::DoctorStatus
+pub enum proef_core::engine::RawOptionValue
+pub proef_core::engine::RawOptionValue::Count
+pub proef_core::engine::RawOptionValue::Duration
+impl core::clone::Clone for proef_core::engine::RawOptionValue
+pub fn proef_core::engine::RawOptionValue::clone(&self) -> proef_core::engine::RawOptionValue
+impl core::cmp::Eq for proef_core::engine::RawOptionValue
+impl core::cmp::PartialEq for proef_core::engine::RawOptionValue
+pub fn proef_core::engine::RawOptionValue::eq(&self, &proef_core::engine::RawOptionValue) -> bool
+impl core::fmt::Debug for proef_core::engine::RawOptionValue
+pub fn proef_core::engine::RawOptionValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::RawOptionValue
+impl core::marker::StructuralPartialEq for proef_core::engine::RawOptionValue
+impl core::marker::Freeze for proef_core::engine::RawOptionValue
+impl core::marker::Send for proef_core::engine::RawOptionValue
+impl core::marker::Sync for proef_core::engine::RawOptionValue
+impl core::marker::Unpin for proef_core::engine::RawOptionValue
+impl core::marker::UnsafeUnpin for proef_core::engine::RawOptionValue
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::RawOptionValue
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::RawOptionValue
 pub struct proef_core::engine::ArtifactRef
 pub proef_core::engine::ArtifactRef::map: alloc::sync::Arc<proef_core::emit::SidecarMap>
 pub proef_core::engine::ArtifactRef::slug: alloc::sync::Arc<str>
@@ -485,6 +505,25 @@ impl core::marker::Unpin for proef_core::engine::PayloadProbeError
 impl core::marker::UnsafeUnpin for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeError
+pub struct proef_core::engine::RawOption
+pub proef_core::engine::RawOption::family: core::option::Option<&'static str>
+pub proef_core::engine::RawOption::value: core::option::Option<proef_core::engine::RawOptionValue>
+impl core::clone::Clone for proef_core::engine::RawOption
+pub fn proef_core::engine::RawOption::clone(&self) -> proef_core::engine::RawOption
+impl core::cmp::Eq for proef_core::engine::RawOption
+impl core::cmp::PartialEq for proef_core::engine::RawOption
+pub fn proef_core::engine::RawOption::eq(&self, &proef_core::engine::RawOption) -> bool
+impl core::fmt::Debug for proef_core::engine::RawOption
+pub fn proef_core::engine::RawOption::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::engine::RawOption
+impl core::marker::StructuralPartialEq for proef_core::engine::RawOption
+impl core::marker::Freeze for proef_core::engine::RawOption
+impl core::marker::Send for proef_core::engine::RawOption
+impl core::marker::Sync for proef_core::engine::RawOption
+impl core::marker::Unpin for proef_core::engine::RawOption
+impl core::marker::UnsafeUnpin for proef_core::engine::RawOption
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::RawOption
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::RawOption
 pub struct proef_core::engine::ScannedFile
 pub proef_core::engine::ScannedFile::fragments: alloc::vec::Vec<proef_core::engine::ScannedFragment>
 pub proef_core::engine::ScannedFile::unannotated: alloc::vec::Vec<usize>
@@ -548,6 +587,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScenarioCtx
 pub struct proef_core::engine::StepKindSpec
 pub proef_core::engine::StepKindSpec::fragments: core::option::Option<proef_core::engine::FragmentSupport>
+pub proef_core::engine::StepKindSpec::options: core::option::Option<proef_core::engine::OptionRecogniser>
 pub proef_core::engine::StepKindSpec::prefix: &'static str
 pub proef_core::engine::StepKindSpec::schema: &'static str
 pub proef_core::engine::StepKindSpec::validate: core::option::Option<proef_core::engine::PayloadValidator>
@@ -575,6 +615,7 @@ pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Res
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
 pub fn proef_core::engine::secret_variables<'a>(&'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>, &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>) -> impl core::iter::traits::iterator::Iterator<Item = (&'a str, &'a str)>
 pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<proef_core::engine::ScannedFile, proef_core::engine::FragmentScanError>
+pub type proef_core::engine::OptionRecogniser = fn(&str) -> core::option::Option<proef_core::engine::RawOption>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
 pub mod proef_core::error
 pub enum proef_core::error::CoreError

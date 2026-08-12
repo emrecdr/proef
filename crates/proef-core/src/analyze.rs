@@ -140,6 +140,15 @@ pub struct AnalyzeCtx<'a> {
     pub config_vars: &'a BTreeMap<String, String>,
     /// Injected run identifier (`${run:id}`).
     pub run_id: &'a str,
+    /// The fragment corpus (ADR-0018), read by the caller.
+    ///
+    /// Injected rather than built here, for the same reason every other input
+    /// is: core performs no IO. It also fixes what building it internally cost —
+    /// a fresh corpus means a fresh scan memo, so the LSP re-read and
+    /// re-hurl-parsed the whole corpus on **every** request: each completion
+    /// popup, each go-to-definition, each debounce tick. The caller holds one
+    /// and rebuilds it only when a fragment file actually changes.
+    pub fragments: &'a pack::FragmentCorpus,
 }
 
 impl SuiteAnalysis {
@@ -181,21 +190,10 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
     // Collect-all load: a broken pack contributes its diagnostic and is
     // excluded from the set, but its siblings still load — the editor keeps
     // binding against the good packs instead of going dark (v0.5.1 fix).
-    // Fragments too, or every `ref:` reads as unknown in the editor while the
-    // same suite runs green — the drift that makes diagnostics untrustworthy.
-    let mut fragments = Vec::new();
-    for name in ctx.provider.discover_fragments().unwrap_or_default() {
-        match ctx.provider.read(&name) {
-            Ok(text) => fragments.push(PackSource {
-                name: name.clone(),
-                text,
-            }),
-            Err(e) => out.push_diags(&name, [read_error_diag(&name, &e.0)]),
-        }
-    }
-
-    let fragments = pack::FragmentCorpus::new(fragments, ctx.kinds);
-    let (loaded, pack_diags) = pack::load_collecting(&sources, &fragments, ctx.kinds);
+    // Fragments come in already read, carrying their own read errors, or every
+    // `ref:` reads as unknown in the editor while the same suite runs green —
+    // the drift that makes diagnostics untrustworthy.
+    let (loaded, pack_diags) = pack::load_collecting(&sources, ctx.fragments, ctx.kinds);
     for d in pack_diags {
         let name = d.source_name.clone().unwrap_or_default();
         out.push_diags(&name, [d]);
@@ -511,12 +509,19 @@ mod tests {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
 
     fn hurl_kind_map() -> &'static BTreeMap<String, String> {
         use std::sync::OnceLock;
         static M: OnceLock<BTreeMap<String, String>> = OnceLock::new();
         M.get_or_init(|| BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]))
+    }
+
+    fn empty_corpus() -> &'static pack::FragmentCorpus {
+        use std::sync::OnceLock;
+        static C: OnceLock<pack::FragmentCorpus> = OnceLock::new();
+        C.get_or_init(pack::FragmentCorpus::empty)
     }
 
     fn ctx_over<'a>(
@@ -530,6 +535,7 @@ mod tests {
             env: empty,
             config_vars: empty,
             run_id: "lsp",
+            fragments: empty_corpus(),
         }
     }
 

@@ -233,6 +233,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -296,6 +297,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -378,6 +380,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -479,6 +482,7 @@ fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
             ext: "hurl",
             scan: fake_scan,
         }),
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -576,6 +580,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -662,6 +667,7 @@ fn completion_offers_macro_pattern_snippets() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -769,6 +775,7 @@ fn references_lists_every_step_bound_to_the_macro() {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 
@@ -959,6 +966,7 @@ fn completion_inside_bind_offers_the_fragments_variables() {
             ext: "hurl",
             scan: fake_scan,
         }),
+        options: None,
     }];
     let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
 

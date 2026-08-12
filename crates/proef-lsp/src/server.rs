@@ -15,9 +15,10 @@ use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
 };
 use proef_core::engine::StepKindSpec;
+use proef_core::pack::FragmentCorpus;
 use proef_core::provider::SourceProvider;
 
-use crate::analysis::{Analysis, RecomputeInputs, recompute};
+use crate::analysis::{Analysis, RecomputeInputs, read_fragments, recompute};
 use crate::documents::Documents;
 use crate::features::{completion, definition, diagnostics, references};
 
@@ -176,12 +177,19 @@ fn client_root(params: &serde_json::Value) -> Option<PathBuf> {
 struct State {
     docs: Documents,
     published: HashSet<String>,
+    /// The fragment corpus, rebuilt only when a fragment file changes.
+    ///
+    /// Held here rather than built per recompute: a fresh corpus carries a fresh
+    /// scan memo, so building one per request re-read and re-hurl-parsed the
+    /// whole corpus on every completion, definition and debounce tick.
+    fragments: FragmentCorpus,
 }
 
 fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerError> {
     let mut state = State {
         docs: Documents::default(),
         published: HashSet::new(),
+        fragments: read_fragments(&Documents::default(), cfg.disk.as_ref(), &cfg.kinds),
     };
     let mut dirty_since: Option<Instant> = None;
 
@@ -225,7 +233,7 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
                 dispatch_request(connection, cfg, &state, &req)?;
             }
             Message::Notification(note) => {
-                if apply_notification(&mut state, &note) {
+                if apply_notification(cfg, &mut state, &note) {
                     dirty_since.get_or_insert_with(Instant::now);
                 }
             }
@@ -236,38 +244,71 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
 
 /// Applies a document notification to the overlay. Returns true if it dirtied the
 /// suite (an open/change/close that a recompute must react to).
-fn apply_notification(state: &mut State, note: &lsp_server::Notification) -> bool {
-    match note.method.as_str() {
+fn apply_notification(
+    cfg: &ServerConfig,
+    state: &mut State,
+    note: &lsp_server::Notification,
+) -> bool {
+    let touched: lsp_types::Uri = match note.method.as_str() {
         DidOpenTextDocument::METHOD => {
-            if let Ok(p) =
+            let Ok(p) =
                 serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(note.params.clone())
-            {
-                state.docs.open(p.text_document.uri, p.text_document.text);
-                return true;
-            }
+            else {
+                return false;
+            };
+            let uri = p.text_document.uri.clone();
+            state.docs.open(p.text_document.uri, p.text_document.text);
+            uri
         }
         DidChangeTextDocument::METHOD => {
-            if let Ok(p) = serde_json::from_value::<lsp_types::DidChangeTextDocumentParams>(
+            let Ok(p) = serde_json::from_value::<lsp_types::DidChangeTextDocumentParams>(
                 note.params.clone(),
-            ) {
-                // FULL sync → the last change carries the whole document.
-                if let Some(change) = p.content_changes.into_iter().last() {
-                    state.docs.change(p.text_document.uri, change.text);
-                    return true;
-                }
-            }
+            ) else {
+                return false;
+            };
+            // FULL sync → the last change carries the whole document.
+            let Some(change) = p.content_changes.into_iter().last() else {
+                return false;
+            };
+            let uri = p.text_document.uri.clone();
+            state.docs.change(p.text_document.uri, change.text);
+            uri
         }
         DidCloseTextDocument::METHOD => {
-            if let Ok(p) =
-                serde_json::from_value::<lsp_types::DidCloseTextDocumentParams>(note.params.clone())
-            {
-                state.docs.close(&p.text_document.uri);
-                return true;
-            }
+            let Ok(p) = serde_json::from_value::<lsp_types::DidCloseTextDocumentParams>(
+                note.params.clone(),
+            ) else {
+                return false;
+            };
+            state.docs.close(&p.text_document.uri);
+            p.text_document.uri
         }
-        _ => {}
+        _ => return false,
+    };
+    // Only a fragment file invalidates the corpus, and only then is it re-read.
+    // Editing a pack or a feature — the overwhelming majority of keystrokes —
+    // leaves it alone, which is the whole point of holding it across recomputes.
+    // A close counts too: the overlay's bytes stop winning, so the corpus must
+    // fall back to what is on disk.
+    if is_fragment(cfg, &touched) {
+        state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
     }
-    false
+    true
+}
+
+/// Does this document belong to the fragment corpus?
+///
+/// By extension, asked of the registry rather than hardcoded: a second engine's
+/// fragment format must invalidate the corpus exactly as `.hurl` does (ADR-0002).
+fn is_fragment(cfg: &ServerConfig, uri: &lsp_types::Uri) -> bool {
+    let name = crate::documents::url_to_name(uri);
+    let Some(ext) = Path::new(&name).extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    cfg.kinds
+        .iter()
+        .filter_map(|kind| kind.fragments)
+        .any(|support| support.ext.eq_ignore_ascii_case(ext))
 }
 
 /// Builds the current [`Analysis`] from the live overlay-then-disk provider, or
@@ -282,6 +323,7 @@ fn current_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
     let inputs = RecomputeInputs {
         root: &cfg.root,
         docs: &state.docs,
+        fragments: &state.fragments,
         disk: cfg.disk.as_ref(),
         kinds: &cfg.kinds,
         kind_to_engine: &cfg.kind_to_engine,
