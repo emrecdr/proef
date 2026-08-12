@@ -41,6 +41,8 @@ pub fn write(diags: &[&Diag], path: &Path) -> Result<(), String> {
         }],
     });
     let text = serde_json::to_string_pretty(&sarif).map_err(|err| err.to_string())?;
+    crate::fsutil::create_parents(path)
+        .map_err(|err| format!("cannot create directory for {}: {err}", path.display()))?;
     std::fs::write(path, text).map_err(|err| format!("cannot write {}: {err}", path.display()))
 }
 

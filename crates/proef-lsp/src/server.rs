@@ -313,13 +313,10 @@ fn apply_notification(
 /// fragment format must invalidate the corpus exactly as `.hurl` does (ADR-0002).
 fn is_fragment(cfg: &ServerConfig, uri: &lsp_types::Uri) -> bool {
     let name = crate::documents::url_to_name(uri);
-    let Some(ext) = Path::new(&name).extension().and_then(|e| e.to_str()) else {
-        return false;
-    };
     cfg.kinds
         .iter()
         .filter_map(|kind| kind.fragments)
-        .any(|support| support.ext.eq_ignore_ascii_case(ext))
+        .any(|support| support.claims(&name))
 }
 
 /// Builds the current [`Analysis`] from the live overlay-then-disk provider, or

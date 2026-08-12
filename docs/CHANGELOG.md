@@ -8,6 +8,30 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **An output path creates the directories it names.** `--junit`, `--sarif` and
+  `report -o` failed when the parent directory did not exist, while
+  `artifacts -o` and the run directory created theirs — no rule, four sites
+  deciding separately, with the two used most in CI on the failing side. Every
+  adopter paid the same `mkdir -p`. `pytest --junitxml`, `jest-junit`,
+  `cargo-nextest`'s JUnit store and the `hurl` proef embeds all create them.
+  This does not weaken the "side effects should be explicit" principle: that is
+  about writing files the user did not name, and here they named exactly this
+  path.
+
+- **`proef fragments` counts `[run] setup`/`teardown` usage.** A fragment only a
+  phase feature reached was reported `UNREACHABLE — no macro refs it`, which was
+  false, and failed `--check` — a false CI failure in the workflow `--check`
+  exists for. The verdict also depended on where the phase file sat: inside the
+  suite directory it was discovered as an ordinary feature and counted. The
+  listing's universe now matches the runner's, and a phase that fails to load
+  withholds every count rather than guessing. Filed as R10-2.
+
+- **One predicate answers "is this a fragment file?"** (`FragmentSupport::claims`).
+  Three answered it before — CLI discovery via `Path::extension`, the core scan
+  via `rsplit('.')`, and the LSP's corpus invalidation case-insensitively — so
+  they disagreed about `api.HURL` (the editor rebuilt its corpus for a file
+  nothing would scan) and about a dotfile named `.hurl`. Filed as R10-3.
+
 - **`--config` reaches `proef lsp` and `--watch`.** The flag bypasses the
   upward search so a `proef.toml` beside the suite becomes usable — but the
   editor re-discovered its own config and `--watch` watched whatever a fresh

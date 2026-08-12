@@ -42,6 +42,13 @@ pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> Ex
     if rec.completion == RunCompletion::Incomplete {
         html = banner_incomplete(&html);
     }
+    if let Err(err) = crate::fsutil::create_parents(&out_path) {
+        crate::render::errln!(
+            "error: cannot create directory for {}: {err}",
+            out_path.display()
+        );
+        return ExitCode::SystemError;
+    }
     if let Err(err) = std::fs::write(&out_path, html) {
         crate::render::errln!("error: cannot write {}: {err}", out_path.display());
         return ExitCode::SystemError;

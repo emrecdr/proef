@@ -579,7 +579,8 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
         // engine's file, and route the fragment to the wrong engine at run time.
         let Some((kind_name, scan)) = kinds.iter().find_map(|kind| {
             let support = kind.fragments?;
-            (source.name.rsplit('.').next() == Some(support.ext))
+            support
+                .claims(&source.name)
                 .then_some((kind.prefix, support.scan))
         }) else {
             continue;

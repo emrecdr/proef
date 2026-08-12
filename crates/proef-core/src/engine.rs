@@ -192,6 +192,30 @@ pub struct FragmentSupport {
     pub scan: FragmentScanner,
 }
 
+impl FragmentSupport {
+    /// Does `name` carry the extension this kind claims?
+    ///
+    /// **The one place the question is answered.** It was answered in three:
+    /// CLI discovery via `Path::extension`, the core scan via `rsplit('.')`, and
+    /// the LSP's corpus invalidation case-insensitively — so they disagreed
+    /// about `api.HURL` (the editor rebuilt its corpus for a file nothing would
+    /// ever scan) and about a dotfile named `.hurl` (a stem, not an extension,
+    /// which only the `rsplit` spelling accepted).
+    ///
+    /// Extension, not membership in a discovered set: a fragment file created
+    /// while the editor is open is in no corpus yet, and it still has to
+    /// invalidate the one being held.
+    ///
+    /// Path semantics, so `.hurl` is a stem and not an extension — the same
+    /// answer a user gets from every other tool that classifies files.
+    #[must_use]
+    pub fn claims(&self, name: &str) -> bool {
+        std::path::Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext == self.ext)
+    }
+}
+
 /// One entry of a fragment file, as the claiming engine's own parser sees it.
 ///
 /// Engine-agnostic by construction: `proef-core` never learns a hurl type, and

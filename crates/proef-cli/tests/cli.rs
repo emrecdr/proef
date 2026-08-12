@@ -564,3 +564,64 @@ fn config_names_a_file_that_discovery_would_never_find() {
         .code(2)
         .stderr(contains("is not a file"));
 }
+
+/// An output path proef was told to write includes the directories it needs.
+///
+/// `--junit` and `report -o` are used mostly in CI, where the target path
+/// routinely does not exist yet — a fresh workspace, `target/reports/`. proef
+/// created parents for `artifacts -o` and the run directory but not for these,
+/// so there was no rule, and the two paths used most in CI were on the failing
+/// side. Every adopter paid the same `mkdir -p`.
+///
+/// The comparison that settles it: `pytest --junitxml`, `jest-junit`,
+/// `cargo-nextest`'s `JUnit` store and the `hurl` proef embeds all create them.
+#[test]
+fn an_output_path_creates_the_directories_it_needs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\n[url]\nbase = \"http://127.0.0.1:1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/features/packs/api.yaml"),
+        "macros:\n  m:\n    match: it runs\n    steps:\n      - hurl: |\n          GET ${url:base}/x\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When it runs\n",
+    )
+    .unwrap();
+
+    // The run itself fails (nothing listens on port 1) — the point is that the
+    // report is still written, rather than the missing directory replacing the
+    // run's own verdict with a path error.
+    proef()
+        .current_dir(root)
+        .args(["test", "--junit", "reports/nested/junit.xml"])
+        .assert()
+        .failure();
+    assert!(
+        root.join("reports/nested/junit.xml").is_file(),
+        "--junit must create the directories its path names"
+    );
+
+    // A validation failure, so SARIF has something to write.
+    std::fs::write(
+        root.join("tests/features/bad.feature"),
+        "Feature: F\n  Scenario: S\n    When nothing matches this\n",
+    )
+    .unwrap();
+    proef()
+        .current_dir(root)
+        .args(["test", "--dry-run", "--sarif", "sarif/nested/out.sarif"])
+        .assert()
+        .code(2);
+    assert!(
+        root.join("sarif/nested/out.sarif").is_file(),
+        "--sarif must create the directories its path names"
+    );
+}

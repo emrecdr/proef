@@ -434,16 +434,19 @@ pub fn fragment_files(
     root: &Path,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<Vec<PathBuf>, FrontError> {
-    let exts: Vec<&str> = fragment_extensions(kinds);
-    if exts.is_empty() {
+    let supports: Vec<proef_core::engine::FragmentSupport> =
+        kinds.iter().filter_map(|kind| kind.fragments).collect();
+    if supports.is_empty() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
     let mut visited = std::collections::BTreeSet::new();
     walk_dir(root, &mut visited, &mut |_, file| {
-        if file
-            .extension()
-            .is_some_and(|e| exts.iter().any(|ext| e == *ext))
+        // Through the seam's own predicate, so discovery and the scan cannot
+        // disagree about which files are fragments.
+        if supports
+            .iter()
+            .any(|support| support.claims(&file.to_string_lossy()))
         {
             out.push(file);
         }

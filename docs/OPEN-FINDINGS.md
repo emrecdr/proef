@@ -205,7 +205,7 @@ gone, which is what stops the class recurring. `proef lsp` still starts when a
 named config is missing (an editor offering less beats one that will not boot),
 where the runner exits 2; the asymmetry is deliberate and documented.
 
-### R10-2 — `proef fragments` judges reachability over a smaller universe than the runner
+### R10-2 — `proef fragments` judges reachability over a smaller universe than the runner *(shipped)*
 
 `[run] setup` / `[run] teardown` are not loaded, so a fragment used **only** by a
 phase feature counts as never run and fails `--check` — a false CI failure in the
@@ -213,7 +213,7 @@ workflow `--check` was asked for, unless the phase feature happens to sit inside
 the suite directory. `exec::execute` already threads one corpus through both
 phase validations and both phase runs; the listing needs the same universe.
 
-### R10-3 — three predicates answer "is this a fragment file?", and they disagree
+### R10-3 — three predicates answer "is this a fragment file?", and they disagree *(shipped)*
 
 `front::fragment_extensions` (exact match, and its doc claims to be "the one
 place that answers this"), `pack::scan_fragments` (exact), and the LSP's own
