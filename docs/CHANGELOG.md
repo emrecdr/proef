@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-12 (the adoption response)
+
 ### Added
 
 - **`[run] exclusive-tags`** — a tag expression selecting scenarios that run
