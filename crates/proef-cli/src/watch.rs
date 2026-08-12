@@ -20,7 +20,7 @@ use proef_core::error::ExitCode;
 /// own output reruns itself forever.
 fn watched_extensions() -> Vec<&'static str> {
     let kinds = crate::registry::step_kinds();
-    let mut exts = vec!["feature", "yaml", "yml"];
+    let mut exts = crate::front::authored_extensions();
     exts.extend(crate::front::fragment_extensions(&kinds));
     exts
 }
@@ -52,10 +52,10 @@ fn is_authored(
     if config_path.is_some_and(|c| path == c) {
         return true;
     }
-    // Every component except the file name is a directory this path sits under.
-    let mut components: Vec<_> = path.components().collect();
-    components.pop();
-    for component in components {
+    // Every component of the parent is a directory this path sits under. Taken
+    // via `parent` rather than by collecting and popping: this runs per
+    // filesystem event, and dropping the file name does not need an allocation.
+    for component in path.parent().into_iter().flat_map(Path::components) {
         let dir = Path::new(component.as_os_str());
         if crate::front::skipped_dir(dir)
             || runs_dir.is_some_and(|name| component.as_os_str() == std::ffi::OsStr::new(name))

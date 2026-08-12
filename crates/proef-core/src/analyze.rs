@@ -299,80 +299,93 @@ fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
         .collect()
 }
 
-/// Index every `ref:` reference → its resolved fragment, for go-to-def from a
-/// `ref:` line. Pairs positionally with the `ref:` line spans exactly as
-/// `index_use_refs` does, and carries the same guard: a flow-style step parses
-/// to a `Ref` but contributes no line, so a count mismatch means the pairing
-/// cannot be trusted and the macro is skipped rather than mis-anchored.
-fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
-    let mut refs = Vec::new();
+/// Index one kind of cross-reference line → its resolved target, for
+/// go-to-definition.
+///
+/// `pick` selects the step kind being indexed and `spans_of` finds that key's
+/// lines; `make` resolves a target name to the record, returning `None` when it
+/// resolves to nothing (an unknown target contributes no reference — pack
+/// validation already reported it).
+///
+/// **The pairing is positional, and that is the delicate part.** Each macro's
+/// parsed targets pair in order with the line spans the scanner finds. Both
+/// counts come from the macro's own steps and source, so a mismatch means the
+/// scanner missed a step it cannot see (a flow-style `- {use: base}` parses to a
+/// step but contributes no line). That macro is then skipped entirely rather
+/// than risk anchoring a reference to the wrong line. Written once here because
+/// `use:` and `ref:` had separate copies of this guard, and a fix to the reasoning
+/// above would have had to land in both to be true.
+fn index_refs<T>(
+    packs: &PackSet,
+    pick: impl Fn(&MacroStepKind) -> Option<&str>,
+    spans_of: fn(&str, &str) -> Vec<Span>,
+    make: impl Fn(&crate::pack::Macro, Span, &str) -> Option<T>,
+) -> Vec<T> {
+    let mut out = Vec::new();
     for m in packs.macros.values() {
         let MacroBody::Steps(steps) = &m.body else {
             continue;
         };
-        let targets: Vec<&str> = steps
-            .iter()
-            .filter_map(|step| match &step.kind {
-                MacroStepKind::Ref { target } => Some(target.as_str()),
-                MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
-            })
-            .collect();
-        let spans = crate::pack::locate::ref_line_spans(&m.source, &m.name);
+        let targets: Vec<&str> = steps.iter().filter_map(|step| pick(&step.kind)).collect();
+        // Most macros reference nothing of this kind, and the span scan walks the
+        // pack text from byte 0 to find the macro's block. The count guard below
+        // already rejects the empty case; leaving before the scan just declines to
+        // pay for it, on a path the LSP re-runs per request.
+        if targets.is_empty() {
+            continue;
+        }
+        let spans = spans_of(&m.source, &m.name);
         if spans.len() != targets.len() {
             continue;
         }
-        for (span, target) in spans.into_iter().zip(targets) {
-            // Resolved by name, so an unknown target simply contributes no
-            // reference — pack validation already reported it.
-            if let Some(fragment) = packs.find_fragment(target) {
-                refs.push(FragmentRef {
-                    pack: m.pack.clone(),
-                    span,
-                    target_fragment: fragment.name.clone(),
-                });
-            }
-        }
+        out.extend(
+            spans
+                .into_iter()
+                .zip(targets)
+                .filter_map(|(span, target)| make(m, span, target)),
+        );
     }
-    refs
+    out
 }
 
-/// Index every `use:` reference → its resolved target, for go-to-def from a
-/// `use:` line. Each macro's parsed `MacroStepKind::Use` targets pair positionally
-/// with the `use:` line spans `pack::locate::use_line_spans` finds. Because both
-/// counts come from the macro's own steps and source, a mismatch means the line
-/// scanner missed a step it can't see (e.g. a flow-style `- {use: base}`), so the
-/// pairing is unreliable and that macro is skipped entirely rather than risk a
-/// wrong `Some`.
-fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
-    let mut use_refs = Vec::new();
-    for m in packs.macros.values() {
-        let MacroBody::Steps(steps) = &m.body else {
-            continue;
-        };
-        let targets: Vec<&str> = steps
-            .iter()
-            .filter_map(|step| match &step.kind {
-                MacroStepKind::Use { target, .. } => Some(target.as_str()),
-                // Only `use:` lines are indexed here; a `ref:` resolves to a
-                // fragment, not a macro, so it is not a go-to-macro target.
-                MacroStepKind::Payload { .. } | MacroStepKind::Ref { .. } => None,
+/// Index every `ref:` reference → its resolved fragment.
+fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
+    index_refs(
+        packs,
+        |kind| match kind {
+            MacroStepKind::Ref { target } => Some(target.as_str()),
+            MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
+        },
+        crate::pack::locate::ref_line_spans,
+        |m, span, target| {
+            packs.find_fragment(target).map(|fragment| FragmentRef {
+                pack: m.pack.clone(),
+                span,
+                target_fragment: fragment.name.clone(),
             })
-            .collect();
-        let spans = crate::pack::locate::use_line_spans(&m.source, &m.name);
-        if spans.len() != targets.len() {
-            continue; // line scan and parsed steps disagree → pairing unreliable, skip
-        }
-        for (span, target) in spans.into_iter().zip(targets) {
-            if let Some(target_macro) = packs.find_use_target(target) {
-                use_refs.push(UseRef {
-                    pack: m.pack.clone(),
-                    span,
-                    target_macro: target_macro.name.clone(),
-                });
-            }
-        }
-    }
-    use_refs
+        },
+    )
+}
+
+/// Index every `use:` reference → its resolved target macro.
+fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
+    index_refs(
+        packs,
+        |kind| match kind {
+            MacroStepKind::Use { target, .. } => Some(target.as_str()),
+            // Only `use:` lines are indexed here; a `ref:` resolves to a
+            // fragment, not a macro, so it is not a go-to-macro target.
+            MacroStepKind::Payload { .. } | MacroStepKind::Ref { .. } => None,
+        },
+        crate::pack::locate::use_line_spans,
+        |m, span, target| {
+            packs.find_use_target(target).map(|target_macro| UseRef {
+                pack: m.pack.clone(),
+                span,
+                target_macro: target_macro.name.clone(),
+            })
+        },
+    )
 }
 
 fn feature_stem(name: &str) -> String {

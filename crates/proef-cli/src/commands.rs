@@ -27,10 +27,6 @@ fn config_vars_for(
         })
 }
 
-/// Load and validate a suite through the front-end (dry-run mode), mapping a
-/// front-end error to its exit code. The shared load path for `flows`,
-/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
-/// raw `FrontError` to SARIF.
 /// This invocation's fragment corpus, read from `[run] fragments` (ADR-0018).
 ///
 /// One helper rather than the same three lines at five call sites: the corpus
@@ -40,6 +36,10 @@ pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::Fragmen
     front::fragment_corpus(config.fragments().as_deref()).map_err(|err| report_front_error(&err))
 }
 
+/// Load and validate a suite through the front-end (dry-run mode), mapping a
+/// front-end error to its exit code. The shared load path for `flows`,
+/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
+/// raw `FrontError` to SARIF.
 fn load_front(
     path: &Path,
     active_env: Option<&str>,
@@ -168,14 +168,17 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>], suite: Option<&Path>) -> ExitC
 fn validate_phase_features(
     config: &ProjectConfig,
     config_vars: &Arc<BTreeMap<String, String>>,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<usize, ExitCode> {
     let mut scenarios = 0usize;
-    // Once for both phases: the corpus does not depend on which one is loading.
-    let fragments = corpus(config)?;
+    // Taken from the caller, not built here: the corpus depends on neither the
+    // phase nor the suite, so the one `dry_run` already read serves both.
+    // Building a second would reintroduce the per-load rescan `corpus` exists
+    // to avoid — the invariant, not just the cost, is the point.
     for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
         let Some(path) = path else { continue };
         let front =
-            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, &fragments)?;
+            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, fragments)?;
         render::print_all(&front.warnings);
         scenarios += front
             .features
@@ -351,7 +354,7 @@ pub fn dry_run(
         return front::no_scenarios_matched();
     }
 
-    let phase_note = match validate_phase_features(config, &config_vars) {
+    let phase_note = match validate_phase_features(config, &config_vars, &fragments) {
         Ok(0) => String::new(),
         Ok(n) => format!(" · {n} setup/teardown scenario(s) validated"),
         Err(code) => return code,

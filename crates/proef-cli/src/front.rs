@@ -128,19 +128,8 @@ pub fn run(
     config_vars: Arc<BTreeMap<String, String>>,
     fragments: &FragmentCorpus,
 ) -> Result<FrontEnd, FrontError> {
-    let engines = registry::engines();
-    let kinds: Vec<proef_core::engine::StepKindSpec> = engines
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
-    let kind_to_engine: BTreeMap<String, String> = engines
-        .iter()
-        .flat_map(|e| {
-            e.step_kinds()
-                .iter()
-                .map(|k| (k.prefix.to_owned(), e.id().to_owned()))
-        })
-        .collect();
+    let kinds = registry::step_kinds();
+    let kind_to_engine = registry::kind_to_engine();
 
     // Injected values — the core reads no environment, clock, or randomness.
     // `vars_os`: a foreign non-UTF-8 variable in the environment must not
@@ -379,7 +368,7 @@ fn walk_features(
     visited: &mut std::collections::BTreeSet<PathBuf>,
 ) -> Result<(), FrontError> {
     walk_dir(dir, visited, &mut |_, file| {
-        if file.extension().is_some_and(|e| e == "feature") {
+        if file.extension().is_some_and(|e| e == FEATURE_EXT) {
             out.push(file);
         }
     })
@@ -394,13 +383,35 @@ pub fn pack_files(base: &Path) -> Result<Vec<PathBuf>, FrontError> {
     let mut visited = std::collections::BTreeSet::new();
     walk_dir(base, &mut visited, &mut |dir, file| {
         if dir.file_name().is_some_and(|name| name == "packs")
-            && file.extension().is_some_and(|e| e == "yaml" || e == "yml")
+            && file
+                .extension()
+                .is_some_and(|e| PACK_EXTS.iter().any(|ext| e == *ext))
         {
             out.push(file);
         }
     })?;
     out.sort();
     Ok(out)
+}
+
+/// The extension of a feature file.
+pub(crate) const FEATURE_EXT: &str = "feature";
+
+/// The extensions of a pack file.
+pub(crate) const PACK_EXTS: [&str; 2] = ["yaml", "yml"];
+
+/// Every extension proef itself authors — the counterpart to
+/// [`fragment_extensions`], which answers the same question for the engines.
+///
+/// One definition because four places need the same answer: feature discovery,
+/// pack discovery, `fmt`'s explicit-file predicate, and `--watch`'s retrigger
+/// allowlist. `--watch` used to hardcode its own copy two lines below a comment
+/// explaining why the *engine* half must never be hardcoded; teaching discovery
+/// a new extension would have left the watcher silently not retriggering on it.
+pub(crate) fn authored_extensions() -> Vec<&'static str> {
+    let mut exts = vec![FEATURE_EXT];
+    exts.extend(PACK_EXTS);
+    exts
 }
 
 /// The file extensions the registered engines claim for fragment files. The one
@@ -484,18 +495,22 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
     } else {
         crate::fsutil::parent_dir(path)
     };
-    read_sources(pack_files(&base)?, "pack")
+    read_sources(pack_files(&base)?)
 }
 
-/// Read discovered files into [`PackSource`]s. `what` names them in the read
-/// error, which is the only thing that differs between the kinds of input the
-/// front end loads — the naming and `Arc` sharing must not.
-fn read_sources(paths: Vec<PathBuf>, what: &str) -> Result<Vec<PackSource>, FrontError> {
+/// Read discovered packs into [`PackSource`]s, failing on the first unreadable
+/// one.
+///
+/// Packs only. The other input kind the front end loads is a fragment corpus,
+/// which [`read_corpus`] handles instead — it collects per-file rather than
+/// failing, because a corpus is foreign by design. That difference is why the
+/// two are separate functions rather than one with a flag.
+fn read_sources(paths: Vec<PathBuf>) -> Result<Vec<PackSource>, FrontError> {
     let mut sources = Vec::with_capacity(paths.len());
     for path in paths {
         let text = std::fs::read_to_string(&path).map_err(|err| {
             FrontError::Core(CoreError::system_with(
-                format!("cannot read {what} {}", path.display()),
+                format!("cannot read pack {}", path.display()),
                 err,
             ))
         })?;

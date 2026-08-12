@@ -65,7 +65,8 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
 /// `packs/`. One predicate for both ways into `fmt`, so an explicit file and a
 /// discovered one cannot disagree about what counts as a pack.
 pub(crate) fn is_pack_file(path: &Path) -> bool {
-    path.extension().is_some_and(|e| e == "yaml" || e == "yml")
+    path.extension()
+        .is_some_and(|e| crate::front::PACK_EXTS.iter().any(|ext| e == *ext))
 }
 
 fn discover(path: &Path) -> Vec<PathBuf> {
