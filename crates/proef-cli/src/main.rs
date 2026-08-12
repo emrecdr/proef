@@ -409,7 +409,12 @@ fn main() -> std::process::ExitCode {
                                 let fragments = config.fragments();
                                 watch::watch_loop(
                                     &path,
-                                    config::config_path().as_deref(),
+                                    // The config this run resolved through, not
+                                    // a fresh upward search — with `--config`
+                                    // the two are different files, and watching
+                                    // the wrong one means edits to the settings
+                                    // driving the run never retrigger it.
+                                    config.path(),
                                     fragments.as_deref(),
                                     config.runs_dir(),
                                     |token| run_once(Some(token)),
@@ -532,7 +537,7 @@ fn main() -> std::process::ExitCode {
             Err(code) => code,
         },
         Command::Fmt { path, check } => fmt::fmt(&path, check),
-        Command::Lsp => lsp::run(),
+        Command::Lsp => lsp::run(config_path.map(std::path::Path::to_path_buf)),
     };
     let code = final_exit(code, render::stdout_failed());
     std::process::ExitCode::from(code.code())

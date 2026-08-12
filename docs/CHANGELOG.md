@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--config` reaches `proef lsp` and `--watch`.** The flag bypasses the
+  upward search so a `proef.toml` beside the suite becomes usable — but the
+  editor re-discovered its own config and `--watch` watched whatever a fresh
+  search found. So in exactly the layout the flag exists for,
+  `proef test --config …` ran green while the editor reported every `ref:` as
+  unknown, and editing the config driving the run never retriggered it.
+  `ProjectConfig` now keeps the file it was read from (with `root` derived from
+  it rather than stored beside it), and both consumers use the config actually
+  in force. For `proef lsp` the flag also outranks the client-announced
+  workspace root. Filed as R10-1.
+
 ## [0.11.0] - 2026-08-12 (the adoption response)
 
 ### Added

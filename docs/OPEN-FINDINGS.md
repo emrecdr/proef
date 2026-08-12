@@ -183,7 +183,7 @@ green. All three are consequences of what that branch added; none is a defect in
 what shipped before it. Recorded rather than fixed in place because each is a
 behaviour change, and the branch was already carrying two correctness fixes.
 
-### R10-1 — `--config` is honoured by the runner and ignored by the editor
+### R10-1 — `--config` is honoured by the runner and ignored by the editor *(shipped)*
 
 `--config <path>` bypasses the upward search so a `proef.toml` beside the suite
 becomes usable. `proef lsp` never sees it (it re-discovers via
@@ -193,8 +193,17 @@ fresh upward search, not the one the run was given.
 So in **exactly the layout the flag exists for**, `proef test --config …` runs
 green while the editor gets no `[run] fragments` and reports every `ref:` as
 unknown — diagnostics disagreeing with the runner, which is the drift that makes
-an editor untrustworthy. `ProjectConfig` already keeps `root = path.parent()`;
-exposing the path it loaded from is enough for both consumers.
+an editor untrustworthy.
+
+**Shipped.** `ProjectConfig` now keeps the *file* it was read from and derives
+`root` from it, rather than storing the directory and leaving every consumer that
+needed the file to search again. `--watch` watches the config the run resolved
+through; `proef lsp` takes the flag and lets it outrank even the client-announced
+workspace root, since a named file is not a guess to be improved on. The free
+`config::config_path()` — the fresh upward search both bugs went through — is
+gone, which is what stops the class recurring. `proef lsp` still starts when a
+named config is missing (an editor offering less beats one that will not boot),
+where the runner exits 2; the asymmetry is deliberate and documented.
 
 ### R10-2 — `proef fragments` judges reachability over a smaller universe than the runner
 

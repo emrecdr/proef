@@ -253,10 +253,20 @@ found and every `${url:…}` reads as unset.
 $ proef test --dry-run --config tests/proef/proef.toml
 ```
 
-It is global — every subcommand accepts it. A named file that does not exist is a
-user error (exit 2), not a fall back to defaults: discovery finding nothing means
-"no project here", but a named path that is not there is a typo, and answering it
-with a silently unconfigured run is the thing worth refusing.
+It is global — every subcommand accepts it, including `proef lsp` and
+`proef test --watch`. The editor loading a *different* config than the runner is
+the drift that makes diagnostics untrustworthy, and `--watch` watches the file
+the run actually resolved through, so editing it retriggers.
+
+For `proef lsp` the flag also outranks the workspace root the client announces:
+the flag names a file, and a named file is not a guess to be improved on.
+
+A named file that does not exist is a user error (exit 2) for the runner, not a
+fall back to defaults: discovery finding nothing means "no project here", but a
+named path that is not there is a typo, and answering it with a silently
+unconfigured run is the thing worth refusing. `proef lsp` makes the opposite call
+and starts anyway — an editor offering less is better than one that will not
+boot, and unlike a run it produces no results to be wrong.
 
 Note which root is which. `[run] fragments` resolves against the **config file's**
 directory, while `suite`, `setup`, `teardown` and `runs-dir` resolve against the
