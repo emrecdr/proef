@@ -32,6 +32,7 @@ const CONFIG: &str = r#"# proef.toml — project configuration.
 # Variables live here, never in .feature files: packs read them as ${url:…} / ${vars:…}.
 [run]
 suite = "suite"                    # `proef test` needs no path argument
+fragments = "hurl"                 # .hurl files whose entries a step may `ref:`
 
 [url]
 # ${url:base} resolves from here; PROEF_BASE_URL overrides it when set.
@@ -42,7 +43,25 @@ const FEATURE: &str = r#"Feature: Directory search
   Scenario: A known record is found
     Given the service is healthy
     When the operator searches for "Acme"
+    And the corpus reports its version
 "#;
+
+/// A one-entry `.hurl` corpus file, so the scaffold shows **both** body forms.
+///
+/// The newcomer with most to gain from `ref:` is the one who already owns a
+/// hurl corpus — and a scaffold teaching only `hurl: |` reads as "proef wants a
+/// copy of your files transcribed into YAML", which is the opposite of what
+/// ADR-0018 built. Charter-safe: a fixed template *demonstrating* the form
+/// generates nothing from anybody's corpus.
+const FRAGMENT: &str = r"# A real hurl file. proef only ever reads it — `proef fmt` refuses to touch it,
+# and `hurl hurl/api.hurl --variable base=...` still runs it unchanged.
+#
+# The annotation names an entry so a pack step can `ref:` it. It carries a name
+# and nothing else: all orchestration stays in the pack.
+# @proef api.version
+GET {{base}}/version
+HTTP 200
+";
 
 /// The pack `init` writes, verbatim.
 ///
@@ -69,6 +88,16 @@ macros:
           [Query]
           q: ${term}
           HTTP 200
+
+  # The other body form. Pick per step, not per suite: `hurl: |` splices ${…}
+  # anywhere (including a multi-line body); `ref:` names an entry of a real
+  # .hurl file, which stays runnable on its own. `bind:` supplies its {{…}}.
+  version:
+    match: the corpus reports its version
+    steps:
+      - ref: api.version
+        bind:
+          base: ${url:base}
 ";
 
 // Mirrors the root `.gitignore`'s `proef runtime outputs` entry: the first
@@ -80,10 +109,11 @@ const GITIGNORE: &str = ".proef-runs/\n.proef-state.json\n";
 /// next command.
 pub fn init(dir: &Path) -> ExitCode {
     let pack_path = dir.join("suite/packs/api.yaml");
-    let files: [(PathBuf, &str); 4] = [
+    let files: [(PathBuf, &str); 5] = [
         (dir.join("proef.toml"), CONFIG),
         (dir.join("suite/case.feature"), FEATURE),
         (pack_path.clone(), PACK),
+        (dir.join("hurl/api.hurl"), FRAGMENT),
         (dir.join(".gitignore"), GITIGNORE),
     ];
 

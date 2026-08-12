@@ -589,8 +589,14 @@ fn expand_ref_step(
         // literally on that line of that file, and ADR-0018 promises a real
         // file:line. The message names the macro, so the other end of the link
         // is not lost.
+        // All three routes ADR-0018 defines, not two. The omitted one was the
+        // fragment's own `[Options] variable:` — the route that makes a corpus
+        // file runnable on its own with nothing passed in, which is the property
+        // ADR-0018 exists to preserve. An author told only the other two learns
+        // the ways to keep a fragment dependent and never the way to make it
+        // independent.
         let message = format!(
-            "fragment `{}` reads `{}`, which nothing supplies — no `bind:` in scope gives a value, and no earlier step captures it",
+            "fragment `{}` reads `{}`, which nothing supplies — no `bind:` in scope gives a value, no earlier step captures it, and the fragment sets no `[Options] variable:` of its own",
             fragment.name,
             missing.join("`, `"),
         );
@@ -602,8 +608,10 @@ fn expand_ref_step(
                     fragment.line,
                 ))
                 .with_help(format!(
-                    "add `bind: {{ {}: … }}` to the step, its macro, or the pack",
-                    missing[0]
+                    "add `bind: {{ {}: … }}` to the step, its macro, or the pack — or give \
+                     the fragment its own `[Options]` `variable: {}=…`, which also keeps the \
+                     file runnable under stock `hurl`",
+                    missing[0], missing[0]
                 )),
         );
         return;
@@ -1755,7 +1763,7 @@ mod tests {
     #[allow(clippy::unnecessary_wraps)]
     fn frag_scan(
         text: &str,
-    ) -> Result<Vec<crate::engine::ScannedFragment>, crate::engine::FragmentScanError> {
+    ) -> Result<crate::engine::ScannedFile, crate::engine::FragmentScanError> {
         let mut out: Vec<crate::engine::ScannedFragment> = Vec::new();
         for (index, line) in text.lines().enumerate() {
             let line = line.trim();
@@ -1797,7 +1805,10 @@ mod tests {
                 }
             }
         }
-        Ok(out)
+        Ok(crate::engine::ScannedFile {
+            fragments: out,
+            unannotated: Vec::new(),
+        })
     }
 
     const FRAG_KINDS: &[StepKindSpec] = &[StepKindSpec {

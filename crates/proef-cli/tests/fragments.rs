@@ -257,6 +257,95 @@ fn a_fragments_option_values_are_capped_like_an_inline_blocks() {
     }
 }
 
+/// The listing exists for the two questions nothing else could answer: which
+/// annotated fragments nothing reaches, and which entries carry no annotation at
+/// all. Both were silent — a missing annotation produces a green run and a
+/// silently absent test.
+#[test]
+fn the_listing_names_both_ways_a_fragment_dies() {
+    let hurl = "# @proef api.used\nGET {{base}}/a\nHTTP 200\n\n\
+                # @proef api.deadNoMacro\nGET {{base}}/b\nHTTP 200\n\n\
+                # @proef api.deadViaMacro\nGET {{base}}/c\nHTTP 200\n\n\
+                GET {{base}}/forgot\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: api.used\n        bind: { base: \"${url:base}\" }\n  \
+                orphanMacro:\n    match: nobody says this\n    steps:\n      \
+                - ref: api.deadViaMacro\n        bind: { base: \"${url:base}\" }\n";
+    let dir = project(hurl, pack);
+    std::fs::write(
+        dir.path().join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches tasks\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .arg("fragments")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    assert!(out.contains("UNREFERENCED"), "{out}");
+    assert!(out.contains("api.deadNoMacro"), "{out}");
+    // The dangerous one: the *macro* warning already fires, so this reads as
+    // covered unless the fragment is named directly, with the reason.
+    assert!(out.contains("UNREACHABLE"), "{out}");
+    assert!(out.contains("orphanMacro"), "{out}");
+    // No name to list it by, so it is listed by line.
+    assert!(out.contains("UNANNOTATED"), "{out}");
+    // The denominator, without which neither death mode is noticeable.
+    assert!(
+        out.contains("4 entries · 3 annotated · 1 unannotated · 2 never run"),
+        "{out}"
+    );
+
+    // `--check` gates the first class; the second needs opting in, because an
+    // unannotated entry is inert by design and only a porting team reads it as
+    // unfinished.
+    let mut check = Command::cargo_bin("proef").unwrap();
+    check
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["fragments", "--check"])
+        .assert()
+        .code(1);
+}
+
+/// A `bind:` key nothing reads was the one authoring mistake in the fragment
+/// path with no signal at all: the typo'd name simply never arrives, and the run
+/// stays green. The did-you-mean matters more here than usual, because the
+/// mistake is in the *pack* while the only previous symptom pointed at the
+/// *fragment*.
+#[test]
+fn a_bind_key_no_fragment_reads_is_refused_with_a_suggestion() {
+    let hurl = "# @proef api.used\nGET {{base}}/a?t={{token}}\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: api.used\n        bind: { base: \"${url:base}\", \
+                token: \"x\", toekn: \"y\" }\n";
+    let stderr = dry_run_error(hurl, pack);
+    assert!(stderr.contains("proef::pack::unread_bind_key"), "{stderr}");
+    assert!(stderr.contains("did you mean `token`?"), "{stderr}");
+}
+
+/// Two entries in one file collide by name like any other pair — but the
+/// cross-file remedy is wrong there: `file.hurl#name` qualifies by file and
+/// cannot separate two entries inside one. Annotating a corpus adds many names
+/// to few files, so this is the likely collision, not the exotic one.
+#[test]
+fn a_same_file_duplicate_says_so_and_offers_a_remedy_that_works() {
+    let hurl = format!("{CORPUS}\n# @proef admin.search\nGET {{{{base}}}}/other\nHTTP 200\n");
+    let stderr = dry_run_error(&hurl, PACK);
+    assert!(stderr.contains("declared twice in"), "{stderr}");
+    assert!(
+        !stderr.contains("file.hurl#name"),
+        "the qualifier cannot disambiguate within one file: {stderr}"
+    );
+}
+
 #[test]
 fn a_duplicate_fragment_name_is_refused() {
     let hurl = format!("{CORPUS}\n# @proef admin.search\nGET {{{{base}}}}/other\nHTTP 200\n");

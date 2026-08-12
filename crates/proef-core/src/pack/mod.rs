@@ -68,6 +68,10 @@ pub struct FragmentCorpus {
 #[derive(Debug, Default)]
 pub(crate) struct Scanned {
     pub(crate) fragments: Arc<BTreeMap<String, Fragment>>,
+    /// Per file, the 1-based lines of entries carrying no annotation. Keyed by
+    /// source name so a listing can group them under the file they belong to;
+    /// a file with none contributes no entry.
+    pub(crate) unannotated: BTreeMap<String, Vec<usize>>,
     pub(crate) diags: Vec<Diag>,
 }
 
@@ -108,6 +112,30 @@ impl FragmentCorpus {
             scanned.diags = diags;
             scanned
         })
+    }
+
+    /// Every annotated fragment in the corpus, keyed by name. Scans on first
+    /// use, like every other reader.
+    ///
+    /// Public because the scan is otherwise gated: [`load`] parses the corpus
+    /// only when some pack actually names a fragment, so `PackSet::fragments`
+    /// is empty for a suite that references none — which is exactly the suite a
+    /// listing has the most to say about.
+    pub fn fragments(&self) -> &BTreeMap<String, Fragment> {
+        &self.scanned().fragments
+    }
+
+    /// Per file, the 1-based lines of entries carrying no `# @proef`
+    /// annotation — the one class of corpus content nothing else can report,
+    /// since an unannotated entry has no name to be listed by.
+    pub fn unannotated(&self) -> &BTreeMap<String, Vec<usize>> {
+        &self.scanned().unannotated
+    }
+
+    /// Whatever was wrong with the corpus: unreadable files first, then scan
+    /// failures. Already shaped as diagnostics.
+    pub fn diagnostics(&self) -> &[Diag] {
+        &self.scanned().diags
     }
 }
 
@@ -542,6 +570,7 @@ pub(crate) fn load_collecting(
 /// the same "never sinks its siblings" rule packs get.
 fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
     let mut fragments: BTreeMap<String, Fragment> = BTreeMap::new();
+    let mut unannotated: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let mut diags: Vec<Diag> = Vec::new();
     for source in sources {
         // The extension decides which kind claims the file. A file no kind
@@ -569,23 +598,41 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
                 continue;
             }
         };
-        for entry in scanned {
+        if !scanned.unannotated.is_empty() {
+            unannotated.insert(source.name.clone(), scanned.unannotated);
+        }
+        for entry in scanned.fragments {
             let name = entry.name;
             if let Some(existing) = fragments.get(&name) {
-                diags.push(
-                    Diag::error(
-                        "proef::pack::duplicate_fragment",
+                // Two branches, because the cross-file remedy is wrong for a
+                // same-file collision: `file.hurl#name` qualifies by *file*, so
+                // it cannot separate two entries inside one. Annotating a corpus
+                // adds many names to few files, which makes same-file the likely
+                // collision — and "declared in both `x` and `x`" reads as a bug
+                // in proef rather than a duplicate in the corpus.
+                let (message, help) = if existing.file == source.name {
+                    (
+                        format!(
+                            "fragment `{name}` is declared twice in `{}` (first at line {})",
+                            source.name, existing.line
+                        ),
+                        "fragment names are global — rename one of the two annotations",
+                    )
+                } else {
+                    (
                         format!(
                             "fragment `{name}` is declared in both `{}` and `{}`",
                             existing.file, source.name
                         ),
-                    )
-                    .with_source(source.name.clone(), Arc::clone(&source.text))
-                    .maybe_span(locate::line_span(&source.text, entry.line))
-                    .with_help(
                         "fragment names are global — rename one, or qualify the `ref:` \
                          as `file.hurl#name`",
-                    ),
+                    )
+                };
+                diags.push(
+                    Diag::error("proef::pack::duplicate_fragment", message)
+                        .with_source(source.name.clone(), Arc::clone(&source.text))
+                        .maybe_span(locate::line_span(&source.text, entry.line))
+                        .with_help(help),
                 );
                 continue;
             }
@@ -607,6 +654,7 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
     }
     Scanned {
         fragments: Arc::new(fragments),
+        unannotated,
         diags,
     }
 }

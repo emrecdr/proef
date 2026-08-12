@@ -54,6 +54,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::unreadable_fragment_file` | A fragment file that could not be read at all (encoding, permissions) — its siblings still load, and it is silent until something `ref:`s the corpus | |
 | `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
 | `pack::bind_without_ref` | `bind:` with no `ref:` to read it — on a step (an inline block takes `${…}` instead), or on a macro whose steps have none (a `use:` target resolves its own) | ✓ |
+| `pack::unread_bind_key` | a `bind:` *key* no fragment in that scope reads (did-you-mean over the readable names) — the finer half of `bind_without_ref`, and the one a typo produces | |
 | `pack::unknown_use` | `use:` names no known macro | ✓ |
 | `pack::use_cycle` | `use:` composition forms a cycle | ✓ |
 | `pack::use_too_deep` | `use:` nesting exceeds depth 32 | |

@@ -206,4 +206,13 @@ of them — variables have exactly one home, this file, and test files stay pure
 proef discovers the nearest `proef.toml` by searching up from the working directory
 (like cargo/git), so it is found from any subdirectory.
 
+**The search only goes up, so the file must sit at or above the directory you run
+from — that is a requirement, not a convention.** Putting `proef.toml` beside the
+suite (`tests/proef/proef.toml`) and running from the repository root does not work:
+nothing searches downward, so the config is simply not found and every `${url:…}`
+reads as unset. Keeping it at the repository root also collapses the one place the
+two roots differ — `[run] fragments` resolves against the **config file's**
+directory, while `suite`, `setup`, `teardown` and `runs-dir` resolve against the
+**working** directory, and at the root those are the same place.
+
 A starter file ships as `proef.toml.example` in the repository root.

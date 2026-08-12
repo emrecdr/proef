@@ -235,6 +235,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--run-id`, `--rerun`, `--sarif`, `--output json|tap`, `--watch`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
 | `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--output json`) |
+| `proef fragments [path]` | list the `[run] fragments` corpus with how many scenarios actually run each entry — naming both ways a fragment dies (no macro refs it; only a macro nothing binds does) and the entries carrying no `# @proef` at all (`--check`, `--require-annotated`, `--output json`) |
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |

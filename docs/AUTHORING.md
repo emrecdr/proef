@@ -160,6 +160,14 @@ inline splices `${…}` anywhere (including a multi-line `${docstring}` body, wh
 a single-line bound scalar cannot express); `ref:` keeps the file runnable on its
 own and checks its interface by name.
 
+`proef fragments` lists the corpus: which entries exist, how many scenarios run
+each, and — the two questions a listing exists for — which are annotated but
+reached by nothing, and which carry no `# @proef` at all and so cannot be
+referenced. `--check` exits 1 on the first; add `--require-annotated` to include
+the second, which is opt-in because an unannotated entry is inert *by design*
+(pointing at a corpus you did not write costs nothing), and only a team
+mid-port means "not done yet" by it.
+
 Set `[run] fragments` to the directory holding those files (see
 [CONFIG.md](CONFIG.md)). Every `{{variable}}` a fragment reads must be bound in
 one of the three scopes, captured by an earlier step, or supplied by the fragment

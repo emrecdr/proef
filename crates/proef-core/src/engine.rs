@@ -118,7 +118,27 @@ pub struct StepKindSpec {
 pub type PayloadValidator = fn(&str) -> Result<(), PayloadProbeError>;
 
 /// An engine-contributed reader for one fragment file's whole text (ADR-0018).
-pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+pub type FragmentScanner = fn(&str) -> Result<ScannedFile, FragmentScanError>;
+
+/// One fragment file as its claiming engine read it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScannedFile {
+    /// The entries carrying a `# @proef` annotation — the referenceable ones.
+    pub fragments: Vec<ScannedFragment>,
+    /// 1-based start lines of entries carrying **no** annotation.
+    ///
+    /// Lines only, and deliberately so. An unannotated entry is not a fragment
+    /// — nothing can `ref:` it — and a corpus proef did not write is expected to
+    /// be mostly those, so building a whole [`ScannedFragment`] for each would
+    /// be the bulk of a scan for no one's benefit. A line number costs a push
+    /// and is all a listing can point at, there being no name to print.
+    ///
+    /// Collected rather than dropped because "which entries did I forget to
+    /// annotate?" is otherwise unanswerable: a missing annotation produces a
+    /// green run and a silently absent test, and the entry that would prove it
+    /// was never built.
+    pub unannotated: Vec<usize>,
+}
 
 /// What a step kind needs to own a fragment file format: the extension that
 /// identifies one and the parser that reads it. Source discovery asks the

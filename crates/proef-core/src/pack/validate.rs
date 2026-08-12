@@ -27,7 +27,7 @@
 //! question (`proef::lower::unbound_placeholder`), because only lowering knows
 //! what earlier steps captured.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use super::locate;
@@ -428,6 +428,20 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
             continue;
         };
 
+        // Macro scope: the union over this macro's own `ref:` targets. Skipped
+        // when the macro has none — `bind_without_ref` already owns that case
+        // and says something more useful about it.
+        if !macro_.bind.is_empty() && macro_has_ref(macro_) {
+            unread_bind_pass(
+                "this macro refs",
+                &format!("macro `{}`", macro_.name),
+                macro_.bind.keys(),
+                &scope_placeholders(set, macro_).into_iter().collect(),
+                &at,
+                diags,
+            );
+        }
+
         let mut payload_ordinals: BTreeMap<&str, usize> = BTreeMap::new();
         for (index, step) in steps.iter().enumerate() {
             match &step.kind {
@@ -538,6 +552,16 @@ fn ref_target_passes(
             ));
         }
     }
+    // Step scope: this step binds for exactly one fragment, so its own reads are
+    // the whole scope.
+    unread_bind_pass(
+        "this step refs",
+        &format!("macro `{}` step {index}", macro_.name),
+        step.bind.keys(),
+        &fragment.placeholders.iter().map(String::as_str).collect(),
+        at,
+        diags,
+    );
     // The same rule one level down. A `bind:` reaches hurl as `[Options]
     // variable:`, so a fragment supplying that name is the identical silent
     // last-wins — except here the *fragment's* line lands last and wins,
@@ -561,6 +585,52 @@ fn ref_target_passes(
                  `variable: {name}=`, where the fragment's own line lands last and the bound \
                  value would never reach the request",
             )),
+        );
+    }
+}
+
+/// Refuse `bind:` keys that nothing in their scope reads.
+///
+/// The finer half of `bind_without_ref`, which only catches a table with no
+/// `ref:` at all. A *key* nobody reads is the same bug one level down and the
+/// commoner one — a typo binds `toekn` beside `token` and the run stays green,
+/// because a fragment reads what it reads and an extra name simply never
+/// arrives. It was the only authoring mistake in the fragment path that produced
+/// no signal whatsoever.
+///
+/// `readable` is a **union over the scope**, never one fragment's placeholders:
+/// a pack-scope table is "the plumbing every macro in the file needs", so a key
+/// serving one macro and not its siblings is correct usage, and per-fragment
+/// checking would reject exactly the thing pack scope is for. Dead means no
+/// fragment reachable from this scope reads it.
+fn unread_bind_pass<'a>(
+    scope: &str,
+    where_: &str,
+    bind: impl Iterator<Item = &'a String>,
+    readable: &BTreeSet<&str>,
+    at: &impl Fn(Diag) -> Diag,
+    diags: &mut Vec<Diag>,
+) {
+    for key in bind {
+        if readable.contains(key.as_str()) {
+            continue;
+        }
+        let suggestion = matcher::closest(key, readable.iter().copied())
+            .map(|near| format!(" — did you mean `{near}`?"))
+            .unwrap_or_default();
+        diags.push(
+            at(Diag::error(
+                "proef::pack::unread_bind_key",
+                format!("{where_}: `bind:` supplies `{key}`, which no fragment {scope} reads{suggestion}"),
+            ))
+            .with_help(if readable.is_empty() {
+                "no fragment in scope reads any variable — delete the table".to_owned()
+            } else {
+                format!(
+                    "the fragments in scope read: `{}`",
+                    readable.iter().copied().collect::<Vec<_>>().join("`, `")
+                )
+            }),
         );
     }
 }
@@ -962,6 +1032,23 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
 /// silently dropped its table, which is the setting-ignored-in-silence bug the
 /// other two exist to refuse. Attributed to a macro from the pack, since a
 /// `PackSet` keeps macros rather than the pack's own source text.
+/// Every placeholder read by the fragments a macro's own `ref:` steps name —
+/// the readable set for that macro's scope. A `use:` target resolves its own
+/// scopes (ADR-0018), so its reads deliberately do not count here.
+fn scope_placeholders<'a>(set: &'a PackSet, macro_: &Macro) -> Vec<&'a str> {
+    let MacroBody::Steps(steps) = &macro_.body else {
+        return Vec::new();
+    };
+    steps
+        .iter()
+        .filter_map(|step| match &step.kind {
+            MacroStepKind::Ref { target } => set.find_fragment(target),
+            MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
+        })
+        .flat_map(|fragment| fragment.placeholders.iter().map(String::as_str))
+        .collect()
+}
+
 fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
     for (pack, table) in &set.bind {
         if table.is_empty() {
@@ -982,6 +1069,25 @@ fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
         }
         let from_pack = || set.macros.values().filter(|m| &m.pack == pack);
         if from_pack().any(macro_has_ref) {
+            // Reachable, so the table is read — but each *key* still has to be.
+            // Union over every fragment any macro in this pack refs.
+            let readable: BTreeSet<&str> = from_pack()
+                .flat_map(|m| scope_placeholders(set, m))
+                .collect();
+            if let Some(anchor) = from_pack().next() {
+                let at = |d: Diag| {
+                    d.with_source(anchor.pack.clone(), Arc::clone(&anchor.source))
+                        .maybe_span(anchor.span)
+                };
+                unread_bind_pass(
+                    "in this pack",
+                    &format!("pack `{pack}`"),
+                    table.keys(),
+                    &readable,
+                    &at,
+                    diags,
+                );
+            }
             continue;
         }
         // Nothing to anchor on if the pack contributed no macros at all; that
@@ -1432,7 +1538,7 @@ mod tests {
     /// retry policy, `?var` a read, `!var` a capture, and `@!boom` fails.
     fn fake_scan(
         text: &str,
-    ) -> Result<Vec<crate::engine::ScannedFragment>, crate::engine::FragmentScanError> {
+    ) -> Result<crate::engine::ScannedFile, crate::engine::FragmentScanError> {
         let mut out: Vec<crate::engine::ScannedFragment> = Vec::new();
         for (index, line) in text.lines().enumerate() {
             let line = line.trim();
@@ -1471,7 +1577,10 @@ mod tests {
                 }
             }
         }
-        Ok(out)
+        Ok(crate::engine::ScannedFile {
+            fragments: out,
+            unannotated: Vec::new(),
+        })
     }
 
     const SCANNING: &[StepKindSpec] = &[StepKindSpec {
@@ -1815,7 +1924,14 @@ mod tests {
                 "p.yaml",
                 "bind:\n  base: ${url:base}\nmacros:\n  m:\n    match: it runs\n    bind:\n      q: ${q}\n    steps:\n      - ref: f\n        bind:\n          id: \"{{recordId}}\"\n",
             )],
-            &pack::FragmentCorpus::new(vec![source("api.frag", "@f\n")], SCANNING),
+            // The fragment reads all three, one per scope: a `bind:` key nothing
+            // in scope reads is now its own error (`unread_bind_key`), so a
+            // fixture binding into a fragment that reads nothing would be
+            // testing an unloadable pack.
+            &pack::FragmentCorpus::new(
+                vec![source("api.frag", "@f\n?base\n?q\n?id\n")],
+                SCANNING,
+            ),
             SCANNING,
         )
         .unwrap_or_else(|err| panic!("should load: {err:?}"));

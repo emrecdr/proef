@@ -485,6 +485,26 @@ impl core::marker::Unpin for proef_core::engine::PayloadProbeError
 impl core::marker::UnsafeUnpin for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::PayloadProbeError
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::PayloadProbeError
+pub struct proef_core::engine::ScannedFile
+pub proef_core::engine::ScannedFile::fragments: alloc::vec::Vec<proef_core::engine::ScannedFragment>
+pub proef_core::engine::ScannedFile::unannotated: alloc::vec::Vec<usize>
+impl core::clone::Clone for proef_core::engine::ScannedFile
+pub fn proef_core::engine::ScannedFile::clone(&self) -> proef_core::engine::ScannedFile
+impl core::cmp::Eq for proef_core::engine::ScannedFile
+impl core::cmp::PartialEq for proef_core::engine::ScannedFile
+pub fn proef_core::engine::ScannedFile::eq(&self, &proef_core::engine::ScannedFile) -> bool
+impl core::default::Default for proef_core::engine::ScannedFile
+pub fn proef_core::engine::ScannedFile::default() -> proef_core::engine::ScannedFile
+impl core::fmt::Debug for proef_core::engine::ScannedFile
+pub fn proef_core::engine::ScannedFile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::engine::ScannedFile
+impl core::marker::Freeze for proef_core::engine::ScannedFile
+impl core::marker::Send for proef_core::engine::ScannedFile
+impl core::marker::Sync for proef_core::engine::ScannedFile
+impl core::marker::Unpin for proef_core::engine::ScannedFile
+impl core::marker::UnsafeUnpin for proef_core::engine::ScannedFile
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScannedFile
+impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScannedFile
 pub struct proef_core::engine::ScannedFragment
 pub proef_core::engine::ScannedFragment::declared_options: alloc::vec::Vec<alloc::string::String>
 pub proef_core::engine::ScannedFragment::line: usize
@@ -554,7 +574,7 @@ pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::s
 pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
 pub fn proef_core::engine::secret_variables<'a>(&'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>, &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>) -> impl core::iter::traits::iterator::Iterator<Item = (&'a str, &'a str)>
-pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<alloc::vec::Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError>
+pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<proef_core::engine::ScannedFile, proef_core::engine::FragmentScanError>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>
 pub mod proef_core::error
 pub enum proef_core::error::CoreError
@@ -981,8 +1001,11 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Fragment
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Fragment
 pub struct proef_core::pack::FragmentCorpus
 impl proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::diagnostics(&self) -> &[proef_core::diag::Diag]
 pub fn proef_core::pack::FragmentCorpus::empty() -> Self
+pub fn proef_core::pack::FragmentCorpus::fragments(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
 pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
+pub fn proef_core::pack::FragmentCorpus::unannotated(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<usize>>
 pub fn proef_core::pack::FragmentCorpus::with_read_errors(self, alloc::vec::Vec<proef_core::diag::Diag>) -> Self
 impl core::fmt::Debug for proef_core::pack::FragmentCorpus
 pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

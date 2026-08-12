@@ -57,7 +57,7 @@ impl SourceProvider for FakeDisk {
 #[allow(clippy::unnecessary_wraps)]
 fn fake_scan(
     text: &str,
-) -> Result<Vec<proef_core::engine::ScannedFragment>, proef_core::engine::FragmentScanError> {
+) -> Result<proef_core::engine::ScannedFile, proef_core::engine::FragmentScanError> {
     let mut out: Vec<proef_core::engine::ScannedFragment> = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let line = line.trim();
@@ -80,7 +80,10 @@ fn fake_scan(
             }
         }
     }
-    Ok(out)
+    Ok(proef_core::engine::ScannedFile {
+        fragments: out,
+        unannotated: Vec::new(),
+    })
 }
 
 fn init(client: &Connection) {

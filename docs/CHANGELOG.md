@@ -6,7 +6,50 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`proef fragments`** — the corpus listing, symmetric with `macros`. Until now
+  no proef output stated how many fragments there were, so neither way a
+  fragment can die had a denominator to be noticed against: one no macro
+  references was unobservable, and one reached only through a macro no scenario
+  binds *looked* covered because the macro was flagged. Both are now named
+  apart, unannotated entries are listed by line (they have no name to list by),
+  and `--check` exits 1 when something never runs. `--require-annotated` extends
+  that to unannotated entries and is deliberately opt-in: an unannotated entry is
+  inert by design (ADR-0018), so "not done yet" is a porting team's meaning, not
+  every adopter's. Reachability is read off the lowered scenarios, so a fragment
+  reached through a chain of `use:` counts as reached.
+
+- **`proef doctor` sees the fragment corpus** — a row reporting how many
+  fragments loaded from `[run] fragments`, warning when the configured root is
+  not a directory. A misconfigured path used to surface much later as
+  `pack::unknown_ref`: an error about a *name* when the cause is a *path*.
+
+- **`proef init` scaffolds both body forms** — a one-entry `.hurl` file with a
+  `# @proef` annotation, `[run] fragments`, and a pack macro of each kind. The
+  newcomer with most to gain from `ref:` is the one who already owns a hurl
+  corpus, and a scaffold teaching only `hurl: |` reads as "proef wants your
+  files transcribed into YAML".
+
 ### Fixed
+
+- **A `bind:` key nothing reads is refused** (`proef::pack::unread_bind_key`),
+  with did-you-mean over the names actually in scope. `bind_without_ref` only
+  caught a table with no `ref:` at all, so `bind: { token: …, toekn: … }`
+  validated clean — the one authoring mistake in the fragment path that produced
+  no signal whatsoever. Checked as a **union over the scope**, never against one
+  fragment: a pack-scope table is the plumbing every macro in the file needs, so
+  a key serving one macro and not its siblings stays correct.
+
+- **`duplicate_fragment` no longer says "in both `x` and `x`"** for two entries
+  in one file, and stops offering `file.hurl#name` as the remedy there — that
+  qualifies by file and cannot separate two entries inside one. Annotating a
+  corpus adds many names to few files, which makes same-file the likely
+  collision.
+
+- **`unbound_placeholder` names all three supply routes.** The omitted one was
+  the fragment's own `[Options] variable:` — the route that makes a corpus file
+  runnable standalone, which is the property ADR-0018 exists to preserve.
 
 - **A fragment's `[Options]` escaped the ADR-0007 value caps.** `retry: -1`,
   `repeat: -1` and an unbounded `delay:` were rejected in an inline `hurl:`
@@ -39,7 +82,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   what splices a multi-line body (ADR-0018's splicing-versus-binding boundary,
   enforced where it can be explained).
 
+### Changed
+
+- **Breaking (library):** `proef_core::engine::FragmentScanner` returns
+  `ScannedFile { fragments, unannotated }` rather than `Vec<ScannedFragment>`.
+  An engine's scanner now also reports the 1-based lines of entries carrying no
+  annotation — lines only, never built-then-discarded fragments, so a foreign
+  corpus still costs a push per unannotated entry. Without it "which entries did
+  I forget to annotate?" is unanswerable: a missing annotation produces a green
+  run and a silently absent test, and the entry that would prove it was never
+  built. `FragmentCorpus` gains `fragments()`, `unannotated()` and
+  `diagnostics()`, because the scan is gated on some pack naming a fragment —
+  so `PackSet::fragments` is empty for exactly the suite a listing has most to
+  say about.
+
 ### Documentation
+
+- **Config discovery is a requirement, not a convention.** `proef.toml` is found
+  by searching *up* from the working directory, so a config beside the suite
+  (`tests/proef/proef.toml`) is never found from the repository root — an
+  adopting team planned that layout and discovered it by failure. CONFIG.md now
+  says so, and notes that keeping the file at the root collapses the one place
+  `[run] fragments` (config-relative) and `suite`/`setup`/`teardown`/`runs-dir`
+  (cwd-relative) differ.
 
 - **The release runbook could not work as written.** `main` is a protected
   branch, and step 4's `git push origin main --follow-tags` fails in the

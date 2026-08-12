@@ -146,6 +146,23 @@ enum Command {
         #[arg(long)]
         env: Option<String>,
     },
+    /// List the .hurl fragment corpus with how many scenarios run each entry, flagging ones nothing reaches
+    Fragments {
+        /// A .feature file or directory (default: `[run] suite`, else `tests/`)
+        path: Option<PathBuf>,
+        /// Machine output: `json` prints one object per entry
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
+        /// Exit 1 when a fragment exists that no scenario runs
+        #[arg(long)]
+        check: bool,
+        /// With `--check`, also fail on entries carrying no `# @proef` annotation
+        #[arg(long, requires = "check")]
+        require_annotated: bool,
+        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+        #[arg(long)]
+        env: Option<String>,
+    },
     /// Emit canonical .hurl artifacts + sidecars for a stable hand-off
     Artifacts {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
@@ -400,6 +417,26 @@ fn main() -> std::process::ExitCode {
                 }
             },
         },
+        Command::Fragments {
+            path,
+            output,
+            check,
+            require_annotated,
+            env,
+        } => match json_only(output) {
+            Err(code) => code,
+            Ok(output_json) => match prepare(path, env) {
+                Err(code) => code,
+                Ok((config, path, active_env)) => commands::fragments(
+                    &path,
+                    output_json,
+                    check,
+                    require_annotated,
+                    active_env.as_deref(),
+                    &config,
+                ),
+            },
+        },
         Command::Macros { path, output, env } => match json_only(output) {
             Err(code) => code,
             Ok(output_json) => match prepare(path, env) {
@@ -426,10 +463,12 @@ fn main() -> std::process::ExitCode {
             // Lenient, like `proef lsp`: `doctor` reports on the environment and
             // must run anywhere, including outside a project. No config or no
             // suite simply means there are no packs to check.
-            let suite = load_config()
-                .ok()
-                .and_then(|config| config.default_suite_path());
-            commands::doctor(&registry::engines(), suite.as_deref())
+            let config = load_config().ok();
+            let suite = config
+                .as_ref()
+                .and_then(config::ProjectConfig::default_suite_path);
+            let fragments = config.as_ref().and_then(config::ProjectConfig::fragments);
+            commands::doctor(&registry::engines(), suite.as_deref(), fragments.as_deref())
         }
         Command::Secret { action } => {
             let result = match action {
