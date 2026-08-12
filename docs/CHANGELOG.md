@@ -20,6 +20,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   every adopter's. Reachability is read off the lowered scenarios, so a fragment
   reached through a chain of `use:` counts as reached.
 
+- **`--config <path>`**, global to every subcommand, naming the `proef.toml` to
+  read instead of searching up from the working directory. Discovery only goes
+  up, so a config beside the suite is unreachable from the repository root — a
+  layout an adopting team planned and abandoned after it failed. A named file
+  that does not exist is a user error rather than a fall back to defaults:
+  discovery finding nothing means "no project here", but a named path that is
+  not there is a typo, and a silently unconfigured run is what that used to buy.
+
 - **`proef doctor` sees the fragment corpus** — a row reporting how many
   fragments loaded from `[run] fragments`, warning when the configured root is
   not a directory. A misconfigured path used to surface much later as

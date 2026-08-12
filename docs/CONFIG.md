@@ -206,13 +206,27 @@ of them — variables have exactly one home, this file, and test files stay pure
 proef discovers the nearest `proef.toml` by searching up from the working directory
 (like cargo/git), so it is found from any subdirectory.
 
-**The search only goes up, so the file must sit at or above the directory you run
-from — that is a requirement, not a convention.** Putting `proef.toml` beside the
-suite (`tests/proef/proef.toml`) and running from the repository root does not work:
-nothing searches downward, so the config is simply not found and every `${url:…}`
-reads as unset. Keeping it at the repository root also collapses the one place the
-two roots differ — `[run] fragments` resolves against the **config file's**
+**The search only goes up, so a discovered file must sit at or above the directory
+you run from — that is a requirement, not a convention.** Putting `proef.toml`
+beside the suite (`tests/proef/proef.toml`) and running from the repository root
+does not work by discovery: nothing searches downward, so the config is simply not
+found and every `${url:…}` reads as unset.
+
+`--config <path>` names the file instead and removes the constraint entirely:
+
+```console
+$ proef test --dry-run --config tests/proef/proef.toml
+```
+
+It is global — every subcommand accepts it. A named file that does not exist is a
+user error (exit 2), not a fall back to defaults: discovery finding nothing means
+"no project here", but a named path that is not there is a typo, and answering it
+with a silently unconfigured run is the thing worth refusing.
+
+Note which root is which. `[run] fragments` resolves against the **config file's**
 directory, while `suite`, `setup`, `teardown` and `runs-dir` resolve against the
-**working** directory, and at the root those are the same place.
+**working** directory. Keeping `proef.toml` at the repository root collapses the
+distinction because the two are then the same place; `--config` makes it explicit,
+and is the reason a config beside the suite writes `fragments = "../hurl"`.
 
 A starter file ships as `proef.toml.example` in the repository root.

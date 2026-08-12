@@ -249,6 +249,10 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 **Exit codes are a contract:** `0` ok · `1` test failure (incl. cancelled runs) ·
 `2` user error · `3` system error.
 
+`--config <path>` is global to every subcommand: it names the `proef.toml` to read
+instead of searching up from the working directory, which is what makes a config
+stored beside the suite usable.
+
 ## Configuration
 
 `proef.toml` in the project root (see [`docs/CONFIG.md`](docs/CONFIG.md) /

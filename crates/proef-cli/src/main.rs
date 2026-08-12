@@ -72,6 +72,9 @@ fn json_only(output: Option<OutputFormat>) -> Result<bool, proef_core::error::Ex
     arg_required_else_help = true
 )]
 struct Cli {
+    /// Read this proef.toml instead of searching up from the working directory
+    #[arg(long, global = true, value_name = "PATH")]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -275,8 +278,14 @@ fn resolve_suite_path(
 /// Load `proef.toml` once per invocation (absent file = defaults; a malformed
 /// file is a user error). Threaded into suite resolution and the command so the
 /// config is read a single time, not once per consumer.
-fn load_config() -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
-    config::ProjectConfig::load().map_err(|message| {
+fn load_config(
+    explicit: Option<&std::path::Path>,
+) -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
+    match explicit {
+        Some(path) => config::ProjectConfig::load_at(path),
+        None => config::ProjectConfig::load(),
+    }
+    .map_err(|message| {
         crate::render::errln!("error: {message}");
         proef_core::error::ExitCode::UserError
     })
@@ -298,8 +307,9 @@ fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error:
 fn prepare(
     path: Option<PathBuf>,
     env: Option<String>,
+    explicit: Option<&std::path::Path>,
 ) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
-    let config = load_config()?;
+    let config = load_config(explicit)?;
     let path = resolve_suite_path(path, &config)?;
     Ok((config, path, active_env(env)?))
 }
@@ -327,8 +337,12 @@ fn main() -> std::process::ExitCode {
     render::install();
     // clap renders usage errors itself and exits 2 — which is exactly the
     // user-error contract (ADR-0009); the mapping is pinned by tests/cli.rs.
-    let cli = Cli::parse();
-    let code = match cli.command {
+    let Cli {
+        config: config_path,
+        command,
+    } = Cli::parse();
+    let config_path = config_path.as_deref();
+    let code = match command {
         Command::Test {
             path,
             dry_run,
@@ -348,7 +362,7 @@ fn main() -> std::process::ExitCode {
             // command" nudge must echo the path the user actually typed, not
             // a defaulted one a bare `proef test` already finds on its own.
             let path_given = path.is_some();
-            match prepare(path, env) {
+            match prepare(path, env, config_path) {
                 Err(code) => code,
                 // Parse the tag expression once (it is constant across watch reruns);
                 // a malformed one is a user error, before any scenario runs.
@@ -410,7 +424,7 @@ fn main() -> std::process::ExitCode {
         }
         Command::Flows { path, output, env } => match json_only(output) {
             Err(code) => code,
-            Ok(output_json) => match prepare(path, env) {
+            Ok(output_json) => match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => {
                     commands::flows(&path, output_json, active_env.as_deref(), &config)
@@ -425,7 +439,7 @@ fn main() -> std::process::ExitCode {
             env,
         } => match json_only(output) {
             Err(code) => code,
-            Ok(output_json) => match prepare(path, env) {
+            Ok(output_json) => match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => commands::fragments(
                     &path,
@@ -439,7 +453,7 @@ fn main() -> std::process::ExitCode {
         },
         Command::Macros { path, output, env } => match json_only(output) {
             Err(code) => code,
-            Ok(output_json) => match prepare(path, env) {
+            Ok(output_json) => match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => {
                     commands::macros(&path, output_json, active_env.as_deref(), &config)
@@ -451,7 +465,7 @@ fn main() -> std::process::ExitCode {
             output,
             run_id,
             env,
-        } => match prepare(path, env) {
+        } => match prepare(path, env, config_path) {
             Err(code) => code,
             Ok((config, path, active_env)) => {
                 commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
@@ -463,7 +477,7 @@ fn main() -> std::process::ExitCode {
             // Lenient, like `proef lsp`: `doctor` reports on the environment and
             // must run anywhere, including outside a project. No config or no
             // suite simply means there are no packs to check.
-            let config = load_config().ok();
+            let config = load_config(config_path).ok();
             let suite = config
                 .as_ref()
                 .and_then(config::ProjectConfig::default_suite_path);
@@ -496,7 +510,7 @@ fn main() -> std::process::ExitCode {
         // error" — they each carried their own copy of that rendering. Loud,
         // not lenient: a config that silently defaulted `runs-dir` would
         // misdiagnose "no runs" (same reasoning as `test`, exec.rs).
-        Command::Explain { run_id } => match load_config() {
+        Command::Explain { run_id } => match load_config(config_path) {
             Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
             Err(code) => code,
         },
@@ -504,7 +518,7 @@ fn main() -> std::process::ExitCode {
             base,
             new,
             fail_on_regression,
-        } => match load_config() {
+        } => match load_config(config_path) {
             Ok(config) => diff::diff(
                 config.runs_dir(),
                 base.as_deref(),
@@ -513,7 +527,7 @@ fn main() -> std::process::ExitCode {
             ),
             Err(code) => code,
         },
-        Command::Report { run_id, output } => match load_config() {
+        Command::Report { run_id, output } => match load_config(config_path) {
             Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
             Err(code) => code,
         },

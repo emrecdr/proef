@@ -177,6 +177,31 @@ impl ProjectConfig {
         Self::from_nearest(find_config_from(dir))
     }
 
+    /// The config file named by `--config`, bypassing discovery entirely.
+    ///
+    /// Discovery only searches *up*, so a config beside the suite is invisible
+    /// from the repository root — a layout an adopting team planned and had to
+    /// abandon. Naming the file removes the constraint, and with it the one
+    /// place the two roots differ: `[run] fragments` resolves against this
+    /// file's directory while the suite path stays relative to the working
+    /// directory, and `--config` makes that choice explicit rather than
+    /// positional.
+    ///
+    /// A named file that is not there is a **hard error**, unlike discovery
+    /// finding nothing. Falling back to defaults would answer a typo'd path
+    /// with a run that silently has no configuration — every `${url:…}` unset,
+    /// and nothing saying why.
+    pub fn load_at(path: &Path) -> Result<Self, String> {
+        if !path.is_file() {
+            return Err(format!(
+                "--config {} is not a file — name the proef.toml to read, \
+                 or omit the flag to search up from the working directory",
+                path.display()
+            ));
+        }
+        Self::from_nearest(Some(path.to_path_buf()))
+    }
+
     fn from_nearest(found: Option<PathBuf>) -> Result<Self, String> {
         let Some(path) = found else {
             return Ok(Self::default());

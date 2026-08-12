@@ -511,3 +511,56 @@ fn secret_set_takes_no_value_on_the_command_line() {
         .code(0)
         .stdout(contains("tok"));
 }
+
+/// `proef.toml` is found by searching *up*, so a config beside the suite is
+/// invisible from the repository root — a layout an adopting team planned and
+/// had to abandon. `--config` names the file instead.
+///
+/// The missing-file half matters as much as the working half: discovery finding
+/// nothing legitimately means "no project, use defaults", but a *named* file
+/// that is not there is a typo, and answering it with a silently unconfigured
+/// run is the failure mode that produces `${url:…}` unset and nothing saying why.
+#[test]
+fn config_names_a_file_that_discovery_would_never_find() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("tests/proef")).unwrap();
+    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
+    // Below the working directory, so the upward search cannot reach it.
+    std::fs::write(
+        root.join("tests/proef/proef.toml"),
+        "[run]\nsuite = \"tests/features\"\n[url]\nbase = \"http://127.0.0.1:1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/features/packs/api.yaml"),
+        "macros:\n  h:\n    match: the service is up\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the service is up\n",
+    )
+    .unwrap();
+
+    // Without it: `${url:base}` is unset, because no config was found.
+    proef()
+        .current_dir(root)
+        .args(["test", "tests/features", "--dry-run"])
+        .assert()
+        .failure();
+
+    proef()
+        .current_dir(root)
+        .args(["test", "--dry-run", "--config", "tests/proef/proef.toml"])
+        .assert()
+        .code(0);
+
+    // A named file that is not there is a user error, never a quiet default.
+    proef()
+        .current_dir(root)
+        .args(["test", "--dry-run", "--config", "tests/proef/nope.toml"])
+        .assert()
+        .code(2)
+        .stderr(contains("is not a file"));
+}
