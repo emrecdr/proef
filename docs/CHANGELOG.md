@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-12 (named hurl fragments)
+
 > **Breaking (library):** `proef_core::pack::load` takes a
 > `&proef_core::pack::FragmentCorpus` between the packs and the step kinds
 > (`&FragmentCorpus::empty()` for the previous behaviour, or
