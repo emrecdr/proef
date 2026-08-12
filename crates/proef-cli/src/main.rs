@@ -380,6 +380,7 @@ fn main() -> std::process::ExitCode {
                                     &path,
                                     config::config_path().as_deref(),
                                     fragments.as_deref(),
+                                    config.runs_dir(),
                                     |token| run_once(Some(token)),
                                 )
                             } else {

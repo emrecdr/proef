@@ -291,6 +291,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`--watch` reran itself forever.** ADR-0018 added the engines' fragment
+  extensions to the retrigger allowlist — `.hurl` among them — while every run
+  writes `.proef-runs/<id>/artifacts/*.hurl`. A watched tree containing its own
+  runs dir fed itself: **49 runs in 15 seconds**, firing real traffic in a tight
+  loop and churning record rotation. The filter now excludes generated trees by
+  directory name, reusing discovery's own `skipped_dir` so there is one rule with
+  two consumers, and takes `[run] runs-dir` for the case where it is not a
+  dot-directory. `OPEN-FINDINGS` P5 had closed this "by inspection", naming
+  `.hurl` as a file that could never match; the note is corrected in place.
+
+- **One unreadable file sank the whole corpus.** A fragment root is *foreign by
+  design*, but a single binary or latin-1 file in it exited 3 from every command
+  — `flows` included, which never looks at a fragment. Read failures are now
+  per-file diagnostics (`pack::unreadable_fragment_file`) that never sink their
+  siblings and stay silent until something `ref:`s the corpus, matching what pack
+  loading and the annotation scan already did.
+
+- **`schema --add-to` rewrote fragment files.** It prepended a yaml-language-server
+  modeline to a `.hurl` corpus file and dropped the pack schema beside it —
+  violating ADR-0018's "fragment files are inputs proef never writes". It now
+  refuses anything that is not a pack, reusing the `is_pack_file` predicate `fmt`
+  already had.
+
+- **A `#` in an annotation name was accepted but unreachable.** `#` separates a
+  file from a fragment in `ref: file.hurl#name`, so such a name could be declared
+  and never referenced — and the failure suggested the exact spelling that had
+  just failed. Refused at scan time.
+
+
 - **`proef lsp` answered every URI-keyed request with `null` on Windows.** A source
   name is an identity compared as a string, and the two sides spelled it differently:
   `Path::join` appends without rewriting what is already there, so a `proef.toml`

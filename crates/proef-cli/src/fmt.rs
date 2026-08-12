@@ -64,7 +64,7 @@ pub fn fmt(path: &Path, check: bool) -> ExitCode {
 /// A pack file by name — the extension rule `pack_files` also applies inside
 /// `packs/`. One predicate for both ways into `fmt`, so an explicit file and a
 /// discovered one cannot disagree about what counts as a pack.
-fn is_pack_file(path: &Path) -> bool {
+pub(crate) fn is_pack_file(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "yaml" || e == "yml")
 }
 

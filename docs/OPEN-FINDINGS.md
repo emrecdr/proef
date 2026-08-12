@@ -216,9 +216,26 @@ root is correct: no wrong answers depend on it.
 ### P5 — watch: the atomic-save half *(remainder)*
 
 **Shipped in #37:** `--watch` now also watches `proef.toml`, matched by exact path.
-**Closed by inspection:** the runs-dir self-trigger cannot happen — the retrigger
-filter is an allowlist of `.feature`/`.yaml`/`.yml`, and no run-record file
-(`.jsonl`, `.log`, `.hurl`, `.vars`, `.json`, `.xml`, `.html`) matches it.
+
+**~~Closed by inspection~~ — the inspection was invalidated by a later change, and
+the bug shipped.** The original argument was: the retrigger filter is an allowlist
+of `.feature`/`.yaml`/`.yml`, and no run-record file (`.jsonl`, `.log`, `.hurl`,
+`.vars`, `.json`, `.xml`, `.html`) matches it. ADR-0018 then added the engines'
+fragment extensions to that allowlist — `.hurl`, named in this very paragraph as
+the thing that could not match — while every run writes
+`.proef-runs/<id>/artifacts/*.hurl`. A watched tree containing its own runs dir
+fed itself: **49 runs in 15 seconds**, firing real traffic in a tight loop.
+
+**Now closed by construction, not inspection.** The retrigger filter excludes
+generated trees **by directory name**, reusing discovery's own `skipped_dir`, so
+there is one rule with two consumers rather than a second list to drift; the
+configured `[run] runs-dir` is passed in for the case where it is not a
+dot-directory. `watch::tests` pins both halves — that an emitted artifact never
+requeues, and that a fragment edit still does.
+
+The lesson is the general one: a "closed by inspection" note records a conclusion
+whose premise nothing watches. This one even enumerated the fact that later became
+false. Prefer a test that would fail when the premise changes.
 
 **Still open:** "a single watched file dies after an atomic save". It did **not**
 reproduce on macOS/FSEvents; `notify`'s own docs say it is real but
