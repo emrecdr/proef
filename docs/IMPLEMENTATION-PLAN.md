@@ -1,6 +1,10 @@
 # proef — Implementation Plan
 
-**Status:** M0–M5 delivered; M6 future · **Date:** 2026-07-28.
+**Status:** M0–M5 delivered, **and everything after them** — external config and
+environments (ADR-0012), the v0.6–v0.8 correctness series, v0.9.0, and named hurl
+fragments (ADR-0018). M6 (future engines) remains unscheduled. `CLAUDE.md`'s Status
+block is the running ledger; the milestone sections below describe the plan as it was
+executed, not the current frontier. · **Date:** 2026-07-28, status refreshed 2026-08-12.
 Normative design: [TECH-SPEC](TECH-SPEC.md); decisions: [ADRs](adr/). Sizes are
 t-shirt (S ≈ days, M ≈ small weeks, L ≈ multi-week) — deliberately not fake-precise.
 

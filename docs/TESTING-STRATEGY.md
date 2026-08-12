@@ -75,6 +75,24 @@ cwd-relative path logic silently no-ops and the test passes without reaching the
 **Corpus:** `--dry-run` over every `.feature` in `tests/` —
 the suite's own features are the regression corpus.
 
+**Documentation (`xtask docs-check` + `crates/proef-cli/tests/docs.rs`):** the docs make
+claims a machine can settle, so they are settled mechanically rather than by review.
+`docs-check` reads files — every relative link resolves, and every fenced `toml`/`yaml`
+example parses **with the product's own parsers**, so the check means "proef would accept
+this", not "some parser would". `tests/docs.rs` needs a built binary and therefore lives
+with `assert_cmd`: it asks clap whether every documented command and long flag exists.
+
+Both were written against defects that had already shipped — an ADR whose first example
+could not load, and a row marked *shipped* that named a `--html` flag which never
+existed. In each the surrounding prose was correct, which is precisely what a careful
+reader does not catch. Two scoping rules keep them honest rather than noisy: only the
+**indexed** corpus is linted (`docs/superpowers/` is a dated archive, and editing history
+to satisfy a checker is the wrong direction), and command detection is restricted to
+**code spans and fenced blocks** — prose says "proef discovers packs", and treating that
+as an invocation produced sixty false positives against four real ones. Names the docs
+discuss as *proposals* are listed explicitly in `tests/docs.rs`, so adding one is a
+decision rather than the check going quietly soft.
+
 **CLI (assert_cmd):** exit codes 0/1/2/3 pinned per command and failure class;
 `--output json` schema-checked; `--junit` well-formed (quick-junit round-parse).
 

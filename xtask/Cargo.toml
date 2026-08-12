@@ -9,6 +9,10 @@ publish.workspace = true
 
 [dependencies]
 proef-fixture = { workspace = true }
+# The product's own parsers, so `docs-check` asks "would proef accept this
+# example?" rather than "would some parser accept it?".
+serde_norway = { workspace = true }
+toml = { workspace = true }
 
 [lints]
 workspace = true
