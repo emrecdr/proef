@@ -183,6 +183,16 @@ struct State {
     /// scan memo, so building one per request re-read and re-hurl-parsed the
     /// whole corpus on every completion, definition and debounce tick.
     fragments: FragmentCorpus,
+    /// A fragment file changed; the corpus is re-read at the next recompute.
+    ///
+    /// A flag rather than an immediate rebuild, because a rebuild walks the
+    /// whole fragment root and re-reads every file in it. Doing that inline in
+    /// the notification handler put a full directory walk on the message loop
+    /// *per keystroke* while editing a `.hurl` file, delaying the next request's
+    /// dispatch and discarding all but the last result. The suite recompute
+    /// three lines below has always been debounced for exactly this reason;
+    /// the corpus now follows the same policy.
+    fragments_dirty: bool,
 }
 
 fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerError> {
@@ -190,6 +200,7 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
         docs: Documents::default(),
         published: HashSet::new(),
         fragments: read_fragments(&Documents::default(), cfg.disk.as_ref(), &cfg.kinds),
+        fragments_dirty: false,
     };
     let mut dirty_since: Option<Instant> = None;
 
@@ -291,7 +302,7 @@ fn apply_notification(
     // A close counts too: the overlay's bytes stop winning, so the corpus must
     // fall back to what is on disk.
     if is_fragment(cfg, &touched) {
-        state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
+        state.fragments_dirty = true;
     }
     true
 }
@@ -350,6 +361,10 @@ fn current_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
 }
 
 fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State) {
+    // One rebuild per debounce window, however many fragment edits it coalesced.
+    if std::mem::take(&mut state.fragments_dirty) {
+        state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
+    }
     let Some(analysis) = current_analysis(cfg, state) else {
         return;
     };

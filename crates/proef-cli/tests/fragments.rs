@@ -725,3 +725,51 @@ fn schema_add_to_refuses_a_fragment_file() {
         "no schema may be dropped into the corpus"
     );
 }
+
+/// ADR-0018 promises that pointing at a corpus you did not write costs nothing.
+/// The ADR-0007 value caps read the entry's text, and while they had no
+/// `[Options]` gate a `[Query]` parameter, form field or lowercase header named
+/// `retry` was a hard error — proef rejecting somebody else's file for a line
+/// hurl treats as data. The gate has always existed on the inline half; the
+/// value scan inherited a laxer rule that was invisible while it only read
+/// proef's own YAML.
+#[test]
+fn a_query_parameter_named_like_an_option_is_not_an_option() {
+    let hurl =
+        "# @proef admin.search\nGET {{base}}/x\n[Query]\nretry: -1\ndelay: 99999999\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: admin.search\n        bind: { base: \"${url:base}\" }\n";
+    let dir = project(hurl, pack);
+    std::fs::write(
+        dir.path().join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches tasks\n",
+    )
+    .unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
+/// One typo'd `ref:` is one mistake. It used to produce three diagnostics: the
+/// correct `unknown_ref`, plus a macro-scope and a pack-scope `unread_bind_key`
+/// telling the author to delete a `bind:` that was never wrong — because the
+/// readable set is built from the fragments a `ref:` resolves to, and an
+/// unresolved one silently contributes nothing. A conclusion drawn from a scope
+/// known to be missing pieces is not a finding.
+#[test]
+fn an_unresolved_ref_does_not_make_its_bindings_look_unread() {
+    let hurl = "# @proef admin.search\nGET {{base}}/x?q={{q}}\nHTTP 200\n";
+    let pack = "bind:\n  q: laptop\nmacros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                bind: { q: laptop }\n    steps:\n      - ref: typo.name\n";
+    let stderr = dry_run_error(hurl, pack);
+    assert!(stderr.contains("proef::pack::unknown_ref"), "{stderr}");
+    assert!(
+        !stderr.contains("unread_bind_key"),
+        "the bindings are fine; the `ref:` is the mistake — {stderr}"
+    );
+}

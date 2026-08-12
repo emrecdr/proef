@@ -36,7 +36,7 @@ use super::{
     RawMacro, RawStep,
 };
 use crate::diag::Diag;
-use crate::engine::{OptionRecogniser, RawOptionValue, StepKindSpec};
+use crate::engine::{OptionRecogniser, RawOption, RawOptionValue, StepKindSpec};
 use crate::lower::macro_has_ref;
 use crate::matcher;
 use crate::resolve::{self, Resolution, ResolveCtx, ResolveMode};
@@ -432,14 +432,17 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
         // when the macro has none — `bind_without_ref` already owns that case
         // and says something more useful about it.
         if !macro_.bind.is_empty() && macro_has_ref(macro_) {
-            unread_bind_pass(
-                "this macro refs",
-                &format!("macro `{}`", macro_.name),
-                macro_.bind.keys(),
-                &scope_placeholders(set, macro_).into_iter().collect(),
-                &at,
-                diags,
-            );
+            let (readable, complete) = scope_placeholders(set, macro_);
+            if complete {
+                unread_bind_pass(
+                    "this macro refs",
+                    &format!("macro `{}`", macro_.name),
+                    macro_.bind.keys(),
+                    &readable,
+                    &at,
+                    diags,
+                );
+            }
         }
 
         let mut payload_ordinals: BTreeMap<&str, usize> = BTreeMap::new();
@@ -448,8 +451,8 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                 MacroStepKind::Use { target, with } => {
                     use_target_passes(set, macro_, index, target, with, &at, diags);
                 }
-                MacroStepKind::Ref { target } => {
-                    ref_target_passes(set, kinds, macro_, index, step, target, &at, diags);
+                MacroStepKind::Ref { .. } => {
+                    ref_target_passes(set, kinds, macro_, index, step, &at, diags);
                 }
                 MacroStepKind::Payload { kind, payload } => {
                     let ordinal = *payload_ordinals
@@ -476,17 +479,21 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
 /// Two comparisons, because the two halves of an `[Options]` section clash on
 /// different keys: option *families* (`retry:`, `delay:`) family-to-family, and
 /// supplied *variables* name-to-name.
-#[allow(clippy::too_many_arguments)]
 fn ref_target_passes(
     set: &PackSet,
     kinds: &[StepKindSpec],
     macro_: &Macro,
     index: usize,
     step: &MacroStep,
-    target: &str,
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
+    // Taken from the step rather than passed beside it: the caller matched this
+    // variant to dispatch here, so a second `target` parameter was one more
+    // argument that could only ever hold the same value.
+    let MacroStepKind::Ref { target } = &step.kind else {
+        return;
+    };
     let Some(fragment) = set.find_fragment(target) else {
         let suggestion = matcher::closest(
             target.rsplit('#').next().unwrap_or(target),
@@ -769,7 +776,17 @@ fn payload_passes(
         }
     };
 
-    lint_raw_options(macro_, index, kind, step, ordinal, text, kinds, at, diags);
+    lint_raw_options(
+        macro_,
+        index,
+        kind,
+        step,
+        ordinal,
+        text,
+        spec.options,
+        at,
+        diags,
+    );
 
     // Pass 7: probe-instantiation parse via the engine's validator.
     let Some(validate) = spec.validate else {
@@ -852,9 +869,31 @@ struct OptionViolation {
 ///
 /// Returns findings rather than diagnostics so each caller can anchor them in
 /// its own source — the one thing the two genuinely disagree about.
-fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViolation> {
-    let mut found = Vec::new();
+/// One recognised option line of an engine payload.
+struct OptionLine<'a> {
+    /// 1-based line within the scanned text.
+    line: usize,
+    /// The option key, trimmed — the text left of the `:`.
+    key: &'a str,
+    /// The raw value, untrimmed.
+    value: &'a str,
+    /// What the claiming engine says this key means.
+    option: RawOption,
+    /// Whether the line sits inside an `[Options]` section.
+    in_options: bool,
+}
+
+/// Every option line an engine payload declares, fence-aware and section-aware.
+///
+/// One walk feeding both halves of pass 6. Splitting the value caps out of the
+/// twin-declaration check is what let the caps reach fragments, but doing it as
+/// two loops duplicated the fence rule and the section bookkeeping — the exact
+/// cost the old single-pass comment predicted. The *walk* is the shared part;
+/// the two checks differ only in what they filter for.
+fn option_lines(text: &str, recognise: OptionRecogniser) -> Vec<OptionLine<'_>> {
+    let mut out = Vec::new();
     let mut in_fence = false;
+    let mut in_options = false;
     for (line_no, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
@@ -864,6 +903,12 @@ fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViol
         if in_fence {
             continue; // fenced body data — a literal `retry: -1` is payload, not an option
         }
+        // A section runs until the next section header or the next entry.
+        if trimmed.starts_with('[') {
+            in_options = trimmed == "[Options]";
+        } else if crate::lower::is_method_line(trimmed) {
+            in_options = false;
+        }
         let Some((key, value)) = trimmed.split_once(':') else {
             continue;
         };
@@ -872,13 +917,40 @@ fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViol
         let Some(option) = recognise(key.trim()) else {
             continue;
         };
-        let key = key.trim();
+        out.push(OptionLine {
+            line: line_no + 1,
+            key: key.trim(),
+            value,
+            option,
+            in_options,
+        });
+    }
+    out
+}
+
+fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViolation> {
+    let mut found = Vec::new();
+    for OptionLine {
+        line,
+        key,
+        value,
+        option,
+        in_options,
+    } in option_lines(text, recognise)
+    {
+        // Only `[Options]` lines are options. Without this gate a `[Query]`
+        // parameter, form field or lowercase header named `retry` is a hard
+        // error — and once the caps reached fragments that meant proef
+        // rejecting a corpus it does not own for a line hurl treats as data,
+        // against ADR-0018's promise that pointing at someone else's files
+        // costs nothing. The inline half of pass 6 has always gated on this;
+        // the value scan inherited a laxer rule that was invisible while it
+        // only ever read proef's own YAML.
+        if !in_options {
+            continue;
+        }
         let mut push = |code: &'static str, detail: String| {
-            found.push(OptionViolation {
-                line: line_no + 1,
-                code,
-                detail,
-            });
+            found.push(OptionViolation { line, code, detail });
         };
         match option.value {
             Some(RawOptionValue::Count) => match value.trim().parse::<i64>() {
@@ -934,11 +1006,13 @@ fn lint_raw_options(
     step: &MacroStep,
     ordinal: usize,
     text: &str,
-    kinds: &[StepKindSpec],
+    recognise: Option<OptionRecogniser>,
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
-    let Some(recognise) = recogniser(kinds, kind) else {
+    // The caller already resolved this kind's spec to get here; re-finding it
+    // would be a second lookup for the same answer.
+    let Some(recognise) = recognise else {
         return;
     };
     for violation in scan_option_values(text, recognise) {
@@ -957,40 +1031,21 @@ fn lint_raw_options(
         );
     }
 
-    let mut in_fence = false;
-    let mut in_options = false;
     // One report per option family is enough to act on; a block whose every
     // entry repeats the clash would otherwise bury the step in duplicates.
     // A list rather than a flag per family, so a new family needs no latch.
     let mut said: Vec<&'static str> = Vec::new();
-    for (line_no, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue; // fenced body data — a literal `retry: -1` is payload, not an option
-        }
-        // A section runs until the next section header or the next entry.
-        if trimmed.starts_with('[') {
-            in_options = trimmed == "[Options]";
-        } else if crate::lower::is_method_line(trimmed) {
-            in_options = false;
-        }
-        if !in_options {
-            continue;
-        }
+    for entry in option_lines(text, recognise) {
+        // Only `[Options]`-section lines count here: a request header may
+        // legitimately be named `retry`, and this is a hard error.
+        //
         // The engine maps its own spellings onto the families a pack knows
         // (`engine::OPTION_FAMILIES`) — several keys may share one policy, which
         // is the engine's business, not the core's.
-        let Some(option) = trimmed
-            .split_once(':')
-            .and_then(|(key, _)| recognise(key.trim()))
-            .and_then(|option| option.family)
-        else {
+        let Some(option) = entry.option.family.filter(|_| entry.in_options) else {
             continue;
         };
+        let line_no = entry.line - 1;
         if step.declared_options().any(|f| f == option) && !said.contains(&option) {
             said.push(option);
             diags.push(
@@ -1055,28 +1110,43 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
 /// path enumeration goes exponential on shared (multi-edge) `use:` targets.
 /// A pack-scope `bind:` needs something in that pack to bind.
 ///
+/// Every placeholder read by the fragments a macro's own `ref:` steps name —
+/// the readable set for that macro's scope — and whether that set is
+/// **complete**. A `use:` target resolves its own scopes (ADR-0018), so its
+/// reads deliberately do not count here.
+///
+/// Incomplete when some `ref:` names nothing loaded: a typo, an unparseable
+/// corpus file, or `[run] fragments` unset. The set is then a lower bound, and
+/// "no fragment in scope reads this key" would be a conclusion drawn from a
+/// scope known to be missing pieces — which is how one typo'd `ref:` used to
+/// produce a correct `unknown_ref` and then two false `unread_bind_key`
+/// telling the author to delete a `bind:` that was never wrong.
+///
+/// A set, because both callers compare membership; returning a `Vec` only to
+/// have each of them collect it was two spellings of one answer.
+fn scope_placeholders<'a>(set: &'a PackSet, macro_: &Macro) -> (BTreeSet<&'a str>, bool) {
+    let MacroBody::Steps(steps) = &macro_.body else {
+        return (BTreeSet::new(), true);
+    };
+    let mut readable = BTreeSet::new();
+    let mut complete = true;
+    for step in steps {
+        let MacroStepKind::Ref { target } = &step.kind else {
+            continue;
+        };
+        match set.find_fragment(target) {
+            Some(fragment) => readable.extend(fragment.placeholders.iter().map(String::as_str)),
+            None => complete = false,
+        }
+    }
+    (readable, complete)
+}
+
 /// The same rule the macro and step scopes already carry, at the scope above
 /// them — `AUTHORING.md` said it applied "at every scope" while the third one
 /// silently dropped its table, which is the setting-ignored-in-silence bug the
 /// other two exist to refuse. Attributed to a macro from the pack, since a
 /// `PackSet` keeps macros rather than the pack's own source text.
-/// Every placeholder read by the fragments a macro's own `ref:` steps name —
-/// the readable set for that macro's scope. A `use:` target resolves its own
-/// scopes (ADR-0018), so its reads deliberately do not count here.
-fn scope_placeholders<'a>(set: &'a PackSet, macro_: &Macro) -> Vec<&'a str> {
-    let MacroBody::Steps(steps) = &macro_.body else {
-        return Vec::new();
-    };
-    steps
-        .iter()
-        .filter_map(|step| match &step.kind {
-            MacroStepKind::Ref { target } => set.find_fragment(target),
-            MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
-        })
-        .flat_map(|fragment| fragment.placeholders.iter().map(String::as_str))
-        .collect()
-}
-
 fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
     for (pack, table) in &set.bind {
         if table.is_empty() {
@@ -1099,10 +1169,14 @@ fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
         if from_pack().any(macro_has_ref) {
             // Reachable, so the table is read — but each *key* still has to be.
             // Union over every fragment any macro in this pack refs.
-            let readable: BTreeSet<&str> = from_pack()
-                .flat_map(|m| scope_placeholders(set, m))
-                .collect();
-            if let Some(anchor) = from_pack().next() {
+            let mut readable: BTreeSet<&str> = BTreeSet::new();
+            let mut complete = true;
+            for macro_ in from_pack() {
+                let (reads, whole) = scope_placeholders(set, macro_);
+                readable.extend(reads);
+                complete &= whole;
+            }
+            if let Some(anchor) = from_pack().next().filter(|_| complete) {
                 let at = |d: Diag| {
                     d.with_source(anchor.pack.clone(), Arc::clone(&anchor.source))
                         .maybe_span(anchor.span)

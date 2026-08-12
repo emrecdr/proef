@@ -115,10 +115,16 @@ pub(crate) fn scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
 fn declared_options(entry: &Entry) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for option in entry.request.options() {
-        let family = match option.kind {
-            OptionKind::Retry(_) | OptionKind::RetryInterval(_) => "retry",
-            OptionKind::Delay(_) => "delay",
-            _ => continue,
+        // Through the same table the inline path uses, keyed by hurl's own
+        // `identifier()` — the raw text left of the `:`. Written twice (once
+        // over `OptionKind` variants, once over strings) these were one rule at
+        // two spellings, and the halves are consulted by *different* checks:
+        // the AST table feeds the double-declaration refusal, the string table
+        // feeds the ADR-0007 value caps. A family added to one and not the
+        // other would be capped but never clash-checked.
+        let Some(family) = crate::recognise_option(option.kind.identifier()).and_then(|o| o.family)
+        else {
+            continue;
         };
         if !out.iter().any(|seen| seen == family) {
             out.push(family.to_owned());

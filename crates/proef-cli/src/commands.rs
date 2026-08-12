@@ -46,15 +46,19 @@ fn load_front(
     active_env: Option<&str>,
     run_id: Option<String>,
     config: &ProjectConfig,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<front::FrontEnd, ExitCode> {
     let config_vars = config_vars_for(active_env, config)?;
-    let fragments = corpus(config)?;
+    // Taken from the caller for the reason `corpus` exists: one read per
+    // invocation. Building one here made every caller that *also* held a corpus
+    // pay for a second walk, read and hurl-parse of the same files — which
+    // `validate_phase_features` had already been fixed not to do.
     front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         config_vars,
-        &fragments,
+        fragments,
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -401,7 +405,11 @@ pub fn flows(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, None, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, None, config, &fragments) {
         Ok(front) => front,
         Err(code) => return code,
     };
@@ -467,16 +475,17 @@ pub fn macros(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, None, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, None, config, &fragments) {
         Ok(front) => front,
         // The suite does not bind — which is exactly when an author needs to
         // read the vocabulary. `load_front` has already rendered the
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(fragments) = corpus(config) else {
-                return code;
-            };
             let Ok(packs) = front::load_packs(path, &fragments) else {
                 return code;
             };
@@ -680,7 +689,13 @@ pub fn fragments(
     // no counts to have — the same state `macros` handles by listing anyway and
     // withholding every count-derived verdict, rather than reporting a confident
     // `0×` that means "not measured".
-    let loaded = load_front(path, active_env, None, config).ok();
+    // The failing exit code is kept, as `macros` keeps it: the listing is still
+    // worth printing beneath the diagnostics, but a suite that did not load is
+    // not a success, and a script reading only the code must not be told it was.
+    let (loaded, load_failure) = match load_front(path, active_env, None, config, &corpus) {
+        Ok(front) => (Some(front), None),
+        Err(code) => (None, Some(code)),
+    };
     let runs: Option<BTreeMap<String, usize>> = loaded.as_ref().map(|front| {
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
         for feature in &front.features {
@@ -726,6 +741,9 @@ pub fn fragments(
 
     render_fragments(&corpus, runs.as_ref(), &referenced_by, output_json);
 
+    if let Some(code) = load_failure {
+        return code;
+    }
     if !check {
         return ExitCode::Success;
     }
@@ -886,7 +904,11 @@ pub fn artifacts(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, run_id, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, run_id, config, &fragments) {
         Ok(front) => front,
         Err(code) => return code,
     };
