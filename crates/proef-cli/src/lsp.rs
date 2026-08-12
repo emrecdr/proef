@@ -20,7 +20,32 @@ use crate::config::ProjectConfig;
 use crate::disk_provider::DiskSourceProvider;
 use crate::registry;
 
-pub fn run() -> ExitCode {
+/// The config this server analyses against.
+///
+/// `--config` wins over discovery, including over the workspace root the client
+/// announces: the flag names a file, and a named file is not a guess to be
+/// improved on. Without that precedence the editor and the runner disagree in
+/// exactly the layout `--config` exists for — a config beside the suite, which
+/// discovery cannot reach from the repository root — so `proef test --config …`
+/// runs green while every `ref:` reads as unknown in the editor.
+///
+/// Unreadable or absent falls back to defaults, as before: `proef lsp` must
+/// start anywhere, and a server that refuses to boot is worse than one
+/// analysing a project with no config.
+fn load_config(
+    explicit: Option<&std::path::Path>,
+    client_root: Option<&std::path::Path>,
+) -> ProjectConfig {
+    if let Some(path) = explicit {
+        return ProjectConfig::load_at(path).unwrap_or_default();
+    }
+    match client_root {
+        Some(root) => ProjectConfig::load_from(root).unwrap_or_default(),
+        None => ProjectConfig::load().unwrap_or_default(),
+    }
+}
+
+pub fn run(explicit_config: Option<std::path::PathBuf>) -> ExitCode {
     // Engine-derived step kinds + kind→engine routing, assembled exactly as a
     // normal run does (front::run) so packs validate and lower identically —
     // one implementation of this mapping, not a divergent copy. Empty kinds
@@ -30,7 +55,7 @@ pub fn run() -> ExitCode {
     let kind_to_engine = registry::kind_to_engine();
 
     // Load proef.toml once — it drives both the suite root and the ${url}/${vars} scope.
-    let config = ProjectConfig::load().unwrap_or_default();
+    let config = load_config(explicit_config.as_deref(), None);
     // A malformed PROEF_ENV must stop the server from starting rather than
     // silently analyse against the wrong config profile — an editor showing
     // diagnostics from the wrong environment is the "reports the wrong
@@ -93,8 +118,11 @@ pub fn run() -> ExitCode {
         // `nvim ~/proj/x.feature` from `$HOME` rooted the analyser at `$HOME`.
         // Same resolution order as above, just anchored on the client's root:
         // `[run] suite`, else the `tests/` convention, else the root itself.
-        resolve_root: Some(Box::new(|client_root: &std::path::Path| {
-            let config = ProjectConfig::load_from(client_root).unwrap_or_default();
+        // Owned: the callback outlives this frame and must carry the flag
+        // with it, or the client's announced root would silently win over a
+        // file the user named.
+        resolve_root: Some(Box::new(move |client_root: &std::path::Path| {
+            let config = load_config(explicit_config.as_deref(), Some(client_root));
             let root = config.default_suite_path().map_or_else(
                 || client_root.to_path_buf(),
                 |rel| {
@@ -117,5 +145,56 @@ pub fn run() -> ExitCode {
             crate::render::errln!("proef lsp: {err}");
             ExitCode::SystemError
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::load_config;
+
+    /// `--config` outranks discovery, including the workspace root the client
+    /// announces.
+    ///
+    /// The precedence is the whole point: discovery only searches *up*, so a
+    /// config beside the suite is unreachable from the repository root — which
+    /// is the layout the flag exists for. Without this, `proef test --config …`
+    /// runs green while the editor loads a different config (or none) and
+    /// reports every `ref:` as unknown, and diagnostics that disagree with the
+    /// runner are worse than no diagnostics.
+    #[test]
+    fn an_explicit_config_outranks_both_discovery_and_the_client_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("nested")).unwrap();
+        let named = root.join("nested/proef.toml");
+        std::fs::write(&named, "[run]\nsuite = \"from-explicit\"\n").unwrap();
+        // A second config the client root *would* find, to prove which won.
+        std::fs::write(
+            root.join("proef.toml"),
+            "[run]\nsuite = \"from-discovery\"\n",
+        )
+        .unwrap();
+
+        let explicit = load_config(Some(&named), Some(root));
+        assert_eq!(explicit.path(), Some(named.as_path()));
+        assert_eq!(explicit.run.suite.as_deref(), Some("from-explicit"));
+
+        // Without the flag the client's root still decides, as before.
+        let discovered = load_config(None, Some(root));
+        assert_eq!(discovered.run.suite.as_deref(), Some("from-discovery"));
+    }
+
+    /// A named file that is not there falls back to defaults rather than
+    /// refusing to boot: `proef lsp` must start anywhere, and a server that
+    /// exits is worse than one analysing a project with no config. The runner
+    /// makes the opposite call for the same flag — there a typo'd path is a
+    /// user error — because a run that silently has no configuration produces
+    /// wrong results, while an editor merely offers less.
+    #[test]
+    fn a_missing_named_config_leaves_the_server_startable() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = load_config(Some(&dir.path().join("nope.toml")), None);
+        assert_eq!(config.path(), None);
     }
 }

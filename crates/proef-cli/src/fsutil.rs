@@ -57,6 +57,27 @@ pub fn is_run_id(name: &str) -> bool {
 /// component) — an empty path that is not a usable directory — so normalize
 /// both the empty and `None` cases to `.` (the current directory), matching
 /// how an explicit `./name` already resolves.
+/// Create the directories `path`'s file needs, so writing it can succeed.
+///
+/// An output path the user named is a path proef was asked to write, and every
+/// comparable runner treats the parents as part of that request: `pytest
+/// --junitxml`, `jest-junit`, `cargo-nextest`'s `JUnit` store, and the `hurl`
+/// proef embeds all create them. proef created them for `artifacts -o` and the
+/// run directory but not for `--junit`, `--sarif` or `report -o` — no rule, just
+/// four sites deciding separately, with the two used most in CI on the failing
+/// side. Every adopter paid the same `mkdir -p`.
+///
+/// This does not weaken clig.dev's "side effects should be explicit": that rule
+/// is about writing files the user *did not* pass. Here they passed exactly this
+/// path.
+pub(crate) fn create_parents(path: &Path) -> std::io::Result<()> {
+    let parent = parent_dir(path);
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent)
+}
+
 pub(crate) fn parent_dir(path: &Path) -> PathBuf {
     path.parent()
         .filter(|p| !p.as_os_str().is_empty())

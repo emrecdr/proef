@@ -698,25 +698,27 @@ pub fn fragments(
     };
     let runs: Option<BTreeMap<String, usize>> = loaded.as_ref().map(|front| {
         let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-        for feature in &front.features {
-            for scenario in &feature.scenarios {
-                // Distinct scenarios, not steps: "2×" should mean two scenarios
-                // exercise this request, not that one scenario called it twice.
-                let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-                for batch in &scenario.lowered.batches {
-                    for step in &batch.steps {
-                        if let Some(fragment) = &step.fragment {
-                            seen.insert(fragment.as_str());
-                        }
-                    }
-                }
-                for fragment in seen {
-                    *counts.entry(fragment.to_owned()).or_default() += 1;
-                }
-            }
-        }
+        count_fragment_runs(front, &mut counts);
         counts
     });
+    // `[run] setup`/`teardown` run their scenarios too, so a fragment only they
+    // reach is *used*. Judging reachability over the suite alone reported it
+    // `UNREACHABLE — no scenario binds it`, which was false, and failed
+    // `--check` — a false CI failure in the workflow `--check` exists for. It
+    // also made the verdict depend on where the phase file sat: inside the
+    // suite directory it was discovered as an ordinary feature and counted.
+    let runs = match (runs, phase_fragment_runs(config, active_env, &corpus)) {
+        (Some(mut suite), Some(phases)) => {
+            for (fragment, n) in phases {
+                *suite.entry(fragment).or_default() += n;
+            }
+            Some(suite)
+        }
+        // A phase that would not load leaves the universe incomplete, so every
+        // count-derived verdict is withheld rather than guessed — the same rule
+        // the suite half already follows.
+        _ => None,
+    };
 
     // Which macro names each fragment, for the "reached only through a macro
     // nothing binds" case — the death mode that currently looks covered.
@@ -785,6 +787,56 @@ pub fn fragments(
     } else {
         ExitCode::Success
     }
+}
+
+/// Add every fragment `front`'s scenarios run to `counts`.
+///
+/// Distinct scenarios, not steps: `2×` should mean two scenarios exercise this
+/// request, not that one scenario called it twice.
+fn count_fragment_runs(front: &front::FrontEnd, counts: &mut BTreeMap<String, usize>) {
+    for feature in &front.features {
+        for scenario in &feature.scenarios {
+            let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+            for batch in &scenario.lowered.batches {
+                for step in &batch.steps {
+                    if let Some(fragment) = &step.fragment {
+                        seen.insert(fragment.as_str());
+                    }
+                }
+            }
+            for fragment in seen {
+                *counts.entry(fragment.to_owned()).or_default() += 1;
+            }
+        }
+    }
+}
+
+/// Fragment usage from `[run] setup` / `[run] teardown`, or `None` if a
+/// configured phase could not be loaded.
+///
+/// The runner executes these features, so a fragment they reach is used. `None`
+/// rather than an empty map on failure: a phase that did not load leaves the
+/// universe incomplete, and a count drawn from an incomplete universe is the
+/// false `UNREACHABLE` this exists to prevent.
+fn phase_fragment_runs(
+    config: &ProjectConfig,
+    active_env: Option<&str>,
+    fragments: &proef_core::pack::FragmentCorpus,
+) -> Option<BTreeMap<String, usize>> {
+    let mut counts = BTreeMap::new();
+    let phases = [("setup", config.setup()), ("teardown", config.teardown())];
+    if phases.iter().all(|(_, path)| path.is_none()) {
+        return Some(counts);
+    }
+    let config_vars = config_vars_for(active_env, config).ok()?;
+    for (label, path) in phases {
+        let Some(path) = path else { continue };
+        let front =
+            crate::exec::load_phase_feature(label, Path::new(path), None, &config_vars, fragments)
+                .ok()?;
+        count_fragment_runs(&front, &mut counts);
+    }
+    Some(counts)
 }
 
 /// Render the fragment listing, grouped by file.

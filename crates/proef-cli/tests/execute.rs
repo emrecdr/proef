@@ -2482,9 +2482,17 @@ fn the_json_body_reports_the_exit_code_the_process_uses() {
     )
     .unwrap();
 
-    // A JUnit path whose parent does not exist: the write fails, which is a
-    // system fault (3) outranking the suite's test failure (1).
-    let unwritable = cwd.path().join("no-such-dir").join("report.junit.xml");
+    // A JUnit path proef cannot create: a *file* stands where the parent
+    // directory would go, so `create_dir_all` fails and the write is a system
+    // fault (3), outranking the suite's own test failure (1).
+    //
+    // Previously this used a merely-absent parent, which stopped being a fault
+    // when output paths began creating the directories they name — every
+    // comparable runner does, and requiring `mkdir -p` in CI was the papercut.
+    // The property under test is unchanged and still worth pinning: the JSON
+    // body must not report a verdict the process then exits past.
+    std::fs::write(cwd.path().join("blocker"), "not a directory").unwrap();
+    let unwritable = cwd.path().join("blocker").join("report.junit.xml");
     let assert = proef_in(cwd.path(), &fixture)
         .args(["test", "suite", "--output", "json", "--junit"])
         .arg(&unwritable)

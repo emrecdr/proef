@@ -457,6 +457,8 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentScanEr
 pub struct proef_core::engine::FragmentSupport
 pub proef_core::engine::FragmentSupport::ext: &'static str
 pub proef_core::engine::FragmentSupport::scan: proef_core::engine::FragmentScanner
+impl proef_core::engine::FragmentSupport
+pub fn proef_core::engine::FragmentSupport::claims(&self, &str) -> bool
 impl core::clone::Clone for proef_core::engine::FragmentSupport
 pub fn proef_core::engine::FragmentSupport::clone(&self) -> proef_core::engine::FragmentSupport
 impl core::fmt::Debug for proef_core::engine::FragmentSupport

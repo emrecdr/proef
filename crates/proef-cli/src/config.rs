@@ -19,12 +19,6 @@ use serde::Deserialize;
 
 use crate::sla::SlaThresholds;
 
-/// The `proef.toml` this process would load, if any — exposed so `--watch` can
-/// watch the file whose values every scenario resolves through.
-pub fn config_path() -> Option<PathBuf> {
-    find_config()
-}
-
 /// The nearest `proef.toml` walking up from the working directory (like
 /// cargo/git), or `None` if none exists in any ancestor.
 fn find_config() -> Option<PathBuf> {
@@ -47,13 +41,16 @@ fn find_config_from(dir: &Path) -> Option<PathBuf> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
-    /// Directory holding the `proef.toml` this was read from, when there was
-    /// one. Relative paths in the config resolve against it: the file is found
-    /// by walking *up* from the working directory, so a path in a config three
-    /// levels above must mean "relative to the project", not "relative to
-    /// wherever the command happened to be run".
+    /// The `proef.toml` this was read from, when there was one.
+    ///
+    /// The *file*, not its directory: `root` is derived from it. Keeping the
+    /// directory alone meant every consumer that needed the file — `--watch`
+    /// deciding what to watch, `proef lsp` deciding what to load — had to
+    /// rediscover it by walking up from the working directory, which silently
+    /// ignored `--config` and left the editor analysing a different project
+    /// than the runner ran.
     #[serde(skip)]
-    root: Option<PathBuf>,
+    path: Option<PathBuf>,
     /// `[run]` table.
     #[serde(default)]
     pub run: RunTable,
@@ -220,7 +217,7 @@ impl ProjectConfig {
             .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
         let mut config: Self =
             toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))?;
-        config.root = path.parent().map(Path::to_path_buf);
+        config.path = Some(path);
         Ok(config)
     }
 
@@ -313,7 +310,7 @@ impl ProjectConfig {
         if raw.is_absolute() {
             return Some(raw);
         }
-        Some(self.root.clone().unwrap_or_default().join(raw))
+        Some(self.root().unwrap_or_default().join(raw))
     }
 
     /// The default suite directory: `[run] suite` if set, else the `tests/`
@@ -326,6 +323,22 @@ impl ProjectConfig {
         }
         let convention = PathBuf::from("tests");
         convention.is_dir().then_some(convention)
+    }
+
+    /// The `proef.toml` this config was read from, if any — so a consumer that
+    /// needs the *file* (what `--watch` watches, what `proef lsp` loads) uses
+    /// the one actually in force rather than searching again.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// The directory relative config paths resolve against: the config file's
+    /// own, since it may sit above the working directory.
+    fn root(&self) -> Option<PathBuf> {
+        self.path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
     }
 
     /// The tag expression selecting exclusive scenarios (`[run] exclusive-tags`),
@@ -509,7 +522,7 @@ mod tests {
         };
 
         let mut config = parse("[run]\nfragments = \"tests/hurl\"\n");
-        config.root = Some(PathBuf::from(project));
+        config.path = Some(Path::new(project).join("proef.toml"));
         let root = config.fragments().expect("configured");
         assert_eq!(root, Path::new(project).join("tests/hurl"));
         assert!(
@@ -520,7 +533,7 @@ mod tests {
         // An absolute `[run] fragments` is taken as written — the corpus may
         // sit outside the project entirely.
         let mut config = parse(&format!("[run]\nfragments = '{corpus}'\n"));
-        config.root = Some(PathBuf::from(project));
+        config.path = Some(Path::new(project).join("proef.toml"));
         assert_eq!(config.fragments(), Some(PathBuf::from(corpus)));
     }
 

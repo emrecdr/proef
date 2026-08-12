@@ -34,6 +34,8 @@ pub fn write_junit(
         report.add_test_suite(suite);
     }
 
+    crate::fsutil::create_parents(path)
+        .map_err(|err| format!("cannot create directory for {}: {err}", path.display()))?;
     let file = std::fs::File::create(path)
         .map_err(|err| format!("cannot create {}: {err}", path.display()))?;
     report
