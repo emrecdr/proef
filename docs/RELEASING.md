@@ -231,3 +231,11 @@ one resolvable.
   `AnalyzeCtx` takes the corpus rather than building one per call,
   `StepKindSpec` carries an `options` recogniser, and `ScenarioSpec` carries
   `exclusive`
+- `v0.11.1` — the gaps 0.11.0 shipped with: `--config` reaches `proef lsp` and
+  `--watch` (it was honoured by the runner alone, so the editor reported every
+  `ref:` as unknown in exactly the layout the flag exists for), `proef fragments`
+  counts `[run] setup`/`teardown` usage instead of calling a phase-only fragment
+  unreachable and failing `--check`, one predicate answers "is this a fragment
+  file?" where three disagreed, and `--junit`/`--sarif`/`report -o` create the
+  directories their paths name — as `artifacts -o` and the run directory already
+  did, and as pytest, jest-junit, cargo-nextest and the embedded hurl all do
