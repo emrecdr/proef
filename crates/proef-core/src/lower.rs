@@ -126,7 +126,7 @@ fn quote_option(value: &str) -> String {
 /// be used — otherwise a pack-scope `${fake:…}` would advance for macros that
 /// never bind anything, and an unresolvable one would fail a macro it does not
 /// concern.
-fn macro_has_ref(macro_: &Macro) -> bool {
+pub(crate) fn macro_has_ref(macro_: &Macro) -> bool {
     match &macro_.body {
         MacroBody::Steps(steps) => steps
             .iter()
@@ -195,6 +195,30 @@ fn resolve_bindings(
             continue;
         }
         if let Some(resolved) = resolve_in(value, refs, sinks) {
+            // A hurl `[Options] variable:` value is a single-line scalar
+            // (`VariableValue` is Null/Bool/Number/String), so a newline here
+            // cannot survive into the entry. Refused by name rather than left to
+            // the emitter, which caught it one stage later as
+            // `emit::invalid_artifact` — blaming the artifact for what the
+            // binding did, and pointing at generated text the author never
+            // wrote. This is the documented splicing-versus-binding boundary
+            // (ADR-0018), enforced where it can be explained.
+            if resolved.contains('\n') {
+                sinks.errors.push(
+                    at(Diag::error(
+                        "proef::lower::multiline_bind",
+                        format!(
+                            "binding `{name}` resolves to a multi-line value, which a hurl \
+                             `[Options] variable:` cannot carry — it is a single-line scalar"
+                        ),
+                    ))
+                    .with_help(
+                        "a multi-line body is what the inline form is for: use `hurl: |` and \
+                         splice it with `${…}` (a `${docstring}` body is the usual case)",
+                    ),
+                );
+                continue;
+            }
             out.insert(name.clone(), Bound::Value(resolved));
         }
     }
@@ -1942,6 +1966,24 @@ mod tests {
             1,
             "exactly one supplier reaches the entry: {text}"
         );
+    }
+
+    /// A hurl `[Options] variable:` value is a single-line scalar, so a
+    /// multi-line binding cannot reach the entry. It used to surface one stage
+    /// later as `emit::invalid_artifact`, blaming generated text the author
+    /// never wrote for what the `bind:` did.
+    #[test]
+    fn a_multiline_binding_is_refused_by_name() {
+        let err = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n        bind:\n          body: |\n            one\n            two\n",
+            "@first\n?body\n",
+        )
+        .expect_err("a multi-line binding cannot be carried");
+        let diag = err
+            .iter()
+            .find(|d| d.code == "proef::lower::multiline_bind")
+            .unwrap_or_else(|| panic!("expected multiline_bind in {err:?}"));
+        assert!(diag.message.contains("body"), "{}", diag.message);
     }
 
     /// hurl's `[Options] variable:` assigns into one shared set rather than

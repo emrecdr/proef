@@ -37,6 +37,7 @@ use super::{
 };
 use crate::diag::Diag;
 use crate::engine::StepKindSpec;
+use crate::lower::macro_has_ref;
 use crate::matcher;
 use crate::resolve::{self, Resolution, ResolveCtx, ResolveMode};
 use crate::step::Retry;
@@ -444,6 +445,7 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
         }
     }
 
+    pack_scope_bind_pass(set, diags);
     use_graph_passes(set, diags);
 }
 
@@ -874,6 +876,43 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
 /// Pass 4: `use:` reference cycles and depth over the whole macro graph.
 /// Three-color DFS with memoized chain depths — node-linear where a per-root
 /// path enumeration goes exponential on shared (multi-edge) `use:` targets.
+/// A pack-scope `bind:` needs something in that pack to bind.
+///
+/// The same rule the macro and step scopes already carry, at the scope above
+/// them — `AUTHORING.md` said it applied "at every scope" while the third one
+/// silently dropped its table, which is the setting-ignored-in-silence bug the
+/// other two exist to refuse. Attributed to a macro from the pack, since a
+/// `PackSet` keeps macros rather than the pack's own source text.
+fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
+    for (pack, table) in &set.bind {
+        if table.is_empty() {
+            continue;
+        }
+        let from_pack = || set.macros.values().filter(|m| &m.pack == pack);
+        if from_pack().any(macro_has_ref) {
+            continue;
+        }
+        // Nothing to anchor on if the pack contributed no macros at all; that
+        // is already its own diagnostic.
+        let Some(anchor) = from_pack().next() else {
+            continue;
+        };
+        diags.push(
+            Diag::error(
+                "proef::pack::bind_without_ref",
+                format!(
+                    "pack `{pack}`: `bind:` supplies a fragment's `{{{{…}}}}` variables, but no macro in this pack has a `ref:` step — the table would go unread"
+                ),
+            )
+            .with_source(anchor.pack.clone(), Arc::clone(&anchor.source))
+            .maybe_span(anchor.span)
+            .with_help(
+                "delete the table, or give the step that needs it a `ref: <fragment>` body",
+            ),
+        );
+    }
+}
+
 fn use_graph_passes(set: &PackSet, diags: &mut Vec<Diag>) {
     let mut colors: BTreeMap<&str, Color> = BTreeMap::new();
     let mut chains: BTreeMap<&str, usize> = BTreeMap::new();
@@ -1535,6 +1574,42 @@ mod tests {
             !has(&diags, "proef::pack::option_declared_twice"),
             "{diags:?}"
         );
+    }
+
+    /// `AUTHORING.md` said `bind_without_ref` applies "at every scope" while the
+    /// pack scope silently dropped its table — the setting-ignored-in-silence
+    /// bug the other two scopes exist to refuse.
+    #[test]
+    fn a_pack_scope_bind_with_no_ref_anywhere_is_rejected() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "bind:\n  unused: v\nmacros:\n  m:\n    match: it runs\n    steps:\n      - hurl: |\n          GET http://x\n          HTTP 200\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::pack::bind_without_ref")
+            .unwrap_or_else(|| panic!("expected bind_without_ref in {diags:?}"));
+        assert!(
+            diag.message.contains("no macro in this pack"),
+            "{}",
+            diag.message
+        );
+    }
+
+    /// …and a pack whose macros do `ref:` keeps its table.
+    #[test]
+    fn a_pack_scope_bind_beside_a_ref_is_accepted() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "bind:\n  used: v\nmacros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(!has(&diags, "proef::pack::bind_without_ref"), "{diags:?}");
     }
 
     #[test]

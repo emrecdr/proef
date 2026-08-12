@@ -23,7 +23,9 @@ use assert_cmd::Command;
 /// `generate` (ADR-0016's `OpenAPI` suite generator) · `merge` (named in
 /// OPEN-FINDINGS E2 as the symptom-treating fix that was *not* taken) ·
 /// `stub`, `tap` (IMPROVEMENT-PLAN rows, both superseded).
-const PROPOSED_COMMANDS: &[&str] = &["generate", "merge", "stub", "tap"];
+/// `fragments` (OPEN-FINDINGS R9-1, a corpus listing deliberately not built for
+/// 0.10.0) joins them.
+const PROPOSED_COMMANDS: &[&str] = &["fragments", "generate", "merge", "stub", "tap"];
 
 /// Docs whose job includes naming flags that no longer exist. A changelog that
 /// could not say "`--value` was removed in favour of `--stdin`" would be failing

@@ -96,6 +96,71 @@ compile gate.
 
 ---
 
+## Open — round-9 residue (ingested 2026-08-12)
+
+The review's P1/P2 and three P3s shipped in #48 and #50. What follows is what was
+verified and deliberately not built, so none of it depends on remembering.
+
+### R9-1 — `proef fragments` has no listing command
+
+`flows` lists scenarios and `macros` lists the vocabulary; nothing lists the
+corpus. There is no way to ask which fragments exist, which are referenced, or
+which `.hurl` entries carry no annotation — and an unannotated entry is *dropped
+at scan time by design*, so the tool structurally cannot report what it never
+built.
+
+Raised by a consumer migration whose coverage gate ("every `@proef` name is
+referenced, every entry is annotated") had to become a script that repo owns.
+**Not built for 0.10.0 on purpose:** new public surface, and the migration was
+unblocked by correcting its own gate instead.
+
+### R9-2 — fuzz coverage does not reach the fragment surfaces
+
+`fuzz_pack_load` runs with an empty corpus, so `ref:`/`bind:` clash logic never
+executes under fuzzing; the annotation scanner's entry-boundary arithmetic —
+proef's own code, not hurl's — and `bake_entry_options`' textual injection are
+unfuzzed entirely. Split the fuzz input into pack and corpus halves, and consider
+a `fuzz_fragment_scan` target (nightly, accepting the native-libs cost).
+`fuzz_tag_expr` also still compiles in gates while sitting in neither fuzz loop.
+
+### R9-3 — no resource bounds on the corpus read
+
+No per-file or file-count cap: a multi-GB `.hurl` is read whole on every command
+that loads packs. Pairs with the read-resilience work in #48, which made the read
+*survivable* but not *bounded*.
+
+### R9-4 — a bind that shadows a capture is silent
+
+hurl's `variable:` assigns into one shared set, so a pack- or macro-scope `bind:`
+re-assigning a name an earlier entry captured overrides it for every later entry,
+with no diagnostic. A warning shaped like `option_declared_twice` fits — the
+difference is that this one is only decidable where the capture set is known, at
+lower time.
+
+### R9-5 — `{{x}}` inside a bind value is unvalidated at lower time
+
+It fails at run time instead of at `--dry-run`: loud, but late, and the late half
+is what `--dry-run` exists to prevent.
+
+### R9-6 — provenance is cwd-dependent
+
+Run from a subdirectory and `step_finished.fragment`, explain's `via`, JUnit and
+the diagnostics carry an absolute machine path; the record-portability claim holds
+only from the project root. Relativize against the config root rather than cwd —
+the same boundary `[run] fragments` already resolves against.
+
+### R9-7 — smaller edges, verified and recorded
+
+Artifacts written *inside* a fragments root poison the corpus with proef's own
+output (loud, but the remedies misdirect — skip files carrying the artifact
+header, or document it); a step-scope `bind:` key the fragment never reads is
+silently baked as a run-level `variable:` and can shadow a later capture, and an
+unused `${secret:}` bind silently widens the required-secret set (warnable at step
+scope, where it is decidable); a `# @proef` annotation placed mid-entry is
+silently ignored and the resulting `unknown_ref` does not hint at misplacement;
+`proef macros` prints a corpus error twice on the degraded path; same-file
+duplicate annotations read as "declared in both f.hurl and f.hurl".
+
 ## Open — round-7 residue (ingested 2026-08-10)
 
 The round-7 pre-merge review of PR #13 never entered any worklist; a round-8
