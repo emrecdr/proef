@@ -52,6 +52,15 @@ pub struct FragmentCorpus {
     /// Captured at construction so the memo cannot be filled under one set of
     /// kinds and then read under another.
     kinds: Vec<StepKindSpec>,
+    /// Files the caller could not read, already shaped as diagnostics.
+    ///
+    /// Held rather than raised at read time because a corpus is *foreign by
+    /// design*: one unreadable file — a binary, a latin-1 export — must not
+    /// take down commands that never look at fragments at all. They surface
+    /// through the same gate as scan diagnostics, so a suite with no `ref:`
+    /// stays silent and "pointing at a corpus you did not write costs nothing"
+    /// keeps meaning what it says.
+    read_errors: Vec<Diag>,
     scanned: std::sync::OnceLock<Scanned>,
 }
 
@@ -68,8 +77,18 @@ impl FragmentCorpus {
         Self {
             sources,
             kinds: kinds.to_vec(),
+            read_errors: Vec::new(),
             scanned: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Record files the caller could not read. They are reported like any other
+    /// per-file corpus problem — never sinking their siblings, and never at all
+    /// unless something `ref:`s the corpus.
+    #[must_use]
+    pub fn with_read_errors(mut self, errors: Vec<Diag>) -> Self {
+        self.read_errors = errors;
+        self
     }
 
     /// The empty corpus — no `[run] fragments` configured, so no `ref:` can
@@ -80,8 +99,15 @@ impl FragmentCorpus {
 
     /// The scan, run on first use and shared by every load thereafter.
     pub(crate) fn scanned(&self) -> &Scanned {
-        self.scanned
-            .get_or_init(|| scan_fragments(&self.sources, &self.kinds))
+        self.scanned.get_or_init(|| {
+            let mut scanned = scan_fragments(&self.sources, &self.kinds);
+            // Unreadable files first: they explain an `unknown_ref` that would
+            // otherwise read as a typo.
+            let mut diags = self.read_errors.clone();
+            diags.append(&mut scanned.diags);
+            scanned.diags = diags;
+            scanned
+        })
     }
 }
 

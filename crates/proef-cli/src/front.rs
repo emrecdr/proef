@@ -92,11 +92,11 @@ pub fn load_packs(path: &Path, fragments: &FragmentCorpus) -> Result<PackSet, Fr
 /// one run would serve the pre-edit corpus to the next.
 pub fn fragment_corpus(root: Option<&Path>) -> Result<FragmentCorpus, FrontError> {
     let kinds = registry::step_kinds();
-    let sources = match root {
+    let (sources, read_errors) = match root {
         Some(root) => fragment_sources(root, &kinds)?,
-        None => Vec::new(),
+        None => (Vec::new(), Vec::new()),
     };
-    Ok(FragmentCorpus::new(sources, &kinds))
+    Ok(FragmentCorpus::new(sources, &kinds).with_read_errors(read_errors))
 }
 
 /// Discover and load a suite's packs — the single place that knows how a
@@ -366,7 +366,7 @@ fn walk_dir_inner(
 
 /// Whether a *child* directory should not be descended: build output, vendored
 /// dependencies, and dot-directories (`.git`, `.proef-runs`, `.venv`, …).
-fn skipped_dir(path: &Path) -> bool {
+pub(crate) fn skipped_dir(path: &Path) -> bool {
     path.file_name().is_some_and(|name| {
         let name = name.to_string_lossy();
         name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref())
@@ -447,14 +447,14 @@ pub fn fragment_files(
 pub fn fragment_sources(
     root: &Path,
     kinds: &[proef_core::engine::StepKindSpec],
-) -> Result<Vec<PackSource>, FrontError> {
+) -> Result<(Vec<PackSource>, Vec<Diag>), FrontError> {
     if !root.exists() {
         return Err(FrontError::Core(CoreError::user(format!(
             "`[run] fragments` names `{}`, which does not exist",
             root.display()
         ))));
     }
-    let mut sources = read_sources(fragment_files(root, kinds)?, "fragment file")?;
+    let (mut sources, read_errors) = read_corpus(fragment_files(root, kinds)?);
     // Spell the names the way every other source is spelled: relative to where
     // the command was run. Features and packs get that free — their paths are
     // the ones the caller typed — but a fragment path is *derived* from
@@ -473,7 +473,7 @@ pub fn fragment_sources(
             }
         }
     }
-    Ok(sources)
+    Ok((sources, read_errors))
 }
 
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the
@@ -505,6 +505,42 @@ fn read_sources(paths: Vec<PathBuf>, what: &str) -> Result<Vec<PackSource>, Fron
         });
     }
     Ok(sources)
+}
+
+/// Read what can be read, and shape the rest as diagnostics.
+///
+/// Packs are proef's own inputs, so an unreadable one is a hard error
+/// ([`read_sources`]). A **fragment corpus is foreign by design** — `CONFIG.md`
+/// sells "pointing at a corpus you did not write costs nothing" — and one
+/// binary or latin-1 file in it used to exit 3 from every command, including
+/// `flows`, which never looks at a fragment. Pack loading and the annotation
+/// scan both already collect per-file and never sink their siblings; this was
+/// the one stage that still did.
+fn read_corpus(paths: Vec<PathBuf>) -> (Vec<PackSource>, Vec<Diag>) {
+    let mut sources = Vec::with_capacity(paths.len());
+    let mut errors = Vec::new();
+    for path in paths {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => sources.push(PackSource {
+                name: portable_display(&path),
+                text: Arc::from(text.as_str()),
+            }),
+            Err(err) => errors.push(
+                Diag::error(
+                    "proef::pack::unreadable_fragment_file",
+                    format!(
+                        "cannot read fragment file {}: {err}",
+                        portable_display(&path)
+                    ),
+                )
+                .with_help(
+                    "the rest of the corpus still loads — remove the file from the \
+                     fragments root, or fix its encoding if a `ref:` needs it",
+                ),
+            ),
+        }
+    }
+    (sources, errors)
 }
 
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter

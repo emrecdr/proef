@@ -983,6 +983,7 @@ pub struct proef_core::pack::FragmentCorpus
 impl proef_core::pack::FragmentCorpus
 pub fn proef_core::pack::FragmentCorpus::empty() -> Self
 pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
+pub fn proef_core::pack::FragmentCorpus::with_read_errors(self, alloc::vec::Vec<proef_core::diag::Diag>) -> Self
 impl core::fmt::Debug for proef_core::pack::FragmentCorpus
 pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl !core::marker::Freeze for proef_core::pack::FragmentCorpus

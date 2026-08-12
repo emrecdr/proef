@@ -690,6 +690,29 @@ pub fn schema(add_to: &[PathBuf], overwrite_existing: bool) -> ExitCode {
         return ExitCode::Success;
     }
 
+    // `--add-to` takes *packs*. The modeline it prepends is a yaml-language-server
+    // directive, and the schema it drops beside the file describes the pack
+    // schema — neither means anything to a `.hurl` corpus, and writing one is a
+    // straight violation of ADR-0018's "fragment files are inputs proef never
+    // writes". `fmt` learned this predicate in #44; this call site did not, and a
+    // guard bolted in front of one writer leaves the next to rediscover it.
+    let refused: Vec<&PathBuf> = add_to
+        .iter()
+        .filter(|p| !crate::fmt::is_pack_file(p))
+        .collect();
+    if !refused.is_empty() {
+        for path in &refused {
+            crate::render::errln!(
+                "error: {} is not a pack — `schema --add-to` takes `.yaml`/`.yml` pack files",
+                path.display()
+            );
+        }
+        crate::render::errln!(
+            "help: fragment files are inputs proef never writes (ADR-0018); point `--add-to` at the pack that `ref:`s them"
+        );
+        return ExitCode::UserError;
+    }
+
     let mut schema_dirs: Vec<PathBuf> = Vec::new();
     for pack_path in add_to {
         let dir = crate::fsutil::parent_dir(pack_path);

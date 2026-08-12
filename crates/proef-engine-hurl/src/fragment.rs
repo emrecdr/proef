@@ -197,6 +197,21 @@ fn annotation(entry: &Entry) -> Result<Option<String>, FragmentScanError> {
                 ),
             ));
         }
+        // `#` is the file qualifier in `ref: file.hurl#name`, so a name
+        // containing one can be declared but never referenced: the lookup
+        // splits on it and searches for a fragment that does not exist. The
+        // failure it produced was a dead end — "names no loaded fragment — did
+        // you mean `a#b`?", suggesting the exact spelling that just failed.
+        if name.contains('#') {
+            return Err(at_comment(
+                comment,
+                format!(
+                    "`@proef` name `{name}` contains `#`, which separates a file from a \
+                     fragment in `ref: file.hurl#name` — such a name could never be \
+                     referenced"
+                ),
+            ));
+        }
         found = Some(name);
     }
     Ok(found)

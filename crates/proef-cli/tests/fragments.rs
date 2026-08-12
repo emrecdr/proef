@@ -496,3 +496,103 @@ fn junit_names_the_fragment_a_failure_came_from() {
         "the JUnit failure message must name the fragment: {xml}"
     );
 }
+
+/// A corpus is **foreign by design** — CONFIG sells "pointing at a corpus you
+/// did not write costs nothing" — so one unreadable file must not take down
+/// commands that never look at fragments. It used to exit 3 from every command,
+/// `flows` included.
+#[test]
+fn an_unreadable_corpus_file_never_sinks_its_siblings() {
+    let dir = project(CORPUS, PACK);
+    std::fs::write(
+        dir.path().join("tests/hurl/binary.hurl"),
+        [0xff, 0xfe, 0x00, 0x01],
+    )
+    .unwrap();
+
+    // A suite whose packs contain no `ref:` never uses the corpus, so an
+    // unreadable file in it must cost exactly nothing — the promise CONFIG
+    // makes. This is the half that used to exit 3 from every command.
+    let inert = project(
+        CORPUS,
+        "macros:\n  noop:\n    match: \"the operator searches for {q}\"\n    params: [q]\n    \
+         steps:\n      - hurl: |\n          GET ${url:base}/x\n          HTTP 200\n",
+    );
+    std::fs::write(
+        inert.path().join("tests/hurl/binary.hurl"),
+        [0xff, 0xfe, 0x00, 0x01],
+    )
+    .unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(inert.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .env("PROEF_SECRET_APITOKEN", API_TOKEN)
+        .args(["flows", "tests/features"])
+        .assert()
+        .code(0);
+
+    // The pack does `ref:` the corpus, so now it is reported — and the readable
+    // sibling still resolved, or this would be an `unknown_ref` instead.
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    let assert = cmd
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .env("PROEF_SECRET_APITOKEN", API_TOKEN)
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(2);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("proef::pack::unreadable_fragment_file"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("unknown_ref"),
+        "the readable sibling must still load: {stderr}"
+    );
+}
+
+/// `#` separates a file from a fragment in `ref: file.hurl#name`, so a name
+/// carrying one could be declared and never referenced — the lookup split on it
+/// and then suggested the exact spelling that had just failed.
+#[test]
+fn an_annotation_name_containing_a_hash_is_refused() {
+    let hurl = CORPUS.replace("# @proef admin.search", "# @proef admin#search");
+    let stderr = dry_run_error(&hurl, PACK);
+    assert!(stderr.contains("proef::pack::bad_annotation"), "{stderr}");
+    assert!(stderr.contains("could never be referenced"), "{stderr}");
+}
+
+/// `--add-to` writes a yaml modeline and drops the pack schema beside the file.
+/// Neither means anything to a `.hurl` corpus, and writing one violates
+/// ADR-0018's "fragment files are inputs proef never writes". `fmt` learned this
+/// predicate; this writer had not.
+#[test]
+fn schema_add_to_refuses_a_fragment_file() {
+    let dir = project(CORPUS, PACK);
+    let fragment = dir.path().join("tests/hurl/admin.hurl");
+    let before = std::fs::read_to_string(&fragment).unwrap();
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .args(["schema", "--add-to", "tests/hurl/admin.hurl"])
+        .assert()
+        .code(2);
+
+    assert_eq!(
+        std::fs::read_to_string(&fragment).unwrap(),
+        before,
+        "the corpus file must be byte-identical"
+    );
+    assert!(
+        !dir.path()
+            .join("tests/hurl/proef-pack.schema.json")
+            .exists(),
+        "no schema may be dropped into the corpus"
+    );
+}
