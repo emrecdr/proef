@@ -148,6 +148,15 @@ pub fn execute(
     // Resolve the active environment once. All three calls consult `env_profile`,
     // so any of them surfaces an unknown `--env` (user error); the match below
     // reports the first such error.
+    // Parsed before anything runs: a malformed expression must stop the run, not
+    // leave every scenario it should have isolated quietly sharing the pool.
+    let exclusive_tags = match config.exclusive_tags() {
+        Ok(expr) => expr,
+        Err(message) => {
+            crate::render::errln!("error: {message}");
+            return ExitCode::UserError;
+        }
+    };
     let (config_vars, effective_jobs, http_defaults, sla_thresholds) = match (
         config.config_vars(active_env),
         config.jobs(jobs, active_env),
@@ -397,6 +406,7 @@ pub fn execute(
     let specs = build_specs(
         &front,
         tags,
+        exclusive_tags.as_ref(),
         scenario_filter,
         scenario_file_filter,
         rerun_set.as_deref(),
@@ -987,7 +997,7 @@ fn run_phase(
         }
     };
 
-    let specs = build_specs(&front, None, None, None, None, artifacts_dir);
+    let specs = build_specs(&front, None, None, None, None, None, artifacts_dir);
     if specs.is_empty() {
         crate::render::errln!(
             "error: {label} feature `{}` has no scenarios",
@@ -1065,6 +1075,7 @@ fn exclude_phase_features(
 fn build_specs(
     front: &FrontEnd,
     tags: Option<&proef_core::tags::TagExpr>,
+    exclusive: Option<&proef_core::tags::TagExpr>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     rerun_set: Option<&[(String, String)]>,
@@ -1148,6 +1159,11 @@ fn build_specs(
                 file_root: Some(crate::fsutil::parent_dir(Path::new(
                     feature.file.path.as_str(),
                 ))),
+                // Selected by the same expression language `--tags` uses, over
+                // the same accumulated tags, so "which scenarios are exclusive"
+                // is answered exactly as "which scenarios are selected".
+                exclusive: exclusive
+                    .is_some_and(|expr| front::tag_selected(&scenario.lowered.tags, Some(expr))),
                 prepare,
             });
         }

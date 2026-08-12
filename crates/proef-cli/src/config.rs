@@ -99,6 +99,16 @@ pub struct RunTable {
     /// ADR-0014) — only when setup succeeded. A teardown failure is a distinct
     /// non-zero signal, never a silently-green suite.
     pub teardown: Option<String>,
+    /// Tag expression selecting scenarios that run with the pool to themselves.
+    ///
+    /// A config key rather than a reserved tag name, because the failure mode of
+    /// the tag form is the worst kind: a scenario added months later lands
+    /// untagged in the parallel pool and breaks isolation intermittently, which
+    /// reads as flakiness rather than as a missing declaration. Naming the
+    /// expression here keeps the rule in one reviewable place, and it is an
+    /// ordinary tag expression (`"@serial and not @wip"`), not a new grammar.
+    #[serde(rename = "exclusive-tags")]
+    pub exclusive_tags: Option<String>,
 }
 
 /// `[env.<name>.run]` overrides. Deliberately narrower than [`RunTable`]: only
@@ -316,6 +326,19 @@ impl ProjectConfig {
         }
         let convention = PathBuf::from("tests");
         convention.is_dir().then_some(convention)
+    }
+
+    /// The tag expression selecting exclusive scenarios (`[run] exclusive-tags`),
+    /// parsed. A malformed expression is a user error, not a silently-ignored
+    /// key: the whole point of the setting is that a scenario it should have
+    /// matched must never quietly rejoin the pool.
+    pub fn exclusive_tags(&self) -> Result<Option<proef_core::tags::TagExpr>, String> {
+        let Some(raw) = self.run.exclusive_tags.as_deref() else {
+            return Ok(None);
+        };
+        proef_core::tags::parse(raw)
+            .map(Some)
+            .map_err(|err| format!("[run] exclusive-tags is not a valid tag expression: {err}"))
     }
 
     /// The suite-level setup feature (`[run] setup`), if any (ADR-0014).

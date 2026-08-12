@@ -233,6 +233,24 @@ build requirement).
       `PackSet::fragments` is an `Arc`, `LoweredScenario::secrets` is a map,
       `Prepared`/`ScenarioCtx` carry `secret_bindings`, and `LoweredStep`/`StepOutcome`/
       `Event::StepFinished` carry `fragment`
+- [x] adoption response — the gaps a 97-entry corpus port hit, plus the scheduling
+      primitive its suite needed. `proef fragments` lists the corpus and names both ways
+      a fragment dies (no macro refs it; only a macro no scenario binds does), with
+      unannotated entries by line and a `--check` gate (`--require-annotated` opts into
+      failing on those, since an unannotated entry is inert *by design*). A `bind:` key
+      nothing reads is refused with did-you-mean (`pack::unread_bind_key`), checked as a
+      union over the scope so a pack-scope key serving one macro stays correct. `doctor`
+      reports the corpus, `init` scaffolds both body forms, and `--config <path>` names
+      the `proef.toml` to read (discovery only searches *up*, so a config beside the
+      suite was unreachable). ADR-0007's value caps now apply to fragment text — they
+      were inline-only, so byte-identical `[Options]` exited 2 in a `hurl:` block and 0
+      behind a `ref:`. `[run] exclusive-tags` runs a matching scenario with the pool to
+      itself (exclusion, not ordering — `[run] setup` already covers *before*).
+      Breaking (library): `FragmentScanner` returns `ScannedFile { fragments,
+      unannotated }`, `AnalyzeCtx` takes the corpus rather than building one (the LSP
+      was re-reading and re-hurl-parsing it per request), `StepKindSpec` carries an
+      `options` recogniser so option *spellings* live only in the engine that owns them,
+      and `ScenarioSpec` carries `exclusive`
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

@@ -244,6 +244,7 @@ fn spec(name: &str, engines_by_batch: &[&'static str]) -> ScenarioSpec {
         name: Arc::from(name),
         line: 1,
         file_root: None,
+        exclusive: false,
         prepare: Box::new(move |_world| {
             Ok(Prepared {
                 batches,
@@ -404,6 +405,7 @@ fn optional_batch_error_does_not_rereport_later_batches() {
         name: Arc::from("optional-error"),
         line: 1,
         file_root: None,
+        exclusive: false,
         prepare: Box::new(move |_world| {
             Ok(Prepared {
                 batches,
@@ -675,5 +677,75 @@ fn abandoned_scenario_emits_nothing_after_run_finished() {
             "run_finished",
         ],
         "gate must drop only the late event, not real ones"
+    );
+}
+
+/// An exclusive scenario runs with the pool to itself.
+///
+/// Asserted by **observed overlap**, not by counting starts: the property is
+/// that nothing else is in flight, and only concurrency can show that. Each
+/// scenario records the peak occupancy it witnessed, so a run where the
+/// exclusive one ever saw a neighbour fails regardless of ordering — and the
+/// non-exclusive pair still has to reach 2, or the test would pass on a runner
+/// that had quietly become serial and proved nothing.
+#[test]
+fn an_exclusive_scenario_never_shares_the_pool() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+
+    /// A scenario that holds a slot long enough for a neighbour to be visible.
+    fn watcher(name: &str, exclusive: bool, peak: Arc<Mutex<usize>>) -> ScenarioSpec {
+        ScenarioSpec {
+            file: Arc::from("mock.feature"),
+            name: Arc::from(name),
+            line: 1,
+            file_root: None,
+            exclusive,
+            prepare: Box::new(move |_world| {
+                let live = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
+                {
+                    let mut seen = peak.lock().unwrap();
+                    *seen = (*seen).max(live);
+                }
+                std::thread::sleep(Duration::from_millis(60));
+                LIVE.fetch_sub(1, Ordering::SeqCst);
+                Ok(Prepared {
+                    batches: Vec::new(),
+                    artifact: None,
+                    secret_bindings: BTreeMap::default(),
+                })
+            }),
+        }
+    }
+
+    let peak_alone: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let peak_shared: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let engines = engines(vec![]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let summary = run(
+        vec![
+            watcher("shared-a", false, Arc::clone(&peak_shared)),
+            watcher("shared-b", false, Arc::clone(&peak_shared)),
+            watcher("alone", true, Arc::clone(&peak_alone)),
+            watcher("shared-c", false, Arc::clone(&peak_shared)),
+        ],
+        &engines,
+        &store,
+        &config(4),
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.outcomes.len(), 4, "every scenario must still run");
+    assert_eq!(
+        *peak_alone.lock().unwrap(),
+        1,
+        "an exclusive scenario saw a neighbour — the pool was not its own"
+    );
+    assert!(
+        *peak_shared.lock().unwrap() >= 2,
+        "the non-exclusive scenarios never overlapped, so this proves nothing \
+         about exclusivity"
     );
 }

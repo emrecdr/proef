@@ -384,7 +384,9 @@ Scenario-per-OS-thread, `--jobs` bounded (default: available_parallelism, capped
 scenario count); events funneled through the sink (the console reporter buffers per
 scenario and replays contiguously); one CancellationToken per run, child per scenario; Ctrl-C graceful /
 second Ctrl-C hard (ADR-0007). Global-World writes serialize through the store lock;
-scenario ordering within a file is preserved for artifact naming, not execution order.
+scenario ordering within a file is preserved for artifact naming, not execution order —
+except that a scenario matching `[run] exclusive-tags` waits for the pool to drain and
+runs alone, which constrains *concurrency* rather than reordering the queue.
 
 ## 13. Security
 

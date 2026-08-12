@@ -482,6 +482,24 @@ and nothing *inside* it.
 form is more explicit and keeps runner semantics out of the feature files — and
 E4 is an argument for it.
 
+**Shipped** as `[run] exclusive-tags`, a tag *expression* rather than a list —
+the same language `--tags` takes, so group membership is answered exactly as
+selection is. Two corrections to this entry, both from checking before building:
+
+1. The filing describes one axis; the mature shape has two. `cargo-nextest`
+   separates a group concurrency limit (`max-threads`, which bounds members
+   against each other and leaves the rest of the pool running) from per-test
+   weight (`threads-required`, which is what buys global exclusivity — they
+   redefined it in 2024 precisely so limits "are never exceeded", enabling
+   mutual exclusion against *all* tests). Only the second is what was missing
+   here, so only that shipped; a group table can be added later without
+   breaking this key.
+2. Of the two motivating scenarios, only the first is a serialization problem.
+   "Installs a workflow definition governing everything created afterwards" is
+   **ordering**, which `[run] setup` already provides — a feature run once
+   before the pool exists. Recorded so an ordering primitive is not built on
+   the assumption that it was needed.
+
 ### E2 — N invocations produce N run records, with no merge *(report B2; consequence of E1)*
 
 **Verified.** Each run writes its own `.proef-runs/<run-id>/` (`TECH-SPEC.md:299`).
@@ -491,6 +509,13 @@ pass/fail aggregation pushed onto the caller's shell, while `explain`/`diff`
 operate per-run so a post-mortem reader must know which to open. **Recorded as a
 consequence, not an independent item** — solve E1 and this largely evaporates;
 solving it alone (a `proef merge`) treats the symptom.
+
+**Largely closed by E1 shipping:** a suite whose isolation needs are expressed
+as `exclusive-tags` runs in one invocation, so it produces one record, one JUnit
+file, one report and one exit code. Kept open rather than closed outright
+because a suite may still split invocations for reasons E1 does not address
+(different environments, different `--tags` in separate CI jobs), and nothing
+merges those.
 
 ### E3 — no per-scenario state reset hook *(report B3)*
 

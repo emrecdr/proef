@@ -39,6 +39,15 @@ pub struct ScenarioSpec {
     pub file_root: Option<std::path::PathBuf>,
     /// Lower + emit against the live World snapshot (pure; runs in-thread).
     pub prepare: PrepareFn,
+    /// Run this scenario with the pool to itself (ADR-0007 scheduling).
+    ///
+    /// Not "one of these at a time" but "nothing else at all": the motivating
+    /// case is a scenario asserting absolute positions (`items[0]`) against a
+    /// database no concurrent scenario may write to. A per-group concurrency
+    /// limit — the other half of the shape `cargo-nextest` settled on — bounds
+    /// members against each other and leaves the rest of the pool running, which
+    /// is the weaker guarantee and not the one that was missing.
+    pub exclusive: bool,
 }
 
 /// The dispatch-time preparation: World snapshot in, batches + artifact out.
@@ -316,15 +325,39 @@ pub fn run(
     // appending events forever (record hygiene; engines gain real stop points
     // as they support cancellation).
     let mut active: BTreeMap<usize, (Instant, CancellationToken)> = BTreeMap::new();
+    // Whether the scenario currently holding the pool asked for it alone.
+    // Cleared the moment the pool drains, so the flag never outlives the run it
+    // describes — it would otherwise stay set after an exclusive scenario
+    // finished and read as "someone still owns the pool".
+    let mut exclusive_active = false;
     let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
     let grace = Duration::from_secs(2);
 
     while outcomes.len() < total {
+        if active.is_empty() {
+            exclusive_active = false;
+        }
         // Fill free slots.
         while active.len() < config.jobs.max(1) {
+            // Peeked, not popped: an exclusive scenario that cannot start yet
+            // must stay at the head. Popping it to inspect it and pushing it
+            // back would reorder the queue, and a scenario that keeps losing its
+            // place is the starvation this ordering exists to prevent.
+            let Some((_, next)) = queue.front() else {
+                break;
+            };
+            // Exclusivity is symmetric, and both directions are needed: an
+            // exclusive scenario waits for the pool to drain, and nothing joins
+            // a pool an exclusive scenario already owns. Enforcing only the
+            // first would let the very next fill iteration start a neighbour
+            // beside it.
+            if (next.exclusive || exclusive_active) && !active.is_empty() {
+                break;
+            }
             let Some((index, spec)) = queue.pop_front() else {
                 break;
             };
+            exclusive_active = spec.exclusive;
             if cancel.is_cancelled() {
                 gate.finish_scenario(
                     &Event::ScenarioFinished {

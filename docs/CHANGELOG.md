@@ -8,6 +8,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`[run] exclusive-tags`** — a tag expression selecting scenarios that run
+  with the pool to themselves. Real suites contain scenarios that cannot run
+  beside anything: one asserting absolute positions (`items[0]`) needs a store
+  no concurrent scenario writes to, and the only workaround was several CLI
+  invocations driven by tag discipline in a Makefile, each producing its own run
+  record, JUnit file and exit code to aggregate in shell.
+
+  A matching scenario waits for the pool to drain, runs alone, and the pool
+  refills after it; everything else keeps running at `jobs` width, and discovery
+  order is unchanged so an exclusive scenario never loses its place. A config
+  expression rather than a reserved tag name, because with a bare convention a
+  scenario added months later lands untagged in the parallel pool and breaks
+  isolation intermittently — which reads as flakiness rather than as a missing
+  declaration. A malformed expression is a user error, never a silently-ignored
+  key.
+
+  This is **exclusion, not ordering**: a scenario that must run *before* the
+  rest belongs in `[run] setup`, which already runs once before the pool exists.
+  Deliberately one axis of the two `cargo-nextest` settled on — per-group
+  concurrency limits (rate-limiting a shared dependency) are a real future need
+  that nobody has asked for, and a group table can be added later without
+  breaking this key.
+
 - **`proef fragments`** — the corpus listing, symmetric with `macros`. Until now
   no proef output stated how many fragments there were, so neither way a
   fragment can die had a denominator to be noticed against: one no macro

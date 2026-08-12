@@ -1423,6 +1423,7 @@ impl core::marker::UnsafeUnpin for proef_core::runner::ScenarioOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::runner::ScenarioOutcome
 impl core::panic::unwind_safe::UnwindSafe for proef_core::runner::ScenarioOutcome
 pub struct proef_core::runner::ScenarioSpec
+pub proef_core::runner::ScenarioSpec::exclusive: bool
 pub proef_core::runner::ScenarioSpec::file: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioSpec::file_root: core::option::Option<std::path::PathBuf>
 pub proef_core::runner::ScenarioSpec::line: usize

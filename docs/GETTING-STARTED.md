@@ -20,17 +20,22 @@ $ proef init
   created ./proef.toml
   created ./suite/case.feature
   created ./suite/packs/api.yaml
+  created ./hurl/api.hurl
   created ./.gitignore
   created ./suite/packs/proef-pack.schema.json
   ok ./suite/packs/api.yaml (modeline added)
 
-created 5 file(s), skipped 0
+created 6 file(s), skipped 0
 next: proef test --dry-run  (then point ${url:base} at your API — the scaffold's routes are placeholders)
 ```
 
 `proef init` writes the three files this walkthrough builds by hand below —
-`proef.toml`, `suite/case.feature`, `suite/packs/api.yaml` — plus the pack
-JSON Schema and a `.gitignore`. It is a deliberately *smaller* suite than the
+`proef.toml`, `suite/case.feature`, `suite/packs/api.yaml` — plus a one-entry
+`hurl/api.hurl`, the pack JSON Schema and a `.gitignore`. The `.hurl` file is
+there because a step has **two** body forms: the scaffold's pack shows an inline
+`hurl:` block and a `ref:` naming that file's `# @proef` entry, so the form an
+adopter with an existing hurl corpus wants is visible from the first command
+rather than only in the docs. It is a deliberately *smaller* suite than the
 one this tutorial builds: no `Then the first hit is record "r-1"` step, no
 `firstHit` `expect:` macro, no `${secret:apiToken}`, and `search` targets a
 plain `/search` route instead of the tutorial's `/api/v1/admin/search/records`.
