@@ -212,3 +212,22 @@ one resolvable.
   `proef secret set --value` was removed in favour of `--stdin` (a secret in
   argv is visible to `ps`), and `proef macros --output json`'s `pattern` field
   changed from a boolean to `string|null`
+- `v0.10.0` — named hurl fragments (ADR-0018): a step may `ref:` one
+  `# @proef <name>` entry of a real `.hurl` file, values supplied by `bind:` at
+  pack/macro/step scope, so the same bytes run under stock `hurl` and under
+  proef; `[run] fragments` names the scanned root, a `ref:` step records the
+  fragment it ran as `file.hurl#name` everywhere a failure is reported, and the
+  editor completes `bind:` keys and jumps from `ref:` to the annotation —
+  breaking: `pack::load` takes a `&FragmentCorpus`, `PackSet::fragments` is an
+  `Arc`, `LoweredScenario::secrets` is a map, and `LoweredStep`/`StepOutcome`/
+  `Event::StepFinished` carry `fragment`
+- `v0.11.0` — the adoption response: ADR-0007's value caps reach fragment text
+  (byte-identical `[Options]` exited 2 inline and 0 behind a `ref:`, then ran),
+  `proef fragments` lists the corpus and names both ways a fragment dies with a
+  `--check` gate, a `bind:` key nothing reads is refused with did-you-mean,
+  `doctor` reports the corpus, `init` scaffolds both body forms, `--config`
+  names the `proef.toml` to read, and `[run] exclusive-tags` runs a scenario
+  with the pool to itself — breaking: `FragmentScanner` returns `ScannedFile`,
+  `AnalyzeCtx` takes the corpus rather than building one per call,
+  `StepKindSpec` carries an `options` recogniser, and `ScenarioSpec` carries
+  `exclusive`
