@@ -1,6 +1,7 @@
 //! CLI subcommand implementations.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,10 +28,6 @@ fn config_vars_for(
         })
 }
 
-/// Load and validate a suite through the front-end (dry-run mode), mapping a
-/// front-end error to its exit code. The shared load path for `flows`,
-/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
-/// raw `FrontError` to SARIF.
 /// This invocation's fragment corpus, read from `[run] fragments` (ADR-0018).
 ///
 /// One helper rather than the same three lines at five call sites: the corpus
@@ -40,20 +37,28 @@ pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::Fragmen
     front::fragment_corpus(config.fragments().as_deref()).map_err(|err| report_front_error(&err))
 }
 
+/// Load and validate a suite through the front-end (dry-run mode), mapping a
+/// front-end error to its exit code. The shared load path for `flows`,
+/// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
+/// raw `FrontError` to SARIF.
 fn load_front(
     path: &Path,
     active_env: Option<&str>,
     run_id: Option<String>,
     config: &ProjectConfig,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<front::FrontEnd, ExitCode> {
     let config_vars = config_vars_for(active_env, config)?;
-    let fragments = corpus(config)?;
+    // Taken from the caller for the reason `corpus` exists: one read per
+    // invocation. Building one here made every caller that *also* held a corpus
+    // pay for a second walk, read and hurl-parse of the same files — which
+    // `validate_phase_features` had already been fixed not to do.
     front::run(
         path,
         proef_core::resolve::ResolveMode::DryRun,
         run_id,
         config_vars,
-        &fragments,
+        fragments,
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -104,7 +109,11 @@ fn schema_check(suite: Option<&Path>) -> (DoctorStatus, String) {
 ///
 /// Exit code: `0` when nothing failed (warnings allowed), `3` when any check
 /// failed — a broken environment is a system fault (ADR-0009).
-pub fn doctor(engines: &[Box<dyn EngineFactory>], suite: Option<&Path>) -> ExitCode {
+pub fn doctor(
+    engines: &[Box<dyn EngineFactory>],
+    suite: Option<&Path>,
+    fragments: Option<&Path>,
+) -> ExitCode {
     fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
         let glyph = match status {
             DoctorStatus::Pass => "ok  ",
@@ -135,6 +144,9 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>], suite: Option<&Path>) -> ExitC
     crate::render::outln!("\nauthoring:");
     let (status, detail) = schema_check(suite);
     row(&mut worst, "pack schema", status, &detail);
+    if let Some((status, detail)) = fragment_check(fragments) {
+        row(&mut worst, "fragments", status, &detail);
+    }
 
     crate::render::outln!("\nsecrets:");
     for (status, name, detail) in crate::secretstore::doctor_checks() {
@@ -168,14 +180,17 @@ pub fn doctor(engines: &[Box<dyn EngineFactory>], suite: Option<&Path>) -> ExitC
 fn validate_phase_features(
     config: &ProjectConfig,
     config_vars: &Arc<BTreeMap<String, String>>,
+    fragments: &proef_core::pack::FragmentCorpus,
 ) -> Result<usize, ExitCode> {
     let mut scenarios = 0usize;
-    // Once for both phases: the corpus does not depend on which one is loading.
-    let fragments = corpus(config)?;
+    // Taken from the caller, not built here: the corpus depends on neither the
+    // phase nor the suite, so the one `dry_run` already read serves both.
+    // Building a second would reintroduce the per-load rescan `corpus` exists
+    // to avoid — the invariant, not just the cost, is the point.
     for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
         let Some(path) = path else { continue };
         let front =
-            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, &fragments)?;
+            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, fragments)?;
         render::print_all(&front.warnings);
         scenarios += front
             .features
@@ -351,7 +366,7 @@ pub fn dry_run(
         return front::no_scenarios_matched();
     }
 
-    let phase_note = match validate_phase_features(config, &config_vars) {
+    let phase_note = match validate_phase_features(config, &config_vars, &fragments) {
         Ok(0) => String::new(),
         Ok(n) => format!(" · {n} setup/teardown scenario(s) validated"),
         Err(code) => return code,
@@ -390,7 +405,11 @@ pub fn flows(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, None, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, None, config, &fragments) {
         Ok(front) => front,
         Err(code) => return code,
     };
@@ -456,16 +475,17 @@ pub fn macros(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, None, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, None, config, &fragments) {
         Ok(front) => front,
         // The suite does not bind — which is exactly when an author needs to
         // read the vocabulary. `load_front` has already rendered the
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(fragments) = corpus(config) else {
-                return code;
-            };
             let Ok(packs) = front::load_packs(path, &fragments) else {
                 return code;
             };
@@ -591,6 +611,289 @@ fn render_macros(
     crate::render::outln!("\n{} macro(s){unused_note}{near_note}", rows.len());
 }
 
+/// The `[run] fragments` root, as `doctor` sees it. `None` when the key is
+/// unset — the feature is off, and a row saying so would be noise for the
+/// majority who never use it.
+///
+/// A misconfigured root otherwise surfaces only much later, as
+/// `pack::unknown_ref` on the first `ref:` — an error about a *name* when the
+/// cause is a *path*. Same argument that gave the pack schema its row: a suite
+/// whose fragments had silently stopped loading had nothing telling it so.
+///
+/// Goes through the same loader the runner uses, so the two cannot disagree
+/// about what the root contains.
+fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
+    let root = root?;
+    let shown = root.display();
+    if !root.is_dir() {
+        return Some((
+            DoctorStatus::Warn,
+            format!("`{shown}` is not a directory — every `ref:` will read as unknown"),
+        ));
+    }
+    let corpus = match front::fragment_corpus(Some(root)) {
+        Ok(corpus) => corpus,
+        Err(err) => return Some((DoctorStatus::Warn, format!("`{shown}`: {err}"))),
+    };
+    let named = corpus.fragments().len();
+    let bare: usize = corpus.unannotated().values().map(Vec::len).sum();
+    let broken = corpus.diagnostics().len();
+    let status = if broken > 0 {
+        DoctorStatus::Warn
+    } else {
+        DoctorStatus::Pass
+    };
+    let mut detail = format!("{named} fragment(s) from `{shown}`");
+    if bare > 0 {
+        let _ = write!(detail, " · {bare} unannotated entr(ies)");
+    }
+    if broken > 0 {
+        let _ = write!(detail, " · {broken} file(s) proef could not read");
+    }
+    Some((status, detail))
+}
+
+/// `proef fragments` — list the corpus, with how many scenarios actually run
+/// each entry (ADR-0018).
+///
+/// The counterpart to [`macros`], and deliberately symmetric with it: fragments
+/// are the second input language, and until now nothing in proef's output stated
+/// how many there were. Without a denominator neither way a fragment can die is
+/// noticeable — an entry no macro references is invisible, and one reached only
+/// through a macro no scenario binds looks covered because the *macro* is
+/// flagged.
+///
+/// Reachability is read off the **lowered** scenarios rather than walked
+/// statically: `use:` inlines a target's steps, so a fragment can be reached
+/// through a chain of macros, and lowering has already resolved every such hop.
+/// What the run would execute is therefore the answer, not an approximation of
+/// it.
+pub fn fragments(
+    path: &Path,
+    output_json: bool,
+    check: bool,
+    require_annotated: bool,
+    active_env: Option<&str>,
+    config: &ProjectConfig,
+) -> ExitCode {
+    let corpus = match corpus(config) {
+        Ok(corpus) => corpus,
+        Err(code) => return code,
+    };
+    // Diagnostics first: an unreadable or unparseable file is why a fragment is
+    // missing from the listing, and a listing that silently omitted it would
+    // read as "you never wrote it".
+    render::print_all(corpus.diagnostics());
+
+    // The suite is loaded for run counts only. When it does not bind there are
+    // no counts to have — the same state `macros` handles by listing anyway and
+    // withholding every count-derived verdict, rather than reporting a confident
+    // `0×` that means "not measured".
+    // The failing exit code is kept, as `macros` keeps it: the listing is still
+    // worth printing beneath the diagnostics, but a suite that did not load is
+    // not a success, and a script reading only the code must not be told it was.
+    let (loaded, load_failure) = match load_front(path, active_env, None, config, &corpus) {
+        Ok(front) => (Some(front), None),
+        Err(code) => (None, Some(code)),
+    };
+    let runs: Option<BTreeMap<String, usize>> = loaded.as_ref().map(|front| {
+        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        for feature in &front.features {
+            for scenario in &feature.scenarios {
+                // Distinct scenarios, not steps: "2×" should mean two scenarios
+                // exercise this request, not that one scenario called it twice.
+                let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+                for batch in &scenario.lowered.batches {
+                    for step in &batch.steps {
+                        if let Some(fragment) = &step.fragment {
+                            seen.insert(fragment.as_str());
+                        }
+                    }
+                }
+                for fragment in seen {
+                    *counts.entry(fragment.to_owned()).or_default() += 1;
+                }
+            }
+        }
+        counts
+    });
+
+    // Which macro names each fragment, for the "reached only through a macro
+    // nothing binds" case — the death mode that currently looks covered.
+    let mut referenced_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if let Some(front) = &loaded {
+        for macro_ in front.packs.macros.values() {
+            let proef_core::pack::MacroBody::Steps(steps) = &macro_.body else {
+                continue;
+            };
+            for step in steps {
+                if let proef_core::pack::MacroStepKind::Ref { target } = &step.kind
+                    && let Some(fragment) = front.packs.find_fragment(target)
+                {
+                    let names = referenced_by.entry(fragment.qualified()).or_default();
+                    if !names.contains(&macro_.name) {
+                        names.push(macro_.name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    render_fragments(&corpus, runs.as_ref(), &referenced_by, output_json);
+
+    if let Some(code) = load_failure {
+        return code;
+    }
+    if !check {
+        return ExitCode::Success;
+    }
+    // `--check` needs measured counts to fail on. Without them the honest
+    // answer is that the gate could not run, not that it passed.
+    let Some(runs) = runs.as_ref() else {
+        render::errln!(
+            "error: --check needs a suite that binds — the counts it gates on were not measured"
+        );
+        return ExitCode::UserError;
+    };
+    let never_run: Vec<&str> = corpus
+        .fragments()
+        .values()
+        .filter(|f| !runs.contains_key(&f.qualified()))
+        .map(|f| f.name.as_str())
+        .collect();
+    let unannotated: usize = corpus.unannotated().values().map(Vec::len).sum();
+    let mut failed = false;
+    if !never_run.is_empty() {
+        render::errln!(
+            "error: {} fragment(s) no scenario runs: {}",
+            never_run.len(),
+            never_run.join(", ")
+        );
+        failed = true;
+    }
+    // Opt-in, because an unannotated entry is inert *by design* (ADR-0018): a
+    // corpus proef did not write is expected to be mostly those, and pointing at
+    // one costs nothing. During a port the same signal means "not done yet",
+    // which is a different claim — so the porting team asks for it explicitly
+    // rather than every adopter inheriting it.
+    if require_annotated && unannotated > 0 {
+        render::errln!("error: {unannotated} entr(ies) carry no `# @proef` annotation");
+        failed = true;
+    }
+    if failed {
+        ExitCode::TestFailure
+    } else {
+        ExitCode::Success
+    }
+}
+
+/// Render the fragment listing, grouped by file.
+fn render_fragments(
+    corpus: &proef_core::pack::FragmentCorpus,
+    runs: Option<&BTreeMap<String, usize>>,
+    referenced_by: &BTreeMap<String, Vec<String>>,
+    output_json: bool,
+) {
+    let fragments = corpus.fragments();
+    let unannotated = corpus.unannotated();
+    // Every file that contributed anything, annotated or not — a file of purely
+    // unannotated entries is precisely what a porting team needs to see.
+    let mut files: Vec<&str> = fragments.values().map(|f| f.file.as_str()).collect();
+    files.extend(unannotated.keys().map(String::as_str));
+    files.sort_unstable();
+    files.dedup();
+
+    if output_json {
+        for fragment in fragments.values() {
+            let qualified = fragment.qualified();
+            // `null`, not `0`: absent knowledge rather than a measured zero.
+            let count = runs.map(|r| r.get(&qualified).copied().unwrap_or(0));
+            let refs = referenced_by.get(&qualified).cloned().unwrap_or_default();
+            let json = serde_json::json!({
+                "name": fragment.name,
+                "file": fragment.file,
+                "qualified": qualified,
+                "line": fragment.line,
+                "kind": fragment.kind,
+                "reads": fragment.placeholders,
+                "supplies": fragment.supplied_variables,
+                "referencedBy": refs,
+                "scenarios": count,
+                "unused": count.map(|n| n == 0),
+            });
+            crate::render::outln!("{json}");
+        }
+        for (file, lines) in unannotated {
+            for line in lines {
+                let json = serde_json::json!({
+                    "name": serde_json::Value::Null,
+                    "file": file,
+                    "line": line,
+                    "annotated": false,
+                });
+                crate::render::outln!("{json}");
+            }
+        }
+        return;
+    }
+
+    let mut never_run = 0usize;
+    for file in &files {
+        let in_file: Vec<_> = fragments.values().filter(|f| f.file == *file).collect();
+        let blank: &[usize] = &[];
+        let bare = unannotated.get(*file).map_or(blank, Vec::as_slice);
+        crate::render::outln!("{file}{}", entries(in_file.len() + bare.len()));
+        for fragment in &in_file {
+            let qualified = fragment.qualified();
+            let count = runs.map(|r| r.get(&qualified).copied().unwrap_or(0));
+            let refs = referenced_by.get(&qualified);
+            let marker = match count {
+                // Two death modes, named apart. The second is the dangerous one:
+                // the macro warning fires, so it reads as already covered.
+                Some(0) => {
+                    never_run += 1;
+                    match refs {
+                        None => "  UNREFERENCED — no macro refs it".to_owned(),
+                        Some(names) => format!(
+                            "  UNREACHABLE — only `{}`, which no scenario binds",
+                            names.join("`, `")
+                        ),
+                    }
+                }
+                _ => String::new(),
+            };
+            let shown = match count {
+                Some(n) => format!("{n}×"),
+                None => "—".to_owned(),
+            };
+            crate::render::outln!("  {:<28} {shown}{marker}", fragment.name);
+        }
+        for line in bare {
+            crate::render::outln!("  {:<28} (line {line}) UNANNOTATED — not referenceable", "");
+        }
+    }
+
+    let bare_total: usize = unannotated.values().map(Vec::len).sum();
+    let total = fragments.len() + bare_total;
+    // Withheld with the verdicts it depends on, exactly as `macros` withholds
+    // its unused tally: "0 never run" from an unbound suite would read as
+    // "nothing is dead" when the truth is "not counted".
+    let dead_note = match runs {
+        Some(_) => format!(" · {never_run} never run"),
+        None => String::new(),
+    };
+    crate::render::outln!(
+        "\n{total} entr{} · {} annotated · {bare_total} unannotated{dead_note}",
+        if total == 1 { "y" } else { "ies" },
+        fragments.len()
+    );
+}
+
+/// `N entries` suffix for a file header.
+fn entries(n: usize) -> String {
+    format!("        {n} entr{}", if n == 1 { "y" } else { "ies" })
+}
+
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`
 /// plus sidecars (`.map.json`, `.vars`) for a stable CI hand-off (ADR-0010).
 /// The written bytes are exactly the parse-validated emission.
@@ -601,7 +904,11 @@ pub fn artifacts(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
-    let front = match load_front(path, active_env, run_id, config) {
+    let fragments = match corpus(config) {
+        Ok(fragments) => fragments,
+        Err(code) => return code,
+    };
+    let front = match load_front(path, active_env, run_id, config, &fragments) {
         Ok(front) => front,
         Err(code) => return code,
     };

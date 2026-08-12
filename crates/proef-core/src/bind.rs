@@ -286,6 +286,7 @@ mod tests {
         schema: "true",
         validate: None,
         fragments: None,
+        options: None,
     }];
 
     fn packs() -> PackSet {

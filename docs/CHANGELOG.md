@@ -6,7 +6,98 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`[run] exclusive-tags`** — a tag expression selecting scenarios that run
+  with the pool to themselves. Real suites contain scenarios that cannot run
+  beside anything: one asserting absolute positions (`items[0]`) needs a store
+  no concurrent scenario writes to, and the only workaround was several CLI
+  invocations driven by tag discipline in a Makefile, each producing its own run
+  record, JUnit file and exit code to aggregate in shell.
+
+  A matching scenario waits for the pool to drain, runs alone, and the pool
+  refills after it; everything else keeps running at `jobs` width, and discovery
+  order is unchanged so an exclusive scenario never loses its place. A config
+  expression rather than a reserved tag name, because with a bare convention a
+  scenario added months later lands untagged in the parallel pool and breaks
+  isolation intermittently — which reads as flakiness rather than as a missing
+  declaration. A malformed expression is a user error, never a silently-ignored
+  key.
+
+  This is **exclusion, not ordering**: a scenario that must run *before* the
+  rest belongs in `[run] setup`, which already runs once before the pool exists.
+  Deliberately one axis of the two `cargo-nextest` settled on — per-group
+  concurrency limits (rate-limiting a shared dependency) are a real future need
+  that nobody has asked for, and a group table can be added later without
+  breaking this key.
+
+- **`proef fragments`** — the corpus listing, symmetric with `macros`. Until now
+  no proef output stated how many fragments there were, so neither way a
+  fragment can die had a denominator to be noticed against: one no macro
+  references was unobservable, and one reached only through a macro no scenario
+  binds *looked* covered because the macro was flagged. Both are now named
+  apart, unannotated entries are listed by line (they have no name to list by),
+  and `--check` exits 1 when something never runs. `--require-annotated` extends
+  that to unannotated entries and is deliberately opt-in: an unannotated entry is
+  inert by design (ADR-0018), so "not done yet" is a porting team's meaning, not
+  every adopter's. Reachability is read off the lowered scenarios, so a fragment
+  reached through a chain of `use:` counts as reached.
+
+- **`--config <path>`**, global to every subcommand, naming the `proef.toml` to
+  read instead of searching up from the working directory. Discovery only goes
+  up, so a config beside the suite is unreachable from the repository root — a
+  layout an adopting team planned and abandoned after it failed. A named file
+  that does not exist is a user error rather than a fall back to defaults:
+  discovery finding nothing means "no project here", but a named path that is
+  not there is a typo, and a silently unconfigured run is what that used to buy.
+
+- **`proef doctor` sees the fragment corpus** — a row reporting how many
+  fragments loaded from `[run] fragments`, warning when the configured root is
+  not a directory. A misconfigured path used to surface much later as
+  `pack::unknown_ref`: an error about a *name* when the cause is a *path*.
+
+- **`proef init` scaffolds both body forms** — a one-entry `.hurl` file with a
+  `# @proef` annotation, `[run] fragments`, and a pack macro of each kind. The
+  newcomer with most to gain from `ref:` is the one who already owns a hurl
+  corpus, and a scaffold teaching only `hurl: |` reads as "proef wants your
+  files transcribed into YAML".
+
 ### Fixed
+
+- **A `bind:` key nothing reads is refused** (`proef::pack::unread_bind_key`),
+  with did-you-mean over the names actually in scope. `bind_without_ref` only
+  caught a table with no `ref:` at all, so `bind: { token: …, toekn: … }`
+  validated clean — the one authoring mistake in the fragment path that produced
+  no signal whatsoever. Checked as a **union over the scope**, never against one
+  fragment: a pack-scope table is the plumbing every macro in the file needs, so
+  a key serving one macro and not its siblings stays correct.
+
+- **`duplicate_fragment` no longer says "in both `x` and `x`"** for two entries
+  in one file, and stops offering `file.hurl#name` as the remedy there — that
+  qualifies by file and cannot separate two entries inside one. Annotating a
+  corpus adds many names to few files, which makes same-file the likely
+  collision.
+
+- **`unbound_placeholder` names all three supply routes.** The omitted one was
+  the fragment's own `[Options] variable:` — the route that makes a corpus file
+  runnable standalone, which is the property ADR-0018 exists to preserve.
+
+- **A fragment's `[Options]` escaped the ADR-0007 value caps.** `retry: -1`,
+  `repeat: -1` and an unbounded `delay:` were rejected in an inline `hurl:`
+  block and *accepted* in a `ref:` fragment — byte-identical text, exit 2 one
+  way and "dry-run OK, 0 warning(s)" the other, then written verbatim into the
+  executed input. The scan lived inside the inline-only linter; only the
+  twinned-option half of pass 6 had crossed to fragments. It reads the text
+  alone, so it now runs against a fragment's too, anchored on the `ref:` line
+  and naming the fragment file and line. This is the case the caps exist for:
+  hurl has no cancellation, so an infinite retry makes the batch budget
+  unestimatable and leaves the watchdog abandoning a thread it cannot stop.
+
+- **A step declaring both `ref:` and a payload was told, falsely, that its pack
+  had no `ref:` at all.** The conflicted step is reported and dropped, so the
+  loaded bodies stop showing every `ref:` the author wrote — and the pack-scope
+  `bind_without_ref` check then drew a conclusion from the gap. It now infers
+  nothing from a pack whose steps did not all normalize.
 
 - **A pack-scope `bind:` with no `ref:` anywhere was silently dropped.**
   `AUTHORING.md` said `bind_without_ref` applies "at every scope" while only the
@@ -22,7 +113,45 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   what splices a multi-line body (ADR-0018's splicing-versus-binding boundary,
   enforced where it can be explained).
 
+### Changed
+
+- **Breaking (library):** `AnalyzeCtx` takes the fragment corpus instead of
+  building one. Building it internally meant a fresh scan memo per call, so the
+  LSP re-read and re-hurl-parsed the **whole corpus on every request** — each
+  completion popup, each go-to-definition, each debounce tick. The server now
+  holds one and rebuilds it only when a fragment file changes; editing a pack or
+  a feature, which is nearly every keystroke, leaves it alone. It is also what
+  core purity already required: the caller does the IO.
+
+- **Breaking (library):** `StepKindSpec` gained `options`, an engine-contributed
+  recogniser mapping a raw option key to what ADR-0007's budget rules should make
+  of it. The fragment half of that rule already crossed the seam while the inline
+  half matched `"retry-interval:"` as a literal inside `proef-core` — one rule at
+  two altitudes, and a second engine would have had its fragments linted and its
+  inline blocks not. A kind contributing no recogniser is not linted, since the
+  core has no way to know what its option keys mean.
+
+- **Breaking (library):** `proef_core::engine::FragmentScanner` returns
+  `ScannedFile { fragments, unannotated }` rather than `Vec<ScannedFragment>`.
+  An engine's scanner now also reports the 1-based lines of entries carrying no
+  annotation — lines only, never built-then-discarded fragments, so a foreign
+  corpus still costs a push per unannotated entry. Without it "which entries did
+  I forget to annotate?" is unanswerable: a missing annotation produces a green
+  run and a silently absent test, and the entry that would prove it was never
+  built. `FragmentCorpus` gains `fragments()`, `unannotated()` and
+  `diagnostics()`, because the scan is gated on some pack naming a fragment —
+  so `PackSet::fragments` is empty for exactly the suite a listing has most to
+  say about.
+
 ### Documentation
+
+- **Config discovery is a requirement, not a convention.** `proef.toml` is found
+  by searching *up* from the working directory, so a config beside the suite
+  (`tests/proef/proef.toml`) is never found from the repository root — an
+  adopting team planned that layout and discovered it by failure. CONFIG.md now
+  says so, and notes that keeping the file at the root collapses the one place
+  `[run] fragments` (config-relative) and `suite`/`setup`/`teardown`/`runs-dir`
+  (cwd-relative) differ.
 
 - **The release runbook could not work as written.** `main` is a protected
   branch, and step 4's `git push origin main --follow-tags` fails in the

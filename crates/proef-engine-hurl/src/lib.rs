@@ -14,7 +14,7 @@ mod session;
 
 use proef_core::engine::{
     DoctorCheck, DoctorResult, EngineFactory, EngineSession, FragmentSupport, PayloadProbeError,
-    ScenarioCtx, StepKindSpec,
+    RawOption, RawOptionValue, ScenarioCtx, StepKindSpec,
 };
 use proef_core::error::EngineError;
 
@@ -37,7 +37,29 @@ const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
         ext: "hurl",
         scan: fragment::scan,
     }),
+    options: Some(recognise_option),
 }];
+
+/// hurl's `[Options]` keys, as the core's budget rules see them (ADR-0007).
+///
+/// The one place these spellings live. `retry-interval` folds into the `retry`
+/// family — they are one policy, and a step's `retry:` sets both — which is the
+/// same mapping [`fragment::scan`] makes from `OptionKind::RetryInterval`, now
+/// written once instead of once per body form.
+fn recognise_option(key: &str) -> Option<RawOption> {
+    let (family, value) = match key {
+        "retry" => (Some("retry"), Some(RawOptionValue::Count)),
+        // No YAML twin, so it cannot be declared twice — but an infinite
+        // `repeat` is exactly as unbounded as an infinite `retry`.
+        "repeat" => (None, Some(RawOptionValue::Count)),
+        "delay" => (Some("delay"), Some(RawOptionValue::Duration)),
+        // Part of the retry policy for double-declaration purposes; its own
+        // value carries no separate cap.
+        "retry-interval" => (Some("retry"), None),
+        _ => return None,
+    };
+    Some(RawOption { family, value })
+}
 
 /// The compiled-in hurl engine, registered by `proef-cli` (ADR-0002).
 pub struct HurlEngineFactory;

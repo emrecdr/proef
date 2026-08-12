@@ -27,6 +27,7 @@ jobs     = 8                # parallel scenario workers
 runs-dir = ".proef-runs"    # where run records land
 setup    = "tests/setup.feature"      # run once before the pool (optional)
 teardown = "tests/teardown.feature"   # run once after the pool (optional)
+exclusive-tags = "@serial"  # scenarios matching this run with the pool to themselves
 
 [http]
 timeout-ms      = 30000     # per-request timeout (batch-level default)
@@ -63,6 +64,7 @@ timeout-ms = 60000
 | `[run] runs-dir` | `.proef-runs` | run records rotate here (newest 200 kept; only uuid-named run dirs are ever touched) |
 | `[run] setup` | *(unset)* | feature run **once before** the pool (suite setup); its `saveAs: global` reaches every scenario; a failure aborts the run |
 | `[run] teardown` | *(unset)* | feature run **once after** the pool (suite teardown), only if setup succeeded; its failure is a distinct exit 3 |
+| `[run] exclusive-tags` | *(unset)* | tag expression (same language as `--tags`) selecting scenarios that run with the pool to themselves; a malformed expression is exit 2 |
 | `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it |
 | `[http] follow-location` | `false` | per-entry `[Options]` override it |
 | `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
@@ -192,6 +194,39 @@ Both features are excluded from the pool, so a setup/teardown feature inside the
 directory never also runs as an ordinary scenario. Auth is already covered by pre-set
 secrets, so setup is for **seeding/provisioning**, not obtaining a runtime token.
 
+## Scenarios that cannot share the pool (`[run] exclusive-tags`)
+
+Some scenarios cannot run beside anything: one asserting absolute positions
+(`items[0]`) needs a store no concurrent scenario writes to. `exclusive-tags`
+is a tag expression — the same language `--tags` takes — selecting those:
+
+```toml
+[run]
+jobs = 8
+exclusive-tags = "@serial"
+```
+
+```gherkin
+  @serial
+  Scenario: The report lists every record in order
+```
+
+A matching scenario waits for the pool to drain, runs alone, and the pool
+refills after it. Everything else keeps running at `jobs` width, so the cost is
+paid only by the scenarios that need it. Ordering is unchanged: scenarios still
+start in discovery order, so an exclusive one never loses its place.
+
+**This is exclusion, not ordering.** A scenario that must run *before* the
+others — installing a fixture the rest depend on — belongs in
+[`[run] setup`](#suite-setup--teardown-run-setup--run-teardown), which already
+runs once before the pool exists.
+
+**A tag expression in config, not a reserved tag name**, deliberately: with a
+bare convention, a scenario added months later lands untagged in the parallel
+pool and breaks isolation intermittently — which reads as flakiness rather than
+as a missing declaration. The expression keeps the rule in one reviewable place.
+A malformed one is a user error (exit 2), never a silently-ignored key.
+
 ## What does *not* live here
 
 - **Secrets** — `proef secret set` / `PROEF_SECRET_<NAME>` env, on their own
@@ -205,5 +240,28 @@ Feature files reference `${url:…}` / `${vars:…}` / `${secret:…}` and decla
 of them — variables have exactly one home, this file, and test files stay pure prose.
 proef discovers the nearest `proef.toml` by searching up from the working directory
 (like cargo/git), so it is found from any subdirectory.
+
+**The search only goes up, so a discovered file must sit at or above the directory
+you run from — that is a requirement, not a convention.** Putting `proef.toml`
+beside the suite (`tests/proef/proef.toml`) and running from the repository root
+does not work by discovery: nothing searches downward, so the config is simply not
+found and every `${url:…}` reads as unset.
+
+`--config <path>` names the file instead and removes the constraint entirely:
+
+```console
+$ proef test --dry-run --config tests/proef/proef.toml
+```
+
+It is global — every subcommand accepts it. A named file that does not exist is a
+user error (exit 2), not a fall back to defaults: discovery finding nothing means
+"no project here", but a named path that is not there is a typo, and answering it
+with a silently unconfigured run is the thing worth refusing.
+
+Note which root is which. `[run] fragments` resolves against the **config file's**
+directory, while `suite`, `setup`, `teardown` and `runs-dir` resolve against the
+**working** directory. Keeping `proef.toml` at the repository root collapses the
+distinction because the two are then the same place; `--config` makes it explicit,
+and is the reason a config beside the suite writes `fragments = "../hurl"`.
 
 A starter file ships as `proef.toml.example` in the repository root.

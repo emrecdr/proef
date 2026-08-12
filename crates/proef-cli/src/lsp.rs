@@ -26,19 +26,8 @@ pub fn run() -> ExitCode {
     // one implementation of this mapping, not a divergent copy. Empty kinds
     // would make every `hurl:` step an unknown kind and starve the LSP of any
     // useful analysis, so this is the load-bearing wiring.
-    let engines = registry::engines();
-    let kinds: Vec<proef_core::engine::StepKindSpec> = engines
-        .iter()
-        .flat_map(|e| e.step_kinds().iter().copied())
-        .collect();
-    let kind_to_engine: BTreeMap<String, String> = engines
-        .iter()
-        .flat_map(|e| {
-            e.step_kinds()
-                .iter()
-                .map(|k| (k.prefix.to_owned(), e.id().to_owned()))
-        })
-        .collect();
+    let kinds = registry::step_kinds();
+    let kind_to_engine = registry::kind_to_engine();
 
     // Load proef.toml once — it drives both the suite root and the ${url}/${vars} scope.
     let config = ProjectConfig::load().unwrap_or_default();

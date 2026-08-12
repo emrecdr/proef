@@ -33,6 +33,13 @@
 # setup    = "tests/setup.feature"
 # teardown = "tests/teardown.feature"
 
+# Scenarios that cannot share the pool: a tag expression (the language `--tags`
+# takes) selecting scenarios that run alone. For a scenario asserting absolute
+# positions against a store no concurrent scenario may write to. This is
+# exclusion, not ordering — a scenario that must run *before* the rest belongs
+# in `setup` above.
+# exclusive-tags = "@serial"
+
 [http]
 # Batch-level defaults for the hurl engine; per-entry [Options] in packs override.
 # timeout-ms = 30000

@@ -13,6 +13,7 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
     schema: "true",
     validate: None,
     fragments: None,
+    options: None,
 }];
 
 fuzz_target!(|data: &[u8]| {

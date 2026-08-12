@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use proef_core::analyze::{AnalyzeCtx, SuiteAnalysis, analyze_suite};
+use proef_core::diag::Diag;
 use proef_core::engine::StepKindSpec;
+use proef_core::pack::{FragmentCorpus, PackSource};
 use proef_core::provider::SourceProvider;
 
 use crate::documents::{Documents, OverlaySourceProvider};
@@ -38,6 +40,42 @@ pub struct RecomputeInputs<'a> {
     pub env: &'a BTreeMap<String, String>,
     /// Injected `proef.toml` config scope (`${url:…}` / `${vars:…}`).
     pub config_vars: &'a BTreeMap<String, String>,
+    /// The fragment corpus, held by the caller across recomputes.
+    pub fragments: &'a FragmentCorpus,
+}
+
+/// Read the whole fragment corpus through the overlay.
+///
+/// Through the overlay, not the disk, so an **unsaved** edit to a `.hurl` file
+/// is what analysis sees — the same rule packs and features already follow.
+///
+/// Called when a fragment file changes, never per request. A corpus rebuilt per
+/// request also rebuilt its scan memo, so the LSP re-read and re-hurl-parsed
+/// every file in it on each completion, definition and debounce tick; on a
+/// corpus of any size that is the dominant cost of typing.
+pub fn read_fragments(
+    docs: &Documents,
+    disk: &dyn SourceProvider,
+    kinds: &[StepKindSpec],
+) -> FragmentCorpus {
+    let overlay = OverlaySourceProvider::new(docs, disk);
+    let mut sources = Vec::new();
+    let mut errors = Vec::new();
+    for name in overlay.discover_fragments().unwrap_or_default() {
+        match overlay.read(&name) {
+            Ok(text) => sources.push(PackSource { name, text }),
+            // A corpus is foreign by design: one unreadable file reports itself
+            // and the rest still load.
+            Err(err) => errors.push(
+                Diag::error(
+                    "proef::pack::unreadable_fragment_file",
+                    format!("cannot read fragment file {name}: {}", err.0),
+                )
+                .with_source(name.clone(), Arc::from("")),
+            ),
+        }
+    }
+    FragmentCorpus::new(sources, kinds).with_read_errors(errors)
 }
 
 /// Read every pack and feature through the overlay-then-disk provider and run the
@@ -56,6 +94,7 @@ pub fn recompute(inputs: &RecomputeInputs<'_>) -> Analysis {
         env: inputs.env,
         config_vars: inputs.config_vars,
         run_id: "lsp",
+        fragments: inputs.fragments,
     });
 
     // Capture the raw text of every source the analysis touched, so features can

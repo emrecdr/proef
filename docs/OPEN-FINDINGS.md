@@ -90,6 +90,14 @@ re-reported after it is fixed.
 | — | `fmt` trimmed the YAML skeleton, turning `--check` red outside its scope | #40 |
 | C1 | negative-case authoring had no signposted catalogue form | #43 |
 | C3 | `expect:` composition documented as a mechanism, never shown as the pattern | #43 |
+| R9-1 | no `proef fragments` listing — neither way a fragment dies had a denominator | (branch) |
+| §2.1 | a `bind:` key nothing reads passed silently — the one authoring mistake with no signal | (branch) |
+| §2.2 | `duplicate_fragment` said "in both `x` and `x`" and offered a remedy that cannot work | (branch) |
+| §2.3 | `unbound_placeholder` named two of ADR-0018's three supply routes | (branch) |
+| §3.1 | `doctor` did not know fragments exist — a path error surfaced as a name error | (branch) |
+| §3.2 | config discovery searches only up, undocumented; no way to name the file | (branch) |
+| §3.3 | `init` scaffolded only `hurl: |`, so `ref:` was invisible to the persona built for it | (branch) |
+| — | ADR-0007 value caps never crossed to fragments: `retry: -1` validated clean | (branch) |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -113,6 +121,13 @@ Raised by a consumer migration whose coverage gate ("every `@proef` name is
 referenced, every entry is annotated") had to become a script that repo owns.
 **Not built for 0.10.0 on purpose:** new public surface, and the migration was
 unblocked by correcting its own gate instead.
+
+**Shipped.** A second migration report (`ADOPTION-REQUEST.md`, 97 entries)
+supplied the field evidence this entry was waiting for and ranked it first of
+seven. `proef fragments` now names both death modes apart, lists unannotated
+entries by line, and gates CI with `--check`; `--require-annotated` is opt-in
+because an unannotated entry is inert *by design* (ADR-0018), so "not done yet"
+is a porting team's reading of that signal and not every adopter's.
 
 ### R9-2 — fuzz coverage does not reach the fragment surfaces
 
@@ -160,6 +175,49 @@ scope, where it is decidable); a `# @proef` annotation placed mid-entry is
 silently ignored and the resulting `unknown_ref` does not hint at misplacement;
 `proef macros` prints a corpus error twice on the degraded path; same-file
 duplicate annotations read as "declared in both f.hurl and f.hurl".
+
+## Open — round-10 residue (ingested 2026-08-12)
+
+Found by a cleanup review over the fragments branch, after its own gates were
+green. All three are consequences of what that branch added; none is a defect in
+what shipped before it. Recorded rather than fixed in place because each is a
+behaviour change, and the branch was already carrying two correctness fixes.
+
+### R10-1 — `--config` is honoured by the runner and ignored by the editor
+
+`--config <path>` bypasses the upward search so a `proef.toml` beside the suite
+becomes usable. `proef lsp` never sees it (it re-discovers via
+`ProjectConfig::load_from`), and `--watch` watches the config found by its own
+fresh upward search, not the one the run was given.
+
+So in **exactly the layout the flag exists for**, `proef test --config …` runs
+green while the editor gets no `[run] fragments` and reports every `ref:` as
+unknown — diagnostics disagreeing with the runner, which is the drift that makes
+an editor untrustworthy. `ProjectConfig` already keeps `root = path.parent()`;
+exposing the path it loaded from is enough for both consumers.
+
+### R10-2 — `proef fragments` judges reachability over a smaller universe than the runner
+
+`[run] setup` / `[run] teardown` are not loaded, so a fragment used **only** by a
+phase feature counts as never run and fails `--check` — a false CI failure in the
+workflow `--check` was asked for, unless the phase feature happens to sit inside
+the suite directory. `exec::execute` already threads one corpus through both
+phase validations and both phase runs; the listing needs the same universe.
+
+### R10-3 — three predicates answer "is this a fragment file?", and they disagree
+
+`front::fragment_extensions` (exact match, and its doc claims to be "the one
+place that answers this"), `pack::scan_fragments` (exact), and the LSP's own
+`is_fragment` (case-insensitive). `api.HURL` therefore invalidates the editor's
+corpus but is never scanned by core or discovered by the CLI.
+
+The shared home is `proef_core::engine`, beside `StepKindSpec` — it is pure logic
+over the registry, so it is sans-IO-legal, and `proef-lsp` cannot reach
+`proef-cli`'s copy. Worth pairing with the deeper question the LSP predicate
+raises: membership in `discover_fragments()` is the real test, and an extension
+match also claims emitted artifacts that happen to end in `.hurl`.
+
+---
 
 ## Open — round-7 residue (ingested 2026-08-10)
 
@@ -424,6 +482,24 @@ and nothing *inside* it.
 form is more explicit and keeps runner semantics out of the feature files — and
 E4 is an argument for it.
 
+**Shipped** as `[run] exclusive-tags`, a tag *expression* rather than a list —
+the same language `--tags` takes, so group membership is answered exactly as
+selection is. Two corrections to this entry, both from checking before building:
+
+1. The filing describes one axis; the mature shape has two. `cargo-nextest`
+   separates a group concurrency limit (`max-threads`, which bounds members
+   against each other and leaves the rest of the pool running) from per-test
+   weight (`threads-required`, which is what buys global exclusivity — they
+   redefined it in 2024 precisely so limits "are never exceeded", enabling
+   mutual exclusion against *all* tests). Only the second is what was missing
+   here, so only that shipped; a group table can be added later without
+   breaking this key.
+2. Of the two motivating scenarios, only the first is a serialization problem.
+   "Installs a workflow definition governing everything created afterwards" is
+   **ordering**, which `[run] setup` already provides — a feature run once
+   before the pool exists. Recorded so an ordering primitive is not built on
+   the assumption that it was needed.
+
 ### E2 — N invocations produce N run records, with no merge *(report B2; consequence of E1)*
 
 **Verified.** Each run writes its own `.proef-runs/<run-id>/` (`TECH-SPEC.md:299`).
@@ -433,6 +509,13 @@ pass/fail aggregation pushed onto the caller's shell, while `explain`/`diff`
 operate per-run so a post-mortem reader must know which to open. **Recorded as a
 consequence, not an independent item** — solve E1 and this largely evaporates;
 solving it alone (a `proef merge`) treats the symptom.
+
+**Largely closed by E1 shipping:** a suite whose isolation needs are expressed
+as `exclusive-tags` runs in one invocation, so it produces one record, one JUnit
+file, one report and one exit code. Kept open rather than closed outright
+because a suite may still split invocations for reasons E1 does not address
+(different environments, different `--tags` in separate CI jobs), and nothing
+merges those.
 
 ### E3 — no per-scenario state reset hook *(report B3)*
 

@@ -204,3 +204,39 @@ Reuse across hurl files is an acknowledged, unresolved gap upstream
 feature. The known failure mode of magic comments — invisible coupling — is answered by
 the name-only rule and by reading the annotation off hurl's own AST, where
 comment-to-entry attachment is already modelled.
+
+## Amendment — 2026-08-12 (the scanner reports unannotated entries, by line)
+
+`FragmentScanner` returns `ScannedFile { fragments, unannotated }` rather than
+`Vec<ScannedFragment>`. The named half is unchanged; the addition is the 1-based start
+line of every entry carrying **no** `# @proef` annotation.
+
+The original contract dropped those entries at scan time, on the argument — still
+correct — that nothing downstream can use one, and that a corpus proef did not write is
+expected to be mostly unannotated, so building a `ScannedFragment` for each would be the
+bulk of a scan for nobody's benefit. That reasoning covers *building fragments*. It does
+not cover *counting*, and the difference showed up in the field: a 97-entry corpus port
+found that missing an annotation on one entry produces a green dry-run and a silently
+absent test, with no signal at scan, bind, or run time — because the entry that would
+prove it was never built. Neither could any command state how many entries a corpus
+held, so there was no denominator against which the gap could be noticed.
+
+A line number costs a push and is all a listing can point at, there being no name to
+print. The performance argument is therefore preserved intact: nothing extra is
+constructed, and `proef fragments` consumes what the scan already had to walk past.
+
+**Unannotated is not an error.** `proef fragments --check` fails on annotated fragments
+no scenario runs; failing on unannotated entries requires `--require-annotated`. During
+a port "unannotated" means *not done yet*; in steady state it means *deliberately not
+exposed*, which is the premise that lets this ADR promise that pointing at a corpus you
+did not write costs nothing. Gating every adopter on the porting reading would have
+contradicted it, so the porting team asks for that check explicitly.
+
+`StepKindSpec` also gained `options`, an engine-contributed recogniser mapping a raw
+option key to what the core's ADR-0007 budget rules should make of it. The fragment half
+of that rule already crossed the seam (`ScannedFragment::declared_options`) while the
+inline half matched `"retry-interval:"` as a literal inside `proef-core` — one rule at
+two altitudes, and a second engine would have had its fragments linted and its inline
+blocks not. Option *spellings* now live only in the engine that owns them. Option
+*baking* (`lower.rs`) still writes hurl syntax directly; the emitter is hurl-shaped by
+ADR-0010 and is a separate question this amendment does not address.

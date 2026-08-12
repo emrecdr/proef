@@ -217,6 +217,135 @@ fn dry_run_error(hurl: &str, pack: &str) -> String {
     String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
 }
 
+/// ADR-0007's caps bound the request that actually runs, so the file it was
+/// written in cannot decide whether they apply. They used to: the value scan sat
+/// inside the inline-only linter, so this exact `[Options]` block exited 2 as a
+/// `hurl:` step and exited **0** — "dry-run OK, 0 warning(s)" — behind a `ref:`,
+/// then went verbatim into the executed input.
+///
+/// This is the one bypass worth an end-to-end test rather than a unit one: hurl
+/// has no cancellation, so an infinite retry leaves the watchdog abandoning a
+/// thread it cannot stop, and the unit tests reach the check through a stub
+/// scanner instead of the real parser that reads a `.hurl` file.
+#[test]
+fn a_fragments_option_values_are_capped_like_an_inline_blocks() {
+    for (line, code) in [
+        ("retry: -1", "proef::pack::retry_not_finite"),
+        ("repeat: -1", "proef::pack::retry_not_finite"),
+        ("delay: 99999999", "proef::pack::delay_unbounded"),
+    ] {
+        let hurl =
+            format!("# @proef admin.search\nGET {{{{base}}}}/x\n[Options]\n{line}\nHTTP 200\n");
+        let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                    steps:\n      - ref: admin.search\n";
+        let feature = "Feature: F\n  Scenario: S\n    When the operator searches tasks\n";
+        let dir = project(&hurl, pack);
+        std::fs::write(dir.path().join("tests/features/a.feature"), feature).unwrap();
+        let assert = Command::cargo_bin("proef")
+            .unwrap()
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+            .args(["test", "--dry-run"])
+            .assert()
+            .code(2);
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+        assert!(stderr.contains(code), "`{line}` in a fragment: {stderr}");
+        // The pack author cannot fix what they cannot find: the diagnostic
+        // anchors on their `ref:` line, so it has to name the other file.
+        assert!(stderr.contains("admin.hurl"), "`{line}`: {stderr}");
+    }
+}
+
+/// The listing exists for the two questions nothing else could answer: which
+/// annotated fragments nothing reaches, and which entries carry no annotation at
+/// all. Both were silent — a missing annotation produces a green run and a
+/// silently absent test.
+#[test]
+fn the_listing_names_both_ways_a_fragment_dies() {
+    let hurl = "# @proef api.used\nGET {{base}}/a\nHTTP 200\n\n\
+                # @proef api.deadNoMacro\nGET {{base}}/b\nHTTP 200\n\n\
+                # @proef api.deadViaMacro\nGET {{base}}/c\nHTTP 200\n\n\
+                GET {{base}}/forgot\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: api.used\n        bind: { base: \"${url:base}\" }\n  \
+                orphanMacro:\n    match: nobody says this\n    steps:\n      \
+                - ref: api.deadViaMacro\n        bind: { base: \"${url:base}\" }\n";
+    let dir = project(hurl, pack);
+    std::fs::write(
+        dir.path().join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches tasks\n",
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .arg("fragments")
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    assert!(out.contains("UNREFERENCED"), "{out}");
+    assert!(out.contains("api.deadNoMacro"), "{out}");
+    // The dangerous one: the *macro* warning already fires, so this reads as
+    // covered unless the fragment is named directly, with the reason.
+    assert!(out.contains("UNREACHABLE"), "{out}");
+    assert!(out.contains("orphanMacro"), "{out}");
+    // No name to list it by, so it is listed by line.
+    assert!(out.contains("UNANNOTATED"), "{out}");
+    // The denominator, without which neither death mode is noticeable.
+    assert!(
+        out.contains("4 entries · 3 annotated · 1 unannotated · 2 never run"),
+        "{out}"
+    );
+
+    // `--check` gates the first class; the second needs opting in, because an
+    // unannotated entry is inert by design and only a porting team reads it as
+    // unfinished.
+    let mut check = Command::cargo_bin("proef").unwrap();
+    check
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["fragments", "--check"])
+        .assert()
+        .code(1);
+}
+
+/// A `bind:` key nothing reads was the one authoring mistake in the fragment
+/// path with no signal at all: the typo'd name simply never arrives, and the run
+/// stays green. The did-you-mean matters more here than usual, because the
+/// mistake is in the *pack* while the only previous symptom pointed at the
+/// *fragment*.
+#[test]
+fn a_bind_key_no_fragment_reads_is_refused_with_a_suggestion() {
+    let hurl = "# @proef api.used\nGET {{base}}/a?t={{token}}\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: api.used\n        bind: { base: \"${url:base}\", \
+                token: \"x\", toekn: \"y\" }\n";
+    let stderr = dry_run_error(hurl, pack);
+    assert!(stderr.contains("proef::pack::unread_bind_key"), "{stderr}");
+    assert!(stderr.contains("did you mean `token`?"), "{stderr}");
+}
+
+/// Two entries in one file collide by name like any other pair — but the
+/// cross-file remedy is wrong there: `file.hurl#name` qualifies by file and
+/// cannot separate two entries inside one. Annotating a corpus adds many names
+/// to few files, so this is the likely collision, not the exotic one.
+#[test]
+fn a_same_file_duplicate_says_so_and_offers_a_remedy_that_works() {
+    let hurl = format!("{CORPUS}\n# @proef admin.search\nGET {{{{base}}}}/other\nHTTP 200\n");
+    let stderr = dry_run_error(&hurl, PACK);
+    assert!(stderr.contains("declared twice in"), "{stderr}");
+    assert!(
+        !stderr.contains("file.hurl#name"),
+        "the qualifier cannot disambiguate within one file: {stderr}"
+    );
+}
+
 #[test]
 fn a_duplicate_fragment_name_is_refused() {
     let hurl = format!("{CORPUS}\n# @proef admin.search\nGET {{{{base}}}}/other\nHTTP 200\n");
@@ -594,5 +723,53 @@ fn schema_add_to_refuses_a_fragment_file() {
             .join("tests/hurl/proef-pack.schema.json")
             .exists(),
         "no schema may be dropped into the corpus"
+    );
+}
+
+/// ADR-0018 promises that pointing at a corpus you did not write costs nothing.
+/// The ADR-0007 value caps read the entry's text, and while they had no
+/// `[Options]` gate a `[Query]` parameter, form field or lowercase header named
+/// `retry` was a hard error — proef rejecting somebody else's file for a line
+/// hurl treats as data. The gate has always existed on the inline half; the
+/// value scan inherited a laxer rule that was invisible while it only read
+/// proef's own YAML.
+#[test]
+fn a_query_parameter_named_like_an_option_is_not_an_option() {
+    let hurl =
+        "# @proef admin.search\nGET {{base}}/x\n[Query]\nretry: -1\ndelay: 99999999\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: admin.search\n        bind: { base: \"${url:base}\" }\n";
+    let dir = project(hurl, pack);
+    std::fs::write(
+        dir.path().join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches tasks\n",
+    )
+    .unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
+/// One typo'd `ref:` is one mistake. It used to produce three diagnostics: the
+/// correct `unknown_ref`, plus a macro-scope and a pack-scope `unread_bind_key`
+/// telling the author to delete a `bind:` that was never wrong — because the
+/// readable set is built from the fragments a `ref:` resolves to, and an
+/// unresolved one silently contributes nothing. A conclusion drawn from a scope
+/// known to be missing pieces is not a finding.
+#[test]
+fn an_unresolved_ref_does_not_make_its_bindings_look_unread() {
+    let hurl = "# @proef admin.search\nGET {{base}}/x?q={{q}}\nHTTP 200\n";
+    let pack = "bind:\n  q: laptop\nmacros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                bind: { q: laptop }\n    steps:\n      - ref: typo.name\n";
+    let stderr = dry_run_error(hurl, pack);
+    assert!(stderr.contains("proef::pack::unknown_ref"), "{stderr}");
+    assert!(
+        !stderr.contains("unread_bind_key"),
+        "the bindings are fine; the `ref:` is the mistake — {stderr}"
     );
 }

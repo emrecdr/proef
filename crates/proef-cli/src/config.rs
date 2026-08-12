@@ -99,6 +99,16 @@ pub struct RunTable {
     /// ADR-0014) — only when setup succeeded. A teardown failure is a distinct
     /// non-zero signal, never a silently-green suite.
     pub teardown: Option<String>,
+    /// Tag expression selecting scenarios that run with the pool to themselves.
+    ///
+    /// A config key rather than a reserved tag name, because the failure mode of
+    /// the tag form is the worst kind: a scenario added months later lands
+    /// untagged in the parallel pool and breaks isolation intermittently, which
+    /// reads as flakiness rather than as a missing declaration. Naming the
+    /// expression here keeps the rule in one reviewable place, and it is an
+    /// ordinary tag expression (`"@serial and not @wip"`), not a new grammar.
+    #[serde(rename = "exclusive-tags")]
+    pub exclusive_tags: Option<String>,
 }
 
 /// `[env.<name>.run]` overrides. Deliberately narrower than [`RunTable`]: only
@@ -175,6 +185,31 @@ impl ProjectConfig {
     /// told it where the workspace actually is.
     pub fn load_from(dir: &Path) -> Result<Self, String> {
         Self::from_nearest(find_config_from(dir))
+    }
+
+    /// The config file named by `--config`, bypassing discovery entirely.
+    ///
+    /// Discovery only searches *up*, so a config beside the suite is invisible
+    /// from the repository root — a layout an adopting team planned and had to
+    /// abandon. Naming the file removes the constraint, and with it the one
+    /// place the two roots differ: `[run] fragments` resolves against this
+    /// file's directory while the suite path stays relative to the working
+    /// directory, and `--config` makes that choice explicit rather than
+    /// positional.
+    ///
+    /// A named file that is not there is a **hard error**, unlike discovery
+    /// finding nothing. Falling back to defaults would answer a typo'd path
+    /// with a run that silently has no configuration — every `${url:…}` unset,
+    /// and nothing saying why.
+    pub fn load_at(path: &Path) -> Result<Self, String> {
+        if !path.is_file() {
+            return Err(format!(
+                "--config {} is not a file — name the proef.toml to read, \
+                 or omit the flag to search up from the working directory",
+                path.display()
+            ));
+        }
+        Self::from_nearest(Some(path.to_path_buf()))
     }
 
     fn from_nearest(found: Option<PathBuf>) -> Result<Self, String> {
@@ -291,6 +326,19 @@ impl ProjectConfig {
         }
         let convention = PathBuf::from("tests");
         convention.is_dir().then_some(convention)
+    }
+
+    /// The tag expression selecting exclusive scenarios (`[run] exclusive-tags`),
+    /// parsed. A malformed expression is a user error, not a silently-ignored
+    /// key: the whole point of the setting is that a scenario it should have
+    /// matched must never quietly rejoin the pool.
+    pub fn exclusive_tags(&self) -> Result<Option<proef_core::tags::TagExpr>, String> {
+        let Some(raw) = self.run.exclusive_tags.as_deref() else {
+            return Ok(None);
+        };
+        proef_core::tags::parse(raw)
+            .map(Some)
+            .map_err(|err| format!("[run] exclusive-tags is not a valid tag expression: {err}"))
     }
 
     /// The suite-level setup feature (`[run] setup`), if any (ADR-0014).

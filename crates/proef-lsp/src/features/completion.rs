@@ -73,7 +73,19 @@ fn cursor_is_in_bind(raw: &str, position: Position) -> bool {
         && let Some(brace) = line.find('{')
         && let Some(close) = line.rfind('}')
     {
-        let at = position.character as usize;
+        // `position.character` counts UTF-16 code units; `find`/`rfind` return
+        // byte offsets. Comparing them directly is correct only while the line
+        // is all-ASCII, so the cursor goes through the bridge that owns this
+        // conversion (`convert.rs`) rather than around it: the difference of two
+        // document offsets is the cursor's byte column within the line.
+        let index = LineIndex::new(raw);
+        let line_start = index.position_to_offset(Position {
+            line: position.line,
+            character: 0,
+        });
+        let at = index
+            .position_to_offset(position)
+            .saturating_sub(line_start);
         return at > brace && at <= close;
     }
     let indent = |s: &str| s.len() - s.trim_start().len();
@@ -340,6 +352,22 @@ mod bind_scope_tests {
 
         let flow = "macros:\n  m:\n    bind: { q: 1 }\n";
         assert!(at(flow, 2, 13), "past the brace is inside the flow table");
+        // The flow branch compares the cursor against byte offsets from
+        // `find`/`rfind`, but LSP columns are UTF-16 code units. On an all-ASCII
+        // line the two agree and the difference is invisible; a multi-byte value
+        // is where they diverge, so the non-ASCII case is the one that pins it.
+        let wide = "macros:\n  m:\n    bind: { q: \"café ☕\" }\n";
+        assert!(
+            at(wide, 2, 20),
+            "a cursor after multi-byte text is still inside the table"
+        );
+        // `}` is UTF-16 column 24 but byte 27, so the old byte-vs-column
+        // comparison called every column up to 27 "inside" and kept offering
+        // bind keys well past the end of the table.
+        assert!(
+            !at(wide, 2, 25),
+            "past the closing brace is outside, counting UTF-16 not bytes"
+        );
         assert!(
             !at(flow, 2, 6),
             "on the key itself is not yet inside the table"
