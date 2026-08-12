@@ -8,6 +8,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A fragment's `[Options]` escaped the ADR-0007 value caps.** `retry: -1`,
+  `repeat: -1` and an unbounded `delay:` were rejected in an inline `hurl:`
+  block and *accepted* in a `ref:` fragment — byte-identical text, exit 2 one
+  way and "dry-run OK, 0 warning(s)" the other, then written verbatim into the
+  executed input. The scan lived inside the inline-only linter; only the
+  twinned-option half of pass 6 had crossed to fragments. It reads the text
+  alone, so it now runs against a fragment's too, anchored on the `ref:` line
+  and naming the fragment file and line. This is the case the caps exist for:
+  hurl has no cancellation, so an infinite retry makes the batch budget
+  unestimatable and leaves the watchdog abandoning a thread it cannot stop.
+
+- **A step declaring both `ref:` and a payload was told, falsely, that its pack
+  had no `ref:` at all.** The conflicted step is reported and dropped, so the
+  loaded bodies stop showing every `ref:` the author wrote — and the pack-scope
+  `bind_without_ref` check then drew a conclusion from the gap. It now infers
+  nothing from a pack whose steps did not all normalize.
+
 - **A pack-scope `bind:` with no `ref:` anywhere was silently dropped.**
   `AUTHORING.md` said `bind_without_ref` applies "at every scope" while only the
   macro and step scopes were checked — and a setting ignored in silence is the

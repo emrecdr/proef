@@ -279,6 +279,11 @@ fn normalize_step(
                     "macro `{macro_name}` step {index}: a step is either `ref:` or {other}, not both"
                 ),
             )));
+            // Dropped from the body: it is not a runnable step in either form,
+            // and keeping it would invite the target-existence pass to report a
+            // *second* thing wrong with a step whose real problem is stated
+            // above. What the drop must not do is let a later pass conclude
+            // anything from the gap — see `pack_scope_bind_pass`.
             return None;
         }
         if raw.with.is_some() {
@@ -490,6 +495,31 @@ fn ref_target_passes(
         );
         return;
     };
+    // The ADR-0007 value caps, against the fragment's own text. The same scan
+    // the inline form gets: a fragment reaches the runner through the same
+    // `[Options]` section, so `retry: -1` behind a `ref:` abandons an
+    // uncancellable thread exactly as it would inline. Anchored on the `ref:`
+    // line, since that is what the pack author can edit, and the message names
+    // the fragment file and line so the other half is findable.
+    for violation in scan_option_values(&fragment.text) {
+        diags.push(
+            at(Diag::error(
+                violation.code,
+                format!(
+                    "macro `{}` step {index}: in fragment `{}` (`{}` line {}), {}",
+                    macro_.name,
+                    fragment.name,
+                    fragment.file,
+                    fragment.line + violation.line - 1,
+                    violation.detail
+                ),
+            ))
+            .with_help(
+                "the cap applies to the executed request, whichever file it was written in — \
+                 edit the fragment, or point this step at one that stays within budget",
+            ),
+        );
+    }
     // Every option family the step sets, not just retry: `delay:` bakes into the
     // same `[Options]` section through the same code path, so leaving it
     // unchecked reproduces exactly the silent last-wins the inline half of this
@@ -711,20 +741,97 @@ fn payload_passes(
     }
 }
 
-/// Pass 6 (raw half): hurl allows infinite `retry`/`repeat` and unbounded
-/// `delay` — parse numeric raw-option values and reject what no budget can
-/// absorb (ADR-0007). Non-numeric values (`{{…}}` templates) pass: the
-/// runtime batch budget still bounds those.
+/// One ADR-0007 value-cap violation in hurl text: which line, which code, and
+/// the sentence describing it — but not where it lives, because that differs
+/// between the two body forms.
+struct OptionViolation {
+    /// 1-based line within the scanned text.
+    line: usize,
+    code: &'static str,
+    detail: String,
+}
+
+/// The ADR-0007 value caps over **any** hurl text: a finite `retry:`/`repeat:`
+/// and a `delay:` under the ceiling.
 ///
-/// Also the double-declaration check: an option set *both* in the block's own
+/// Split out of [`lint_raw_options`] because the caps must hold wherever the
+/// text came from. Both body forms reach the same runner through the same
+/// `[Options]` section, and hurl has no cancellation — an infinite retry makes
+/// the batch budget unestimatable and leaves the watchdog abandoning a thread it
+/// cannot stop, which is the failure mode ADR-0007 exists to prevent. While this
+/// scan lived inside the inline-only linter, a fragment could set `retry: -1`
+/// and validate clean: byte-identical text was rejected inline and accepted
+/// behind a `ref:`.
+///
+/// Returns findings rather than diagnostics so each caller can anchor them in
+/// its own source — the one thing the two genuinely disagree about.
+fn scan_option_values(text: &str) -> Vec<OptionViolation> {
+    let mut found = Vec::new();
+    let mut in_fence = false;
+    for (line_no, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue; // fenced body data — a literal `retry: -1` is payload, not an option
+        }
+        let mut push = |code: &'static str, detail: String| {
+            found.push(OptionViolation {
+                line: line_no + 1,
+                code,
+                detail,
+            });
+        };
+        for option in ["retry", "repeat"] {
+            if let Some(value) = trimmed.strip_prefix(&format!("{option}:")) {
+                match value.trim().parse::<i64>() {
+                    Ok(-1) => push(
+                        "proef::pack::retry_not_finite",
+                        format!(
+                            "`{option}: -1` is infinite — budgets require a finite count (ADR-0007)"
+                        ),
+                    ),
+                    Ok(n) if n > MAX_COUNT => push(
+                        "proef::pack::retry_not_finite",
+                        format!("`{option}: {n}` is budget-hostile — the cap is {MAX_COUNT}"),
+                    ),
+                    _ => {}
+                }
+            }
+        }
+        if let Some(value) = trimmed.strip_prefix("delay:")
+            && let Some(ms) = raw_duration_ms(value)
+            && ms > MAX_DELAY_MS
+        {
+            push(
+                "proef::pack::delay_unbounded",
+                format!(
+                    "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
+                    value.trim()
+                ),
+            );
+        }
+    }
+    found
+}
+
+/// Pass 6 (raw half), for an inline block: the ADR-0007 value caps
+/// ([`scan_option_values`]) anchored in the pack, plus the double-declaration
+/// check.
+///
+/// The double-declaration half: an option set *both* in the block's own
 /// `[Options]` and as its YAML twin (`retry:` / `delay:`). Lowering extends an
 /// author's section rather than opening a second one, and hurl resolves
 /// duplicate options last-wins, so the raw value quietly beat the typed one —
 /// the pack said one thing and the run did another. Only `[Options]`-section
 /// lines count: a request header may legitimately be named `retry`, and this
 /// is a hard error, so it must not fire on one.
-// Both checks read the same one-pass scan; splitting them would walk the block
-// twice and duplicate the fence and section bookkeeping.
+///
+/// Only this half is inline-only, because only it compares against the *step's*
+/// YAML keys. The caps read the text alone, which is why they now also run
+/// against a fragment's — see [`scan_option_values`].
 #[allow(clippy::too_many_arguments)]
 fn lint_raw_options(
     macro_: &Macro,
@@ -736,6 +843,22 @@ fn lint_raw_options(
     at: &impl Fn(Diag) -> Diag,
     diags: &mut Vec<Diag>,
 ) {
+    for violation in scan_option_values(text) {
+        diags.push(
+            at(Diag::error(
+                violation.code,
+                format!("macro `{}` step {index}: {}", macro_.name, violation.detail),
+            ))
+            .maybe_span(locate::payload_line_span(
+                &macro_.source,
+                &macro_.name,
+                kind,
+                ordinal,
+                violation.line,
+            )),
+        );
+    }
+
     let mut in_fence = false;
     let mut in_options = false;
     // One report per option family is enough to act on; a block whose every
@@ -756,50 +879,6 @@ fn lint_raw_options(
             in_options = trimmed == "[Options]";
         } else if crate::lower::is_method_line(trimmed) {
             in_options = false;
-        }
-        let mut reject = |code: &'static str, message: String| {
-            diags.push(
-                at(Diag::error(
-                    code,
-                    format!("macro `{}` step {index}: {message}", macro_.name),
-                ))
-                .maybe_span(locate::payload_line_span(
-                    &macro_.source,
-                    &macro_.name,
-                    kind,
-                    ordinal,
-                    line_no + 1,
-                )),
-            );
-        };
-        for option in ["retry", "repeat"] {
-            if let Some(value) = trimmed.strip_prefix(&format!("{option}:")) {
-                match value.trim().parse::<i64>() {
-                    Ok(-1) => reject(
-                        "proef::pack::retry_not_finite",
-                        format!(
-                            "`{option}: -1` is infinite — budgets require a finite count (ADR-0007)"
-                        ),
-                    ),
-                    Ok(n) if n > MAX_COUNT => reject(
-                        "proef::pack::retry_not_finite",
-                        format!("`{option}: {n}` is budget-hostile — the cap is {MAX_COUNT}"),
-                    ),
-                    _ => {}
-                }
-            }
-        }
-        if let Some(value) = trimmed.strip_prefix("delay:")
-            && let Some(ms) = raw_duration_ms(value)
-            && ms > MAX_DELAY_MS
-        {
-            reject(
-                "proef::pack::delay_unbounded",
-                format!(
-                    "`delay: {}` exceeds the {MAX_DELAY_MS} ms (1 hour) cap",
-                    value.trim()
-                ),
-            );
         }
         if !in_options {
             continue;
@@ -886,6 +965,19 @@ fn probe_lower(macro_: &Macro, text: &str) -> Result<Vec<String>, resolve::Resol
 fn pack_scope_bind_pass(set: &PackSet, diags: &mut Vec<Diag>) {
     for (pack, table) in &set.bind {
         if table.is_empty() {
+            continue;
+        }
+        // A step that declared both `ref:` and a payload is reported and then
+        // dropped, so this pack's loaded bodies no longer show every `ref:` its
+        // author wrote. "No macro here has a `ref:`" is then a claim about the
+        // loaded set, not about the pack — and a pack whose only `ref:` was the
+        // conflicted step got told its `bind:` would go unread, which is false
+        // and points nowhere useful. Infer nothing from a body known to be
+        // incomplete; the conflict itself already fails the run.
+        if diags.iter().any(|d| {
+            d.code == "proef::pack::body_form_conflict"
+                && d.source_name.as_deref() == Some(pack.as_str())
+        }) {
             continue;
         }
         let from_pack = || set.macros.values().filter(|m| &m.pack == pack);
@@ -1369,6 +1461,13 @@ mod tests {
                     use std::fmt::Write as _;
                     let _ = write!(last.text, "[Options]\nvariable: {supplied}=from-fragment\n");
                     last.supplied_variables.push(supplied.to_owned());
+                } else if let Some(raw) = line.strip_prefix('+') {
+                    // A raw line appended to the fragment's own text, so a test
+                    // can put an `[Options]` value in the file rather than in
+                    // the scanner's structured output — which is the whole point
+                    // of the value caps: they read the text, not the summary.
+                    use std::fmt::Write as _;
+                    let _ = write!(last.text, "[Options]\n{raw}\n");
                 }
             }
         }
@@ -1474,6 +1573,51 @@ mod tests {
             &[source("api.frag", "@f\n")],
         );
         assert!(has(&diags, "proef::pack::body_form_conflict"), "{diags:?}");
+    }
+
+    /// ADR-0007's caps are about the request that runs, so they cannot depend on
+    /// which file the author wrote it in. They used to: the scan lived inside
+    /// the inline-only linter, so byte-identical `[Options]` was rejected in a
+    /// `hurl:` block and accepted in a fragment — and an infinite retry is
+    /// precisely what the watchdog cannot rescue, hurl having no cancellation.
+    #[test]
+    fn a_fragments_option_values_are_capped_like_an_inline_blocks() {
+        for (line, code) in [
+            ("retry: -1", "proef::pack::retry_not_finite"),
+            ("repeat: -1", "proef::pack::retry_not_finite"),
+            ("delay: 99999999", "proef::pack::delay_unbounded"),
+        ] {
+            let diags = diags_of(
+                &[source(
+                    "p.yaml",
+                    "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n",
+                )],
+                &[source("api.frag", &format!("@f\n+{line}\n"))],
+            );
+            assert!(has(&diags, code), "`{line}` in a fragment: {diags:?}");
+        }
+    }
+
+    /// A step carrying both `ref:` and a payload is an error — but it is still a
+    /// step the author put a `ref:` on. While the conflicted step was dropped
+    /// from the normalized body, "does this macro reference a fragment?" had two
+    /// answers (the raw shape at macro scope, the normalized body at pack
+    /// scope), and a pack whose only `ref:` also carried a payload was told, on
+    /// top of the real error, that no macro in it had a `ref:` at all.
+    #[test]
+    fn a_conflicted_body_form_is_still_a_ref_at_every_scope() {
+        let diags = diags_of(
+            &[source(
+                "p.yaml",
+                "bind:\n  a: b\nmacros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        alt: |\n          GET http://x\n",
+            )],
+            &[source("api.frag", "@f\n")],
+        );
+        assert!(has(&diags, "proef::pack::body_form_conflict"), "{diags:?}");
+        assert!(
+            !has(&diags, "proef::pack::bind_without_ref"),
+            "the pack does have a `ref:` — {diags:?}"
+        );
     }
 
     /// `bind:` feeds a fragment's variables. On an inline step there is nothing

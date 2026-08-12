@@ -217,6 +217,46 @@ fn dry_run_error(hurl: &str, pack: &str) -> String {
     String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
 }
 
+/// ADR-0007's caps bound the request that actually runs, so the file it was
+/// written in cannot decide whether they apply. They used to: the value scan sat
+/// inside the inline-only linter, so this exact `[Options]` block exited 2 as a
+/// `hurl:` step and exited **0** — "dry-run OK, 0 warning(s)" — behind a `ref:`,
+/// then went verbatim into the executed input.
+///
+/// This is the one bypass worth an end-to-end test rather than a unit one: hurl
+/// has no cancellation, so an infinite retry leaves the watchdog abandoning a
+/// thread it cannot stop, and the unit tests reach the check through a stub
+/// scanner instead of the real parser that reads a `.hurl` file.
+#[test]
+fn a_fragments_option_values_are_capped_like_an_inline_blocks() {
+    for (line, code) in [
+        ("retry: -1", "proef::pack::retry_not_finite"),
+        ("repeat: -1", "proef::pack::retry_not_finite"),
+        ("delay: 99999999", "proef::pack::delay_unbounded"),
+    ] {
+        let hurl =
+            format!("# @proef admin.search\nGET {{{{base}}}}/x\n[Options]\n{line}\nHTTP 200\n");
+        let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                    steps:\n      - ref: admin.search\n";
+        let feature = "Feature: F\n  Scenario: S\n    When the operator searches tasks\n";
+        let dir = project(&hurl, pack);
+        std::fs::write(dir.path().join("tests/features/a.feature"), feature).unwrap();
+        let assert = Command::cargo_bin("proef")
+            .unwrap()
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+            .args(["test", "--dry-run"])
+            .assert()
+            .code(2);
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+        assert!(stderr.contains(code), "`{line}` in a fragment: {stderr}");
+        // The pack author cannot fix what they cannot find: the diagnostic
+        // anchors on their `ref:` line, so it has to name the other file.
+        assert!(stderr.contains("admin.hurl"), "`{line}`: {stderr}");
+    }
+}
+
 #[test]
 fn a_duplicate_fragment_name_is_refused() {
     let hurl = format!("{CORPUS}\n# @proef admin.search\nGET {{{{base}}}}/other\nHTTP 200\n");
