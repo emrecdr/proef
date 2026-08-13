@@ -76,7 +76,7 @@ pub fn watch_loop(
     path: &Path,
     config_path: Option<&Path>,
     fragments: Option<&Path>,
-    runs_dir: &str,
+    runs_dir: &Path,
     mut once: impl FnMut(CancellationToken) -> ExitCode,
 ) -> ExitCode {
     // `proef.toml` lives above the suite, so the recursive watch below never
@@ -88,7 +88,7 @@ pub fn watch_loop(
     let watched_exts = watched_extensions();
     // The last path component of the configured runs dir. Matched by name, so a
     // root spelled differently by the watcher than by the config still matches.
-    let watched_runs_dir = Path::new(runs_dir)
+    let watched_runs_dir = runs_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned());
     let (tx, rx) = mpsc::channel::<()>();

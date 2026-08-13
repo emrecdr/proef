@@ -25,6 +25,12 @@ use crate::config::ProjectConfig;
 use crate::front::{self, FrontEnd};
 use crate::{OutputFormat, registry, render};
 
+/// The persistent World's file name. Where it *sits* is
+/// [`ProjectConfig::state_file`](crate::config::ProjectConfig::state_file)'s
+/// answer, not this module's — the store belongs to the project, not to the
+/// directory the shell happens to be in.
+pub const STATE_FILE: &str = ".proef-state.json";
+
 /// How many run records to keep (TECH-SPEC §11).
 const RUN_RETENTION: usize = 200;
 
@@ -173,6 +179,10 @@ pub fn execute(
         }
     };
 
+    // Every project file this run reads or writes, resolved once against the
+    // config rather than against the working directory (`ProjectConfig::resolve`).
+    let state_file = config.state_file();
+
     // Phase 1: full validation pass (fail fast on static errors, discover
     // secrets, produce the run id).
     // Read once for the whole invocation: this same corpus serves the suite's
@@ -187,6 +197,7 @@ pub fn execute(
         run_id,
         Arc::clone(&config_vars),
         &fragments,
+        &state_file,
     ) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
@@ -202,10 +213,11 @@ pub fn execute(
     if let Some(teardown) = config.teardown()
         && let Err(code) = load_phase_feature(
             "teardown",
-            Path::new(teardown),
+            &teardown,
             None,
             &config_vars,
             &fragments,
+            config,
         )
     {
         return code;
@@ -219,7 +231,7 @@ pub fn execute(
         // variables a binding may have renamed them to (ADR-0018).
         .flat_map(|s| s.lowered.secrets.values().cloned())
         .collect();
-    let secrets = match crate::secretstore::resolve_all(&secret_names) {
+    let secrets = match crate::secretstore::resolve_all(&config.secrets_file(), &secret_names) {
         Ok(secrets) => Arc::new(secrets),
         Err(missing) => {
             crate::render::errln!("error: missing secret value(s): {}", missing.join(", "));
@@ -229,7 +241,7 @@ pub fn execute(
 
     // Run directory. Rotation happens before the new dir exists so the
     // in-flight run can never be a rotation candidate.
-    let runs_root = PathBuf::from(config.runs_dir());
+    let runs_root = config.runs_dir();
 
     // `--rerun`: read the prior run's failures BEFORE this run's dir exists, so
     // `latest_run` sees the previous run, not this one. No prior record is a
@@ -335,7 +347,7 @@ pub fn execute(
     let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
 
     // Shared global store (scenario merge-back through the lock, §12).
-    let store = match GlobalStore::load(Path::new(".proef-state.json")) {
+    let store = match GlobalStore::load(&state_file) {
         Ok(store) => Arc::new(Mutex::new(store)),
         Err(err) => {
             crate::render::errln!("error: {err}");
@@ -348,8 +360,8 @@ pub fn execute(
     // Suite-level setup/teardown (ADR-0014): a feature run once before / after
     // the pool at the CLI edge, sharing the store so its `saveAs: global`
     // promotions reach every scenario. The core runner stays tag-agnostic.
-    let setup_path = config.setup().map(PathBuf::from);
-    let teardown_path = config.teardown().map(PathBuf::from);
+    let setup_path = config.setup();
+    let teardown_path = config.teardown();
 
     // Setup runs first and merges its globals *before* the pool snapshots the
     // store. A setup failure aborts here, never masked — a broken fixture is a
@@ -367,6 +379,7 @@ pub fn execute(
             &cancel,
             &artifacts_dir,
             &fragments,
+            config,
         ) {
             Err(code) => return code,
             Ok(summary) => {
@@ -473,6 +486,7 @@ pub fn execute(
             &teardown_cancel,
             &artifacts_dir,
             &fragments,
+            config,
         ) {
             // The phase's own exit code, not a blanket 3: a teardown path that
             // does not exist is a user error like any other, and flattening it
@@ -521,7 +535,7 @@ pub fn execute(
 
     // Persist the World (atomic temp+rename, 0600 — ADR-0005).
     if let Ok(guard) = store.lock()
-        && let Err(err) = guard.save(Path::new(".proef-state.json"))
+        && let Err(err) = guard.save(&state_file)
     {
         crate::render::errln!("warning: cannot persist global state: {err}");
     }
@@ -923,6 +937,7 @@ pub(crate) fn load_phase_feature(
     run_id: Option<String>,
     config_vars: &Arc<BTreeMap<String, String>>,
     fragments: &proef_core::pack::FragmentCorpus,
+    config: &ProjectConfig,
 ) -> Result<FrontEnd, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
@@ -941,6 +956,7 @@ pub(crate) fn load_phase_feature(
         run_id,
         Arc::clone(config_vars),
         fragments,
+        &config.state_file(),
     )
     .map_err(|err| {
         crate::render::errln!("error: {label} feature failed to validate:");
@@ -966,6 +982,7 @@ fn run_phase(
     cancel: &CancellationToken,
     artifacts_dir: &Path,
     fragments: &proef_core::pack::FragmentCorpus,
+    config: &ProjectConfig,
 ) -> Result<runner::RunSummary, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
     // directory would run every feature under it as the phase AND leave them
@@ -977,6 +994,7 @@ fn run_phase(
         Some(run_id.to_string()),
         config_vars,
         fragments,
+        config,
     )?;
     render::print_all(&front.warnings);
 
@@ -986,7 +1004,7 @@ fn run_phase(
         .flat_map(|feature| feature.scenarios.iter())
         .flat_map(|scenario| scenario.lowered.secrets.values().cloned())
         .collect();
-    let secrets = match crate::secretstore::resolve_all(&names) {
+    let secrets = match crate::secretstore::resolve_all(&config.secrets_file(), &names) {
         Ok(secrets) => Arc::new(secrets),
         Err(missing) => {
             crate::render::errln!(

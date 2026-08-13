@@ -127,6 +127,7 @@ pub fn run(
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
     fragments: &FragmentCorpus,
+    state_file: &Path,
 ) -> Result<FrontEnd, FrontError> {
     let kinds = registry::step_kinds();
     let kind_to_engine = registry::kind_to_engine();
@@ -144,7 +145,7 @@ pub fn run(
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string())
             .as_str(),
     );
-    let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
+    let world = World::new(GlobalStore::load(state_file)?);
 
     let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds)?;
     let packs: Arc<PackSet> = Arc::new(loaded);

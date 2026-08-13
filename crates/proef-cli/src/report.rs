@@ -2,7 +2,7 @@
 //! its event record. A *derived* view (ADR-0008), replayed like `explain`: the
 //! events read back are already redacted at the sink, so the page is too.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use proef_core::error::ExitCode;
 use proef_core::event::Event;
@@ -11,9 +11,8 @@ use crate::record::RunCompletion;
 
 /// Render the named run (or the latest) to a standalone HTML file. Defaults to
 /// `report.html` inside the run dir so the `artifacts/` deep-links resolve.
-pub fn report(runs_dir: &str, run_id: Option<&str>, output: Option<&Path>) -> ExitCode {
-    let runs_root = PathBuf::from(runs_dir);
-    let Some(record_dir) = crate::record::resolve_dir(&runs_root, run_id) else {
+pub fn report(runs_root: &Path, run_id: Option<&str>, output: Option<&Path>) -> ExitCode {
+    let Some(record_dir) = crate::record::resolve_dir(runs_root, run_id) else {
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };

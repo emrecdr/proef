@@ -59,6 +59,7 @@ fn load_front(
         run_id,
         config_vars,
         fragments,
+        &config.state_file(),
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -113,6 +114,7 @@ pub fn doctor(
     engines: &[Box<dyn EngineFactory>],
     suite: Option<&Path>,
     fragments: Option<&Path>,
+    secrets: &Path,
 ) -> ExitCode {
     fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
         let glyph = match status {
@@ -149,7 +151,7 @@ pub fn doctor(
     }
 
     crate::render::outln!("\nsecrets:");
-    for (status, name, detail) in crate::secretstore::doctor_checks() {
+    for (status, name, detail) in crate::secretstore::doctor_checks(secrets) {
         row(&mut worst, name, status, &detail);
     }
 
@@ -190,7 +192,7 @@ fn validate_phase_features(
     for (label, path) in [("setup", config.setup()), ("teardown", config.teardown())] {
         let Some(path) = path else { continue };
         let front =
-            crate::exec::load_phase_feature(label, Path::new(path), None, config_vars, fragments)?;
+            crate::exec::load_phase_feature(label, &path, None, config_vars, fragments, config)?;
         render::print_all(&front.warnings);
         scenarios += front
             .features
@@ -310,6 +312,7 @@ pub fn dry_run(
         run_id,
         Arc::clone(&config_vars),
         &fragments,
+        &config.state_file(),
     );
 
     if let Some(sarif_path) = sarif {
@@ -832,7 +835,7 @@ fn phase_fragment_runs(
     for (label, path) in phases {
         let Some(path) = path else { continue };
         let front =
-            crate::exec::load_phase_feature(label, Path::new(path), None, &config_vars, fragments)
+            crate::exec::load_phase_feature(label, &path, None, &config_vars, fragments, config)
                 .ok()?;
         count_fragment_runs(&front, &mut counts);
     }

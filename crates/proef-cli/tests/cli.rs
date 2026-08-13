@@ -527,9 +527,12 @@ fn config_names_a_file_that_discovery_would_never_find() {
     std::fs::create_dir_all(root.join("tests/proef")).unwrap();
     std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
     // Below the working directory, so the upward search cannot reach it.
+    // `suite` is spelled relative to *this file*, like every other written path
+    // (`ProjectConfig::resolve`) — which is what lets the same config drive the
+    // run from the root and from a subdirectory alike.
     std::fs::write(
         root.join("tests/proef/proef.toml"),
-        "[run]\nsuite = \"tests/features\"\n[url]\nbase = \"http://127.0.0.1:1\"\n",
+        "[run]\nsuite = \"../features\"\n[url]\nbase = \"http://127.0.0.1:1\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -563,6 +566,61 @@ fn config_names_a_file_that_discovery_would_never_find() {
         .assert()
         .code(2)
         .stderr(contains("is not a file"));
+}
+
+/// A project is where its `proef.toml` is, not where the shell is.
+///
+/// Discovery searches *up*, so running from a subdirectory finds the same
+/// config — but every path it wrote used to resolve against the working
+/// directory, so `[run] suite = "features"` became `sub/features` and reported
+/// "neither a feature file nor a directory". `[run] fragments` was the one key
+/// already anchored on the config, which meant two keys in one table quietly
+/// meant two different roots.
+#[test]
+fn a_subdirectory_run_resolves_the_same_project_as_the_root_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("features/packs")).unwrap();
+    std::fs::create_dir_all(root.join("hurl")).unwrap();
+    std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"features\"\nfragments = \"hurl\"\n\
+         [url]\nbase = \"http://127.0.0.1:1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("hurl/api.hurl"),
+        "# @proef health\nGET {{base}}/health\nHTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("features/packs/api.yaml"),
+        "macros:\n  h:\n    match: the service is up\n    steps:\n      - ref: health\n        bind:\n          base: ${url:base}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the service is up\n",
+    )
+    .unwrap();
+
+    // The reference run, from the directory holding the config.
+    proef()
+        .current_dir(root)
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+
+    // …and from two directories down, where the upward search finds the very
+    // same file. Both keys have to resolve, not just the fragment root.
+    for cwd in ["sub", "sub/deeper"] {
+        proef()
+            .current_dir(root.join(cwd))
+            .args(["test", "--dry-run"])
+            .assert()
+            .code(0);
+    }
 }
 
 /// An output path proef was told to write includes the directories it needs.

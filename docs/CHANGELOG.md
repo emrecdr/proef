@@ -6,6 +6,59 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`proef.toml` has one path rule.** A path *written in the config* now resolves
+  against the directory holding the config; a path *typed on the command line*
+  still resolves against the working directory. `[run] fragments` already worked
+  this way and everything else did not, so two keys in one table meant two
+  different roots: from a subdirectory `fragments = "hurl"` resolved while
+  `suite = "features"` reported "neither a feature file nor a directory". With
+  `--config` the split was worse than inconsistent — pointing at a config in
+  another tree ran `dry-run OK` over whatever suite happened to sit beside the
+  shell, and never looked at the configured one.
+
+  The rule now covers `suite`, `setup`, `teardown`, `runs-dir` and the `tests/`
+  convention probe, plus two files nothing had inventoried: **`.proef-state.json`**
+  (the persistent World) and **`.proef-secrets.json`** (the secret store), which
+  were anchored on the working directory — so two shells in one project were two
+  Worlds and two secret stores. It is the convention Cargo, `tsconfig.json` and
+  pytest's rootdir all follow. Absolute values are taken as written, and with no
+  `proef.toml` in scope written paths stay relative to the working directory, so
+  the config-independent reference corpus is unaffected. Filed as R11-1.
+
+- **`--watch` rereads the config it retriggers on.** Editing `proef.toml`
+  retriggered a run that still used the snapshot loaded at startup: changing
+  `[url] base` produced a rerun that dutifully called the old host, and the same
+  went stale for `jobs`, `[env.*]` and `exclusive-tags`. Watching a file whose
+  contents you then ignore is worse than not watching it, because the rerun
+  reports that the edit was taken. Each rerun now re-reads the file and
+  re-resolves the suite from it; a config that no longer parses fails that rerun
+  and leaves the loop watching, since half-typed TOML is the normal state of a
+  file being edited. What the loop *watches* is still fixed at startup, so
+  changing `[run] fragments` or `runs-dir` needs a restart. Filed as R11-2.
+
+- **`--config` is honoured or refused by every subcommand.** `doctor` printed the
+  error for a missing named file and then reported on defaults, exit 0 — the
+  "fall back to defaults" `CONFIG.md` forbids — while `fmt`, `init`, `schema` and
+  `secret` accepted a nonexistent path silently, against the "global to every
+  subcommand" claim in `CONFIG.md`, `README.md` and this file. A named file that
+  is not there is now exit 2 everywhere, including where nothing reads it;
+  `doctor` stays lenient about *discovery*, which is a different claim. `secret`
+  additionally uses the flag, since the store is the project's. Filed as R11-3.
+
+> **Breaking:** the secret store and the World move with the config rather than
+> with the shell. A project whose `proef.toml` sits at its root — the documented
+> layout — is unaffected. A store written from some other directory is not
+> migrated: move `.proef-secrets.json` / `.proef-state.json` beside `proef.toml`,
+> or re-run `proef secret set`.
+>
+> **Breaking (library):** `proef_cli` is not a published library surface, but for
+> the record `front::run` takes the state-file path, `ProjectConfig::runs_dir`
+> returns a `PathBuf`, `setup`/`teardown` return `Option<PathBuf>`, `suite` is
+> gone (fold into `default_suite_path`), and the `secretstore` entry points take
+> the store path.
+
 ## [0.11.1] - 2026-08-12 (the gaps 0.11.0 shipped with)
 
 ### Fixed
