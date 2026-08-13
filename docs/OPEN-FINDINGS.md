@@ -241,8 +241,11 @@ The loop watched `proef.toml` and reran on an edit while the rerun used the
 startup snapshot, so changing `[url] base` produced a rerun that called the old
 host. Fixed by re-reading per rerun — and by moving the startup config out of
 scope, which makes the stale value unreachable from the rerun closure and the
-invariant a compile error rather than a habit. The watched *set* is still fixed
-at startup, so `[run] fragments` and `runs-dir` need a restart.
+invariant a compile error rather than a habit. Which *directories* are watched is
+still fixed at startup, so `[run] fragments` and `[run] suite` need a restart to
+be watched. `runs-dir` was in that list until R11-8 showed it did not belong
+there: it is not a watched root but an *excluded* one, and freezing it was the
+bug rather than the limitation.
 
 ### R11-3 — `--config` was honoured, swallowed, or ignored depending on the command *(shipped)*
 
@@ -275,6 +278,37 @@ overlay provider. That difference is real — the editor must see unsaved buffer
 so the readers stay separate. What is worth watching is that "which files are in
 the corpus" is still answered twice, and only the *meaning* of a failed read was
 unified here.
+
+### R11-8 — a `runs-dir` edited mid-`--watch` fed the loop its own output *(shipped)*
+
+R11-2 made each rerun re-read the config, so records went to the *new* runs dir
+while the watcher's exclusion still named the one frozen at startup. Every
+rerun's `artifacts/*.hurl`, now under an unexcluded directory, requeued the next
+run: 39 runs in 12 seconds, firing real traffic, from one edit. The third outing
+for this class, so the fix removes the second answer rather than resynchronising
+it — each rerun registers where it is about to write, *before* it writes, and the
+exclusion is derived from the same config the run is. Deliberately not a
+uuid-shaped exclusion: `--run-id` names a run directory that is not uuid-shaped.
+
+### R11-9 — a relative `--config` was never the file `--watch` matched *(shipped)*
+
+The watcher compared the config by exact path while `notify` reports events under
+the spelling the OS resolved them to, so `--config proef.toml` matched nothing and
+config edits produced no rerun — silently, because feature edits kept firing and
+the loop looked alive. Two questions had been conflated: where a path *points*
+(answered once, lexically, when the flag is stored) and whether two paths *are the
+same file* (answered by comparing canonical forms, since absolute is not enough —
+macOS's `/var` → `/private/var` aliasing and symlinks both survive it). The same
+relative path had been costing `proef lsp --config` go-to-definition across the
+whole corpus, because `documents::name_to_url` refuses a relative name.
+
+### R11-10 — `doctor` reported on defaults over a `proef.toml` that would not parse *(shipped)*
+
+R11-3's discovery arm became a silent `unwrap_or_default`, dropping the parse
+error the previous code printed: a malformed config left `doctor` reporting on
+invented defaults and printing "all checks passed", exit 0. A `project:` row now,
+so it reaches `worst` and the exit code CI reads. Leniency still means *absent* —
+`doctor` must run outside a project — not *broken*.
 
 ---
 
