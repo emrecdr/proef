@@ -356,13 +356,18 @@ fn reload_for_rerun(
 
 /// The shared preamble of every suite command (`test`/`flows`/`artifacts`):
 /// load config once, resolve the suite path, and pick the active environment.
+///
+/// The first two steps *are* [`reload_for_rerun`] — the same pair a `--watch`
+/// rerun repeats — so the startup path and the rerun path cannot drift on what
+/// "load the config, then resolve the suite against it" means. They were
+/// separate copies, which is the shape the `exclusive-tags` bug in this same
+/// change came in: two paths that had to agree, and nothing making them.
 fn prepare(
     path: Option<PathBuf>,
     env: Option<String>,
     explicit: Option<&std::path::Path>,
 ) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
-    let config = load_config(explicit)?;
-    let path = resolve_suite_path(path, &config)?;
+    let (config, path) = reload_for_rerun(explicit, path)?;
     Ok((config, path, active_env(env)?))
 }
 

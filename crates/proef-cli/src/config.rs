@@ -375,11 +375,8 @@ impl ProjectConfig {
 
     /// The directory relative config paths resolve against: the config file's
     /// own, since it may sit above the working directory.
-    fn root(&self) -> Option<PathBuf> {
-        self.path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
+    fn root(&self) -> Option<&Path> {
+        self.path.as_deref().and_then(Path::parent)
     }
 
     /// The tag expression selecting exclusive scenarios (`[run] exclusive-tags`),

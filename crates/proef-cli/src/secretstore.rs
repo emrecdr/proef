@@ -189,12 +189,11 @@ enum StoreState {
     Unreadable(std::io::Error),
 }
 
-/// A sibling of the store file (`.lock`, `.corrupt`) — built by appending to
-/// the store's own path so both follow it wherever the config roots it.
+/// A sibling of the store file (`.lock`, `.corrupt`) — appended to the store's
+/// own path so both follow it wherever the config roots it. The naming rule
+/// itself lives in `fsutil`, shared with the atomic-write temp sibling.
 fn sidecar(store: &Path, suffix: &str) -> PathBuf {
-    let mut name = store.as_os_str().to_os_string();
-    name.push(suffix);
-    PathBuf::from(name)
+    crate::fsutil::with_suffix(store, suffix)
 }
 
 fn read_store(store: &Path) -> StoreState {

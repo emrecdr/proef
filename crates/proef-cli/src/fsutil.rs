@@ -35,10 +35,24 @@ pub(crate) fn write_atomic_private(path: &Path, contents: &str) -> std::io::Resu
     Ok(())
 }
 
-fn sibling_tmp(path: &Path) -> std::path::PathBuf {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".{}.tmp", std::process::id()));
-    std::path::PathBuf::from(tmp)
+/// `path` with `suffix` appended to its **file name** — the sibling naming every
+/// derived file here uses (`.tmp`, `.lock`, `.corrupt`).
+///
+/// Appending to the `OsStr` rather than reaching for `with_extension` (which
+/// would replace `.json`, not extend it) or `join` (which would make the sidecar
+/// a *child* of the store). Both spellings existed separately, and a sidecar
+/// that lands in the wrong place is exactly the bug the config-relative path
+/// rule was fixing.
+pub(crate) fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The process-unique temp sibling `write_atomic` renames from. Per-process so
+/// two concurrent proefs writing the same file cannot share a scratch path.
+fn sibling_tmp(path: &Path) -> PathBuf {
+    with_suffix(path, &format!(".{}.tmp", std::process::id()))
 }
 
 /// Is this directory name a proef run id (uuid)? Shared by run rotation and
