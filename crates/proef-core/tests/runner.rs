@@ -688,47 +688,59 @@ fn abandoned_scenario_emits_nothing_after_run_finished() {
 /// exclusive one ever saw a neighbour fails regardless of ordering — and the
 /// non-exclusive pair still has to reach 2, or the test would pass on a runner
 /// that had quietly become serial and proved nothing.
-#[test]
-fn an_exclusive_scenario_never_shares_the_pool() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+/// How many scenarios were live at the same time as this one, sampled **across
+/// its whole hold** rather than once at entry.
+///
+/// The single-sample version read like a concurrency check and was not: a
+/// neighbour that starts *after* this scenario recorded its count is invisible
+/// to it, and "a neighbour joined the exclusive scenario already running" is
+/// precisely that shape. Removing half the fill gate left the single-sample
+/// tests green. Sampling is a peak *observation*, not a wall-clock assertion —
+/// the run is as slow as it needs to be and the assertion is on what was seen.
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-    static LIVE: AtomicUsize = AtomicUsize::new(0);
-
-    /// A scenario that holds a slot long enough for a neighbour to be visible.
-    fn watcher(name: &str, exclusive: bool, peak: Arc<Mutex<usize>>) -> ScenarioSpec {
-        ScenarioSpec {
-            file: Arc::from("mock.feature"),
-            name: Arc::from(name),
-            line: 1,
-            file_root: None,
-            exclusive,
-            prepare: Box::new(move |_world| {
-                let live = LIVE.fetch_add(1, Ordering::SeqCst) + 1;
+fn overlap_watcher(name: &str, exclusive: bool, peak: Arc<Mutex<usize>>) -> ScenarioSpec {
+    use std::sync::atomic::Ordering;
+    ScenarioSpec {
+        file: Arc::from("mock.feature"),
+        name: Arc::from(name),
+        line: 1,
+        file_root: None,
+        exclusive,
+        prepare: Box::new(move |_world| {
+            LIVE.fetch_add(1, Ordering::SeqCst);
+            for _ in 0..12 {
+                let live = LIVE.load(Ordering::SeqCst);
                 {
+                    // One acquisition: `*m.lock() = (*m.lock()).max(x)` locks
+                    // the same non-reentrant mutex twice and deadlocks.
                     let mut seen = peak.lock().unwrap();
                     *seen = (*seen).max(live);
                 }
-                std::thread::sleep(Duration::from_millis(60));
-                LIVE.fetch_sub(1, Ordering::SeqCst);
-                Ok(Prepared {
-                    batches: Vec::new(),
-                    artifact: None,
-                    secret_bindings: BTreeMap::default(),
-                })
-            }),
-        }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            LIVE.fetch_sub(1, Ordering::SeqCst);
+            Ok(Prepared {
+                batches: Vec::new(),
+                artifact: None,
+                secret_bindings: BTreeMap::default(),
+            })
+        }),
     }
+}
 
+#[test]
+fn an_exclusive_scenario_never_shares_the_pool() {
     let peak_alone: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
     let peak_shared: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
     let engines = engines(vec![]);
     let store = Arc::new(Mutex::new(GlobalStore::new()));
     let summary = run(
         vec![
-            watcher("shared-a", false, Arc::clone(&peak_shared)),
-            watcher("shared-b", false, Arc::clone(&peak_shared)),
-            watcher("alone", true, Arc::clone(&peak_alone)),
-            watcher("shared-c", false, Arc::clone(&peak_shared)),
+            overlap_watcher("shared-a", false, Arc::clone(&peak_shared)),
+            overlap_watcher("shared-b", false, Arc::clone(&peak_shared)),
+            overlap_watcher("alone", true, Arc::clone(&peak_alone)),
+            overlap_watcher("shared-c", false, Arc::clone(&peak_shared)),
         ],
         &engines,
         &store,
@@ -747,5 +759,134 @@ fn an_exclusive_scenario_never_shares_the_pool() {
         *peak_shared.lock().unwrap() >= 2,
         "the non-exclusive scenarios never overlapped, so this proves nothing \
          about exclusivity"
+    );
+}
+
+/// Two exclusive scenarios back to back, with ordinary work either side.
+///
+/// The pool has to drain, run one alone, refill, drain again, and run the second
+/// alone. The interesting state is the flag that says "an exclusive scenario
+/// owns the pool": it is cleared when the active set empties, and a version that
+/// cleared it one turn late would let the second exclusive scenario start beside
+/// the first's tail — or, cleared one turn early, would let a neighbour join.
+/// Neither shows up with a single exclusive scenario in the queue.
+#[test]
+fn back_to_back_exclusive_scenarios_each_get_the_pool_alone() {
+    let first: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let second: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let before: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    // Counted apart from `before` on purpose. Sharing one counter let the
+    // leading pair's overlap satisfy the assertion, so a pool that never
+    // refilled — `exclusive_active` left set once an exclusive scenario had
+    // run, turning everything after it serial — passed unnoticed.
+    let after: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let engines = engines(vec![]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let summary = run(
+        vec![
+            overlap_watcher("shared-a", false, Arc::clone(&before)),
+            overlap_watcher("shared-b", false, Arc::clone(&before)),
+            overlap_watcher("alone-1", true, Arc::clone(&first)),
+            overlap_watcher("alone-2", true, Arc::clone(&second)),
+            overlap_watcher("shared-c", false, Arc::clone(&after)),
+            overlap_watcher("shared-d", false, Arc::clone(&after)),
+        ],
+        &engines,
+        &store,
+        &config(4),
+        &EventSink::null(),
+        &CancellationToken::new(),
+    );
+
+    assert_eq!(summary.outcomes.len(), 6, "every scenario must still run");
+    assert_eq!(
+        *first.lock().unwrap(),
+        1,
+        "the first exclusive scenario saw a neighbour"
+    );
+    assert_eq!(
+        *second.lock().unwrap(),
+        1,
+        "the second exclusive scenario saw a neighbour — most likely the first one's tail"
+    );
+    assert!(
+        *before.lock().unwrap() >= 2,
+        "the pool never ran anything in parallel, so this proves nothing about exclusivity"
+    );
+    assert!(
+        *after.lock().unwrap() >= 2,
+        "the pool never refilled after the exclusive scenarios — parallelism has to \
+         come back, or `exclusive-tags` silently serialises the rest of the run"
+    );
+}
+
+/// Cancelling while an exclusive scenario is waiting for the pool to drain must
+/// finish the run, not deadlock.
+///
+/// The fill gate refuses to start anything while an exclusive scenario is at the
+/// head and the pool is non-empty. Cancellation drains the queue by *skipping*
+/// its entries, and a gate that skipped past the exclusive head — or one that
+/// waited for a pool that would never refill — leaves the loop unable to reach
+/// its total. Every scenario must be accounted for either way.
+#[test]
+fn cancelling_during_an_exclusive_drain_still_completes_the_run() {
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+
+    // Cancels from inside the first scenario, i.e. while the exclusive one
+    // behind it is at the head of the queue waiting for this slot to free.
+    let mut specs = vec![ScenarioSpec {
+        file: Arc::from("mock.feature"),
+        name: Arc::from("running-when-cancelled"),
+        line: 1,
+        file_root: None,
+        exclusive: false,
+        prepare: Box::new(move |_world| {
+            trigger.cancel();
+            Ok(Prepared {
+                batches: Vec::new(),
+                artifact: None,
+                secret_bindings: BTreeMap::default(),
+            })
+        }),
+    }];
+    for (i, exclusive) in [(1, true), (2, true), (3, false)] {
+        specs.push(ScenarioSpec {
+            file: Arc::from("mock.feature"),
+            name: Arc::from(format!("queued-{i}").as_str()),
+            line: 1,
+            file_root: None,
+            exclusive,
+            prepare: Box::new(|_world| {
+                Ok(Prepared {
+                    batches: Vec::new(),
+                    artifact: None,
+                    secret_bindings: BTreeMap::default(),
+                })
+            }),
+        });
+    }
+
+    let engines = engines(vec![]);
+    let store = Arc::new(Mutex::new(GlobalStore::new()));
+    let summary = run(
+        specs,
+        &engines,
+        &store,
+        &config(2),
+        &EventSink::null(),
+        &cancel,
+    );
+
+    // The run terminated (a deadlock would hang this test rather than fail it)
+    // and every scenario reached an outcome — run or skipped, never dropped.
+    assert_eq!(
+        summary.outcomes.len(),
+        4,
+        "a cancelled exclusive drain lost scenarios instead of skipping them"
+    );
+    assert!(
+        summary.outcomes.iter().any(|o| o.status == Status::Skipped),
+        "cancellation should have skipped the queued scenarios"
     );
 }

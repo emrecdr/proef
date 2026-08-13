@@ -211,10 +211,23 @@ exclusive-tags = "@serial"
   Scenario: The report lists every record in order
 ```
 
-A matching scenario waits for the pool to drain, runs alone, and the pool
-refills after it. Everything else keeps running at `jobs` width, so the cost is
-paid only by the scenarios that need it. Ordering is unchanged: scenarios still
-start in discovery order, so an exclusive one never loses its place.
+A matching scenario waits for the pool to drain, runs alone, and the pool refills
+after it. Ordering is unchanged: scenarios still start in discovery order, so an
+exclusive one never loses its place — and that is also what the cost is made of.
+Queueing is strict FIFO, so while an exclusive scenario sits at the head **no new
+scenario starts**: the pool drains to empty, the exclusive one runs by itself,
+and only then does parallelism return to `jobs` width. Expect a throughput dip
+around each exclusive scenario roughly as long as the slowest scenario already
+running, plus the exclusive one's own duration. Put another way, the cost is
+bounded and predictable rather than free.
+
+**Exclusivity is enforced against the dispatcher's own bookkeeping.** A scenario
+the watchdog abandons for blowing its batch budget (ADR-0007) leaves the active
+set immediately, but its detached thread keeps going until the request in flight
+returns — hurl cannot be cancelled mid-entry. In that window an exclusive
+scenario can start while an abandoned neighbour is still issuing requests. It
+takes a budget blowout in the same moment to happen, and it is the one caveat the
+isolation guarantee carries; a run that never trips the watchdog never meets it.
 
 **This is exclusion, not ordering.** A scenario that must run *before* the
 others — installing a fixture the rest depend on — belongs in

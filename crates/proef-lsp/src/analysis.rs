@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use proef_core::analyze::{AnalyzeCtx, SuiteAnalysis, analyze_suite};
-use proef_core::diag::Diag;
 use proef_core::engine::StepKindSpec;
 use proef_core::pack::{FragmentCorpus, PackSource};
 use proef_core::provider::SourceProvider;
@@ -66,12 +65,11 @@ pub fn read_fragments(
             Ok(text) => sources.push(PackSource { name, text }),
             // A corpus is foreign by design: one unreadable file reports itself
             // and the rest still load.
+            // The same diagnostic the CLI reports, help text included — it is
+            // the corpus's own statement about an unreadable file, not the
+            // reader's. `with_source` on top so the editor can position it.
             Err(err) => errors.push(
-                Diag::error(
-                    "proef::pack::unreadable_fragment_file",
-                    format!("cannot read fragment file {name}: {}", err.0),
-                )
-                .with_source(name.clone(), Arc::from("")),
+                FragmentCorpus::unreadable_file(&name, &err.0).with_source(name, Arc::from("")),
             ),
         }
     }

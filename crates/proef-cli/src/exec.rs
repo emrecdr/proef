@@ -156,12 +156,9 @@ pub fn execute(
     // reports the first such error.
     // Parsed before anything runs: a malformed expression must stop the run, not
     // leave every scenario it should have isolated quietly sharing the pool.
-    let exclusive_tags = match config.exclusive_tags() {
+    let exclusive_tags = match crate::commands::exclusive_tags(config) {
         Ok(expr) => expr,
-        Err(message) => {
-            crate::render::errln!("error: {message}");
-            return ExitCode::UserError;
-        }
+        Err(code) => return code,
     };
     let (config_vars, effective_jobs, http_defaults, sla_thresholds) = match (
         config.config_vars(active_env),
@@ -203,6 +200,11 @@ pub fn execute(
         Err(err) => return crate::commands::report_front_error(&err),
     };
     render::print_all(&front.warnings);
+    front::warn_if_exclusive_matches_nothing(
+        &front,
+        exclusive_tags.as_ref(),
+        config.run.exclusive_tags.as_deref(),
+    );
 
     // Teardown is validated here, beside the suite and before any run directory
     // or record exists. Otherwise a typo'd `[run] teardown` costs a full suite

@@ -37,6 +37,21 @@ pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::Fragmen
     front::fragment_corpus(config.fragments().as_deref()).map_err(|err| report_front_error(&err))
 }
 
+/// The parsed `[run] exclusive-tags`, or the user error a malformed one is.
+///
+/// Shared by `--dry-run` and the real run so they cannot disagree about whether
+/// the key is valid — which they did: only the run path parsed it, so the gate
+/// CI runs waved through the one error the setting is designed to make
+/// impossible.
+pub(crate) fn exclusive_tags(
+    config: &ProjectConfig,
+) -> Result<Option<proef_core::tags::TagExpr>, ExitCode> {
+    config.exclusive_tags().map_err(|message| {
+        render::errln!("error: {message}");
+        ExitCode::UserError
+    })
+}
+
 /// Load and validate a suite through the front-end (dry-run mode), mapping a
 /// front-end error to its exit code. The shared load path for `flows`,
 /// `artifacts`, and `macros`; `dry_run` keeps its own so it can serialize the
@@ -285,7 +300,10 @@ fn write_sarif(result: &Result<front::FrontEnd, proef_core::diag::FrontError>, s
 /// opposed to `[run] suite`/`tests/` default resolution) — it decides whether
 /// the printed "next command" echoes that path: a bare `proef test` only
 /// rediscovers a *defaulted* path on its own.
-#[allow(clippy::too_many_arguments)]
+// One linear validation report: the stages run in a fixed order and the reader
+// follows it top to bottom, so splitting hides the order rather than the length.
+// The flat parameter list mirrors the CLI flag surface one-to-one.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub fn dry_run(
     path: &Path,
     path_given: bool,
@@ -298,6 +316,10 @@ pub fn dry_run(
     sarif: Option<&Path>,
     config: &ProjectConfig,
 ) -> ExitCode {
+    let exclusive = match exclusive_tags(config) {
+        Ok(expr) => expr,
+        Err(code) => return code,
+    };
     let config_vars = match config_vars_for(active_env, config) {
         Ok(vars) => vars,
         Err(code) => return code,
@@ -323,6 +345,11 @@ pub fn dry_run(
         Ok(front) => front,
         Err(err) => return report_front_error(&err),
     };
+    front::warn_if_exclusive_matches_nothing(
+        &front,
+        exclusive.as_ref(),
+        config.run.exclusive_tags.as_deref(),
+    );
 
     // scenarios, selected, steps, batches, artifacts
     let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize);
@@ -710,17 +737,24 @@ pub fn fragments(
     // `--check` — a false CI failure in the workflow `--check` exists for. It
     // also made the verdict depend on where the phase file sat: inside the
     // suite directory it was discovered as an ordinary feature and counted.
-    let runs = match (runs, phase_fragment_runs(config, active_env, &corpus)) {
+    // Which half went missing, kept so the reader is told the truth about it.
+    // Collapsing the two said "--check needs a suite that binds" when the suite
+    // had bound perfectly well and a `[run] setup` feature was the thing that
+    // would not load — sending the reader to inspect the half that was fine.
+    let (runs, unmeasured) = match (runs, phase_fragment_runs(config, active_env, &corpus)) {
         (Some(mut suite), Some(phases)) => {
             for (fragment, n) in phases {
                 *suite.entry(fragment).or_default() += n;
             }
-            Some(suite)
+            (Some(suite), None)
         }
-        // A phase that would not load leaves the universe incomplete, so every
-        // count-derived verdict is withheld rather than guessed — the same rule
-        // the suite half already follows.
-        _ => None,
+        // Either half missing leaves the universe incomplete, so every
+        // count-derived verdict is withheld rather than guessed.
+        (None, _) => (None, Some("the suite did not load")),
+        (Some(_), None) => (
+            None,
+            Some("a configured `[run] setup`/`teardown` feature did not load"),
+        ),
     };
 
     // Which macro names each fragment, for the "reached only through a macro
@@ -746,17 +780,42 @@ pub fn fragments(
 
     render_fragments(&corpus, runs.as_ref(), &referenced_by, output_json);
 
+    // Say why a count column is dashes, the way `macros` does. Without it the
+    // listing looks like a corpus nothing uses rather than a measurement that
+    // could not be taken — the same confusion, one column over.
+    if let Some(reason) = unmeasured
+        && !output_json
+    {
+        render::errln!(
+            "note: listing the corpus only — run counts need a suite that binds ({reason})"
+        );
+    }
+
     if let Some(code) = load_failure {
         return code;
     }
     if !check {
         return ExitCode::Success;
     }
+    // A `--check` with no corpus to check passes for the same reason an empty
+    // one does, and the two are indistinguishable in the output: `0 entries`,
+    // exit 0. That makes the CI gate disarm silently the day `[run] fragments`
+    // is dropped from the config — the gate keeps reporting success about a
+    // corpus it is no longer looking at. Asking for a check of nothing is a
+    // question about the configuration, so it is answered as one.
+    if config.fragments().is_none() {
+        render::errln!(
+            "error: --check needs `[run] fragments` set — with no corpus configured there is \
+             nothing to check, and a passing gate would say otherwise"
+        );
+        return ExitCode::UserError;
+    }
     // `--check` needs measured counts to fail on. Without them the honest
     // answer is that the gate could not run, not that it passed.
     let Some(runs) = runs.as_ref() else {
         render::errln!(
-            "error: --check needs a suite that binds — the counts it gates on were not measured"
+            "error: --check needs measured run counts and {} — so they were not measured",
+            unmeasured.unwrap_or("the universe was incomplete")
         );
         return ExitCode::UserError;
     };
@@ -864,7 +923,12 @@ fn render_fragments(
             // `null`, not `0`: absent knowledge rather than a measured zero.
             let count = runs.map(|r| r.get(&qualified).copied().unwrap_or(0));
             let refs = referenced_by.get(&qualified).cloned().unwrap_or_default();
+            // `annotated` is the discriminator between this row shape and the
+            // unannotated one below, which carries four fields to this one's
+            // eleven. Present on **both**, so a consumer branches on a key that
+            // is always there rather than probing for the absence of `kind`.
             let json = serde_json::json!({
+                "annotated": true,
                 "name": fragment.name,
                 "file": fragment.file,
                 "qualified": qualified,

@@ -773,3 +773,59 @@ fn an_unresolved_ref_does_not_make_its_bindings_look_unread() {
         "the bindings are fine; the `ref:` is the mistake — {stderr}"
     );
 }
+
+/// `--check` with no corpus configured used to pass: `0 entries`, exit 0,
+/// indistinguishable from a corpus that exists and is fully used. A CI gate then
+/// disarms silently the day `[run] fragments` leaves the config — it keeps
+/// reporting success about a corpus it is no longer looking at.
+///
+/// No fixture: nothing here runs a request.
+#[test]
+fn fragments_check_refuses_to_pass_with_no_corpus_configured() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("features/packs")).unwrap();
+    std::fs::write(root.join("proef.toml"), "[run]\nsuite = \"features\"\n").unwrap();
+    std::fs::write(
+        root.join("features/packs/p.yaml"),
+        "macros:\n  ping:\n    match: I ping\n    steps:\n      - hurl: |\n          GET http://127.0.0.1:1/x\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When I ping\n",
+    )
+    .unwrap();
+
+    let run = |args: &[&str]| {
+        Command::cargo_bin("proef")
+            .unwrap()
+            .current_dir(root)
+            .env("NO_COLOR", "1")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // The listing itself stays available — "no corpus" is a fine answer to ask for.
+    let listing = run(&["fragments"]);
+    assert_eq!(listing.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&listing.stdout).contains("0 entries"),
+        "listing should still report an empty corpus"
+    );
+
+    // Asking it to *gate* on a corpus that is not configured is a question about
+    // the configuration, and is answered as one.
+    let gate = run(&["fragments", "--check"]);
+    assert_eq!(
+        gate.status.code(),
+        Some(2),
+        "--check with no corpus must not report success"
+    );
+    assert!(
+        String::from_utf8_lossy(&gate.stderr).contains("--check needs `[run] fragments` set"),
+        "stderr: {}",
+        String::from_utf8_lossy(&gate.stderr)
+    );
+}

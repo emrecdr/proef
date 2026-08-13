@@ -136,7 +136,6 @@ executes under fuzzing; the annotation scanner's entry-boundary arithmetic —
 proef's own code, not hurl's — and `bake_entry_options`' textual injection are
 unfuzzed entirely. Split the fuzz input into pack and corpus halves, and consider
 a `fuzz_fragment_scan` target (nightly, accepting the native-libs cost).
-`fuzz_tag_expr` also still compiles in gates while sitting in neither fuzz loop.
 
 ### R9-3 — no resource bounds on the corpus read
 
@@ -225,6 +224,57 @@ over the registry, so it is sans-IO-legal, and `proef-lsp` cannot reach
 `proef-cli`'s copy. Worth pairing with the deeper question the LSP predicate
 raises: membership in `discover_fragments()` is the real test, and an extension
 match also claims emitted artifacts that happen to end in `.hurl`.
+
+### R11-1 — `proef.toml` resolved its paths against two different roots *(shipped)*
+
+`[run] fragments` resolved against the config file's directory and `suite`,
+`setup`, `teardown` and `runs-dir` resolved against the working directory, so the
+same relative spelling meant two directories depending on which key it sat under.
+`.proef-state.json` and `.proef-secrets.json` were cwd-anchored too and appeared
+in no inventory, making two shells in one project two Worlds and two secret
+stores. One rule now: written paths resolve against the config, typed paths
+against the working directory.
+
+### R11-2 — `--watch` retriggered on a config it then ignored *(shipped)*
+
+The loop watched `proef.toml` and reran on an edit while the rerun used the
+startup snapshot, so changing `[url] base` produced a rerun that called the old
+host. Fixed by re-reading per rerun — and by moving the startup config out of
+scope, which makes the stale value unreachable from the rerun closure and the
+invariant a compile error rather than a habit. The watched *set* is still fixed
+at startup, so `[run] fragments` and `runs-dir` need a restart.
+
+### R11-3 — `--config` was honoured, swallowed, or ignored depending on the command *(shipped)*
+
+`doctor` printed the error for a missing named file and then reported on
+defaults, exit 0; `fmt`, `init`, `schema` and `secret` accepted a nonexistent
+path silently. Three documents called the flag global to every subcommand. A
+named-but-missing file is exit 2 everywhere now; `doctor` stays lenient about
+discovery, which is a different claim.
+
+### R11-4 / R11-5 — `[run] exclusive-tags` did not validate itself *(shipped)*
+
+`--dry-run` never parsed the expression, and a well-formed expression matching
+nothing was silent — both defeat the reason the setting is a config expression
+rather than a reserved tag name.
+
+### R11-6 — exclusivity is invisible in the run record
+
+`Event::ScenarioStarted` carries no field saying a scenario ran exclusively, so a
+post-mortem cannot tell a deliberate drain from a stall: the record shows
+parallelism dropping to one and nothing explaining why. An additive field is
+permitted by ADR-0008, and the reporters would need to decide whether to surface
+it. Filed rather than built — it is a design question about what the record
+should say, not a defect, and the run behaves correctly either way.
+
+### R11-7 — the corpus-read rule is shared, its *discovery* is not
+
+`FragmentCorpus::unreadable_file` now gives both readers one diagnostic, but the
+CLI walks the fragment root with `std::fs` while the LSP reads through its
+overlay provider. That difference is real — the editor must see unsaved buffers —
+so the readers stay separate. What is worth watching is that "which files are in
+the corpus" is still answered twice, and only the *meaning* of a failed read was
+unified here.
 
 ---
 

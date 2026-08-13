@@ -5,6 +5,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 fn proef() -> Command {
@@ -682,4 +683,86 @@ fn an_output_path_creates_the_directories_it_needs() {
         root.join("sarif/nested/out.sarif").is_file(),
         "--sarif must create the directories its path names"
     );
+}
+
+/// A suite with one exclusive scenario and one ordinary one, plus whatever
+/// `[run] exclusive-tags` the caller wants to try against it.
+fn exclusive_tags_project(expression: &str) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("features/packs")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        format!("[run]\nsuite = \"features\"\nexclusive-tags = \"{expression}\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("features/packs/p.yaml"),
+        "macros:\n  ping:\n    match: I ping\n    steps:\n      - hurl: |\n          GET http://127.0.0.1:1/health\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("features/a.feature"),
+        "Feature: F\n  @solo\n  Scenario: alone\n    When I ping\n\n  Scenario: shared\n    When I ping\n",
+    )
+    .unwrap();
+    tmp
+}
+
+/// `--dry-run` validates the settings a run would use — and `[run]
+/// exclusive-tags` was exempt, so a malformed expression exited 2 from
+/// `proef test` and passed `dry-run OK … 0 warning(s)` from the gate CI runs.
+#[test]
+fn dry_run_refuses_a_malformed_exclusive_tags_expression() {
+    let tmp = exclusive_tags_project("@solo and (");
+    for args in [
+        vec!["test", "--dry-run"],
+        // The real run already refused it; both paths must agree.
+        vec!["test"],
+    ] {
+        proef()
+            .current_dir(tmp.path())
+            .args(&args)
+            .assert()
+            .code(2)
+            .stderr(contains(
+                "[run] exclusive-tags is not a valid tag expression",
+            ));
+    }
+}
+
+/// A *well-formed* expression matching no scenario is the typo that defeats the
+/// key's own design rationale: isolation degrades, every scenario rejoins the
+/// shared pool, and the interference reads as flakiness rather than as a
+/// misspelled setting.
+#[test]
+fn an_exclusive_tags_expression_matching_nothing_is_reported() {
+    let tmp = exclusive_tags_project("@soloz");
+    proef()
+        .current_dir(tmp.path())
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0)
+        .stderr(contains("matches no scenario"));
+}
+
+/// …and the two cases it must *not* fire on: a spelling that matches, and a
+/// `--tags` filter that removed the matches from this particular run. The
+/// second is why the verdict is taken over every scenario the suite loaded
+/// rather than over the ones selected — otherwise every filtered run would
+/// report a broken setting.
+#[test]
+fn a_matching_exclusive_expression_is_silent_even_when_tags_filter_it_out() {
+    let tmp = exclusive_tags_project("@solo");
+    for args in [
+        vec!["test", "--dry-run"],
+        vec!["test", "--dry-run", "--tags", "not @solo"],
+    ] {
+        proef()
+            .current_dir(tmp.path())
+            .args(&args)
+            .assert()
+            .code(0)
+            .stderr(contains("matches no scenario").not());
+    }
 }
