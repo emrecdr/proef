@@ -257,6 +257,51 @@ fn a_fragments_option_values_are_capped_like_an_inline_blocks() {
     }
 }
 
+/// A phase that will not load fails the listing, as a suite that will not load
+/// already did.
+///
+/// `phase_fragment_runs` flattened its error to "not measured", so a broken
+/// `[run] setup` printed `error: setup feature failed to validate:` and then
+/// exited **0**. The counts really are unmeasurable in that state — that half
+/// was right — but a script reading only the exit code was told it succeeded
+/// while proef was printing errors at it.
+#[test]
+fn a_phase_that_does_not_load_reaches_the_exit_code() {
+    let hurl = "# @proef api.used\nGET {{base}}/a\nHTTP 200\n";
+    let pack = "macros:\n  searchTasks:\n    match: the operator searches tasks\n    \
+                steps:\n      - ref: api.used\n        bind: { base: \"${url:base}\" }\n";
+    let dir = project(hurl, pack);
+    std::fs::write(
+        dir.path().join("tests/features/a.feature"),
+        "Feature: F\n  Scenario: S\n    When the operator searches tasks\n",
+    )
+    .unwrap();
+    // Prose no macro matches, so the phase feature cannot bind.
+    std::fs::write(
+        dir.path().join("setup.feature"),
+        "Feature: S\n  Scenario: boot\n    When nothing matches this prose at all\n",
+    )
+    .unwrap();
+    let config = dir.path().join("proef.toml");
+    let text = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(
+        &config,
+        text.replace("[url]", "setup = \"setup.feature\"\n[url]"),
+    )
+    .unwrap();
+
+    let assert = Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .arg("fragments")
+        .assert()
+        .failure();
+    let err = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(err.contains("setup"), "the failing half is named: {err}");
+}
+
 /// The listing exists for the two questions nothing else could answer: which
 /// annotated fragments nothing reaches, and which entries carry no annotation at
 /// all. Both were silent — a missing annotation produces a green run and a

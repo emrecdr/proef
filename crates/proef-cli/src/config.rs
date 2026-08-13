@@ -188,16 +188,29 @@ impl ProjectConfig {
     ///
     /// Discovery only searches *up*, so a config beside the suite is invisible
     /// from the repository root — a layout an adopting team planned and had to
-    /// abandon. Naming the file removes the constraint, and with it the one
-    /// place the two roots differ: `[run] fragments` resolves against this
-    /// file's directory while the suite path stays relative to the working
-    /// directory, and `--config` makes that choice explicit rather than
-    /// positional.
+    /// abandon. Naming the file removes that constraint; every path written
+    /// inside it still resolves against its own directory, the one rule.
     ///
     /// A named file that is not there is a **hard error**, unlike discovery
     /// finding nothing. Falling back to defaults would answer a typo'd path
     /// with a run that silently has no configuration — every `${url:…}` unset,
     /// and nothing saying why.
+    ///
+    /// The path is made **absolute** before it is stored, because everything
+    /// downstream already assumes it is. Discovery gets that for free — it
+    /// builds on `current_dir()`, which the OS returns already resolved — so
+    /// the typed flag is the only way a relative one enters, and it silently
+    /// broke two things when it did: [`fragments`](Self::fragments) returned a
+    /// relative path, which `documents::name_to_url` refuses, costing
+    /// `proef lsp` go-to-definition over the whole corpus; and `--watch`
+    /// identifies the config it watches by path, so edits to a relatively-named
+    /// one never retriggered a run.
+    ///
+    /// Lexical (`std::path::absolute`), not `canonicalize`: this answers *where
+    /// does it point*, and resolving symlinks here would rewrite a spelling the
+    /// user chose into one they never typed. Whether two paths *are the same
+    /// file* is a different question, asked and answered where it matters
+    /// ([`crate::watch`]).
     pub fn load_at(path: &Path) -> Result<Self, String> {
         if !path.is_file() {
             return Err(format!(
@@ -206,7 +219,9 @@ impl ProjectConfig {
                 path.display()
             ));
         }
-        Self::from_nearest(Some(path.to_path_buf()))
+        let absolute = std::path::absolute(path)
+            .map_err(|err| format!("--config {} cannot be resolved: {err}", path.display()))?;
+        Self::from_nearest(Some(absolute))
     }
 
     fn from_nearest(found: Option<PathBuf>) -> Result<Self, String> {

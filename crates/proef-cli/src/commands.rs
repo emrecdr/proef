@@ -130,6 +130,7 @@ pub fn doctor(
     suite: Option<&Path>,
     fragments: Option<&Path>,
     secrets: &Path,
+    config_error: Option<&str>,
 ) -> ExitCode {
     fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
         let glyph = match status {
@@ -154,6 +155,16 @@ pub fn doctor(
             let result = (check.run)();
             row(&mut worst, check.name, result.status, &result.detail);
         }
+    }
+
+    // Conditional, like the fragments row below: an absent `proef.toml` is not
+    // a finding — `doctor` must run outside a project — but one that is present
+    // and unparseable is, and every check under it ran against defaults the
+    // project never asked for. A row rather than a bare print so it reaches
+    // `worst` and the exit code, which is what a CI script reads.
+    if let Some(error) = config_error {
+        crate::render::outln!("\nproject:");
+        row(&mut worst, "proef.toml", DoctorStatus::Fail, error);
     }
 
     // CLI-owned checks: neither the pack schema nor the secret machinery is
@@ -673,12 +684,25 @@ fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
     } else {
         DoctorStatus::Pass
     };
-    let mut detail = format!("{named} fragment(s) from `{shown}`");
+    // Pluralised rather than spelled `entr(ies)`, which is not a word either
+    // way round; the listing below already carries the same `entr{}` idiom.
+    let mut detail = format!(
+        "{named} fragment{} from `{shown}`",
+        if named == 1 { "" } else { "s" }
+    );
     if bare > 0 {
-        let _ = write!(detail, " · {bare} unannotated entr(ies)");
+        let _ = write!(
+            detail,
+            " · {bare} unannotated entr{}",
+            if bare == 1 { "y" } else { "ies" }
+        );
     }
     if broken > 0 {
-        let _ = write!(detail, " · {broken} file(s) proef could not read");
+        let _ = write!(
+            detail,
+            " · {broken} file{} proef could not read",
+            if broken == 1 { "" } else { "s" }
+        );
     }
     Some((status, detail))
 }
@@ -741,7 +765,9 @@ pub fn fragments(
     // Collapsing the two said "--check needs a suite that binds" when the suite
     // had bound perfectly well and a `[run] setup` feature was the thing that
     // would not load — sending the reader to inspect the half that was fine.
-    let (runs, unmeasured) = match (runs, phase_fragment_runs(config, active_env, &corpus)) {
+    let phase_runs = phase_fragment_runs(config, active_env, &corpus);
+    let phase_failure = phase_runs.as_ref().err().copied();
+    let (runs, unmeasured) = match (runs, phase_runs.ok()) {
         (Some(mut suite), Some(phases)) => {
             for (fragment, n) in phases {
                 *suite.entry(fragment).or_default() += n;
@@ -757,26 +783,7 @@ pub fn fragments(
         ),
     };
 
-    // Which macro names each fragment, for the "reached only through a macro
-    // nothing binds" case — the death mode that currently looks covered.
-    let mut referenced_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    if let Some(front) = &loaded {
-        for macro_ in front.packs.macros.values() {
-            let proef_core::pack::MacroBody::Steps(steps) = &macro_.body else {
-                continue;
-            };
-            for step in steps {
-                if let proef_core::pack::MacroStepKind::Ref { target } = &step.kind
-                    && let Some(fragment) = front.packs.find_fragment(target)
-                {
-                    let names = referenced_by.entry(fragment.qualified()).or_default();
-                    if !names.contains(&macro_.name) {
-                        names.push(macro_.name.clone());
-                    }
-                }
-            }
-        }
-    }
+    let referenced_by = loaded.as_ref().map(macros_referencing).unwrap_or_default();
 
     render_fragments(&corpus, runs.as_ref(), &referenced_by, output_json);
 
@@ -791,7 +798,10 @@ pub fn fragments(
         );
     }
 
-    if let Some(code) = load_failure {
+    // Either half failing is a failure, for the reason the suite half already
+    // gave: the listing is worth printing beneath the diagnostics, but a script
+    // reading only the code must not be told this was a success.
+    if let Some(code) = load_failure.or(phase_failure) {
         return code;
     }
     if !check {
@@ -829,8 +839,9 @@ pub fn fragments(
     let mut failed = false;
     if !never_run.is_empty() {
         render::errln!(
-            "error: {} fragment(s) no scenario runs: {}",
+            "error: {} fragment{} that no scenario runs: {}",
             never_run.len(),
+            if never_run.len() == 1 { "" } else { "s" },
             never_run.join(", ")
         );
         failed = true;
@@ -841,7 +852,11 @@ pub fn fragments(
     // which is a different claim — so the porting team asks for it explicitly
     // rather than every adopter inheriting it.
     if require_annotated && unannotated > 0 {
-        render::errln!("error: {unannotated} entr(ies) carry no `# @proef` annotation");
+        render::errln!(
+            "error: {unannotated} entr{} carr{} no `# @proef` annotation",
+            if unannotated == 1 { "y" } else { "ies" },
+            if unannotated == 1 { "ies" } else { "y" }
+        );
         failed = true;
     }
     if failed {
@@ -849,6 +864,33 @@ pub fn fragments(
     } else {
         ExitCode::Success
     }
+}
+
+/// Which macros name each fragment, keyed by qualified name.
+///
+/// For the "reached only through a macro nothing binds" death mode — the one
+/// that looks covered, because the *macro* warning already fires and reads as
+/// the whole story. Naming the macro is what lets the reader tell the two
+/// apart: a fragment nothing references at all, and one referenced by a macro
+/// no scenario says.
+fn macros_referencing(front: &front::FrontEnd) -> BTreeMap<String, Vec<String>> {
+    let mut referenced_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for macro_ in front.packs.macros.values() {
+        let proef_core::pack::MacroBody::Steps(steps) = &macro_.body else {
+            continue;
+        };
+        for step in steps {
+            if let proef_core::pack::MacroStepKind::Ref { target } = &step.kind
+                && let Some(fragment) = front.packs.find_fragment(target)
+            {
+                let names = referenced_by.entry(fragment.qualified()).or_default();
+                if !names.contains(&macro_.name) {
+                    names.push(macro_.name.clone());
+                }
+            }
+        }
+    }
+    referenced_by
 }
 
 /// Add every fragment `front`'s scenarios run to `counts`.
@@ -873,32 +915,36 @@ fn count_fragment_runs(front: &front::FrontEnd, counts: &mut BTreeMap<String, us
     }
 }
 
-/// Fragment usage from `[run] setup` / `[run] teardown`, or `None` if a
-/// configured phase could not be loaded.
+/// Fragment usage from `[run] setup` / `[run] teardown`, or the failing exit
+/// code if a configured phase could not be loaded.
 ///
-/// The runner executes these features, so a fragment they reach is used. `None`
-/// rather than an empty map on failure: a phase that did not load leaves the
-/// universe incomplete, and a count drawn from an incomplete universe is the
-/// false `UNREACHABLE` this exists to prevent.
+/// The runner executes these features, so a fragment they reach is used. An
+/// error rather than an empty map on failure: a phase that did not load leaves
+/// the universe incomplete, and a count drawn from an incomplete universe is
+/// the false `UNREACHABLE` this exists to prevent.
+///
+/// The code is carried rather than flattened to `None`, because the diagnostics
+/// have already been printed by the time it is known. Swallowing it printed
+/// `error:` lines and then exited 0 — the same "reported success while
+/// producing wrong output" shape the suite half is careful about two lines up.
 fn phase_fragment_runs(
     config: &ProjectConfig,
     active_env: Option<&str>,
     fragments: &proef_core::pack::FragmentCorpus,
-) -> Option<BTreeMap<String, usize>> {
+) -> Result<BTreeMap<String, usize>, ExitCode> {
     let mut counts = BTreeMap::new();
     let phases = [("setup", config.setup()), ("teardown", config.teardown())];
     if phases.iter().all(|(_, path)| path.is_none()) {
-        return Some(counts);
+        return Ok(counts);
     }
-    let config_vars = config_vars_for(active_env, config).ok()?;
+    let config_vars = config_vars_for(active_env, config)?;
     for (label, path) in phases {
         let Some(path) = path else { continue };
         let front =
-            crate::exec::load_phase_feature(label, &path, None, &config_vars, fragments, config)
-                .ok()?;
+            crate::exec::load_phase_feature(label, &path, None, &config_vars, fragments, config)?;
         count_fragment_runs(&front, &mut counts);
     }
-    Some(counts)
+    Ok(counts)
 }
 
 /// Render the fragment listing, grouped by file.

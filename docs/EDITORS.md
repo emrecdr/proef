@@ -25,6 +25,30 @@ in (its working directory), discovering every `.feature` file and every
 resolution `proef test` uses, so the two never diverge. Launch your editor from
 the project root (or configure the server's root/working directory to it).
 
+## Naming the config: `--config`
+
+`proef lsp --config <path/to/proef.toml>` names the config to read instead of
+searching for one, exactly as it does for every other subcommand (`CONFIG.md`).
+Reach for it when discovery cannot find the right file — most often a config
+that sits *beside the suite* rather than above it, which an upward search
+launched from the repository root can never reach.
+
+For `proef lsp` the flag also outranks the workspace root the client announces:
+the flag names a file, and a named file is not a guess to be improved on.
+Without it, an editor rooted somewhere else loads a different config than the
+runner, and the diagnostics stop being trustworthy in exactly the layout the
+flag exists for — `proef test --config …` runs green while every `ref:` reads as
+unknown in the editor.
+
+```lua
+cmd = { "proef", "lsp", "--config", "/abs/path/to/proef.toml" },
+```
+
+Unlike the runner, an unreadable or absent file does not stop the server: it
+starts on defaults, because an editor offering less is better than one that will
+not boot. A **relative** path works, but prefer an absolute one — an editor's
+working directory is rarely the one you assume.
+
 ## File types served
 
 | Kind | Pattern | Typical editor filetype |

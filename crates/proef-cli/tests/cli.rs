@@ -482,6 +482,26 @@ fn doctor_outside_a_project_reports_no_suite_rather_than_failing() {
         .stdout(contains("no suite configured"));
 }
 
+/// …but a `proef.toml` that is *present and broken* is its first finding.
+///
+/// Leniency is about a config being absent. When the discovery arm became a
+/// silent `unwrap_or_default`, `doctor` ran every check against a configuration
+/// the project never wrote and reported "all checks passed", exit 0 — the one
+/// answer a diagnosis tool must not give about a file sitting right there. The
+/// error reaches the exit code via a row, because that is what CI reads.
+#[test]
+fn doctor_fails_on_a_discovered_config_that_does_not_parse() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("proef.toml"), "runs-dir = [[[ &&&\n").unwrap();
+    proef()
+        .current_dir(tmp.path())
+        .arg("doctor")
+        .assert()
+        .code(3)
+        .stdout(contains("[FAIL] proef.toml"))
+        .stdout(contains("environment is not ready"));
+}
+
 /// A secret must never be passable in argv, where `ps` exposes it. `--value` is
 /// gone rather than deprecated, and the flag that replaces it reads stdin.
 #[test]
