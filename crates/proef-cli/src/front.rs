@@ -127,6 +127,7 @@ pub fn run(
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
     fragments: &FragmentCorpus,
+    state_file: &Path,
 ) -> Result<FrontEnd, FrontError> {
     let kinds = registry::step_kinds();
     let kind_to_engine = registry::kind_to_engine();
@@ -144,7 +145,7 @@ pub fn run(
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string())
             .as_str(),
     );
-    let world = World::new(GlobalStore::load(Path::new(".proef-state.json"))?);
+    let world = World::new(GlobalStore::load(state_file)?);
 
     let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds)?;
     let packs: Arc<PackSet> = Arc::new(loaded);
@@ -543,19 +544,10 @@ fn read_corpus(paths: Vec<PathBuf>) -> (Vec<PackSource>, Vec<Diag>) {
                 name: portable_display(&path),
                 text: Arc::from(text.as_str()),
             }),
-            Err(err) => errors.push(
-                Diag::error(
-                    "proef::pack::unreadable_fragment_file",
-                    format!(
-                        "cannot read fragment file {}: {err}",
-                        portable_display(&path)
-                    ),
-                )
-                .with_help(
-                    "the rest of the corpus still loads — remove the file from the \
-                     fragments root, or fix its encoding if a `ref:` needs it",
-                ),
-            ),
+            Err(err) => errors.push(proef_core::pack::FragmentCorpus::unreadable_file(
+                &portable_display(&path),
+                &err.to_string(),
+            )),
         }
     }
     (sources, errors)
@@ -572,6 +564,43 @@ pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
 /// omitted) selects everything; otherwise the boolean expression decides.
 pub fn tag_selected(tags: &[String], filter: Option<&proef_core::tags::TagExpr>) -> bool {
     filter.is_none_or(|expr| expr.eval(tags))
+}
+
+/// Warn when `[run] exclusive-tags` is set and matches no scenario in the suite.
+///
+/// The key exists because isolation must never degrade silently: that is the
+/// stated reason it is a config expression rather than a reserved tag name. A
+/// typo defeats it exactly the way the tag form would — `@soloz` against a
+/// `@solo` suite put every scenario back in the shared pool, exit 0, nothing
+/// said — and the resulting interference reads as flakiness rather than as a
+/// misspelled setting.
+///
+/// Judged over **every** scenario the suite loaded, not over the ones this run
+/// selected, so `--tags @smoke` filtering the exclusive scenarios out of one run
+/// is not reported as a broken setting. A warning rather than an error: the
+/// expression is well-formed, and a suite mid-refactor may legitimately have
+/// none of them left.
+pub fn warn_if_exclusive_matches_nothing(
+    front: &FrontEnd,
+    exclusive: Option<&proef_core::tags::TagExpr>,
+    written: Option<&str>,
+) {
+    let (Some(expr), Some(written)) = (exclusive, written) else {
+        return;
+    };
+    let matches = front
+        .features
+        .iter()
+        .flat_map(|feature| feature.scenarios.iter())
+        .any(|scenario| expr.eval(&scenario.lowered.tags));
+    if matches {
+        return;
+    }
+    crate::render::errln!(
+        "warning: [run] exclusive-tags (`{written}`) matches no scenario — every scenario \
+         is running in the shared pool\n         \
+         check the spelling against `proef flows`, which prints each scenario's tags"
+    );
 }
 
 #[cfg(test)]

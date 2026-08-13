@@ -95,6 +95,27 @@ impl FragmentCorpus {
         self
     }
 
+    /// The diagnostic for a corpus file that could not be read at all.
+    ///
+    /// Here rather than at each caller because there are two — the CLI walks the
+    /// fragment root, the editor reads through its overlay provider — and they
+    /// had drifted: the CLI's carried the "the rest of the corpus still loads"
+    /// help that is the whole point of per-file resilience, and the editor's did
+    /// not, so the same unreadable file explained itself in the terminal and
+    /// went unexplained in the pane beside the code. The *reading* differs and
+    /// always will; what it means when reading fails does not.
+    #[must_use]
+    pub fn unreadable_file(name: &str, cause: &str) -> Diag {
+        Diag::error(
+            "proef::pack::unreadable_fragment_file",
+            format!("cannot read fragment file {name}: {cause}"),
+        )
+        .with_help(
+            "the rest of the corpus still loads — remove the file from the \
+             fragments root, or fix its encoding if a `ref:` needs it",
+        )
+    }
+
     /// The empty corpus — no `[run] fragments` configured, so no `ref:` can
     /// resolve and nothing is ever scanned.
     pub fn empty() -> Self {

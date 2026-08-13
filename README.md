@@ -251,7 +251,13 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 
 `--config <path>` is global to every subcommand: it names the `proef.toml` to read
 instead of searching up from the working directory, which is what makes a config
-stored beside the suite usable.
+stored beside the suite usable. A named file that is not there is exit 2 — from
+every subcommand, including the ones that read nothing out of it.
+
+**Paths written in `proef.toml` resolve against the directory holding it; paths
+typed on the command line resolve against the working directory.** A project is
+therefore where its config is, not where your shell is: run from a subdirectory and
+you get the same suite, run records, World and secrets.
 
 ## Configuration
 

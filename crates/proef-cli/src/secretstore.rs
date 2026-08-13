@@ -189,8 +189,15 @@ enum StoreState {
     Unreadable(std::io::Error),
 }
 
-fn read_store() -> StoreState {
-    match std::fs::read_to_string(STORE_FILE) {
+/// A sibling of the store file (`.lock`, `.corrupt`) — appended to the store's
+/// own path so both follow it wherever the config roots it. The naming rule
+/// itself lives in `fsutil`, shared with the atomic-write temp sibling.
+fn sidecar(store: &Path, suffix: &str) -> PathBuf {
+    crate::fsutil::with_suffix(store, suffix)
+}
+
+fn read_store(store: &Path) -> StoreState {
+    match std::fs::read_to_string(store) {
         Ok(text) => match serde_json::from_str(&text) {
             Ok(store) => StoreState::Loaded(store),
             Err(err) => StoreState::Corrupt(err),
@@ -203,15 +210,17 @@ fn read_store() -> StoreState {
 /// Load the store (`name → enc:v1:token`); missing file = empty. A corrupt
 /// store is the user's committed file gone bad (`User`); an unreadable one is
 /// the environment (`System`).
-pub fn load_store() -> Result<BTreeMap<String, String>, SecretError> {
-    match read_store() {
-        StoreState::Loaded(store) => Ok(store),
+pub fn load_store(store: &Path) -> Result<BTreeMap<String, String>, SecretError> {
+    match read_store(store) {
+        StoreState::Loaded(loaded) => Ok(loaded),
         StoreState::Missing => Ok(BTreeMap::new()),
-        StoreState::Corrupt(err) => {
-            Err(SecretError::User(format!("{STORE_FILE} is invalid: {err}")))
-        }
+        StoreState::Corrupt(err) => Err(SecretError::User(format!(
+            "{} is invalid: {err}",
+            store.display()
+        ))),
         StoreState::Unreadable(err) => Err(SecretError::System(format!(
-            "cannot read {STORE_FILE}: {err}"
+            "cannot read {}: {err}",
+            store.display()
         ))),
     }
 }
@@ -220,49 +229,57 @@ pub fn load_store() -> Result<BTreeMap<String, String>, SecretError> {
 /// on a sibling `.lock` file. The lock file (not the store itself) carries
 /// the lock because [`save_store`] renames over the store — a lock on the
 /// old inode would not stop a writer opening the new one.
-fn lock_store() -> Result<std::fs::File, SecretError> {
-    let path = format!("{STORE_FILE}.lock");
+fn lock_store(store: &Path) -> Result<std::fs::File, SecretError> {
+    let path = sidecar(store, ".lock");
+    // The store sits beside `proef.toml`, which may be a directory `secret set`
+    // is the first thing to write into.
+    crate::fsutil::create_parents(&path)
+        .map_err(|err| SecretError::System(format!("cannot create {}: {err}", path.display())))?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(&path)
-        .map_err(|err| SecretError::System(format!("cannot open {path}: {err}")))?;
+        .map_err(|err| SecretError::System(format!("cannot open {}: {err}", path.display())))?;
     file.lock()
-        .map_err(|err| SecretError::System(format!("cannot lock {path}: {err}")))?;
+        .map_err(|err| SecretError::System(format!("cannot lock {}: {err}", path.display())))?;
     Ok(file)
 }
 
-fn save_store(store: &BTreeMap<String, String>) -> Result<(), SecretError> {
+fn save_store(path: &Path, store: &BTreeMap<String, String>) -> Result<(), SecretError> {
     let json = serde_json::to_string_pretty(store)
         .map_err(|err| SecretError::System(format!("cannot serialize store: {err}")))?;
     // Ciphertext-only, but private anyway (TECH-SPEC §13 discipline).
-    crate::fsutil::write_atomic_private(Path::new(STORE_FILE), &format!("{json}\n"))
-        .map_err(|err| SecretError::System(format!("cannot write {STORE_FILE}: {err}")))
+    crate::fsutil::write_atomic_private(path, &format!("{json}\n"))
+        .map_err(|err| SecretError::System(format!("cannot write {}: {err}", path.display())))
 }
 
 /// Like [`load_store`], but a *corrupt* store (unparseable JSON) is moved
 /// aside to `.corrupt` and treated as empty — `secret set` must always have
 /// a way forward, and the sidelined file keeps the evidence. Read paths
 /// (`list`, `rm`, resolution) still fail loudly instead of destroying state.
-fn load_store_or_recover() -> Result<BTreeMap<String, String>, SecretError> {
-    match read_store() {
-        StoreState::Loaded(store) => Ok(store),
+fn load_store_or_recover(store: &Path) -> Result<BTreeMap<String, String>, SecretError> {
+    match read_store(store) {
+        StoreState::Loaded(loaded) => Ok(loaded),
         StoreState::Missing => Ok(BTreeMap::new()),
         StoreState::Corrupt(err) => {
-            let backup = format!("{STORE_FILE}.corrupt");
-            std::fs::rename(STORE_FILE, &backup).map_err(|rename_err| {
+            let backup = sidecar(store, ".corrupt");
+            std::fs::rename(store, &backup).map_err(|rename_err| {
                 SecretError::System(format!(
-                    "{STORE_FILE} is invalid ({err}) and cannot be moved aside: {rename_err}"
+                    "{} is invalid ({err}) and cannot be moved aside: {rename_err}",
+                    store.display()
                 ))
             })?;
             crate::render::errln!(
-                "warning: {STORE_FILE} was corrupt ({err}) — moved to {backup}, starting fresh"
+                "warning: {} was corrupt ({err}) — moved to {}, starting fresh",
+                store.display(),
+                backup.display()
             );
             Ok(BTreeMap::new())
         }
         StoreState::Unreadable(err) => Err(SecretError::System(format!(
-            "cannot read {STORE_FILE}: {err}"
+            "cannot read {}: {err}",
+            store.display()
         ))),
     }
 }
@@ -276,6 +293,7 @@ fn load_store_or_recover() -> Result<BTreeMap<String, String>, SecretError> {
 ///
 /// `Err` carries one human-ready line per unresolvable name.
 pub fn resolve_all(
+    store_path: &Path,
     names: &std::collections::BTreeSet<String>,
 ) -> Result<BTreeMap<String, String>, Vec<String>> {
     let env_override = |name: &str| format!("PROEF_SECRET_{}", name.to_uppercase());
@@ -296,7 +314,7 @@ pub fn resolve_all(
     }
 
     let mut missing = Vec::new();
-    match load_store() {
+    match load_store(store_path) {
         Ok(store) => {
             let mut stored = Vec::new();
             for name in from_store {
@@ -352,7 +370,7 @@ pub fn resolve_all(
 /// is visible to anyone who can run `ps`, and for the same reason the failure
 /// path below points at `--stdin` rather than offering one. Same shape as
 /// `docker login --password-stdin`.
-pub fn set(name: &str, from_stdin: bool) -> Result<(), SecretError> {
+pub fn set(store_path: &Path, name: &str, from_stdin: bool) -> Result<(), SecretError> {
     let value = if from_stdin {
         let mut value = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut value)
@@ -370,35 +388,39 @@ pub fn set(name: &str, from_stdin: bool) -> Result<(), SecretError> {
     let key = load_or_create_key()?;
     // The whole read-modify-write is one critical section: concurrent
     // `secret set` calls must all land (released on drop).
-    let _lock = lock_store()?;
-    let mut store = load_store_or_recover()?;
+    let _lock = lock_store(store_path)?;
+    let mut store = load_store_or_recover(store_path)?;
     store.insert(name.to_owned(), encrypt(&value, &key));
-    save_store(&store)?;
-    crate::render::outln!("secret `{name}` stored in {STORE_FILE} (ciphertext only)");
+    save_store(store_path, &store)?;
+    crate::render::outln!(
+        "secret `{name}` stored in {} (ciphertext only)",
+        store_path.display()
+    );
     Ok(())
 }
 
 /// `proef secret rm NAME` — remove a stored secret (same locked
 /// read-modify-write as `set`). Removing an absent name is a user error:
 /// a typo'd cleanup must not report success.
-pub fn rm(name: &str) -> Result<(), SecretError> {
-    let _lock = lock_store()?;
-    let mut store = load_store()?;
+pub fn rm(store_path: &Path, name: &str) -> Result<(), SecretError> {
+    let _lock = lock_store(store_path)?;
+    let mut store = load_store(store_path)?;
     if store.remove(name).is_none() {
         return Err(SecretError::User(format!(
-            "no secret named `{name}` in {STORE_FILE} (see `proef secret list`)"
+            "no secret named `{name}` in {} (see `proef secret list`)",
+            store_path.display()
         )));
     }
-    save_store(&store)?;
-    crate::render::outln!("secret `{name}` removed from {STORE_FILE}");
+    save_store(store_path, &store)?;
+    crate::render::outln!("secret `{name}` removed from {}", store_path.display());
     Ok(())
 }
 
 /// `proef secret list` — names only, never values (ADR-0005).
-pub fn list() -> Result<(), SecretError> {
-    let store = load_store()?;
+pub fn list(store_path: &Path) -> Result<(), SecretError> {
+    let store = load_store(store_path)?;
     if store.is_empty() {
-        crate::render::outln!("no secrets stored ({STORE_FILE})");
+        crate::render::outln!("no secrets stored ({})", store_path.display());
     }
     for name in store.keys() {
         crate::render::outln!("{name}");
@@ -408,7 +430,9 @@ pub fn list() -> Result<(), SecretError> {
 
 /// `proef doctor` health report for the secret machinery — cheap, read-only
 /// checks over the key source and the store file.
-pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, String)> {
+pub fn doctor_checks(
+    store_path: &Path,
+) -> Vec<(proef_core::engine::DoctorStatus, &'static str, String)> {
     use proef_core::engine::DoctorStatus as S;
     let mut checks = Vec::new();
 
@@ -451,26 +475,27 @@ pub fn doctor_checks() -> Vec<(proef_core::engine::DoctorStatus, &'static str, S
         Err(message) => checks.push((S::Fail, "secret key", message)),
     }
 
-    match read_store() {
+    let store_name = store_path.display();
+    match read_store(store_path) {
         StoreState::Loaded(store) => checks.push((
-            permissive_mode_status(Path::new(STORE_FILE)),
+            permissive_mode_status(store_path),
             "secret store",
-            format!("{STORE_FILE}: {} secret(s), ciphertext only", store.len()),
+            format!("{store_name}: {} secret(s), ciphertext only", store.len()),
         )),
         StoreState::Corrupt(err) => checks.push((
             S::Fail,
             "secret store",
-            format!("{STORE_FILE} is corrupt: {err} (the next `proef secret set` moves it aside)"),
+            format!("{store_name} is corrupt: {err} (the next `proef secret set` moves it aside)"),
         )),
         StoreState::Missing => checks.push((
             S::Pass,
             "secret store",
-            format!("no store — created on first `proef secret set` ({STORE_FILE})"),
+            format!("no store — created on first `proef secret set` ({store_name})"),
         )),
         StoreState::Unreadable(err) => checks.push((
             S::Fail,
             "secret store",
-            format!("cannot read {STORE_FILE}: {err}"),
+            format!("cannot read {store_name}: {err}"),
         )),
     }
 

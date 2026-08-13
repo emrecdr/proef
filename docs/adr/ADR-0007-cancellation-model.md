@@ -37,6 +37,20 @@ its budget); abandoned threads leak until process exit (accepted: the process is
 short-lived by design). If interrupt support ever lands upstream, adopting it is an
 engine-internal change (candidate for the ADR-0003 patch pipeline).
 
+**One consequence reaches a later feature, so it is recorded here rather than
+discovered again.** `[run] exclusive-tags` promises a matching scenario the pool
+to itself, and the dispatcher enforces that against its own *active set*. An
+abandoned scenario leaves that set the moment the watchdog fires, while its
+detached thread keeps issuing requests until the entry in flight returns — the
+whole reason abandonment exists. So an exclusive scenario can start while an
+abandoned neighbour is still talking to the target: exactly the interference the
+key promises away, in the one window this ADR knowingly leaves open. It takes a
+budget blowout in the same moment, and a run that never trips the watchdog never
+meets it, so this is documented rather than engineered away — closing it means a
+bounded grace on the exclusive fill gate while detached threads report alive,
+which buys a rare guarantee with a per-exclusive-scenario delay every run pays.
+Revisit if the isolation guarantee ever has to be absolute.
+
 ## Alternatives considered
 
 Killing scenario threads — unsound in Rust (no safe thread kill). Running each batch in

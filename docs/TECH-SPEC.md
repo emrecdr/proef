@@ -339,12 +339,14 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ## 10. CLI reference (v1)
 
 ```
+proef [--config PATH] <command>       # global: names the proef.toml to read
 proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
                       [--run-id ID] [--rerun] [--sarif PATH (with --dry-run)]
 proef flows [file|dir] [--env NAME] [--output json]
 proef macros [file|dir] [--env NAME] [--output json]
+proef fragments [file|dir] [--env NAME] [--output json] [--check [--require-annotated]]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
@@ -375,8 +377,18 @@ no engine sessions, no network.
 200-run
 rotation (only uuid-named run records rotate; the in-flight run never does).
 `.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
-runner settings (`[run]` jobs/runs-dir/suite, `[http]` timeouts) + suite variables
-(`[url]`/`[vars]`) + per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
+runner settings (`[run]` jobs/runs-dir/suite/fragments/setup/teardown/exclusive-tags,
+`[http]` timeouts, `[sla]` ceilings) + suite variables (`[url]`/`[vars]`) +
+per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
+
+**One path rule:** a path *written in* `proef.toml` resolves against the directory
+holding `proef.toml`; a path *typed on the command line* resolves against the working
+directory. Absolute values are taken as written, and with no config in scope written
+paths stay relative to the working directory. This covers `suite`, `fragments`,
+`setup`, `teardown`, `runs-dir`, `.proef-state.json` and `.proef-secrets.json` — so a
+project is where its config is, not where the shell is, and running from a
+subdirectory reaches the same suite, records, World and secrets as running from the
+root.
 
 ## 12. Parallelism & cancellation
 

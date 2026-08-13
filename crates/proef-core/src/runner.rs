@@ -326,9 +326,14 @@ pub fn run(
     // as they support cancellation).
     let mut active: BTreeMap<usize, (Instant, CancellationToken)> = BTreeMap::new();
     // Whether the scenario currently holding the pool asked for it alone.
-    // Cleared the moment the pool drains, so the flag never outlives the run it
-    // describes — it would otherwise stay set after an exclusive scenario
-    // finished and read as "someone still owns the pool".
+    //
+    // Also cleared when the pool drains, below. That clear is belt-and-braces
+    // rather than load-bearing — every pop reassigns the flag, and the gate's
+    // `!active.is_empty()` conjunct already ignores it while the pool is empty,
+    // so removing it changes no behaviour (checked). It stays because a stale
+    // "someone owns the pool" is a nasty thing to leave lying around for the
+    // next change to the gate, and because reading the flag mid-loop should not
+    // require reconstructing that argument.
     let mut exclusive_active = false;
     let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
     let grace = Duration::from_secs(2);

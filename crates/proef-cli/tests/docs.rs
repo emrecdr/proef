@@ -213,3 +213,7 @@ fn every_documented_command_and_flag_exists() {
         failures.join("\n  ")
     );
 }
+
+// The other half of this file's job — `DIAGNOSTICS.md` and the emitted codes
+// agreeing in both directions — is `xtask docs-check`'s `check_diagnostics_index`.
+// It reads files and needs no built binary, which is the line this file draws.

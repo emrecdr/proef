@@ -29,7 +29,7 @@ mod sla;
 mod tap;
 mod watch;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -291,6 +291,40 @@ fn load_config(
     })
 }
 
+/// Like [`load_config`], but a config that was only *discovered* falls back to
+/// defaults instead of failing — what `doctor` needs, since it reports on the
+/// environment and must run anywhere, including outside a project.
+///
+/// A config named by `--config` stays fatal even here. The two cases are not
+/// the same claim: discovery finding nothing means "no project here", while a
+/// named path that is not there is a typo, and answering a typo with a report
+/// about some *other* configuration is how `doctor` came to print the error and
+/// then run on defaults, exit 0.
+fn load_config_lenient(
+    explicit: Option<&std::path::Path>,
+) -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
+    match explicit {
+        Some(path) => load_config(Some(path)),
+        None => Ok(config::ProjectConfig::load().unwrap_or_default()),
+    }
+}
+
+/// Answer for `--config` in a command that reads nothing from it.
+///
+/// `fmt`, `init` and `schema` take no configuration, and accepted the flag
+/// silently — `proef fmt --config /nope.toml` exited 0 while the docs called the
+/// flag global to every subcommand. The file is parsed and thrown away: the flag
+/// is *checked*, not consumed, so a typo costs the same exit 2 everywhere and
+/// discovery is left alone for commands that were never asking about it.
+fn check_config_flag(
+    explicit: Option<&std::path::Path>,
+) -> Result<(), proef_core::error::ExitCode> {
+    match explicit {
+        None => Ok(()),
+        Some(path) => load_config(Some(path)).map(|_| ()),
+    }
+}
+
 /// The active environment: the `--env` flag wins, else `PROEF_ENV`, else none.
 fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error::ExitCode> {
     if let Some(flag) = flag {
@@ -302,15 +336,38 @@ fn active_env(flag: Option<String>) -> Result<Option<String>, proef_core::error:
     })
 }
 
+/// One `--watch` rerun's preamble: read `proef.toml` **again**, then re-resolve
+/// the suite from what it now says.
+///
+/// Separate from the run itself, and named, because the bug it fixes is
+/// invisible from the outside: `--watch` watched the config and retriggered on
+/// an edit while the rerun still used the snapshot loaded at startup, so
+/// changing `[url] base` produced a rerun that dutifully called the old host.
+/// Watching a file whose contents you then ignore is worse than not watching it
+/// — it reports that the edit was taken.
+fn reload_for_rerun(
+    explicit: Option<&std::path::Path>,
+    typed_path: Option<PathBuf>,
+) -> Result<(config::ProjectConfig, PathBuf), proef_core::error::ExitCode> {
+    let config = load_config(explicit)?;
+    let path = resolve_suite_path(typed_path, &config)?;
+    Ok((config, path))
+}
+
 /// The shared preamble of every suite command (`test`/`flows`/`artifacts`):
 /// load config once, resolve the suite path, and pick the active environment.
+///
+/// The first two steps *are* [`reload_for_rerun`] — the same pair a `--watch`
+/// rerun repeats — so the startup path and the rerun path cannot drift on what
+/// "load the config, then resolve the suite against it" means. They were
+/// separate copies, which is the shape the `exclusive-tags` bug in this same
+/// change came in: two paths that had to agree, and nothing making them.
 fn prepare(
     path: Option<PathBuf>,
     env: Option<String>,
     explicit: Option<&std::path::Path>,
 ) -> Result<(config::ProjectConfig, PathBuf, Option<String>), proef_core::error::ExitCode> {
-    let config = load_config(explicit)?;
-    let path = resolve_suite_path(path, &config)?;
+    let (config, path) = reload_for_rerun(explicit, path)?;
     Ok((config, path, active_env(env)?))
 }
 
@@ -362,6 +419,9 @@ fn main() -> std::process::ExitCode {
             // command" nudge must echo the path the user actually typed, not
             // a defaulted one a bare `proef test` already finds on its own.
             let path_given = path.is_some();
+            // Kept for `--watch`: each rerun re-resolves the suite from the
+            // config it just re-read, and the typed path still has to win.
+            let typed_path = path.clone();
             match prepare(path, env, config_path) {
                 Err(code) => code,
                 // Parse the tag expression once (it is constant across watch reruns);
@@ -373,10 +433,15 @@ fn main() -> std::process::ExitCode {
                             proef_core::error::ExitCode::UserError
                         }
                         Ok(tag_filter) => {
-                            let run_once = |cancel| {
+                            // Takes the config rather than closing over one:
+                            // under `--watch` the config is re-read per rerun,
+                            // and a closure that captured the startup snapshot
+                            // is exactly how editing `[url] base` retriggered a
+                            // run that still called the old host.
+                            let run_once = |config: &config::ProjectConfig, path: &Path, cancel| {
                                 if dry_run {
                                     commands::dry_run(
-                                        &path,
+                                        path,
                                         path_given,
                                         tag_filter.as_ref(),
                                         tags.as_deref(),
@@ -385,11 +450,11 @@ fn main() -> std::process::ExitCode {
                                         active_env.as_deref(),
                                         run_id.clone(),
                                         sarif.as_deref(),
-                                        &config,
+                                        config,
                                     )
                                 } else {
                                     exec::execute(
-                                        &path,
+                                        path,
                                         tag_filter.as_ref(),
                                         jobs,
                                         output,
@@ -399,28 +464,54 @@ fn main() -> std::process::ExitCode {
                                         active_env.as_deref(),
                                         run_id.clone(),
                                         rerun,
-                                        &config,
+                                        config,
                                         cancel, // None = execute installs its own Ctrl-C handler
                                     )
                                 }
                             };
                             if watch_mode {
-                                // The loop owns Ctrl-C and hands each run its token.
+                                // What the loop *watches* is fixed at startup —
+                                // rearming a watcher mid-loop would race the
+                                // events it is draining — so a change to
+                                // `[run] fragments` or `runs-dir` needs a
+                                // restart. What each rerun *reads* is not: the
+                                // config is loaded again below.
                                 let fragments = config.fragments();
+                                let runs_dir = config.runs_dir();
+                                // The config this run resolved through, not a
+                                // fresh upward search — with `--config` the two
+                                // are different files, and watching the wrong
+                                // one means edits to the settings driving the
+                                // run never retrigger it.
+                                let watched = config.path().map(Path::to_path_buf);
+                                // **Load-bearing, not tidiness.** Moving the
+                                // startup config out here is what makes it
+                                // unreachable from the rerun closure below, so
+                                // "a rerun must not use the snapshot" is
+                                // enforced by the compiler (E0382) rather than
+                                // by remembering. Delete this line and the
+                                // original bug compiles again.
+                                drop(config);
                                 watch::watch_loop(
                                     &path,
-                                    // The config this run resolved through, not
-                                    // a fresh upward search — with `--config`
-                                    // the two are different files, and watching
-                                    // the wrong one means edits to the settings
-                                    // driving the run never retrigger it.
-                                    config.path(),
+                                    watched.as_deref(),
                                     fragments.as_deref(),
-                                    config.runs_dir(),
-                                    |token| run_once(Some(token)),
+                                    &runs_dir,
+                                    |token| {
+                                        // A config that no longer parses fails
+                                        // this rerun and leaves the loop
+                                        // watching — the next keystroke may
+                                        // well fix it.
+                                        match reload_for_rerun(config_path, typed_path.clone()) {
+                                            Err(code) => code,
+                                            Ok((config, path)) => {
+                                                run_once(&config, &path, Some(token))
+                                            }
+                                        }
+                                    },
                                 )
                             } else {
-                                run_once(None)
+                                run_once(&config, &path, None)
                             }
                         }
                     }
@@ -476,47 +567,68 @@ fn main() -> std::process::ExitCode {
                 commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
             }
         },
-        Command::Schema { add_to } => commands::schema(&add_to, true),
-        Command::Init { dir } => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
+        Command::Schema { add_to } => match check_config_flag(config_path) {
+            Err(code) => code,
+            Ok(()) => commands::schema(&add_to, true),
+        },
+        Command::Init { dir } => match check_config_flag(config_path) {
+            Err(code) => code,
+            Ok(()) => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
+        },
         Command::Doctor => {
-            // Lenient, like `proef lsp`: `doctor` reports on the environment and
-            // must run anywhere, including outside a project. No config or no
-            // suite simply means there are no packs to check.
-            let config = load_config(config_path).ok();
-            let suite = config
-                .as_ref()
-                .and_then(config::ProjectConfig::default_suite_path);
-            let fragments = config.as_ref().and_then(config::ProjectConfig::fragments);
-            commands::doctor(&registry::engines(), suite.as_deref(), fragments.as_deref())
+            // Lenient about *discovery*, like `proef lsp`: `doctor` reports on
+            // the environment and must run anywhere, including outside a
+            // project, where no config and no suite simply means there are no
+            // packs to check. Never lenient about `--config` — see
+            // `load_config_lenient`.
+            match load_config_lenient(config_path) {
+                Err(code) => code,
+                Ok(config) => commands::doctor(
+                    &registry::engines(),
+                    config.default_suite_path().as_deref(),
+                    config.fragments().as_deref(),
+                    &config.secrets_file(),
+                ),
+            }
         }
-        Command::Secret { action } => {
-            let result = match action {
-                SecretAction::Set { name, stdin } => secretstore::set(&name, stdin),
-                SecretAction::List => secretstore::list(),
-                SecretAction::Rm { name } => secretstore::rm(&name),
-            };
-            match result {
-                Ok(()) => proef_core::error::ExitCode::Success,
-                Err(err) => {
-                    crate::render::errln!("error: {}", err.message());
-                    // The variant carries the ADR-0009 classification: a typo
-                    // exits 2, an unwritable key dir or lock failure exits 3.
-                    match err {
-                        secretstore::SecretError::User(_) => proef_core::error::ExitCode::UserError,
-                        secretstore::SecretError::System(_) => {
-                            proef_core::error::ExitCode::SystemError
+        // The store is the *project's*, so `secret` needs the config for the
+        // same reason `test` does — and `--config` therefore decides which
+        // project's secrets are being listed or written, instead of being
+        // accepted and ignored while the store was taken from the shell's cwd.
+        Command::Secret { action } => match load_config(config_path) {
+            Err(code) => code,
+            Ok(config) => {
+                let store = config.secrets_file();
+                let result = match action {
+                    SecretAction::Set { name, stdin } => secretstore::set(&store, &name, stdin),
+                    SecretAction::List => secretstore::list(&store),
+                    SecretAction::Rm { name } => secretstore::rm(&store, &name),
+                };
+                match result {
+                    Ok(()) => proef_core::error::ExitCode::Success,
+                    Err(err) => {
+                        crate::render::errln!("error: {}", err.message());
+                        // The variant carries the ADR-0009 classification: a typo
+                        // exits 2, an unwritable key dir or lock failure exits 3.
+                        match err {
+                            secretstore::SecretError::User(_) => {
+                                proef_core::error::ExitCode::UserError
+                            }
+                            secretstore::SecretError::System(_) => {
+                                proef_core::error::ExitCode::SystemError
+                            }
                         }
                     }
                 }
             }
-        }
+        },
         // The three record-reading commands all go through `load_config`,
         // which owns the one spelling of "a malformed proef.toml is a user
         // error" — they each carried their own copy of that rendering. Loud,
         // not lenient: a config that silently defaulted `runs-dir` would
         // misdiagnose "no runs" (same reasoning as `test`, exec.rs).
         Command::Explain { run_id } => match load_config(config_path) {
-            Ok(config) => explain::explain(config.runs_dir(), run_id.as_deref()),
+            Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref()),
             Err(code) => code,
         },
         Command::Diff {
@@ -525,7 +637,7 @@ fn main() -> std::process::ExitCode {
             fail_on_regression,
         } => match load_config(config_path) {
             Ok(config) => diff::diff(
-                config.runs_dir(),
+                &config.runs_dir(),
                 base.as_deref(),
                 new.as_deref(),
                 fail_on_regression,
@@ -533,10 +645,13 @@ fn main() -> std::process::ExitCode {
             Err(code) => code,
         },
         Command::Report { run_id, output } => match load_config(config_path) {
-            Ok(config) => report::report(config.runs_dir(), run_id.as_deref(), output.as_deref()),
+            Ok(config) => report::report(&config.runs_dir(), run_id.as_deref(), output.as_deref()),
             Err(code) => code,
         },
-        Command::Fmt { path, check } => fmt::fmt(&path, check),
+        Command::Fmt { path, check } => match check_config_flag(config_path) {
+            Err(code) => code,
+            Ok(()) => fmt::fmt(&path, check),
+        },
         Command::Lsp => lsp::run(config_path.map(std::path::Path::to_path_buf)),
     };
     let code = final_exit(code, render::stdout_failed());
@@ -545,6 +660,10 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
+    // Why: unwrap/expect are acceptable in `#[cfg(test)]` — a broken assumption
+    // surfaces as a test failure, which is exactly the intent.
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use proef_core::error::ExitCode;
 
@@ -578,6 +697,91 @@ mod tests {
         assert_eq!(
             final_exit(ExitCode::TestFailure, false),
             ExitCode::TestFailure
+        );
+    }
+
+    /// **A `--watch` rerun reads the file, not the snapshot.**
+    ///
+    /// The regression is silent by construction — the loop prints "change
+    /// detected — rerunning" either way, so the only visible symptom is a run
+    /// that quietly used the old settings, which is how it survived a release
+    /// that claimed to have fixed it. Pinned here rather than by driving a real
+    /// watch loop: that would need a background process and sleeps, and the
+    /// suite's flake rule is to assert the decision instead of the timing.
+    #[test]
+    fn a_rerun_sees_an_edited_config_rather_than_the_startup_snapshot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = tmp.path().join("proef.toml");
+        std::fs::create_dir(tmp.path().join("features")).expect("suite dir");
+        std::fs::write(
+            &config,
+            "[run]\nsuite = \"features\"\n[url]\nbase = \"one\"\n",
+        )
+        .expect("write config");
+
+        let first = reload_for_rerun(Some(&config), None).expect("first load");
+        assert_eq!(first.0.config_vars(None).expect("vars")["url:base"], "one");
+
+        // The edit that woke the loop.
+        std::fs::write(
+            &config,
+            "[run]\nsuite = \"features\"\n[url]\nbase = \"two\"\n",
+        )
+        .expect("edit config");
+
+        let second = reload_for_rerun(Some(&config), None).expect("second load");
+        assert_eq!(
+            second.0.config_vars(None).expect("vars")["url:base"],
+            "two",
+            "the rerun used the startup snapshot instead of re-reading the file"
+        );
+        // The suite is re-resolved from the config too, so a rerun after a
+        // `[run] suite` edit runs the suite the file now names.
+        assert_eq!(second.1, tmp.path().join("features"));
+    }
+
+    /// A config that stops parsing mid-session fails *that rerun* and leaves the
+    /// loop watching — half-typed TOML is the normal state of a file being
+    /// edited, and exiting the watch on it would make `--watch` unusable for the
+    /// one file it exists to react to.
+    #[test]
+    fn a_rerun_over_a_broken_config_is_a_user_error_not_a_panic() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config = tmp.path().join("proef.toml");
+        std::fs::write(&config, "[run\nsuite =").expect("write config");
+        assert_eq!(
+            reload_for_rerun(Some(&config), None).unwrap_err(),
+            ExitCode::UserError
+        );
+    }
+
+    /// `--config` names a file; a named file that is not there is a typo, and
+    /// the answer is the same exit 2 whether or not the command reads anything
+    /// from it. `fmt`, `init` and `schema` used to accept it and exit 0.
+    #[test]
+    fn a_named_config_that_is_missing_is_refused_even_where_nothing_reads_it() {
+        let missing = std::path::Path::new("definitely/not/here/proef.toml");
+        assert_eq!(
+            check_config_flag(Some(missing)).unwrap_err(),
+            ExitCode::UserError
+        );
+        // No flag, no claim to check — discovery stays the lenient path.
+        assert!(check_config_flag(None).is_ok());
+    }
+
+    /// `doctor` must run anywhere, including outside a project — but "no config
+    /// found" and "the config you named is not there" are different claims, and
+    /// collapsing them is how `doctor --config /nope.toml` printed the error and
+    /// then reported on defaults, exit 0.
+    #[test]
+    fn doctor_is_lenient_about_discovery_and_strict_about_the_flag() {
+        assert!(
+            load_config_lenient(None).is_ok(),
+            "discovery finding nothing must not stop doctor"
+        );
+        assert_eq!(
+            load_config_lenient(Some(std::path::Path::new("no/such/proef.toml"))).unwrap_err(),
+            ExitCode::UserError
         );
     }
 }

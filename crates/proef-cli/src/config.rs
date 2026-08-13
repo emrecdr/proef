@@ -282,16 +282,57 @@ impl ProjectConfig {
             .max(1))
     }
 
-    /// The run-record directory (`[run] runs-dir`, default `.proef-runs`).
-    /// Not environment-scoped — one project shares one record store.
-    pub fn runs_dir(&self) -> &str {
-        self.run.runs_dir.as_deref().unwrap_or(".proef-runs")
+    /// A path **written in `proef.toml`**, resolved against the file's own
+    /// directory.
+    ///
+    /// The whole rule, in one function: *paths written in the config resolve
+    /// against the config file; paths typed on the command line resolve against
+    /// the working directory.* It is the convention every neighbouring tool
+    /// follows — a Cargo manifest's `members`/`path` are manifest-relative, a
+    /// `tsconfig.json`'s paths are config-relative, pytest makes the config
+    /// file's directory the rootdir — and proef followed it for exactly one key,
+    /// `[run] fragments`, while `suite`, `setup`, `teardown` and `runs-dir` read
+    /// against the working directory. Two keys in one table then meant two
+    /// different roots: from a subdirectory, `fragments = "hurl"` resolved and
+    /// `suite = "features"` did not exist.
+    ///
+    /// An absolute path is taken as written — the corpus, or the record store,
+    /// may sit outside the project entirely. No `proef.toml` in scope leaves the
+    /// path relative, which is the working directory: there is no config file to
+    /// be relative *to*, and the config-independent reference corpus depends on
+    /// that staying true.
+    fn resolve(&self, written: &str) -> PathBuf {
+        let raw = PathBuf::from(written);
+        if raw.is_absolute() {
+            return raw;
+        }
+        match self.root() {
+            Some(root) => root.join(raw),
+            None => raw,
+        }
     }
 
-    /// The configured default suite path (`[run] suite`), if any. The CLI falls
-    /// back to the `tests/` convention when this is unset and no path is passed.
-    pub fn suite(&self) -> Option<&str> {
-        self.run.suite.as_deref()
+    /// The run-record directory (`[run] runs-dir`, default `.proef-runs`).
+    /// Not environment-scoped — one project shares one record store, and it is
+    /// the *project's*: reading `explain` from a subdirectory must find the
+    /// records the run wrote, not an empty directory beside the shell.
+    pub fn runs_dir(&self) -> PathBuf {
+        self.resolve(self.run.runs_dir.as_deref().unwrap_or(".proef-runs"))
+    }
+
+    /// The persistent World (`.proef-state.json`, ADR-0005) — one project, one
+    /// store. Anchored on the config so two working directories cannot silently
+    /// become two Worlds with the same `saveAs: global` writing to each.
+    pub fn state_file(&self) -> PathBuf {
+        self.resolve(crate::exec::STATE_FILE)
+    }
+
+    /// The encrypted secret store (`.proef-secrets.json`) — one project, one
+    /// store, for the reason [`state_file`](Self::state_file) gives. The *key*
+    /// is unaffected: it lives under `PROEF_CONFIG_DIR`/HOME and is per-machine,
+    /// not per-project.
+    pub fn secrets_file(&self) -> PathBuf {
+        self.resolve(crate::secretstore::STORE_FILE)
     }
 
     /// The configured fragment root (`[run] fragments`) resolved against the
@@ -306,22 +347,22 @@ impl ProjectConfig {
     /// path is *spelled* in artifacts is a naming question and lives at the
     /// naming boundary — `front::fragment_sources`.
     pub fn fragments(&self) -> Option<PathBuf> {
-        let raw = PathBuf::from(self.run.fragments.as_deref()?);
-        if raw.is_absolute() {
-            return Some(raw);
-        }
-        Some(self.root().unwrap_or_default().join(raw))
+        Some(self.resolve(self.run.fragments.as_deref()?))
     }
 
     /// The default suite directory: `[run] suite` if set, else the `tests/`
     /// convention when it exists on disk, else None. The single place both the
     /// suite commands (`resolve_suite_path`) and the LSP derive "which directory
     /// is the suite", so the two never diverge.
+    ///
+    /// The convention probe is resolved too: `tests/` means the project's, and
+    /// probing the working directory answered "no suite" one directory into the
+    /// project it was standing in.
     pub fn default_suite_path(&self) -> Option<PathBuf> {
-        if let Some(suite) = self.suite() {
-            return Some(PathBuf::from(suite));
+        if let Some(suite) = self.run.suite.as_deref() {
+            return Some(self.resolve(suite));
         }
-        let convention = PathBuf::from("tests");
+        let convention = self.resolve("tests");
         convention.is_dir().then_some(convention)
     }
 
@@ -334,11 +375,8 @@ impl ProjectConfig {
 
     /// The directory relative config paths resolve against: the config file's
     /// own, since it may sit above the working directory.
-    fn root(&self) -> Option<PathBuf> {
-        self.path
-            .as_deref()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
+    fn root(&self) -> Option<&Path> {
+        self.path.as_deref().and_then(Path::parent)
     }
 
     /// The tag expression selecting exclusive scenarios (`[run] exclusive-tags`),
@@ -355,13 +393,13 @@ impl ProjectConfig {
     }
 
     /// The suite-level setup feature (`[run] setup`), if any (ADR-0014).
-    pub fn setup(&self) -> Option<&str> {
-        self.run.setup.as_deref()
+    pub fn setup(&self) -> Option<PathBuf> {
+        Some(self.resolve(self.run.setup.as_deref()?))
     }
 
     /// The suite-level teardown feature (`[run] teardown`), if any (ADR-0014).
-    pub fn teardown(&self) -> Option<&str> {
-        self.run.teardown.as_deref()
+    pub fn teardown(&self) -> Option<PathBuf> {
+        Some(self.resolve(self.run.teardown.as_deref()?))
     }
 
     /// The injected `${url:…}` / `${vars:…}` scope for the active environment,
@@ -461,11 +499,71 @@ mod tests {
         assert!(err.contains("prod") && err.contains("staging"), "{err}");
     }
 
+    /// **The rule, pinned once for every key that obeys it.**
+    ///
+    /// Every path written in `proef.toml` resolves against the file's own
+    /// directory. This used to be true of `[run] fragments` alone, so the same
+    /// relative spelling meant two different directories depending on which key
+    /// it sat under — from a subdirectory `fragments = "hurl"` resolved and
+    /// `suite = "features"` reported "neither a feature file nor a directory".
+    /// A key added later that forgets to call `resolve` fails here.
     #[test]
-    fn suite_default_path_is_read() {
-        let config = parse("[run]\nsuite = \"e2e\"\n");
-        assert_eq!(config.suite(), Some("e2e"));
-        assert_eq!(ProjectConfig::default().suite(), None);
+    fn every_config_written_path_resolves_against_the_config_file() {
+        // Spelled for the host platform: a bare `/proj` is not absolute on
+        // Windows, so a Unix-shaped fixture would assert nothing there.
+        let project = if cfg!(windows) { r"C:\proj" } else { "/proj" };
+        let mut config = parse(
+            "[run]\nsuite = \"features\"\nfragments = \"hurl\"\nruns-dir = \"out\"\n\
+             setup = \"phases/setup.feature\"\nteardown = \"phases/teardown.feature\"\n",
+        );
+        config.path = Some(Path::new(project).join("proef.toml"));
+
+        let at = |rest: &str| Some(Path::new(project).join(rest));
+        assert_eq!(config.default_suite_path(), at("features"), "[run] suite");
+        assert_eq!(config.fragments(), at("hurl"), "[run] fragments");
+        assert_eq!(
+            config.runs_dir(),
+            Path::new(project).join("out"),
+            "runs-dir"
+        );
+        assert_eq!(config.setup(), at("phases/setup.feature"), "[run] setup");
+        assert_eq!(
+            config.teardown(),
+            at("phases/teardown.feature"),
+            "[run] teardown"
+        );
+        assert_eq!(config.state_file(), at(".proef-state.json").unwrap());
+        assert_eq!(config.secrets_file(), at(".proef-secrets.json").unwrap());
+    }
+
+    /// No `proef.toml` in scope leaves every path relative — which is the
+    /// working directory. The reference corpus is config-independent by design
+    /// and several suites run it from a temp cwd with no config in scope, so a
+    /// resolver that invented a root would break them.
+    #[test]
+    fn without_a_config_file_paths_stay_relative_to_the_working_directory() {
+        let config = parse("[run]\nsuite = \"e2e\"\nruns-dir = \"out\"\n");
+        assert_eq!(config.default_suite_path(), Some(PathBuf::from("e2e")));
+        assert_eq!(config.runs_dir(), PathBuf::from("out"));
+        assert_eq!(config.state_file(), PathBuf::from(".proef-state.json"));
+        assert_eq!(
+            ProjectConfig::default().runs_dir(),
+            PathBuf::from(".proef-runs")
+        );
+    }
+
+    /// An absolute path is taken as written — a record store or corpus may sit
+    /// outside the project entirely.
+    #[test]
+    fn an_absolute_written_path_is_never_rerooted() {
+        let (project, elsewhere) = if cfg!(windows) {
+            (r"C:\proj", r"C:\elsewhere\runs")
+        } else {
+            ("/proj", "/elsewhere/runs")
+        };
+        let mut config = parse(&format!("[run]\nruns-dir = '{elsewhere}'\n"));
+        config.path = Some(Path::new(project).join("proef.toml"));
+        assert_eq!(config.runs_dir(), PathBuf::from(elsewhere));
     }
 
     #[test]
@@ -565,12 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn setup_and_teardown_paths_are_read() {
-        let config = parse(
-            "[run]\nsetup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
-        );
-        assert_eq!(config.setup(), Some("suite/setup.feature"));
-        assert_eq!(config.teardown(), Some("suite/teardown.feature"));
+    fn setup_and_teardown_are_absent_unless_configured() {
         assert_eq!(ProjectConfig::default().setup(), None);
         assert_eq!(ProjectConfig::default().teardown(), None);
     }

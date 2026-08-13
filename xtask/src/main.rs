@@ -1,6 +1,7 @@
 //! Workspace automation as Rust (TECH-SPEC §15) — no shell scripts for logic.
 //! `just` provides thin aliases: `just canary` → `cargo run -p xtask -- canary`.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
@@ -344,10 +345,115 @@ fn check_links(docs: &[PathBuf], failures: &mut Vec<String>) {
     }
 }
 
+/// Every diagnostic code the workspace emits, found by scanning source for the
+/// `"proef::<area>::<name>"` literals `Diag::error`/`warning` are built from.
+///
+/// A scan, not a registry: the codes are string literals at their emission
+/// sites, which is what makes them greppable in the first place — the property
+/// `DIAGNOSTICS.md` exists to serve.
+fn emitted_codes() -> BTreeSet<String> {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(Path::new("crates"), &mut files);
+    files.sort();
+
+    let mut codes = BTreeSet::new();
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(start) = rest.find("\"proef::") {
+            rest = &rest[start + 1..];
+            let Some(end) = rest.find('"') else { break };
+            let code = &rest[..end];
+            // `proef::<area>::<name>`, nothing else — the corpus driver builds a
+            // code from a directory name, and that expression is not one.
+            let parts: Vec<&str> = code.split("::").collect();
+            if parts.len() == 3
+                && parts[1..]
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+            {
+                codes.insert(parts[1..].join("::"));
+            }
+        }
+    }
+    // A fixture code from the diagnostics unit tests, not a real diagnostic.
+    codes.remove("test::x");
+    codes
+}
+
+/// **`DIAGNOSTICS.md` and the emitted codes must agree in both directions.**
+///
+/// The same shape as the crate and ADR checks above — something that exists in
+/// the tree must appear in the doc that indexes it — which is why it lives here
+/// rather than beside the binary-dependent half: it reads files and nothing else.
+///
+/// It has drifted twice. The file carried a `pack::load` row nothing emitted, so
+/// a reader who hit a real failure and grepped the index found a plausible entry
+/// that could never be the cause — and the self-reported total counted it. An
+/// undocumented code is the same failure from the other side: the index promises
+/// to be the fastest route from a code to its cause, and a code missing from it
+/// is a promise broken silently.
+fn check_diagnostics_index(failures: &mut Vec<String>) {
+    let index = std::fs::read_to_string("docs/DIAGNOSTICS.md").unwrap_or_default();
+    let documented: BTreeSet<String> = index
+        .lines()
+        .filter_map(|line| line.strip_prefix("| `")?.split_once('`').map(|(c, _)| c))
+        .filter(|code| code.split("::").count() == 2)
+        .map(str::to_owned)
+        .collect();
+    let emitted = emitted_codes();
+
+    // Guard against the scan silently ceasing to match emission sites, which
+    // would make every assertion below pass by finding nothing.
+    if emitted.len() <= 50 {
+        failures.push(format!(
+            "the diagnostic-code scan found only {} codes — it stopped matching \
+             emission sites, so this check is passing vacuously",
+            emitted.len()
+        ));
+        return;
+    }
+    for code in emitted.difference(&documented) {
+        failures.push(format!(
+            "`proef::{code}` is emitted but has no row in docs/DIAGNOSTICS.md"
+        ));
+    }
+    for code in documented.difference(&emitted) {
+        failures.push(format!(
+            "docs/DIAGNOSTICS.md has a row for `proef::{code}`, which nothing emits"
+        ));
+    }
+    // The file states its own total; a row added without touching it leaves a
+    // count that reads as authoritative and is not.
+    let stated = format!("of the {} codes", documented.len());
+    if !index.contains(&stated) {
+        failures.push(format!(
+            "docs/DIAGNOSTICS.md should say \"{stated}\" — it has {} rows",
+            documented.len()
+        ));
+    }
+}
+
 /// Mechanical doc↔code alignment (the drift class fixed by hand a dozen times
 /// before this existed): every workspace crate appears in TECH-SPEC §2 and
-/// CLAUDE.md; every ADR file appears in the docs index; every fenced `toml`/`yaml`
-/// example parses; every relative link resolves.
+/// CLAUDE.md; every ADR file appears in the docs index; every diagnostic code
+/// the workspace emits has a row in DIAGNOSTICS.md and vice versa; every fenced
+/// `toml`/`yaml` example parses; every relative link resolves.
 ///
 /// The command-and-flag half of this lives in `crates/proef-cli/tests/docs.rs`
 /// instead, where `assert_cmd` guarantees a built binary — this task reads files
@@ -390,6 +496,7 @@ fn docs_check() -> ExitCode {
             }
         }
     }
+    check_diagnostics_index(&mut failures);
     let docs = living_docs();
     check_examples(&docs, &mut failures);
     check_links(&docs, &mut failures);

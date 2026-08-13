@@ -4,7 +4,7 @@
 //! so a truncated record is never mistaken for a complete one.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::Path;
 
 use proef_core::error::ExitCode;
 use proef_core::event::Event;
@@ -13,9 +13,8 @@ use proef_core::step::Status;
 use crate::record::{self, RunCompletion};
 
 /// Explain the named run (or the latest) from `.proef-runs/`.
-pub fn explain(runs_dir: &str, run_id: Option<&str>) -> ExitCode {
-    let runs_root = PathBuf::from(runs_dir);
-    let Some(record_dir) = record::resolve_dir(&runs_root, run_id) else {
+pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
+    let Some(record_dir) = record::resolve_dir(runs_root, run_id) else {
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };

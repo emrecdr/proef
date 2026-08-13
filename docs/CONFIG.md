@@ -211,10 +211,23 @@ exclusive-tags = "@serial"
   Scenario: The report lists every record in order
 ```
 
-A matching scenario waits for the pool to drain, runs alone, and the pool
-refills after it. Everything else keeps running at `jobs` width, so the cost is
-paid only by the scenarios that need it. Ordering is unchanged: scenarios still
-start in discovery order, so an exclusive one never loses its place.
+A matching scenario waits for the pool to drain, runs alone, and the pool refills
+after it. Ordering is unchanged: scenarios still start in discovery order, so an
+exclusive one never loses its place — and that is also what the cost is made of.
+Queueing is strict FIFO, so while an exclusive scenario sits at the head **no new
+scenario starts**: the pool drains to empty, the exclusive one runs by itself,
+and only then does parallelism return to `jobs` width. Expect a throughput dip
+around each exclusive scenario roughly as long as the slowest scenario already
+running, plus the exclusive one's own duration. Put another way, the cost is
+bounded and predictable rather than free.
+
+**Exclusivity is enforced against the dispatcher's own bookkeeping.** A scenario
+the watchdog abandons for blowing its batch budget (ADR-0007) leaves the active
+set immediately, but its detached thread keeps going until the request in flight
+returns — hurl cannot be cancelled mid-entry. In that window an exclusive
+scenario can start while an abandoned neighbour is still issuing requests. It
+takes a budget blowout in the same moment to happen, and it is the one caveat the
+isolation guarantee carries; a run that never trips the watchdog never meets it.
 
 **This is exclusion, not ordering.** A scenario that must run *before* the
 others — installing a fixture the rest depend on — belongs in
@@ -268,10 +281,33 @@ unconfigured run is the thing worth refusing. `proef lsp` makes the opposite cal
 and starts anyway — an editor offering less is better than one that will not
 boot, and unlike a run it produces no results to be wrong.
 
-Note which root is which. `[run] fragments` resolves against the **config file's**
-directory, while `suite`, `setup`, `teardown` and `runs-dir` resolve against the
-**working** directory. Keeping `proef.toml` at the repository root collapses the
-distinction because the two are then the same place; `--config` makes it explicit,
-and is the reason a config beside the suite writes `fragments = "../hurl"`.
+It applies to every subcommand in the same way, including the ones that read
+nothing from the file: `proef fmt --config missing.toml` exits 2 rather than
+formatting and reporting success. The flag names a file, and a named file that is
+not there is a typo whatever the command was going to do with it.
+
+### Which directory a path is relative to
+
+**Paths written in `proef.toml` resolve against the directory holding
+`proef.toml`. Paths typed on the command line resolve against the working
+directory.** That is the whole rule, and it has no exceptions: `suite`,
+`fragments`, `setup`, `teardown` and `runs-dir` all follow it, as do the two
+files proef keeps beside them — `.proef-state.json` (the persistent World) and
+`.proef-secrets.json` (the secret store). An absolute value is taken as written,
+so a corpus or a record store may sit outside the project entirely.
+
+The consequence worth stating plainly: **a project is where its `proef.toml` is,
+not where your shell is.** Running from a subdirectory finds the same config by
+walking up, and now resolves the same suite, writes the same run records, and
+reads the same World and the same secrets as running from the root. It is the
+convention Cargo (`path`/`members` are manifest-relative), `tsconfig.json` and
+pytest's rootdir all follow.
+
+With no `proef.toml` in scope there is nothing to be relative *to*, so paths stay
+relative to the working directory, unchanged.
+
+A config that does not sit at the project root spells its paths from where it
+sits — a `proef.toml` in `tests/proef/` beside a suite in `tests/features/`
+writes `suite = "../features"`.
 
 A starter file ships as `proef.toml.example` in the repository root.

@@ -20,17 +20,16 @@ const SLOWER_MIN_DELTA_MS: u64 = 50;
 const SLOWER_MIN_RATIO_NUM: u64 = 3; // new ≥ base * 3/2
 const SLOWER_MIN_RATIO_DEN: u64 = 2;
 
-/// Compare two run records. `base`/`new` are run ids under `runs_dir`; omitted,
+/// Compare two run records. `base`/`new` are run ids under `runs_root`; omitted,
 /// they default to the previous and latest runs. With `fail_on_regression`, a
 /// detected regression exits `1` (a test that now fails) for CI gating.
 pub fn diff(
-    runs_dir: &str,
+    runs_root: &Path,
     base: Option<&str>,
     new: Option<&str>,
     fail_on_regression: bool,
 ) -> ExitCode {
-    let runs_root = PathBuf::from(runs_dir);
-    let (base_dir, new_dir) = match resolve_pair(&runs_root, base, new) {
+    let (base_dir, new_dir) = match resolve_pair(runs_root, base, new) {
         Ok(pair) => pair,
         Err(message) => {
             crate::render::errln!("error: {message}");

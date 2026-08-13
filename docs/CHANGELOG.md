@@ -6,6 +6,109 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`proef.toml` has one path rule.** A path *written in the config* now resolves
+  against the directory holding the config; a path *typed on the command line*
+  still resolves against the working directory. `[run] fragments` already worked
+  this way and everything else did not, so two keys in one table meant two
+  different roots: from a subdirectory `fragments = "hurl"` resolved while
+  `suite = "features"` reported "neither a feature file nor a directory". With
+  `--config` the split was worse than inconsistent — pointing at a config in
+  another tree ran `dry-run OK` over whatever suite happened to sit beside the
+  shell, and never looked at the configured one.
+
+  The rule now covers `suite`, `setup`, `teardown`, `runs-dir` and the `tests/`
+  convention probe, plus two files nothing had inventoried: **`.proef-state.json`**
+  (the persistent World) and **`.proef-secrets.json`** (the secret store), which
+  were anchored on the working directory — so two shells in one project were two
+  Worlds and two secret stores. It is the convention Cargo, `tsconfig.json` and
+  pytest's rootdir all follow. Absolute values are taken as written, and with no
+  `proef.toml` in scope written paths stay relative to the working directory, so
+  the config-independent reference corpus is unaffected. Filed as R11-1.
+
+- **`--watch` rereads the config it retriggers on.** Editing `proef.toml`
+  retriggered a run that still used the snapshot loaded at startup: changing
+  `[url] base` produced a rerun that dutifully called the old host, and the same
+  went stale for `jobs`, `[env.*]` and `exclusive-tags`. Watching a file whose
+  contents you then ignore is worse than not watching it, because the rerun
+  reports that the edit was taken. Each rerun now re-reads the file and
+  re-resolves the suite from it; a config that no longer parses fails that rerun
+  and leaves the loop watching, since half-typed TOML is the normal state of a
+  file being edited. What the loop *watches* is still fixed at startup, so
+  changing `[run] fragments` or `runs-dir` needs a restart. Filed as R11-2.
+
+- **`--config` is honoured or refused by every subcommand.** `doctor` printed the
+  error for a missing named file and then reported on defaults, exit 0 — the
+  "fall back to defaults" `CONFIG.md` forbids — while `fmt`, `init`, `schema` and
+  `secret` accepted a nonexistent path silently, against the "global to every
+  subcommand" claim in `CONFIG.md`, `README.md` and this file. A named file that
+  is not there is now exit 2 everywhere, including where nothing reads it;
+  `doctor` stays lenient about *discovery*, which is a different claim. `secret`
+  additionally uses the flag, since the store is the project's. Filed as R11-3.
+
+> **Breaking:** the secret store and the World move with the config rather than
+> with the shell. A project whose `proef.toml` sits at its root — the documented
+> layout — is unaffected. A store written from some other directory is not
+> migrated: move `.proef-secrets.json` / `.proef-state.json` beside `proef.toml`,
+> or re-run `proef secret set`.
+>
+> **Breaking (library):** `proef_cli` is not a published library surface, but for
+> the record `front::run` takes the state-file path, `ProjectConfig::runs_dir`
+> returns a `PathBuf`, `setup`/`teardown` return `Option<PathBuf>`, `suite` is
+> gone (fold into `default_suite_path`), and the `secretstore` entry points take
+> the store path. `proef_core` gains one item:
+> `pack::FragmentCorpus::unreadable_file`.
+
+- **`[run] exclusive-tags` validates itself.** `--dry-run` did not parse the
+  expression at all, so a malformed one exited 2 from `proef test` and passed
+  `dry-run OK … 0 warning(s)` from the gate CI runs. And a *well-formed*
+  expression matching no scenario was silent: `@soloz` against a `@solo` suite
+  put every scenario back in the shared pool, exit 0, nothing said — the exact
+  silent degradation the key was designed as a config expression to prevent, and
+  one that reads as flakiness rather than as a typo. Both paths now parse it, and
+  a zero-match expression warns, naming it and pointing at `proef flows`. Judged
+  over every scenario the suite loaded rather than the ones selected, so a
+  `--tags` filter that removes the matches from one run is not reported as a
+  broken setting. Filed as R11-4 and R11-5.
+
+### Changed
+
+- **`proef fragments` says which half it could not measure.** `--check` reported
+  "needs a suite that binds" when the suite had bound perfectly well and a
+  `[run] setup`/`teardown` feature was the thing that failed to load, sending the
+  reader to inspect the half that was fine. The degraded listing also now carries
+  the note `macros` prints, so withheld counts read as "not measured" rather than
+  as a corpus nothing uses.
+
+- **`proef fragments --check` refuses to pass with no corpus configured.** With
+  `[run] fragments` unset it printed `0 entries` and exited 0, indistinguishable
+  from a fully-used corpus — so a CI gate disarmed silently the day the key left
+  the config. The listing still works; only the *gate* is now a user error.
+
+- **`proef fragments --output json` carries `annotated` on both row shapes.** The
+  annotated and unannotated rows differ in eight fields, and consumers had to
+  probe for the absence of one to tell them apart.
+
+### Documentation
+
+- `CONFIG.md`'s "everything else keeps running at `jobs` width" was false:
+  queueing is strict FIFO, so nothing new starts while an exclusive scenario
+  waits at the head. The cost is bounded, not absent, and is now described.
+- The one caveat `[run] exclusive-tags` carries is written down in `CONFIG.md` and
+  ADR-0007: exclusivity is enforced against the dispatcher's active set, which a
+  watchdog-abandoned scenario leaves while its detached thread is still issuing
+  requests (hurl cannot be cancelled mid-entry).
+- `TECH-SPEC` §10 gained `proef fragments` and the global `--config`; §11's
+  `[run]` inventory listed three of seven keys.
+- `DIAGNOSTICS.md` carried a `pack::load` row nothing emits — a reader who
+  grepped it found a plausible cause that could never be one — and filed
+  `lower::multiline_bind` under `proef::pack::*`. Both fixed, and the two-way
+  agreement between the file and the emitted codes is now a test, since this
+  drifted twice.
+- `OPEN-FINDINGS` R9-2 still said `fuzz_tag_expr` "sits in neither fuzz loop"
+  three sections after recording that it is in both.
+
 ## [0.11.1] - 2026-08-12 (the gaps 0.11.0 shipped with)
 
 ### Fixed
@@ -57,8 +160,10 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   record, JUnit file and exit code to aggregate in shell.
 
   A matching scenario waits for the pool to drain, runs alone, and the pool
-  refills after it; everything else keeps running at `jobs` width, and discovery
-  order is unchanged so an exclusive scenario never loses its place. A config
+  refills after it, with discovery order unchanged so an exclusive scenario never
+  loses its place. Queueing is strict FIFO, so nothing new starts while one waits
+  at the head — the throughput dip around each exclusive scenario is the price,
+  and it is bounded. A config
   expression rather than a reserved tag name, because with a bare convention a
   scenario added months later lands untagged in the parallel pool and breaks
   isolation intermittently — which reads as flakiness rather than as a missing

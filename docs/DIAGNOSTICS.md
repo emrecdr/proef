@@ -50,7 +50,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::unknown_ref` | `ref:` names no loaded fragment (suggests the closest) | ✓ |
 | `pack::duplicate_fragment` | Two fragment files declare the same `# @proef` name | |
 | `pack::bad_annotation` | A fragment file the engine's parser could not read, an annotation it could not attach, or a name containing `#` (which could never be referenced) | |
-| `lower::multiline_bind` | A `bind:` value that resolves to multiple lines — a hurl `[Options] variable:` is a single-line scalar; the inline `hurl: \|` form is what splices a multi-line body | |
 | `pack::unreadable_fragment_file` | A fragment file that could not be read at all (encoding, permissions) — its siblings still load, and it is silent until something `ref:`s the corpus | |
 | `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
 | `pack::bind_without_ref` | `bind:` with no `ref:` to read it — on a step (an inline block takes `${…}` instead), or on a macro whose steps have none (a `use:` target resolves its own) | ✓ |
@@ -63,7 +62,6 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::with_without_use` | `with:` on a step that has no `use:` | |
 | `pack::missing_use_param` | The `use:` target requires a param `with:` does not supply | ✓ |
 | `pack::unknown_with_key` | A `with:` key the target macro does not declare | ✓ |
-| `pack::load` | A non-diagnostic core failure surfaced while loading packs (defensive; the loader normally reports located diagnostics) | |
 
 ## `proef::bind::*` — matching prose to macros
 
@@ -86,6 +84,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `lower::kind_unrouted` | Internal safety net: a lowered step's kind maps to no engine (registry drift — unreachable through the CLI, which is why it has no corpus case) | |
 | `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
 | `lower::unbound_placeholder` | A fragment reads a `{{variable}}` that no `bind:` in scope supplies and no earlier step captures | |
+| `lower::multiline_bind` | A `bind:` value that resolves to multiple lines — a hurl `[Options] variable:` is a single-line scalar; the inline `hurl: \|` form is what splices a multi-line body | |
 | `lower::secret_in_composite_bind` | A `bind:` value mixes `${secret:…}` into a larger string — bind the secret alone and put the surrounding text in the fragment | |
 | `lower::dry_run_unknown` | A runtime-only global under `--dry-run` (*warning*) | |
 
@@ -124,6 +123,12 @@ The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
 `crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
 `[run] fragments` root, and the seeded corpus is deliberately config-independent.
 
-30 of the 71 codes carry a seeded corpus case today; the corpus guard asserts
+30 of the 70 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
+
+Every row here is a code some code path actually emits. That was not free: this
+file used to carry a `pack::load` row for a defensive case that never had a code
+(a non-diagnostic core failure while loading packs renders as a bare `error:`),
+so a reader who grepped for it found nothing and had no way to tell the index was
+wrong. A row nothing emits is worse than a missing row.

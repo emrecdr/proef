@@ -1049,6 +1049,7 @@ pub fn proef_core::pack::FragmentCorpus::empty() -> Self
 pub fn proef_core::pack::FragmentCorpus::fragments(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
 pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
 pub fn proef_core::pack::FragmentCorpus::unannotated(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<usize>>
+pub fn proef_core::pack::FragmentCorpus::unreadable_file(&str, &str) -> proef_core::diag::Diag
 pub fn proef_core::pack::FragmentCorpus::with_read_errors(self, alloc::vec::Vec<proef_core::diag::Diag>) -> Self
 impl core::fmt::Debug for proef_core::pack::FragmentCorpus
 pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
