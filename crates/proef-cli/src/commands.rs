@@ -12,6 +12,16 @@ use crate::config::ProjectConfig;
 use crate::front;
 use crate::render;
 
+/// The suffix `n` takes: `plural(n, "", "s")`, `plural(n, "y", "ies")`.
+///
+/// Eight sites spelled this ternary inline, two of them twice in one sentence,
+/// and the drift is what the helper is for rather than the character count:
+/// `entr(ies)` — a word in neither direction — had shipped from two of them
+/// precisely because each site decided for itself.
+fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
+    if n == 1 { one } else { many }
+}
+
 /// Build the injected `${url:…}` / `${vars:…}` scope for the active environment
 /// (base deep-merged with `[env.<name>]`) from an already-loaded config. An absent
 /// file yields an empty scope; an unknown `--env` is a user error.
@@ -684,24 +694,19 @@ fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
     } else {
         DoctorStatus::Pass
     };
-    // Pluralised rather than spelled `entr(ies)`, which is not a word either
-    // way round; the listing below already carries the same `entr{}` idiom.
-    let mut detail = format!(
-        "{named} fragment{} from `{shown}`",
-        if named == 1 { "" } else { "s" }
-    );
+    let mut detail = format!("{named} fragment{} from `{shown}`", plural(named, "", "s"));
     if bare > 0 {
         let _ = write!(
             detail,
             " · {bare} unannotated entr{}",
-            if bare == 1 { "y" } else { "ies" }
+            plural(bare, "y", "ies")
         );
     }
     if broken > 0 {
         let _ = write!(
             detail,
             " · {broken} file{} proef could not read",
-            if broken == 1 { "" } else { "s" }
+            plural(broken, "", "s")
         );
     }
     Some((status, detail))
@@ -783,7 +788,10 @@ pub fn fragments(
         ),
     };
 
-    let referenced_by = loaded.as_ref().map(macros_referencing).unwrap_or_default();
+    let referenced_by = loaded
+        .as_ref()
+        .map(|front| macros_referencing(&front.packs))
+        .unwrap_or_default();
 
     render_fragments(&corpus, runs.as_ref(), &referenced_by, output_json);
 
@@ -841,7 +849,7 @@ pub fn fragments(
         render::errln!(
             "error: {} fragment{} that no scenario runs: {}",
             never_run.len(),
-            if never_run.len() == 1 { "" } else { "s" },
+            plural(never_run.len(), "", "s"),
             never_run.join(", ")
         );
         failed = true;
@@ -854,8 +862,8 @@ pub fn fragments(
     if require_annotated && unannotated > 0 {
         render::errln!(
             "error: {unannotated} entr{} carr{} no `# @proef` annotation",
-            if unannotated == 1 { "y" } else { "ies" },
-            if unannotated == 1 { "ies" } else { "y" }
+            plural(unannotated, "y", "ies"),
+            plural(unannotated, "ies", "y")
         );
         failed = true;
     }
@@ -873,15 +881,15 @@ pub fn fragments(
 /// the whole story. Naming the macro is what lets the reader tell the two
 /// apart: a fragment nothing references at all, and one referenced by a macro
 /// no scenario says.
-fn macros_referencing(front: &front::FrontEnd) -> BTreeMap<String, Vec<String>> {
+fn macros_referencing(packs: &proef_core::pack::PackSet) -> BTreeMap<String, Vec<String>> {
     let mut referenced_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for macro_ in front.packs.macros.values() {
+    for macro_ in packs.macros.values() {
         let proef_core::pack::MacroBody::Steps(steps) = &macro_.body else {
             continue;
         };
         for step in steps {
             if let proef_core::pack::MacroStepKind::Ref { target } = &step.kind
-                && let Some(fragment) = front.packs.find_fragment(target)
+                && let Some(fragment) = packs.find_fragment(target)
             {
                 let names = referenced_by.entry(fragment.qualified()).or_default();
                 if !names.contains(&macro_.name) {
@@ -1049,14 +1057,14 @@ fn render_fragments(
     };
     crate::render::outln!(
         "\n{total} entr{} · {} annotated · {bare_total} unannotated{dead_note}",
-        if total == 1 { "y" } else { "ies" },
+        plural(total, "y", "ies"),
         fragments.len()
     );
 }
 
 /// `N entries` suffix for a file header.
 fn entries(n: usize) -> String {
-    format!("        {n} entr{}", if n == 1 { "y" } else { "ies" })
+    format!("        {n} entr{}", plural(n, "y", "ies"))
 }
 
 /// `proef artifacts <path> -o DIR` — emit every scenario's canonical `.hurl`

@@ -1,7 +1,6 @@
 //! `--watch`: rerun on feature/pack changes via `notify` (pinned 8.2.0).
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -59,14 +58,34 @@ impl RunsDirs {
         }
     }
 
-    /// Whether `component` names one of them. By name, not by path prefix, for
-    /// the reason [`is_authored`] gives.
-    fn holds(&self, component: &OsStr) -> bool {
-        self.0.lock().is_ok_and(|seen| {
-            seen.iter()
-                .any(|name| OsStr::new(name.as_str()) == component)
+    /// Whether any directory `path` sits under is one of them. By name, not by
+    /// path prefix, for the reason [`is_authored`] gives.
+    ///
+    /// Answers for the whole path under **one** lock. Asked per component it
+    /// acquired an uncontended mutex eight times for an ordinary path, once per
+    /// filesystem event, and scanned the set linearly at each — where a set
+    /// keyed by name answers with a lookup. A non-UTF-8 component matches
+    /// nothing, as it did before: the names here were stored lossily, so they
+    /// could never equal the raw bytes either.
+    fn holds_any(&self, path: &Path) -> bool {
+        let Ok(seen) = self.0.lock() else {
+            return false;
+        };
+        components_of(path).any(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .is_some_and(|name| seen.contains(name))
         })
     }
+}
+
+/// Every directory `path` sits under, outermost first.
+///
+/// Via `parent` rather than by collecting and popping: this runs per filesystem
+/// event, and dropping the file name does not need an allocation.
+fn components_of(path: &Path) -> impl Iterator<Item = std::path::Component<'_>> {
+    path.parent().into_iter().flat_map(Path::components)
 }
 
 /// Whether `path` and `config` are the same file.
@@ -125,14 +144,13 @@ fn is_authored(
     if config_path.is_some_and(|c| same_file(path, c)) {
         return true;
     }
-    // Every component of the parent is a directory this path sits under. Taken
-    // via `parent` rather than by collecting and popping: this runs per
-    // filesystem event, and dropping the file name does not need an allocation.
-    for component in path.parent().into_iter().flat_map(Path::components) {
-        let dir = Path::new(component.as_os_str());
-        if crate::front::skipped_dir(dir) || runs.holds(component.as_os_str()) {
-            return false;
-        }
+    // Two rules over the same directories, asked separately so the shared one
+    // is taken once: proef's own run output, then the trees discovery skips.
+    if runs.holds_any(path) {
+        return false;
+    }
+    if components_of(path).any(|c| crate::front::skipped_dir(Path::new(c.as_os_str()))) {
+        return false;
     }
     path.extension()
         .and_then(|e| e.to_str())
