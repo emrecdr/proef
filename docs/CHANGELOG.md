@@ -17,7 +17,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   so the fix removes the second answer rather than resynchronising it: each
   rerun registers where it is about to write, and the exclusion is derived from
   the same config the run is. A directory a previous run wrote stays excluded
-  too, since its events can still be in flight. Filed as R11-4.
+  too, since its events can still be in flight. Filed as R11-8.
 
 - **`--watch --config <relative path>` retriggers on config edits.** The watcher
   compared the config by exact path while `notify` reports events under the
@@ -28,7 +28,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   identity is settled by comparing canonical paths, which is a stricter question
   than being absolute. The same relative-path flaw silently cost `proef lsp
   --config <relative>` go-to-definition across the whole fragment corpus, since
-  `documents::name_to_url` refuses a relative name. Filed as R11-5.
+  `documents::name_to_url` refuses a relative name. Filed as R11-9.
 
 - **`doctor` reports a `proef.toml` that will not parse.** The discovery arm had
   become a silent `unwrap_or_default`, so a malformed config left `doctor`
@@ -36,7 +36,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the parse error, which the previous code printed, discarded. It is a `project:`
   row now, so it reaches `worst` and the exit code a CI script actually reads.
   Being *absent* is still not a finding: `doctor` must run outside a project.
-  Filed as R11-6.
+  Filed as R11-10.
 
 - **`proef fragments` exits non-zero when a `[run] setup`/`teardown` phase fails
   to load.** It printed `error: setup feature failed to validate:` and exited 0,
