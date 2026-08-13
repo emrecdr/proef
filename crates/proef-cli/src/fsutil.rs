@@ -66,11 +66,6 @@ pub fn is_run_id(name: &str) -> bool {
     name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
 }
 
-/// The directory a file path lives in, for deriving a search/context base.
-/// `Path::parent()` returns `Some("")` for a bare filename (no directory
-/// component) — an empty path that is not a usable directory — so normalize
-/// both the empty and `None` cases to `.` (the current directory), matching
-/// how an explicit `./name` already resolves.
 /// Create the directories `path`'s file needs, so writing it can succeed.
 ///
 /// An output path the user named is a path proef was asked to write, and every
@@ -92,6 +87,11 @@ pub(crate) fn create_parents(path: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(parent)
 }
 
+/// The directory a file path lives in, for deriving a search/context base.
+/// `Path::parent()` returns `Some("")` for a bare filename (no directory
+/// component) — an empty path that is not a usable directory — so normalize
+/// both the empty and `None` cases to `.` (the current directory), matching
+/// how an explicit `./name` already resolves.
 pub(crate) fn parent_dir(path: &Path) -> PathBuf {
     path.parent()
         .filter(|p| !p.as_os_str().is_empty())

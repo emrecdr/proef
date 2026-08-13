@@ -300,12 +300,21 @@ fn load_config(
 /// named path that is not there is a typo, and answering a typo with a report
 /// about some *other* configuration is how `doctor` came to print the error and
 /// then run on defaults, exit 0.
+///
+/// A discovered file that does not *parse* is a third case, and returning the
+/// message rather than dropping it is the point of the tuple. Leniency is about
+/// a config being **absent**; a `proef.toml` that is sitting right there and
+/// broken is the first thing a diagnosis tool should say, and saying nothing
+/// made "all checks passed" true only of the configuration doctor had invented.
 fn load_config_lenient(
     explicit: Option<&std::path::Path>,
-) -> Result<config::ProjectConfig, proef_core::error::ExitCode> {
+) -> Result<(config::ProjectConfig, Option<String>), proef_core::error::ExitCode> {
     match explicit {
-        Some(path) => load_config(Some(path)),
-        None => Ok(config::ProjectConfig::load().unwrap_or_default()),
+        Some(path) => load_config(Some(path)).map(|config| (config, None)),
+        None => Ok(match config::ProjectConfig::load() {
+            Ok(config) => (config, None),
+            Err(message) => (config::ProjectConfig::default(), Some(message)),
+        }),
     }
 }
 
@@ -470,12 +479,19 @@ fn main() -> std::process::ExitCode {
                                 }
                             };
                             if watch_mode {
-                                // What the loop *watches* is fixed at startup —
-                                // rearming a watcher mid-loop would race the
-                                // events it is draining — so a change to
-                                // `[run] fragments` or `runs-dir` needs a
-                                // restart. What each rerun *reads* is not: the
-                                // config is loaded again below.
+                                // Which *directories* the loop watches is fixed
+                                // at startup — rearming a watcher mid-loop
+                                // would race the events it is draining — so a
+                                // change to `[run] fragments` or `[run] suite`
+                                // needs a restart to be watched. What each
+                                // rerun *reads* is not: the config is loaded
+                                // again below. `runs-dir` is neither, and used
+                                // to fall between them: the rerun wrote to the
+                                // new directory while the watcher still
+                                // excluded the old one, and the output fed the
+                                // input. The rerun now registers where it
+                                // writes (`RunsDirs`), so the two cannot
+                                // disagree.
                                 let fragments = config.fragments();
                                 let runs_dir = config.runs_dir();
                                 // The config this run resolved through, not a
@@ -497,7 +513,7 @@ fn main() -> std::process::ExitCode {
                                     watched.as_deref(),
                                     fragments.as_deref(),
                                     &runs_dir,
-                                    |token| {
+                                    |token, runs_dirs| {
                                         // A config that no longer parses fails
                                         // this rerun and leaves the loop
                                         // watching — the next keystroke may
@@ -505,6 +521,11 @@ fn main() -> std::process::ExitCode {
                                         match reload_for_rerun(config_path, typed_path.clone()) {
                                             Err(code) => code,
                                             Ok((config, path)) => {
+                                                // Before the run writes, not
+                                                // after: notify delivers on its
+                                                // own thread while the run is
+                                                // still going.
+                                                runs_dirs.record(&config.runs_dir());
                                                 run_once(&config, &path, Some(token))
                                             }
                                         }
@@ -583,11 +604,12 @@ fn main() -> std::process::ExitCode {
             // `load_config_lenient`.
             match load_config_lenient(config_path) {
                 Err(code) => code,
-                Ok(config) => commands::doctor(
+                Ok((config, config_error)) => commands::doctor(
                     &registry::engines(),
                     config.default_suite_path().as_deref(),
                     config.fragments().as_deref(),
                     &config.secrets_file(),
+                    config_error.as_deref(),
                 ),
             }
         }

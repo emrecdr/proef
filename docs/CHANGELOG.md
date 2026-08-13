@@ -8,6 +8,42 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A `runs-dir` edited mid-`--watch` no longer feeds the loop its own output.**
+  Reruns re-read the config (the fix below), so records went to the *new*
+  directory while the watcher's exclusion still named the one it had frozen at
+  startup — and every rerun's `artifacts/*.hurl`, now under an unexcluded
+  directory, requeued the next run. One edit produced **39 runs in 12 seconds**,
+  firing real traffic. This was the third outing for the watch-feedback class,
+  so the fix removes the second answer rather than resynchronising it: each
+  rerun registers where it is about to write, and the exclusion is derived from
+  the same config the run is. A directory a previous run wrote stays excluded
+  too, since its events can still be in flight. Filed as R11-4.
+
+- **`--watch --config <relative path>` retriggers on config edits.** The watcher
+  compared the config by exact path while `notify` reports events under the
+  spelling the OS resolved them to, so `--config proef.toml` never matched and
+  config edits produced *nothing* — silently, because feature edits kept working
+  and the loop looked alive. Symlinked and `/tmp`-style aliased paths failed the
+  same way and are also fixed: the flag is made absolute when it is stored, and
+  identity is settled by comparing canonical paths, which is a stricter question
+  than being absolute. The same relative-path flaw silently cost `proef lsp
+  --config <relative>` go-to-definition across the whole fragment corpus, since
+  `documents::name_to_url` refuses a relative name. Filed as R11-5.
+
+- **`doctor` reports a `proef.toml` that will not parse.** The discovery arm had
+  become a silent `unwrap_or_default`, so a malformed config left `doctor`
+  reporting on invented defaults and printing "all checks passed", exit 0 — with
+  the parse error, which the previous code printed, discarded. It is a `project:`
+  row now, so it reaches `worst` and the exit code a CI script actually reads.
+  Being *absent* is still not a finding: `doctor` must run outside a project.
+  Filed as R11-6.
+
+- **`proef fragments` exits non-zero when a `[run] setup`/`teardown` phase fails
+  to load.** It printed `error: setup feature failed to validate:` and exited 0,
+  because the phase half flattened its failure to "not measured" while the suite
+  half kept its code. Withholding the counts was right; reporting success while
+  printing errors was not.
+
 - **`proef.toml` has one path rule.** A path *written in the config* now resolves
   against the directory holding the config; a path *typed on the command line*
   still resolves against the working directory. `[run] fragments` already worked
@@ -35,8 +71,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   reports that the edit was taken. Each rerun now re-reads the file and
   re-resolves the suite from it; a config that no longer parses fails that rerun
   and leaves the loop watching, since half-typed TOML is the normal state of a
-  file being edited. What the loop *watches* is still fixed at startup, so
-  changing `[run] fragments` or `runs-dir` needs a restart. Filed as R11-2.
+  file being edited. Which *directories* the loop watches is still fixed at
+  startup, so changing `[run] fragments` or `[run] suite` needs a restart to be
+  watched. Filed as R11-2.
 
 - **`--config` is honoured or refused by every subcommand.** `doctor` printed the
   error for a missing named file and then reported on defaults, exit 0 — the
@@ -47,11 +84,21 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `doctor` stays lenient about *discovery*, which is a different claim. `secret`
   additionally uses the flag, since the store is the project's. Filed as R11-3.
 
-> **Breaking:** the secret store and the World move with the config rather than
-> with the shell. A project whose `proef.toml` sits at its root — the documented
-> layout — is unaffected. A store written from some other directory is not
-> migrated: move `.proef-secrets.json` / `.proef-state.json` beside `proef.toml`,
-> or re-run `proef secret set`.
+> **Breaking:** the secret store, the persistent World **and the run records**
+> move with the config rather than with the shell. What decides whether this
+> reaches you is **where you invoked proef**, not where `proef.toml` sits: runs
+> started from the project root are unchanged, but a run started from a
+> subdirectory used to write `.proef-state.json`, `.proef-secrets.json` and
+> `.proef-runs/` beside the *shell*, and now writes all three beside the config.
+>
+> Nothing is migrated, and none of it announces itself. A World written from a
+> subdirectory reads as empty, so `saveAs: global` values start over on the
+> first run after upgrading; stored secrets read as absent; and the old run
+> records are simply invisible to `explain`, `report` and `diff`, which say "no
+> run records" rather than erroring. To carry them over, move
+> `.proef-state.json`, `.proef-secrets.json` and `.proef-runs/` from the
+> directory you used to run from into the one holding `proef.toml`. Otherwise
+> re-run `proef secret set` and take a fresh baseline.
 >
 > **Breaking (library):** `proef_cli` is not a published library surface, but for
 > the record `front::run` takes the state-file path, `ProjectConfig::runs_dir`
