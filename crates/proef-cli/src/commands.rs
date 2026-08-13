@@ -12,12 +12,16 @@ use crate::config::ProjectConfig;
 use crate::front;
 use crate::render;
 
-/// The suffix `n` takes: `plural(n, "", "s")`, `plural(n, "y", "ies")`.
+/// The ending `n` takes when the stem itself changes: `plural(n, "y", "ies")`.
 ///
-/// Eight sites spelled this ternary inline, two of them twice in one sentence,
-/// and the drift is what the helper is for rather than the character count:
-/// `entr(ies)` — a word in neither direction — had shipped from two of them
-/// precisely because each site decided for itself.
+/// **Only** for that case. A regular plural is spelled `file(s)` here — the
+/// parenthetical is the house style at some thirty sites, `proef-core` included,
+/// and branching on the count to print `1 file` buys nothing a reader notices
+/// while leaving the CLI speaking two dialects.
+///
+/// The parenthetical stops working when the stem moves, which is how
+/// `entr(ies)` shipped: a word in neither direction, from sites that each
+/// decided for themselves. Those spell both endings, from here, once.
 fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
     if n == 1 { one } else { many }
 }
@@ -694,7 +698,7 @@ fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
     } else {
         DoctorStatus::Pass
     };
-    let mut detail = format!("{named} fragment{} from `{shown}`", plural(named, "", "s"));
+    let mut detail = format!("{named} fragment(s) from `{shown}`");
     if bare > 0 {
         let _ = write!(
             detail,
@@ -703,11 +707,7 @@ fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
         );
     }
     if broken > 0 {
-        let _ = write!(
-            detail,
-            " · {broken} file{} proef could not read",
-            plural(broken, "", "s")
-        );
+        let _ = write!(detail, " · {broken} file(s) proef could not read");
     }
     Some((status, detail))
 }
@@ -847,9 +847,8 @@ pub fn fragments(
     let mut failed = false;
     if !never_run.is_empty() {
         render::errln!(
-            "error: {} fragment{} that no scenario runs: {}",
+            "error: {} fragment(s) that no scenario runs: {}",
             never_run.len(),
-            plural(never_run.len(), "", "s"),
             never_run.join(", ")
         );
         failed = true;
