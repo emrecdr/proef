@@ -239,3 +239,17 @@ one resolvable.
   file?" where three disagreed, and `--junit`/`--sarif`/`report -o` create the
   directories their paths name — as `artifacts -o` and the run directory already
   did, and as pytest, jest-junit, cargo-nextest and the embedded hurl all do
+- `v0.12.0` — one path rule, and a watcher that stops lying: a path written in
+  `proef.toml` resolves against the config, a path typed on the command line
+  against the working directory, with no exceptions — which finally inventoried
+  `.proef-state.json`, `.proef-secrets.json` and the run records, all three
+  cwd-anchored and unlisted. `--watch` rereads the config it retriggers on;
+  stops feeding itself when `runs-dir` changes mid-loop (one edit produced 39
+  runs in 12 seconds against a live API); and matches a relatively-typed or
+  symlinked `--config`, which also restored `proef lsp --config`
+  go-to-definition across the fragment corpus. `doctor` fails a `proef.toml`
+  that will not parse instead of reporting on invented defaults, `--config` is
+  honoured or refused by every subcommand, and `[run] exclusive-tags` validates
+  itself in both paths — breaking: the secret store, the World and the run
+  records move with the config rather than the shell, which reaches anyone who
+  ran proef from a subdirectory

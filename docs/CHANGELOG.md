@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-08-14 (one path rule, and a watcher that stops lying)
+
 ### Fixed
 
 - **A `runs-dir` edited mid-`--watch` no longer feeds the loop its own output.**
