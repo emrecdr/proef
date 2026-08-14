@@ -78,11 +78,16 @@ jobs:
           tool: cargo-fuzz
 
       - name: Fuzz
-        # Explicit host triple: see the CI fuzz-smoke note.
+        # Explicit host triple, and targets from `cargo fuzz list`: see the CI
+        # fuzz-smoke note for why the list is not written out here.
         run: |
           host=$(rustc +nightly -vV | sed -n 's/^host: //p')
-          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load fuzz_tag_expr; do
+          targets=$(cargo +nightly fuzz list)
+          test -n "$targets" || { echo "no fuzz targets discovered"; exit 1; }
+          for target in $targets; do
+            echo "::group::$target"
             cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=600
+            echo "::endgroup::"
           done
 
   # Advisory sweep against unchanged code (deny gates PRs; audit catches the

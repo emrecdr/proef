@@ -6,6 +6,49 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Security
+
+- **The fragment corpus read is bounded.** `[run] fragments` names a directory
+  proef did not write and does not control, and it was read with no per-file or
+  total cap: a 279 MB file cost **601 MB of resident memory on `proef flows`** —
+  a command that never looks at a fragment — because the text is read whole and
+  then copied into an `Arc<str>`. A file over 8 MiB is now skipped
+  (`proef::pack::oversized_fragment_file`) and the reader stops past 64 MiB
+  total (`proef::pack::fragment_corpus_too_large`). The size comes from the
+  directory entry, so an oversized file is never allocated at all; the same
+  bound applies in `proef lsp`, where the corpus is held between requests rather
+  than for one command. Skipped, never fatal — a corpus is foreign by design, so
+  one bad file must not sink the ones beside it. An unreferenced corpus still
+  costs nothing: the scan stays lazy, so nothing is reported unless a pack
+  actually names a fragment. Filed as R9-3.
+
+### Internal
+
+- **Fuzzing reaches the fragment rules.** `fuzz_pack_load` ran against an *empty*
+  corpus, so `ref:` resolution, `bind:` keys nothing reads, a `bind:` colliding
+  with a variable the fragment supplies itself, and unbound placeholders were
+  covered on paper and unreachable in fact. The new `fuzz_fragment_binding`
+  target is **structure-aware**: it builds a well-formed pack and corpus and
+  spends its budget on the name space where those rules live. That shape was
+  chosen from measurement, not taste — a byte-oriented version never once
+  resolved a `ref:` in 1.45 million runs, because reaching the rules meant
+  discovering valid YAML *and* a matching corpus at the same time. The corpus is
+  read by a synthetic scanner rather than hurl's, which is what keeps the fuzz
+  workspace free of native libraries: cargo dependencies are package-level, so
+  one engine-dependent target would compile hurl for all of them.
+
+- **Hurl's own annotation scanner is property-tested**, in `proef-engine-hurl`
+  where the native libraries already are. The properties pin what the
+  entry-boundary arithmetic is for: every reported line lies inside the file,
+  every entry is accounted for exactly once, the starts are ordered and
+  distinct, and — the one that matters — **no fragment's text runs into the
+  entry after it**. That last assertion exists because a first draft without it
+  passed while the boundary was deliberately broken.
+
+- **The fuzz target list comes from `cargo fuzz list`.** It had been spelled out
+  in `ci.yml` *and* `nightly.yml`, so a new target ran nowhere until both were
+  edited, and nothing failed to say so.
+
 ### Fixed
 
 - **A run record no longer names the machine that produced it.** `[run] suite`

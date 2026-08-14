@@ -51,6 +51,8 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `pack::duplicate_fragment` | Two fragment files declare the same `# @proef` name | |
 | `pack::bad_annotation` | A fragment file the engine's parser could not read, an annotation it could not attach, or a name containing `#` (which could never be referenced) | |
 | `pack::unreadable_fragment_file` | A fragment file that could not be read at all (encoding, permissions) — its siblings still load, and it is silent until something `ref:`s the corpus | |
+| `pack::oversized_fragment_file` | A fragment file over 8 MiB — skipped unread (the size comes from the directory entry), siblings still load | |
+| `pack::fragment_corpus_too_large` | The corpus as a whole passed 64 MiB — the read stops, naming the file it stopped at | |
 | `pack::body_form_conflict` | A step is both `ref:` and a payload (or `use:`) | ✓ |
 | `pack::bind_without_ref` | `bind:` with no `ref:` to read it — on a step (an inline block takes `${…}` instead), or on a macro whose steps have none (a `use:` target resolves its own) | ✓ |
 | `pack::unread_bind_key` | a `bind:` *key* no fragment in that scope reads (did-you-mean over the readable names) — the finer half of `bind_without_ref`, and the one a typo produces | |
@@ -123,7 +125,7 @@ The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
 `crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
 `[run] fragments` root, and the seeded corpus is deliberately config-independent.
 
-30 of the 70 codes carry a seeded corpus case today; the corpus guard asserts
+30 of the 72 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
 

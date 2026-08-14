@@ -129,7 +129,7 @@ entries by line, and gates CI with `--check`; `--require-annotated` is opt-in
 because an unannotated entry is inert *by design* (ADR-0018), so "not done yet"
 is a porting team's reading of that signal and not every adopter's.
 
-### R9-2 — fuzz coverage does not reach the fragment surfaces
+### R9-2 — fuzz coverage does not reach the fragment surfaces *(shipped)*
 
 `fuzz_pack_load` runs with an empty corpus, so `ref:`/`bind:` clash logic never
 executes under fuzzing; the annotation scanner's entry-boundary arithmetic —
@@ -137,11 +137,57 @@ proef's own code, not hurl's — and `bake_entry_options`' textual injection are
 unfuzzed entirely. Split the fuzz input into pack and corpus halves, and consider
 a `fuzz_fragment_scan` target (nightly, accepting the native-libs cost).
 
-### R9-3 — no resource bounds on the corpus read
+**Shipped, and the prescription was half wrong — measurably.** Splitting the
+input into pack and corpus halves was tried first and *did not work*: a
+byte-oriented target never resolved a single `ref:` in **1.45 million runs**,
+because reaching the rules means discovering valid YAML and a matching corpus
+name simultaneously. Verified by probe (panic on a resolving `ref:`, run the
+fuzzer, see whether it fires) rather than assumed from coverage numbers — which
+is the same mistake this finding is about, one level up.
+
+What shipped instead is `fuzz_fragment_binding`, **structure-aware**: it builds a
+well-formed pack and corpus from the input and spends the budget on the name
+space, so every run reaches the rules. The probe fires in seconds.
+`fuzz_pack_load` stays byte-oriented and unchanged — parser totality is a real
+job and the split would only have diluted it.
+
+The `fuzz_fragment_scan` half was declined for a concrete reason, not on cost
+alone: cargo dependencies are **package-level**, so adding `proef-engine-hurl` to
+the fuzz crate compiles hurl for all five targets and drags native libraries into
+a job that has none. Hurl's scanner is instead **property-tested in
+`proef-engine-hurl`**, where those libraries already are — pinning that every
+reported line lies inside the file, that entries are accounted for exactly once
+in order, and that no fragment's text runs into the entry after it. The last
+assertion was added after mutation testing: the first draft passed with the
+boundary deliberately broken.
+
+Still open from this entry: **`bake_entry_options`' textual injection is
+unfuzzed.** It is lower-time, not load-time, so it sits behind lowering rather
+than `pack::load` and needs its own target.
+
+### R9-3 — no resource bounds on the corpus read *(shipped)*
 
 No per-file or file-count cap: a multi-GB `.hurl` is read whole on every command
 that loads packs. Pairs with the read-resilience work in #48, which made the read
 *survivable* but not *bounded*.
+
+**Shipped, and worse than filed by one word:** not "a multi-GB file" — a 279 MB
+file cost **601 MB of resident memory** on `proef flows`, a command that never
+looks at a fragment, over a file carrying no `# @proef` annotation at all. The
+doubling is `read_to_string` into a `String` and then `Arc::from(&str)`, which
+copies.
+
+Bounded now at 8 MiB per file and 64 MiB per corpus, measured from the directory
+entry so an oversized file is never allocated (601 MB → **15 MB** on the same
+input). Reported through the per-file diagnostic channel `unreadable_file`
+already established — skipped, never fatal — and applied in `proef lsp` too,
+where the corpus is *held between requests* rather than for the length of one
+command. The laziness promise is intact: a corpus nothing `ref:`s still reports
+nothing and exits 0, pinned by a test.
+
+The `Arc<str>` copy itself was left alone. Removing it means changing
+`PackSource`'s type across every reader, which is a wider change than a bound
+and buys a constant factor on an input that is now capped anyway.
 
 ### R9-4 — a bind that shadows a capture is silent
 
@@ -179,6 +225,16 @@ scope, where it is decidable); a `# @proef` annotation placed mid-entry is
 silently ignored and the resulting `unknown_ref` does not hint at misplacement;
 `proef macros` prints a corpus error twice on the degraded path; same-file
 duplicate annotations read as "declared in both f.hurl and f.hurl".
+
+**The double print is broader than filed** (verified 2026-08-14 while adding the
+corpus bound, which inherits it). It is not specific to `macros`: `proef
+fragments` does it too, and to *any* corpus diagnostic — `unreadable_fragment_file`
+and the new `oversized_fragment_file` alike. The mechanism is that
+`commands::fragments` renders `corpus.diagnostics()` itself and then loads the
+suite, whose failure path renders the same diagnostics again. Both land on
+stderr, so the count line reads `1 error(s)` under two rendered copies. Left
+here rather than folded into the bound: it is a rendering decision about which
+of the two sites owns corpus diagnostics, not a property of any one diagnostic.
 
 ## Open — round-10 residue (ingested 2026-08-12)
 

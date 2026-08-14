@@ -116,6 +116,67 @@ impl FragmentCorpus {
         )
     }
 
+    /// The largest a single corpus file may be before it is skipped.
+    ///
+    /// A fragment file is human-authored text: 8 MiB is on the order of 200,000
+    /// lines, some three orders of magnitude past the largest corpus anyone has
+    /// reported (15 files, 112 fragments). The cap is not tuning — it is the
+    /// line past which the input is not a test corpus, and the reader stops
+    /// trusting it with the process's memory.
+    pub const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+    /// The largest a whole corpus may be before the reader stops.
+    ///
+    /// Separate from [`Self::MAX_FILE_BYTES`] because they bound different
+    /// failures: one enormous file, and an accumulation of ordinary ones. A
+    /// per-file cap alone leaves a directory of a million 1 KiB files unbounded.
+    pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+
+    /// The diagnostic for a corpus file too large to be worth reading.
+    ///
+    /// Shaped like [`Self::unreadable_file`] and reported through the same
+    /// channel, because it means the same thing to the user: this file did not
+    /// load, the rest did, and a `ref:` into it will read as unknown. The two
+    /// live together for the reason that one does — the *reading* differs
+    /// between the CLI and the editor, what it means when a file does not load
+    /// does not.
+    #[must_use]
+    pub fn oversized_file(name: &str, bytes: u64) -> Diag {
+        Diag::error(
+            "proef::pack::oversized_fragment_file",
+            format!(
+                "fragment file {name} is {bytes} bytes, over the {} byte limit — skipped",
+                Self::MAX_FILE_BYTES
+            ),
+        )
+        .with_help(
+            "the rest of the corpus still loads — point `[run] fragments` at the \
+             directory holding your hurl files rather than one containing generated \
+             or vendored output",
+        )
+    }
+
+    /// The diagnostic for a corpus that exhausted [`Self::MAX_TOTAL_BYTES`].
+    ///
+    /// Names the file the reader stopped at rather than a bare total: the walk
+    /// is sorted, so that name is stable across runs and is where the user
+    /// should start looking.
+    #[must_use]
+    pub fn corpus_budget_exhausted(name: &str) -> Diag {
+        Diag::error(
+            "proef::pack::fragment_corpus_too_large",
+            format!(
+                "the fragment corpus exceeds {} bytes — stopped at {name}; \
+                 later files were not read",
+                Self::MAX_TOTAL_BYTES
+            ),
+        )
+        .with_help(
+            "narrow `[run] fragments` to the directory that actually holds the \
+             hurl files a pack `ref:`s",
+        )
+    }
+
     /// The empty corpus — no `[run] fragments` configured, so no `ref:` can
     /// resolve and nothing is ever scanned.
     pub fn empty() -> Self {

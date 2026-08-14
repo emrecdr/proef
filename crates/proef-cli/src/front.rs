@@ -609,22 +609,80 @@ fn read_sources(paths: Vec<PathBuf>, naming: &SourceNaming) -> Result<Vec<PackSo
 /// `flows`, which never looks at a fragment. Pack loading and the annotation
 /// scan both already collect per-file and never sink their siblings; this was
 /// the one stage that still did.
+/// **Bounded**, which the resilience work did not make it. A corpus is foreign
+/// by design and named by one config line, so its size is not something the
+/// suite's author controls: `[run] fragments` pointed one directory too high
+/// reads whatever is under it. A 279 MB file cost 601 MB of resident memory on
+/// `proef flows` — a command that never looks at a fragment — because the text
+/// is read whole and then copied into an `Arc<str>`. The size is checked from
+/// the directory entry, so an oversized file is never allocated at all.
 fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, Vec<Diag>) {
     let mut sources = Vec::with_capacity(paths.len());
     let mut errors = Vec::new();
+    let mut budget = proef_core::pack::FragmentCorpus::MAX_TOTAL_BYTES;
     for path in paths {
+        let name = naming.name(&path);
+        // An unstattable file is left to the read below to report: it fails
+        // there with the real cause, and reporting "cannot size" first would
+        // explain the same file twice in different words.
+        let size = std::fs::metadata(&path).map_or(0, |meta| meta.len());
+        match admit(&name, size, budget) {
+            Admit::Skip(diag) => {
+                errors.push(diag);
+                continue;
+            }
+            Admit::Stop(diag) => {
+                errors.push(diag);
+                break;
+            }
+            Admit::Read { remaining } => budget = remaining,
+        }
         match std::fs::read_to_string(&path) {
             Ok(text) => sources.push(PackSource {
-                name: naming.name(&path),
+                name,
                 text: Arc::from(text.as_str()),
             }),
             Err(err) => errors.push(proef_core::pack::FragmentCorpus::unreadable_file(
-                &naming.name(&path),
+                &name,
                 &err.to_string(),
             )),
         }
     }
     (sources, errors)
+}
+
+/// What the corpus bound says about one file, decided before it is read.
+enum Admit {
+    /// Read it; `remaining` is the budget left afterwards.
+    Read { remaining: u64 },
+    /// Leave this one out and carry on with the rest.
+    Skip(Diag),
+    /// Stop reading the corpus here.
+    Stop(Diag),
+}
+
+/// The bound itself, as a pure decision over a name and a size.
+///
+/// Split from the reading so it can be exercised without writing 64 MiB to
+/// disk: the budget's whole job is to trip on an accumulation, and a test that
+/// had to build one would be slow enough that nobody would keep it.
+///
+/// An oversized file is skipped *without* charging the budget. It was never
+/// read, so charging for it would let one bad file silently shorten the corpus
+/// behind it — turning a per-file problem into a whole-corpus one.
+fn admit(name: &str, size: u64, budget: u64) -> Admit {
+    use proef_core::pack::FragmentCorpus;
+
+    if size > FragmentCorpus::MAX_FILE_BYTES {
+        return Admit::Skip(FragmentCorpus::oversized_file(name, size));
+    }
+    match budget.checked_sub(size) {
+        Some(remaining) => Admit::Read { remaining },
+        // Stop rather than skip-and-continue: past the budget every later file
+        // would report the same thing, and a corpus that is too big is one
+        // finding, not one per file.
+        None => Admit::Stop(FragmentCorpus::corpus_budget_exhausted(name)),
+    }
 }
 
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
@@ -681,8 +739,50 @@ pub fn warn_if_exclusive_matches_nothing(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{SourceNaming, discover_features, pack_files};
+    use super::{Admit, SourceNaming, admit, discover_features, pack_files};
+    use proef_core::pack::FragmentCorpus;
     use std::path::{Path, PathBuf};
+
+    /// The corpus bound, exhaustively — the accumulation case included, which
+    /// an end-to-end test could only reach by writing 64 MiB.
+    #[test]
+    fn the_corpus_bound_skips_one_huge_file_and_stops_on_an_accumulation() {
+        let budget = FragmentCorpus::MAX_TOTAL_BYTES;
+
+        // Ordinary file: read, budget charged.
+        let Admit::Read { remaining } = admit("a.hurl", 1024, budget) else {
+            panic!("an ordinary file must be read")
+        };
+        assert_eq!(remaining, budget - 1024);
+
+        // Exactly at the per-file cap is still fine — the cap is a ceiling, not
+        // an exclusive bound, so a file sized to it is not refused by rounding.
+        assert!(matches!(
+            admit("edge.hurl", FragmentCorpus::MAX_FILE_BYTES, budget),
+            Admit::Read { .. }
+        ));
+
+        // One byte over is skipped, and the rest of the corpus carries on.
+        let Admit::Skip(diag) = admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1, budget)
+        else {
+            panic!("an oversized file must be skipped")
+        };
+        assert_eq!(diag.code, "proef::pack::oversized_fragment_file");
+
+        // An accumulation of legal files stops the read, naming where. The
+        // sorted walk makes that name stable across runs.
+        let Admit::Stop(diag) = admit("last.hurl", 2, 1) else {
+            panic!("an exhausted budget must stop the read")
+        };
+        assert_eq!(diag.code, "proef::pack::fragment_corpus_too_large");
+
+        // A skipped file does not charge the budget: it was never read, and
+        // charging for it would let one bad file shorten the corpus behind it.
+        assert!(matches!(
+            admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1, 8),
+            Admit::Skip(_)
+        ));
+    }
 
     /// The naming rule, case by case. Each line is a spelling that reaches a
     /// durable artifact, so each is a contract rather than an implementation
