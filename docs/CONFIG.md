@@ -25,6 +25,7 @@ suite    = "tests"          # default suite path — `proef test` needs no argum
 fragments = "tests/hurl"    # root of the hurl files packs may `ref:` (optional)
 jobs     = 8                # parallel scenario workers
 runs-dir = ".proef-runs"    # where run records land
+keep-runs = 200             # past records kept there (0 = only the run in flight)
 setup    = "tests/setup.feature"      # run once before the pool (optional)
 teardown = "tests/teardown.feature"   # run once after the pool (optional)
 exclusive-tags = "@serial"  # scenarios matching this run with the pool to themselves
@@ -61,7 +62,8 @@ timeout-ms = 60000
 |---|---|---|
 | `[run] suite` | *(unset)* | default path for `proef test`/`flows`/`artifacts`; falls back to the `tests/` convention, then errors. An explicit path always wins |
 | `[run] jobs` | available parallelism | `--jobs` flag wins; live threads never exceed the scenario count |
-| `[run] runs-dir` | `.proef-runs` | run records rotate here (newest 200 kept; only uuid-named run dirs are ever touched) |
+| `[run] runs-dir` | `.proef-runs` | run records rotate here; only uuid-named run dirs are ever touched |
+| `[run] keep-runs` | `200` | how many **past** records `runs-dir` retains, besides the one being written; `0` keeps none but the run in flight |
 | `[run] setup` | *(unset)* | feature run **once before** the pool (suite setup); its `saveAs: global` reaches every scenario; a failure aborts the run |
 | `[run] teardown` | *(unset)* | feature run **once after** the pool (suite teardown), only if setup succeeded; its failure is a distinct exit 3 |
 | `[run] exclusive-tags` | *(unset)* | tag expression (same language as `--tags`) selecting scenarios that run with the pool to themselves; a malformed expression is exit 2 |
@@ -309,5 +311,43 @@ relative to the working directory, unchanged.
 A config that does not sit at the project root spells its paths from where it
 sits — a `proef.toml` in `tests/proef/` beside a suite in `tests/features/`
 writes `suite = "../features"`.
+
+### How a path is spelled in what proef writes
+
+The same rule, read backwards. **Nothing proef records names the machine it ran
+on**: a path that reaches an artifact, a sidecar, an event, a report or a
+diagnostic is spelled relative to the directory holding `proef.toml`.
+
+That matters because ADR-0010 makes the emitted `.hurl` a contract — the same
+inputs must give the same bytes — and a run record is meant to travel from a
+laptop to CI and back. So all four of these produce the *same* record:
+
+```console
+$ proef test                              # path derived from [run] suite
+$ proef test suite                        # typed
+$ proef test /home/you/proj/suite         # typed absolutely
+$ cd sub && proef test                    # from a subdirectory
+```
+
+Two cases keep an absolute path, because no project-relative spelling of them
+exists: a suite or fragment corpus that genuinely sits outside the project
+(`fragments = "/opt/shared-corpus"`), and a run with no `proef.toml` in scope. A
+path *typed* relative is recorded exactly as typed — it is machine-independent
+already, and it is the spelling your terminal can open.
+
+### How long run records live
+
+Each run writes one directory under `runs-dir` holding its artifacts, its
+`events.jsonl` and its `run.log`. `[run] keep-runs` bounds how many are kept:
+the default of 200 suits an archive, and a suite re-run on every save wants far
+fewer. The artifacts are the largest part and are byte-identical between runs of
+an unchanged suite — but they are *what that run executed*, and once the corpus
+moves on `proef artifacts` no longer reproduces them, so the cost is bounded
+rather than dropped.
+
+Rotation only ever deletes directories named by a **generated** run id, because
+`runs-dir` may be `.` or otherwise shared with your own files. A record written
+under `--run-id <name>` is therefore never rotated: if CI mints a fresh name per
+build into a persistent directory, prune it yourself.
 
 A starter file ships as `proef.toml.example` in the repository root.

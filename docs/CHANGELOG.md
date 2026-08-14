@@ -6,6 +6,49 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A run record no longer names the machine that produced it.** `[run] suite`
+  resolves against the config directory (0.12.0), so a path-less `proef test`
+  handed the front end an absolute path — and every emitter printed it: the
+  `.hurl` `# source:` header, `.map.json`'s `feature.file`, every
+  `step_finished` event, the console, and pack diagnostics. Two checkouts of one
+  suite stopped producing equal artifacts, which is the property ADR-0010 exists
+  to guarantee; an adopting suite hit it as `/Users/…` in 133 artifact lines and
+  64% of its event stream by bytes.
+
+  The resolution rule was right and stands. What was missing is its **naming
+  dual**: resolve against the project, then name against the project again.
+  `front::SourceNaming` is now the one boundary that answers "how is this path
+  spelled", for features, packs and fragments alike — replacing the fragment
+  corpus's separate cwd-relative strip, which was a second anchor for the same
+  question. The four ways to name one suite — derived from `[run] suite`, typed,
+  typed absolutely, or reached from a subdirectory — now emit one artifact, byte
+  for byte.
+
+  A path that arrives relative is recorded exactly as it arrived; a suite or
+  corpus genuinely outside the project keeps its absolute name, there being no
+  project-relative spelling of it. Filed as R12-1, and it closes R9-6, which had
+  described the same defect as safe from the project root — it no longer was.
+
+  **Breaking**, by the rule in `docs/RELEASING.md`: it changes emitted artifact
+  bytes, which is inherently breaking and takes a MINOR bump. Migration: nothing
+  to do for a suite invoked with a typed relative path — those bytes are
+  unchanged. A tool reading `step.file` or `feature.file` out of a record
+  produced by a path-less run now sees a project-relative path where it saw an
+  absolute one; join it onto the directory holding `proef.toml`. Records written
+  by earlier versions are not rewritten.
+
+### Added
+
+- **`[run] keep-runs`** bounds how many past run records `runs-dir` retains. The
+  policy already existed as a hard-coded 200; it just could not be expressed, so
+  a suite re-run on every save accumulated records for a day with nothing
+  signalling a ceiling. `0` keeps none but the run in flight. Rotation still only
+  ever deletes directories named by a *generated* run id — `runs-dir` may be `.`
+  — so a `--run-id <name>` record sits outside the budget and is never rotated,
+  now stated in CONFIG.md rather than left to be discovered. Filed as R12-2.
+
 ## [0.12.0] - 2026-08-14 (one path rule, and a watcher that stops lying)
 
 ### Fixed

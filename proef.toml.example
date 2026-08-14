@@ -27,6 +27,12 @@
 # Where per-run records and artifacts are written. Default: .proef-runs/
 # runs-dir = ".proef-runs"
 
+# How many PAST run records to keep there, besides the one being written.
+# Default 200, which suits an archive; a suite re-run on every save wants far
+# fewer, and 0 keeps none but the run in flight. Only records named by a
+# generated run id rotate — a `--run-id <name>` record is never deleted.
+# keep-runs = 200
+
 # Suite setup/teardown: a feature run once before/after the pool (ADR-0014).
 # Setup's `saveAs: global` reaches every scenario (seed fixtures / shared state);
 # a setup failure aborts the run, a teardown failure is a distinct exit 3.
