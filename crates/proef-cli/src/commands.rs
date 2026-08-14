@@ -48,7 +48,17 @@ fn config_vars_for(
 /// is read once per invocation and shared by every load, and a site that built
 /// its own would silently reintroduce the per-load rescan this exists to avoid.
 pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::FragmentCorpus, ExitCode> {
-    front::fragment_corpus(config.fragments().as_deref()).map_err(|err| report_front_error(&err))
+    front::fragment_corpus(config.fragments().as_deref(), &naming(config))
+        .map_err(|err| report_front_error(&err))
+}
+
+/// How this project spells the paths it records (`front::SourceNaming`).
+///
+/// A helper for the reason [`corpus`] is one: the anchor is always
+/// `ProjectConfig::root`, and a call site that derived it any other way would
+/// put a second spelling of the same file into the same run record.
+pub(crate) fn naming(config: &ProjectConfig) -> front::SourceNaming {
+    front::SourceNaming::anchored_at(config.root())
 }
 
 /// The parsed `[run] exclusive-tags`, or the user error a malformed one is.
@@ -89,6 +99,7 @@ fn load_front(
         config_vars,
         fragments,
         &config.state_file(),
+        &naming(config),
     )
     .map_err(|err| report_front_error(&err))
 }
@@ -145,6 +156,7 @@ pub fn doctor(
     fragments: Option<&Path>,
     secrets: &Path,
     config_error: Option<&str>,
+    naming: &front::SourceNaming,
 ) -> ExitCode {
     fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
         let glyph = match status {
@@ -186,7 +198,7 @@ pub fn doctor(
     crate::render::outln!("\nauthoring:");
     let (status, detail) = schema_check(suite);
     row(&mut worst, "pack schema", status, &detail);
-    if let Some((status, detail)) = fragment_check(fragments) {
+    if let Some((status, detail)) = fragment_check(fragments, naming) {
         row(&mut worst, "fragments", status, &detail);
     }
 
@@ -360,6 +372,7 @@ pub fn dry_run(
         Arc::clone(&config_vars),
         &fragments,
         &config.state_file(),
+        &naming(config),
     );
 
     if let Some(sarif_path) = sarif {
@@ -541,7 +554,7 @@ pub fn macros(
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(packs) = front::load_packs(path, &fragments) else {
+            let Ok(packs) = front::load_packs(path, &fragments, &naming(config)) else {
                 return code;
             };
             crate::render::errln!(
@@ -677,7 +690,10 @@ fn render_macros(
 ///
 /// Goes through the same loader the runner uses, so the two cannot disagree
 /// about what the root contains.
-fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
+fn fragment_check(
+    root: Option<&Path>,
+    naming: &front::SourceNaming,
+) -> Option<(DoctorStatus, String)> {
     let root = root?;
     let shown = root.display();
     if !root.is_dir() {
@@ -686,7 +702,7 @@ fn fragment_check(root: Option<&Path>) -> Option<(DoctorStatus, String)> {
             format!("`{shown}` is not a directory — every `ref:` will read as unknown"),
         ));
     }
-    let corpus = match front::fragment_corpus(Some(root)) {
+    let corpus = match front::fragment_corpus(Some(root), naming) {
         Ok(corpus) => corpus,
         Err(err) => return Some((DoctorStatus::Warn, format!("`{shown}`: {err}"))),
     };

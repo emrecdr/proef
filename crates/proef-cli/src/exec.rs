@@ -31,8 +31,14 @@ use crate::{OutputFormat, registry, render};
 /// directory the shell happens to be in.
 pub const STATE_FILE: &str = ".proef-state.json";
 
-/// How many run records to keep (TECH-SPEC §11).
-const RUN_RETENTION: usize = 200;
+/// How many run records to keep when `[run] keep-runs` says nothing
+/// (TECH-SPEC §11).
+///
+/// Sized for an archive rather than a laptop, which is why it is now only the
+/// default: a record costs roughly its artifacts plus its event stream, and a
+/// suite re-run on every save reaches the ceiling in a day of work while
+/// wanting about five of them.
+pub(crate) const DEFAULT_KEEP_RUNS: usize = 200;
 
 /// A scenario tagged `@quarantine` runs and reports, but its test-failure does
 /// not gate the exit code (`RunSummary::exit_code_excluding`).
@@ -195,6 +201,7 @@ pub fn execute(
         Arc::clone(&config_vars),
         &fragments,
         &state_file,
+        &crate::commands::naming(config),
     ) {
         Ok(front) => front,
         Err(err) => return crate::commands::report_front_error(&err),
@@ -268,7 +275,7 @@ pub fn execute(
         None
     };
 
-    rotate_runs(&runs_root, front.run_id.as_ref());
+    rotate_runs(&runs_root, front.run_id.as_ref(), config.keep_runs());
     let run_dir = runs_root.join(front.run_id.as_ref());
     let artifacts_dir = run_dir.join("artifacts");
     if let Err(err) = std::fs::create_dir_all(&artifacts_dir) {
@@ -959,6 +966,7 @@ pub(crate) fn load_phase_feature(
         Arc::clone(config_vars),
         fragments,
         &config.state_file(),
+        &crate::commands::naming(config),
     )
     .map_err(|err| {
         crate::render::errln!("error: {label} feature failed to validate:");
@@ -1232,11 +1240,16 @@ fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
     }
 }
 
-/// Keep the newest [`RUN_RETENTION`] run records (uuid-v7 names sort by
-/// time). Only directories *named by a run id* are candidates — `runs-dir`
-/// may be `.` or otherwise shared with user content, and rotation must never
-/// touch anything proef did not create — and the in-flight run never is.
-fn rotate_runs(runs_dir: &Path, current_run: &str) {
+/// Keep the newest `keep` run records (uuid-v7 names sort by time). Only
+/// directories *named by a run id* are candidates — `runs-dir` may be `.` or
+/// otherwise shared with user content, and rotation must never touch anything
+/// proef did not create — and the in-flight run never is.
+///
+/// That safety rule has a cost worth knowing: `--run-id ci` writes a directory
+/// this will never delete, so a caller minting a fresh id per build accumulates
+/// records without bound whatever `keep` says. Deliberate — guessing at
+/// user-named directories is the worse failure — and documented in CONFIG.md.
+fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
     let Ok(entries) = std::fs::read_dir(runs_dir) else {
         return;
     };
@@ -1251,8 +1264,8 @@ fn rotate_runs(runs_dir: &Path, current_run: &str) {
         })
         .collect();
     dirs.sort();
-    if dirs.len() > RUN_RETENTION {
-        let excess = dirs.len() - RUN_RETENTION;
+    if dirs.len() > keep {
+        let excess = dirs.len() - keep;
         for dir in dirs.into_iter().take(excess) {
             let _ = std::fs::remove_dir_all(dir);
         }
@@ -1290,9 +1303,60 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{RunRecord, runner};
+    use super::{RunRecord, rotate_runs, runner};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
+
+    /// Rotation honours the configured budget, and still refuses to delete
+    /// anything it did not name.
+    ///
+    /// The two halves are asserted together because they trade against each
+    /// other: a budget tight enough to be useful on a laptop is exactly when a
+    /// rotation that guessed at directory names would start eating user
+    /// content, and `--run-id`-named records sit outside the budget for that
+    /// reason — which is a cost, not an oversight, so it is pinned here rather
+    /// than left to be rediscovered.
+    #[test]
+    fn rotation_keeps_the_budget_and_only_ever_deletes_what_it_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runs = tmp.path();
+        // uuid-v7 names sort by time, so these are oldest-first by construction.
+        let ids: Vec<String> = (0..5)
+            .map(|n| format!("0198f3c1-0000-7000-8000-00000000000{n}"))
+            .collect();
+        for id in &ids {
+            std::fs::create_dir_all(runs.join(id)).unwrap();
+        }
+        for foreign in ["ci", "nightly-42", "notes"] {
+            std::fs::create_dir_all(runs.join(foreign)).unwrap();
+        }
+
+        // Budget of 2, plus the in-flight run, over 5 existing records.
+        rotate_runs(runs, &ids[4], 2);
+
+        let left: Vec<String> = std::fs::read_dir(runs)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !left.contains(&ids[0]),
+            "oldest record must be rotated away"
+        );
+        assert!(
+            !left.contains(&ids[1]),
+            "second-oldest must be rotated away"
+        );
+        for kept in [&ids[2], &ids[3], &ids[4]] {
+            assert!(left.contains(kept), "{kept} must survive: {left:?}");
+        }
+        for foreign in ["ci", "nightly-42", "notes"] {
+            assert!(
+                left.contains(&foreign.to_owned()),
+                "`{foreign}` is not a generated run id — rotation must not touch it: {left:?}"
+            );
+        }
+    }
 
     /// A run that panics mid-flight must stay `RunCompletion::Incomplete`, not
     /// certify as complete. Nothing sets `panic = "abort"`, so unwind is live —

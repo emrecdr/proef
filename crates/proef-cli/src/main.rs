@@ -610,6 +610,7 @@ fn main() -> std::process::ExitCode {
                     config.fragments().as_deref(),
                     &config.secrets_file(),
                     config_error.as_deref(),
+                    &commands::naming(&config),
                 ),
             }
         }

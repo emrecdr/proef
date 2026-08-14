@@ -73,9 +73,13 @@ pub struct FrontEnd {
 /// listing a suite whose steps do not bind) would otherwise get nothing. The
 /// packs are complete whenever this returns: pack loading precedes binding and
 /// does not depend on it.
-pub fn load_packs(path: &Path, fragments: &FragmentCorpus) -> Result<PackSet, FrontError> {
+pub fn load_packs(
+    path: &Path,
+    fragments: &FragmentCorpus,
+    naming: &SourceNaming,
+) -> Result<PackSet, FrontError> {
     let kinds = registry::step_kinds();
-    Ok(load_pack_set(path, fragments, &kinds)?.1)
+    Ok(load_pack_set(path, fragments, &kinds, naming)?.1)
 }
 
 /// Read the configured fragment root into a [`FragmentCorpus`] — once per CLI
@@ -90,10 +94,13 @@ pub fn load_packs(path: &Path, fragments: &FragmentCorpus) -> Result<PackSet, Fr
 /// Built per invocation rather than cached in a static: `--watch` re-enters
 /// `execute` after every edit in the same process, and a corpus that outlived
 /// one run would serve the pre-edit corpus to the next.
-pub fn fragment_corpus(root: Option<&Path>) -> Result<FragmentCorpus, FrontError> {
+pub fn fragment_corpus(
+    root: Option<&Path>,
+    naming: &SourceNaming,
+) -> Result<FragmentCorpus, FrontError> {
     let kinds = registry::step_kinds();
     let (sources, read_errors) = match root {
-        Some(root) => fragment_sources(root, &kinds)?,
+        Some(root) => fragment_sources(root, &kinds, naming)?,
         None => (Vec::new(), Vec::new()),
     };
     Ok(FragmentCorpus::new(sources, &kinds).with_read_errors(read_errors))
@@ -110,9 +117,10 @@ fn load_pack_set(
     path: &Path,
     fragments: &FragmentCorpus,
     kinds: &[proef_core::engine::StepKindSpec],
+    naming: &SourceNaming,
 ) -> Result<(usize, PackSet), FrontError> {
     let mut sources = pack::builtin_sources();
-    sources.extend(project_packs(path)?);
+    sources.extend(project_packs(path, naming)?);
     let packs_loaded = sources.len();
     Ok((packs_loaded, pack::load(&sources, fragments, kinds)?))
 }
@@ -128,6 +136,7 @@ pub fn run(
     config_vars: Arc<BTreeMap<String, String>>,
     fragments: &FragmentCorpus,
     state_file: &Path,
+    naming: &SourceNaming,
 ) -> Result<FrontEnd, FrontError> {
     let kinds = registry::step_kinds();
     let kind_to_engine = registry::kind_to_engine();
@@ -147,7 +156,7 @@ pub fn run(
     );
     let world = World::new(GlobalStore::load(state_file)?);
 
-    let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds)?;
+    let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds, naming)?;
     let packs: Arc<PackSet> = Arc::new(loaded);
     let kind_to_engine = Arc::new(kind_to_engine);
 
@@ -156,7 +165,7 @@ pub fn run(
     let mut features: Vec<LoadedFeature> = Vec::new();
 
     for feature_path in discover_features(path)? {
-        let display = portable_display(&feature_path);
+        let display = naming.name(&feature_path);
         let text = std::fs::read_to_string(&feature_path).map_err(|err| {
             FrontError::Core(CoreError::system_with(
                 format!("cannot read feature file {display}"),
@@ -248,6 +257,89 @@ fn portable_display(path: &Path) -> String {
         display.replace('\\', "/")
     } else {
         display
+    }
+}
+
+/// How a discovered path is **spelled** in artifacts, sidecars, events,
+/// diagnostics and the console — the one naming boundary for every input kind
+/// the front end reads.
+///
+/// It exists because resolution and naming pull in opposite directions. A path
+/// written in `proef.toml` resolves against the config's directory, so it
+/// arrives here absolute; ADR-0010 makes the emitted `.hurl` a contract that two
+/// machines must reproduce byte-for-byte from identical inputs, and an absolute
+/// path breaks that by naming the machine. The rule is therefore the naming dual
+/// of [`ProjectConfig::resolve`](crate::config::ProjectConfig): *resolve against
+/// the project, then name against the project again.*
+///
+/// A path that is already relative is left exactly as it arrived — it is
+/// machine-independent already, and it is the spelling the caller typed, which
+/// their terminal can still open. Only an absolute path is rewritten, and only
+/// when it lies inside the project; a corpus genuinely outside the project has
+/// no project-relative name and keeps the one it has. This matches how the
+/// neighbouring tools anchor a report — pytest builds a nodeid relative to
+/// `rootdir`, Jest and Playwright report against `rootDir`.
+///
+/// Note what this is *not* used for: `DiskSourceProvider` (`proef lsp`) keeps
+/// absolute names on purpose, because it keys document identity on them and
+/// `documents::name_to_url` refuses a relative name.
+#[derive(Clone, Default)]
+pub struct SourceNaming {
+    /// The directory holding `proef.toml`, when the project has one. `None` —
+    /// no config in scope — means nothing to anchor against, which is also the
+    /// state the config-independent reference corpus runs in.
+    project: Option<PathBuf>,
+    /// The same directory with symlinks resolved, resolved **once** here rather
+    /// than per file. See [`Self::relative`] for what it is for.
+    canonical: Option<PathBuf>,
+}
+
+impl SourceNaming {
+    /// Anchor names at `project` (`ProjectConfig::root`).
+    #[must_use]
+    pub fn anchored_at(project: Option<&Path>) -> Self {
+        Self {
+            canonical: project.and_then(|project| project.canonicalize().ok()),
+            project: project.map(Path::to_path_buf),
+        }
+    }
+
+    /// The name `path` carries from here on.
+    fn name(&self, path: &Path) -> String {
+        self.relative(path)
+            .map_or_else(|| portable_display(path), |rest| portable_display(&rest))
+    }
+
+    /// `path` relative to the project, or `None` when it lies outside.
+    ///
+    /// Lexically first, which handles the escaping case for free:
+    /// `[run] suite = "../shared"` resolves to `<root>/../shared` — `Path::join`
+    /// appends without normalizing — so stripping the root returns
+    /// `../shared`, still machine-independent. It also keeps the caller's own
+    /// spelling when a suite is reached *through* a symlink, which resolving
+    /// first would replace with the link's target.
+    ///
+    /// Canonically second, for the one case the lexical pass cannot see: the
+    /// same file named two ways. `proef test /tmp/proj/suite` on macOS is
+    /// `/private/tmp/proj/suite` to `current_dir()`, so the prefixes differ by
+    /// an alias and the strip fails, leaving the absolute path this type exists
+    /// to remove. Comparing canonical forms settles identity rather than
+    /// spelling — the same two-step, in the same order, that `watch::same_file`
+    /// settled on after a relative `--config` silently matched nothing (R11-9).
+    /// Both sides are canonicalized or neither is, so a Windows `\\?\` prefix
+    /// appears on both and cancels instead of reaching the name.
+    fn relative(&self, path: &Path) -> Option<PathBuf> {
+        if let Some(project) = self.project.as_deref()
+            && let Ok(rest) = path.strip_prefix(project)
+        {
+            return Some(rest.to_path_buf());
+        }
+        let canonical = self.canonical.as_deref()?;
+        path.canonicalize()
+            .ok()?
+            .strip_prefix(canonical)
+            .ok()
+            .map(Path::to_path_buf)
     }
 }
 
@@ -462,6 +554,7 @@ pub fn fragment_files(
 pub fn fragment_sources(
     root: &Path,
     kinds: &[proef_core::engine::StepKindSpec],
+    naming: &SourceNaming,
 ) -> Result<(Vec<PackSource>, Vec<Diag>), FrontError> {
     if !root.exists() {
         return Err(FrontError::Core(CoreError::user(format!(
@@ -469,37 +562,18 @@ pub fn fragment_sources(
             root.display()
         ))));
     }
-    let (mut sources, read_errors) = read_corpus(fragment_files(root, kinds)?);
-    // Spell the names the way every other source is spelled: relative to where
-    // the command was run. Features and packs get that free — their paths are
-    // the ones the caller typed — but a fragment path is *derived* from
-    // `[run] fragments`, which resolves against the config file's directory and
-    // is therefore absolute. Left that way it reaches `Fragment::file`, and
-    // from there diagnostics, the artifact map and the run record, making a
-    // record machine-specific: two checkouts of one suite stop comparing equal,
-    // and a temp directory can end up in a durable artifact.
-    //
-    // Naming only. The path used to *read* the file stays absolute, which is
-    // what `proef lsp` needs to turn a source name back into a document URI.
-    if let Ok(cwd) = std::env::current_dir() {
-        for source in &mut sources {
-            if let Ok(rest) = Path::new(&source.name).strip_prefix(&cwd) {
-                source.name = portable_display(rest);
-            }
-        }
-    }
-    Ok((sources, read_errors))
+    Ok(read_corpus(fragment_files(root, kinds)?, naming))
 }
 
 /// Project packs: every `packs/*.yml|yaml` under the input directory (or the
 /// input file's parent) via [`pack_files`].
-fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
+fn project_packs(path: &Path, naming: &SourceNaming) -> Result<Vec<PackSource>, FrontError> {
     let base = if path.is_dir() {
         path.to_path_buf()
     } else {
         crate::fsutil::parent_dir(path)
     };
-    read_sources(pack_files(&base)?)
+    read_sources(pack_files(&base)?, naming)
 }
 
 /// Read discovered packs into [`PackSource`]s, failing on the first unreadable
@@ -509,7 +583,7 @@ fn project_packs(path: &Path) -> Result<Vec<PackSource>, FrontError> {
 /// which [`read_corpus`] handles instead — it collects per-file rather than
 /// failing, because a corpus is foreign by design. That difference is why the
 /// two are separate functions rather than one with a flag.
-fn read_sources(paths: Vec<PathBuf>) -> Result<Vec<PackSource>, FrontError> {
+fn read_sources(paths: Vec<PathBuf>, naming: &SourceNaming) -> Result<Vec<PackSource>, FrontError> {
     let mut sources = Vec::with_capacity(paths.len());
     for path in paths {
         let text = std::fs::read_to_string(&path).map_err(|err| {
@@ -519,7 +593,7 @@ fn read_sources(paths: Vec<PathBuf>) -> Result<Vec<PackSource>, FrontError> {
             ))
         })?;
         sources.push(PackSource {
-            name: portable_display(&path),
+            name: naming.name(&path),
             text: Arc::from(text.as_str()),
         });
     }
@@ -535,17 +609,17 @@ fn read_sources(paths: Vec<PathBuf>) -> Result<Vec<PackSource>, FrontError> {
 /// `flows`, which never looks at a fragment. Pack loading and the annotation
 /// scan both already collect per-file and never sink their siblings; this was
 /// the one stage that still did.
-fn read_corpus(paths: Vec<PathBuf>) -> (Vec<PackSource>, Vec<Diag>) {
+fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, Vec<Diag>) {
     let mut sources = Vec::with_capacity(paths.len());
     let mut errors = Vec::new();
     for path in paths {
         match std::fs::read_to_string(&path) {
             Ok(text) => sources.push(PackSource {
-                name: portable_display(&path),
+                name: naming.name(&path),
                 text: Arc::from(text.as_str()),
             }),
             Err(err) => errors.push(proef_core::pack::FragmentCorpus::unreadable_file(
-                &portable_display(&path),
+                &naming.name(&path),
                 &err.to_string(),
             )),
         }
@@ -607,7 +681,59 @@ pub fn warn_if_exclusive_matches_nothing(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{discover_features, pack_files};
+    use super::{SourceNaming, discover_features, pack_files};
+    use std::path::{Path, PathBuf};
+
+    /// The naming rule, case by case. Each line is a spelling that reaches a
+    /// durable artifact, so each is a contract rather than an implementation
+    /// detail (ADR-0010).
+    #[test]
+    fn a_name_is_never_absolute_while_the_file_is_inside_the_project() {
+        let project = PathBuf::from("/proj");
+        let naming = SourceNaming::anchored_at(Some(&project));
+
+        // The regression this fixes: `[run] suite` resolves against the config,
+        // so the path arrives absolute and used to be recorded that way.
+        assert_eq!(
+            naming.name(Path::new("/proj/suite/health.feature")),
+            "suite/health.feature"
+        );
+
+        // A relative path is machine-independent already, and it is the
+        // spelling the caller typed — their terminal can still open it.
+        assert_eq!(
+            naming.name(Path::new("suite/health.feature")),
+            "suite/health.feature"
+        );
+
+        // `[run] suite = "../shared"` resolves to `<root>/../shared` because
+        // `Path::join` appends without normalizing, so stripping the root
+        // leaves a `..` path — still machine-independent, which is the point.
+        assert_eq!(
+            naming.name(Path::new("/proj/../shared/x.feature")),
+            "../shared/x.feature"
+        );
+
+        // A corpus genuinely outside the project has no project-relative name,
+        // so it keeps the only one it has rather than being mangled.
+        assert_eq!(
+            naming.name(Path::new("/opt/corpus/x.hurl")),
+            "/opt/corpus/x.hurl"
+        );
+    }
+
+    /// No `proef.toml` in scope means nothing to anchor against — the state the
+    /// config-independent reference corpus runs in, where every path is already
+    /// relative and must stay exactly as it arrived.
+    #[test]
+    fn without_a_project_every_name_is_left_as_it_arrived() {
+        let naming = SourceNaming::anchored_at(None);
+        assert_eq!(
+            naming.name(Path::new("tests/features/a.feature")),
+            "tests/features/a.feature"
+        );
+        assert_eq!(naming.name(Path::new("/abs/a.feature")), "/abs/a.feature");
+    }
 
     /// Build output, vendored trees and dot-directories are never descended.
     /// The walk is unindexed and re-runs per LSP request, so entering `target/`

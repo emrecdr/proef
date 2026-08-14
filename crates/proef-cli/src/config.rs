@@ -80,6 +80,15 @@ pub struct RunTable {
     /// Run-record directory (default `.proef-runs`).
     #[serde(rename = "runs-dir")]
     pub runs_dir: Option<String>,
+    /// How many past run records to keep in `runs-dir`
+    /// (default [`exec::DEFAULT_KEEP_RUNS`](crate::exec::DEFAULT_KEEP_RUNS)).
+    ///
+    /// `0` keeps none but the run in flight, which is the setting for a suite
+    /// re-run on every save; the default suits an archive. Rotation only ever
+    /// deletes directories named by a generated run id, so a record written
+    /// under `--run-id <name>` is outside this budget entirely.
+    #[serde(rename = "keep-runs")]
+    pub keep_runs: Option<usize>,
     /// Default suite path used when `proef test` is given no path
     /// (falls back to the `tests/` convention when unset — see `suite`).
     pub suite: Option<String>,
@@ -335,6 +344,16 @@ impl ProjectConfig {
         self.resolve(self.run.runs_dir.as_deref().unwrap_or(".proef-runs"))
     }
 
+    /// How many past run records `runs-dir` retains (`[run] keep-runs`).
+    ///
+    /// Project-wide for the same reason `runs-dir` is: one project, one record
+    /// store, so one retention policy. `[env.<name>.run]` accepts only `jobs`
+    /// and `deny_unknown_fields` refuses this key there — a per-environment
+    /// retention would be a silent no-op on a shared directory.
+    pub fn keep_runs(&self) -> usize {
+        self.run.keep_runs.unwrap_or(crate::exec::DEFAULT_KEEP_RUNS)
+    }
+
     /// The persistent World (`.proef-state.json`, ADR-0005) — one project, one
     /// store. Anchored on the config so two working directories cannot silently
     /// become two Worlds with the same `saveAs: global` writing to each.
@@ -390,7 +409,13 @@ impl ProjectConfig {
 
     /// The directory relative config paths resolve against: the config file's
     /// own, since it may sit above the working directory.
-    fn root(&self) -> Option<&Path> {
+    ///
+    /// Public because it anchors the *naming* half of the same rule as well as
+    /// the resolution half. A path written in the config resolves against this
+    /// directory, so it comes back absolute — and `front::SourceNaming` spells
+    /// it relative to this same directory again before it reaches an artifact
+    /// or the run record. One anchor, both directions.
+    pub fn root(&self) -> Option<&Path> {
         self.path.as_deref().and_then(Path::parent)
     }
 
@@ -701,8 +726,29 @@ mod tests {
             toml::from_str::<ProjectConfig>("[env.prod.run]\nruns-dir = \"out\"\n").is_err(),
             "per-env runs-dir override must be rejected, not silently ignored"
         );
+        assert!(
+            toml::from_str::<ProjectConfig>("[env.prod.run]\nkeep-runs = 5\n").is_err(),
+            "retention follows runs-dir: one record store, one policy"
+        );
         // `jobs` remains the one env-overridable run field.
         let config = parse("[env.prod.run]\njobs = 3\n");
         assert_eq!(config.jobs(None, Some("prod")).unwrap(), 3);
+    }
+
+    /// `[run] keep-runs` makes the retention ceiling expressible. It was always
+    /// a policy — the number just lived in a `const` where no project could
+    /// reach it, and an adopting suite accumulated records for a day before
+    /// noticing there was a ceiling at all.
+    #[test]
+    fn keep_runs_defaults_and_accepts_zero() {
+        assert_eq!(
+            parse("").keep_runs(),
+            crate::exec::DEFAULT_KEEP_RUNS,
+            "an unset key keeps the archive-sized default"
+        );
+        assert_eq!(parse("[run]\nkeep-runs = 5\n").keep_runs(), 5);
+        // Zero is meaningful, not a mistake to reject: keep nothing but the run
+        // in flight. That is the setting a `--watch` loop wants.
+        assert_eq!(parse("[run]\nkeep-runs = 0\n").keep_runs(), 0);
     }
 }

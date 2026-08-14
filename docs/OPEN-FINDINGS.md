@@ -156,12 +156,17 @@ lower time.
 It fails at run time instead of at `--dry-run`: loud, but late, and the late half
 is what `--dry-run` exists to prevent.
 
-### R9-6 — provenance is cwd-dependent
+### R9-6 — provenance is cwd-dependent *(shipped)*
 
 Run from a subdirectory and `step_finished.fragment`, explain's `via`, JUnit and
 the diagnostics carry an absolute machine path; the record-portability claim holds
 only from the project root. Relativize against the config root rather than cwd —
 the same boundary `[run] fragments` already resolves against.
+
+**Shipped** as part of R12-1, which found the same defect reaching further than
+this entry describes — the safe case it names, running from the project root, had
+stopped being safe. The prescription here was the right one and is what landed:
+one anchor, the config directory, for every input kind.
 
 ### R9-7 — smaller edges, verified and recorded
 
@@ -309,6 +314,90 @@ error the previous code printed: a malformed config left `doctor` reporting on
 invented defaults and printing "all checks passed", exit 0. A `project:` row now,
 so it reaches `worst` and the exit code CI reads. Leniency still means *absent* —
 `doctor` must run outside a project — not *broken*.
+
+## Open — adoption report on 0.12.0 (ingested 2026-08-14)
+
+From a suite that ported to `ref:` at scale — 15 hurl files, 112 fragments, 21
+scenarios — and ran 0.12.0 as an installed release. Three items, each reproduced
+here against the tree before being written down. Two shipped in the same change;
+the third is recorded because the report's *diagnosis* was wrong even though its
+*observation* was right, and that distinction is the finding.
+
+### R12-1 — provenance named the machine that produced the record *(shipped)*
+
+`[run] suite` resolves against the config directory (R11-1), so a path-less
+`proef test` handed the front end an **absolute** path and every emitter printed
+it: the `.hurl` `# source:` header, `.map.json`'s `feature.file`, every
+`step_finished` event, the console, and pack diagnostics. Two checkouts of one
+suite stopped producing equal artifacts, which is exactly the property ADR-0010
+exists to guarantee.
+
+**Worse than R9-6 filed it.** R9-6 says the portability claim "holds only from
+the project root"; this reproduces *from* the project root with the config in it.
+R11-1 was the right fix — one resolution rule — but resolution produces absolute
+paths, and nothing was named at the other end.
+
+**Shipped, and R9-6 with it.** `front::SourceNaming` is the one naming boundary:
+resolve against the project, then name against the project again. A relative path
+is left exactly as it arrived (machine-independent already, and the caller's own
+spelling, which their terminal can open); an absolute one is spelled relative to
+the config directory when it lies inside it. This also replaced the fragment
+corpus's cwd-relative strip, which was a second anchor for the same question —
+the drift R9-6 predicted. The four ways to name one suite (derived, typed, typed
+absolute, from a subdirectory) now emit one artifact byte-for-byte, pinned by
+`crates/proef-cli/tests/provenance.rs`.
+
+Two limits, deliberate: a corpus genuinely outside the project keeps its absolute
+name, because no project-relative one exists; and `DiskSourceProvider`
+(`proef lsp`) still yields absolute names, because it keys document identity on
+them.
+
+### R12-2 — the run-record ceiling was a constant no project could reach *(shipped)*
+
+Retention was `const RUN_RETENTION = 200` with only `runs-dir` configurable, and
+artifacts are byte-identical across runs of an unchanged suite — so a suite
+re-run on every save accumulated identical bytes for a day before anything
+signalled a ceiling existed. `[run] keep-runs` makes the policy expressible; `0`
+keeps none but the run in flight.
+
+**The report's inference that artifacts should therefore not be stored is wrong,
+and it said so itself:** an old record's artifacts are what *that run executed*,
+and once the corpus changes `proef artifacts` no longer reproduces them. Bound
+the cost, do not drop the evidence.
+
+**Not closed by this, and not reported:** rotation only ever deletes directories
+named by a *generated* run id, so `--run-id <name>` records sit outside the
+budget entirely. A CI minting a fresh id per build accumulates without bound.
+Guessing at user-named directories is the worse failure — `runs-dir` may be `.`
+— so this stays, documented in CONFIG.md rather than fixed.
+
+### R12-3 — a `[run] setup` test failure is invisible to JUnit
+
+Reproduced: a setup feature whose *assertion* fails exits **2** with
+`summary: 0 passed · 0 failed · 0 skipped`, and `--output junit` writes an empty
+report, because the abort precedes the reporter. A CI reading JUnit sees nothing
+at all.
+
+**The exit code is not the defect.** ADR-0014 decided it explicitly — a setup
+failure maps to a user (2) or system (3) fault, never a test failure, "the same
+distinction Playwright draws between a clear setup error and a cryptic test
+failure". Changing it needs a superseding ADR, not a bug fix.
+
+**Three of the report's supporting claims do not survive checking**, recorded so
+they are not re-litigated:
+
+- *"teardown already has a distinct code; setup collapses both into one"* —
+  false. A teardown **assertion** failure exits 3, not 1: both phases map a test
+  failure onto a non-test code (`phase_failed(…, UserError)` / `…, SystemError`).
+  Neither distinguishes, by design.
+- *"appears in nothing `explain`/`diff` consume"* — false for `explain`, which
+  prints `failed (setup — excluded from the totals above)` with the assertion
+  detail and the artifact reference; the events are in the record with
+  `phase: setup`.
+- *"previously raised, still open"* — no entry in this file matches it.
+
+So the open item is narrow: **the phase reporters run only for the pool.** Worth
+fixing at the reporter, not the exit code.
 
 ---
 

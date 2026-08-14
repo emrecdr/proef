@@ -374,10 +374,10 @@ no engine sessions, no network.
 
 `.proef-runs/<run-id>/` → `events.jsonl` (the record, ADR-0008), `run.log` (console tee),
 `artifacts/*.hurl|.map.json|.vars`, `report.html`, `report.junit.xml` (when requested);
-200-run
-rotation (only uuid-named run records rotate; the in-flight run never does).
+`[run] keep-runs`-bounded
+rotation, default 200 (only uuid-named run records rotate; the in-flight run never does).
 `.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
-runner settings (`[run]` jobs/runs-dir/suite/fragments/setup/teardown/exclusive-tags,
+runner settings (`[run]` jobs/runs-dir/keep-runs/suite/fragments/setup/teardown/exclusive-tags,
 `[http]` timeouts, `[sla]` ceilings) + suite variables (`[url]`/`[vars]`) +
 per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
 
@@ -389,6 +389,17 @@ paths stay relative to the working directory. This covers `suite`, `fragments`,
 project is where its config is, not where the shell is, and running from a
 subdirectory reaches the same suite, records, World and secrets as running from the
 root.
+
+**And its naming dual:** a path that reaches an artifact, sidecar, event, report or
+diagnostic is *spelled* relative to that same directory (`front::SourceNaming`).
+Resolution makes a written path absolute; naming makes it project-relative again, so
+nothing proef records names the machine that produced it — the four ways to point at
+one suite (derived, typed, typed absolute, from a subdirectory) emit one artifact
+byte-for-byte, which is what ADR-0010's same-bytes contract means across machines. A
+path that arrives *relative* is recorded exactly as it arrived; one that lies outside
+the project keeps its absolute name, there being no project-relative spelling of it.
+`DiskSourceProvider` (`proef lsp`) is deliberately outside this: it keys document
+identity on absolute names.
 
 ## 12. Parallelism & cancellation
 
