@@ -57,6 +57,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Internal
 
+- **A hung test is now a five-minute failure, not a five-day zombie.** The
+  nextest config had `slow-timeout` with no `terminate-after`, which only
+  *labels* a test SLOW and never kills it — an `lsp_stdio` test wedged on an
+  unbounded `child.wait()` ran for five days with its `proef lsp` child alive.
+  Both layers fixed: the two bare `child.wait()` sites got the file's own
+  bounded-watchdog pattern (a server that fails to exit now fails the test in
+  10s, naming what did not exit), and the runner gained `terminate-after = 2`
+  (120s), sized from a cold-cache census of the whole suite (slowest ordinary
+  test: 5.1s). The `harness_` trio — which shells `cargo test` inside the test
+  and measured 216s on a fully cold cache — gets a per-test override to 600s,
+  the nextest docs' own tight-global-plus-overrides pattern. The
+  process-group kill (a spawned server dies with its test) was verified
+  empirically with a deliberately hung test holding a live child.
+
 - **Cleanup pass over this cycle's four PRs** (reuse/simplification/efficiency/
   altitude review). The corpus-bound *decision* moved into core as
   `pack::CorpusBudget` — it was abstracted in the CLI and hand-copied in the

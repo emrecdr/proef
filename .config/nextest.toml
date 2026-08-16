@@ -2,7 +2,26 @@
 
 [profile.default]
 fail-fast = false
-slow-timeout = { period = "60s" }
+# `terminate-after` is the half that makes the timeout real: without it,
+# nextest only *labels* a test SLOW every period and never kills anything — an
+# lsp_stdio test wedged on an unbounded child.wait() ran for five days under
+# the label-only config, keeping its `proef lsp` child alive. Sizing is from a
+# cold-cache census of the whole suite (2026-08-17): the slowest ordinary test
+# is 5.1s, so 120s is a >20x margin. Nextest SIGTERMs the whole process group
+# and SIGKILLs after a grace period, so a spawned server dies with its test —
+# verified empirically, not assumed: a deliberately hung test with a live
+# child timed out at period x terminate-after exactly, child dead.
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# The one genuinely-long-when-cold family, per the nextest docs' own pattern
+# (tight global, raise only for genuinely long tests): the `harness_` trio
+# shells `cargo test -p proef-harness` *inside* the test, which on a fully
+# cold cache is a real workspace build — measured at 216s once. Steady-state
+# they run in ~3s; the override only widens the kill ceiling, not the SLOW
+# label.
+[[profile.default.overrides]]
+filter = 'test(/^harness_/)'
+slow-timeout = { period = "60s", terminate-after = 10 }
 
 [profile.ci]
 retries = 0
