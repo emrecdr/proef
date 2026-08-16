@@ -223,13 +223,24 @@ pub fn parse_record(events: &[Event]) -> Record {
     }
 }
 
-/// Read a full run record from `<record_dir>/events.jsonl` — a thin file-IO
-/// wrapper over [`parse_record`]. Callers that also need the raw events
-/// (`report`) should read and parse the file themselves and call
-/// `parse_record` directly instead, rather than paying for — and risking a
-/// second, possibly-inconsistent view from — a second read of a live run.
+/// Read a full run record — a thin file-IO wrapper over [`parse_record`].
+/// Callers that also need the raw events (`report`) should read and parse the
+/// file themselves and call `parse_record` directly instead, rather than
+/// paying for — and risking a second, possibly-inconsistent view from — a
+/// second read of a live run.
+///
+/// Takes a record **directory** (`<record>/events.jsonl` is read) or the
+/// events **file** itself, under any name. The JSONL stream *is* the record
+/// (ADR-0008), so a `baseline.jsonl` a CI job downloaded from another branch's
+/// artifacts is as much a record as a directory this checkout wrote — `diff`
+/// accepts both spellings, and the two must mean the same thing here rather
+/// than each caller re-deciding.
 pub fn read_record(record_dir: &Path) -> Result<Record, String> {
-    let events_path = record_dir.join("events.jsonl");
+    let events_path = if record_dir.is_file() {
+        record_dir.to_path_buf()
+    } else {
+        record_dir.join("events.jsonl")
+    };
     let text = std::fs::read_to_string(&events_path)
         .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
     let events: Vec<Event> = text

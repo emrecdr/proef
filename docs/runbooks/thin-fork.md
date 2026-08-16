@@ -45,6 +45,45 @@ patched path, revert restored registry resolution. Elapsed ≈ one hurl rebuild.
 4. On each upstream release: rebase the branch onto the new tag, drop merged
    patches, re-run the canary, move the pins per IMPLEMENTATION-PLAN §7.
 
+## Pin-bump checklist — hurl 8.1 watch items (recorded 2026-08-16)
+
+Behavior changes already on hurl master that the canary **cannot see** —
+compile-and-test stays green while a guarantee shifts. Work each of these when
+the pins move to 8.1 (IMPLEMENTATION-PLAN §7); each names the fixture to add.
+
+The structural reason these need a list at all: the fragment scanner matches
+`OptionKind` **narrowly** (`if let OptionKind::Variable` — one arm, by design,
+so a semver-allowed variant addition is not a compile break). New `[Options]`
+in a fragment file are therefore silently *accepted*, not flagged. That is the
+right default for options with local effect, and exactly wrong for the first
+item below.
+
+- **`variables-file:` (upstream #2021) — check the sandbox before accepting
+  it.** Upstream opens the named file with a raw `File::open` against process
+  CWD, no `ContextDir` confinement. A fragment corpus is *foreign by design*,
+  so a corpus file saying `variables-file: ../../secrets.env` would read a
+  file outside the project on proef's behalf. On bump: decide refuse-or-flag
+  (`option_declared_twice`'s family machinery fits), and add a fixture — a
+  `.hurl` with an escaping `variables-file:` must not silently read the target.
+- **Cross-host cookie strip (upstream #5118, landed)** — a redirect across
+  hosts stops forwarding cookies. Fixture: a fixture-server redirect pair
+  asserting which cookies arrive, so the behavior flip shows up as a diff in
+  *our* suite rather than as a user's broken auth flow.
+- **`--file-root` resolution change (upstream #2830, watch)** — multipart
+  asset paths may move from CWD-relative to hurl-file-relative. This is
+  proef's multipart seam: artifacts are emitted to a different directory than
+  the pack they came from, so relative asset paths are exactly the bytes that
+  would change meaning. Fixture: a multipart scenario whose asset path only
+  resolves under one of the two rules.
+- **`Value::Duration` (upstream #3519, watch)** — a captured duration
+  re-rendered into a template may change its string form. Fixture: capture a
+  duration-typed value, splice it into a later request, snapshot the bytes.
+- **New `[Options]` variants generally** (`no-header`,
+  `http2-prior-knowledge`, `fail-with-body`, `no-jsonpath-coercion`, …): the
+  scanner accepts them silently (above). On bump, sweep the new variants once
+  and sort each into "local effect, fine" or "needs the `variables-file:`
+  treatment".
+
 ## Currently drafted patches
 
 - `docs/upstream/0001-run-entries-reusable-client.patch` — `run_entries`

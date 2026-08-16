@@ -446,6 +446,62 @@ fn diff_reports_regressions_and_fixes_between_runs() {
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(stdout.contains("1 fixed"), "{stdout}");
+
+    // The CI-baseline flow (R3-4): the base is a *downloaded file*, not a run
+    // in this checkout's runs-dir — outside the project, under a name the
+    // download step chose. The JSONL stream is the record (ADR-0008), so the
+    // file must mean exactly what the run id means. Before this, every
+    // argument was joined onto runs-dir, so a path answered with
+    // `.proef-runs/<path>/events.jsonl: No such file` — the argument mangled
+    // into the complaint.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let baseline = elsewhere.path().join("main-branch-baseline.jsonl");
+    std::fs::copy(
+        cwd.path().join(".proef-runs/run-base/events.jsonl"),
+        &baseline,
+    )
+    .unwrap();
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "diff",
+            baseline.to_str().unwrap(),
+            "run-new",
+            "--fail-on-regression",
+        ])
+        .assert()
+        .code(1); // same regression, certified from the downloaded baseline
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(stdout.contains("1 regressed"), "{stdout}");
+    assert!(
+        stdout.contains("main-branch-baseline.jsonl"),
+        "the header must name the file the caller passed: {stdout}"
+    );
+
+    // A record *directory* works the same way — the other spelling a script
+    // has in hand after an artifact download preserves the layout.
+    proef_in(cwd.path(), &fixture)
+        .args([
+            "diff",
+            cwd.path().join(".proef-runs/run-base").to_str().unwrap(),
+            "run-new",
+        ])
+        .assert()
+        .code(0);
+
+    // A path that does not exist names itself — never a runs-dir join of it.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["diff", "no/such/baseline.jsonl", "run-new"])
+        .assert()
+        .code(2);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("`no/such/baseline.jsonl` does not exist"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains(".proef-runs/no/such"),
+        "the complaint must not mangle the path into runs-dir: {stderr}"
+    );
 }
 
 /// `proef report` writes a self-contained HTML file into the run dir whose

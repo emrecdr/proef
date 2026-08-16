@@ -98,6 +98,20 @@ jobs:
           fi
           cargo auditable build --release --locked -p proef --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
 
+      # The libcurl actually linked into THIS artifact, in the release log.
+      # RUSTSEC carries no advisories for CVEs in a *-sys-bundled C library, so
+      # cargo-audit/deny will never flag a stale bundled curl — when a curl CVE
+      # batch lands, this line is what a responder greps instead of guessing
+      # from lockfiles. Every matrix row's binary runs on its own builder
+      # (the x86_64-apple cross runs under Rosetta); `|| true` keeps a future
+      # genuinely-cross target from wedging the release over a missing print.
+      - name: Report linked libcurl
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/proef"
+          [[ "${{ matrix.target }}" == *windows* ]] && bin="${bin}.exe"
+          "$bin" doctor || true
+
       - name: Stage artifact
         id: stage
         shell: bash

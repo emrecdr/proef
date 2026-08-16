@@ -141,6 +141,20 @@ regressions" against a cancelled run, since a regression could be hiding among
 the scenarios it never reached. The three commands' differing treatment of
 `cancelled` is a deliberate choice, not an inconsistency.
 
+`proef diff` takes each side as a **run id, a record directory, or an events
+`.jsonl` file** — the stream is the record, so a file means the same thing
+under any name. That third form is the CI baseline flow: upload
+`.proef-runs/<id>/events.jsonl` as an artifact on your main branch, download
+it in the PR job as (say) `baseline.jsonl`, then
+
+```console
+$ proef test tests/features --run-id pr
+$ proef diff baseline.jsonl pr --fail-on-regression   # exit 1 on passed → failed
+```
+
+and a scenario that regressed against main fails the PR without a run record
+store shared between jobs.
+
 `proef diff` keys steps by `(text, ordinal)` so that line shifts don't lie and
 repeated steps stay distinct. The trade-off is positional: if a scenario loses
 an earlier duplicate of a step, every later instance shifts down one ordinal,

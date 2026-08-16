@@ -205,9 +205,11 @@ enum Command {
     },
     /// Compare two run records: regressions, fixes, flakiness, perf deltas
     Diff {
-        /// Base run id (default: the previous run)
+        /// Base: a run id, a record directory, or an events .jsonl file
+        /// (default: the previous run)
         base: Option<String>,
-        /// New run id (default: the latest run)
+        /// New: a run id, a record directory, or an events .jsonl file
+        /// (default: the latest run)
         new: Option<String>,
         /// Exit 1 when a scenario regressed (passed → failed), for CI gating
         #[arg(long)]
