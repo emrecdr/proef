@@ -46,6 +46,15 @@ fn ident(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// Zero or one element: the empty string means "this fragment has none".
+fn one(value: &str) -> Vec<String> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        vec![value.to_owned()]
+    }
+}
+
 /// The corpus half's grammar: one fragment per generated file, described
 /// entirely by the fields the core reasons about.
 fn synthetic_scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
@@ -61,9 +70,7 @@ fn synthetic_scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
             name: name.to_owned(),
             text: line.to_owned(),
             line: index + 1,
-            placeholders: (!placeholder.is_empty())
-                .then(|| vec![placeholder.to_owned()])
-                .unwrap_or_default(),
+            placeholders: one(placeholder),
             // Mapped onto the real vocabulary rather than passed through: a
             // family only the engine knows *silences* the clash check by
             // design, so free-form strings would spend the budget proving the
@@ -74,9 +81,7 @@ fn synthetic_scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
                 .map(|b| OPTION_FAMILIES[b as usize % OPTION_FAMILIES.len()].to_owned())
                 .into_iter()
                 .collect(),
-            supplied_variables: (!supplied.is_empty())
-                .then(|| vec![supplied.to_owned()])
-                .unwrap_or_default(),
+            supplied_variables: one(supplied),
         });
     }
     Ok(file)

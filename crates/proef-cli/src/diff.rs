@@ -123,9 +123,9 @@ fn resolve_pair(
 ) -> Result<(PathBuf, PathBuf), String> {
     let missing = || format!("no run records under {}", root.display());
     match (base, new) {
-        (Some(base), Some(new)) => Ok((resolve_one(root, base)?, resolve_one(root, new)?)),
+        (Some(base), Some(new)) => Ok((record::locate(root, base)?, record::locate(root, new)?)),
         (Some(base), None) => Ok((
-            resolve_one(root, base)?,
+            record::locate(root, base)?,
             record::latest_run(root).ok_or_else(missing)?,
         )),
         (None, _) => {
@@ -142,39 +142,6 @@ fn resolve_pair(
             Ok((prev, latest))
         }
     }
-}
-
-/// One positional, resolved to a record directory: a run id under `root`, or a
-/// **path** — the record directory itself, or its `events.jsonl`.
-///
-/// The path form is what a CI baseline flow actually has in hand: a record
-/// downloaded from the base branch's artifacts lands wherever the download
-/// step put it, not under this checkout's `runs-dir`. Before this, every
-/// argument was `root.join(arg)`, so a path answered with
-/// `.proef-runs/.proef-runs/…/events.jsonl/events.jsonl: No such file` — the
-/// argument mangled into the complaint, and nothing saying paths were the
-/// problem.
-///
-/// Disambiguation is existence-on-disk, tried as a path first: a run id that
-/// *also* exists as a local file would be pathological (`runs-dir` may be `.`,
-/// but run dirs are uuid-named). A file is passed through as-is — a downloaded
-/// baseline keeps whatever name the download step gave it, and
-/// [`record::read_record`] takes the events file directly — and so is a
-/// directory, which is the record-dir form the run ids resolve to.
-fn resolve_one(root: &Path, arg: &str) -> Result<PathBuf, String> {
-    let as_path = Path::new(arg);
-    if as_path.exists() {
-        return Ok(as_path.to_path_buf());
-    }
-    // Not on disk: a run id under runs-root — unless it was *spelled* as a
-    // path, where "id under root" is never what the caller meant and the
-    // joined complaint would name a directory they did not type.
-    if arg.contains(['/', '\\']) {
-        return Err(format!(
-            "`{arg}` does not exist (looked for a run directory or an events .jsonl file)"
-        ));
-    }
-    Ok(root.join(arg))
 }
 
 /// A `(file, scenario)` key rendered as `file :: scenario`.

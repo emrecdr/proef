@@ -283,7 +283,11 @@ fn portable_display(path: &Path) -> String {
 /// Note what this is *not* used for: `DiskSourceProvider` (`proef lsp`) keeps
 /// absolute names on purpose, because it keys document identity on them and
 /// `documents::name_to_url` refuses a relative name.
-#[derive(Clone, Default)]
+// No `Default`: an un-anchored naming is a compile-passing wrong value for a
+// call site that skipped `commands::naming`, and nothing legitimate wants one
+// — the no-config state goes through `anchored_at(None)`, on purpose, where
+// it is visible.
+#[derive(Clone)]
 pub struct SourceNaming {
     /// The directory holding `proef.toml`, when the project has one. `None` —
     /// no config in scope — means nothing to anchor against, which is also the
@@ -329,6 +333,15 @@ impl SourceNaming {
     /// Both sides are canonicalized or neither is, so a Windows `\\?\` prefix
     /// appears on both and cancels instead of reaching the name.
     fn relative(&self, path: &Path) -> Option<PathBuf> {
+        // A relative path is kept exactly as it arrived — the documented
+        // contract, and the common case (every typed-relative suite path
+        // reaches here). Without this, such paths fell through to the
+        // canonicalize fallback below: a syscall chain per discovered file to
+        // recompute a spelling the caller already typed — and for a `../`
+        // path, to *rewrite* it, against the contract.
+        if path.is_relative() {
+            return None;
+        }
         if let Some(project) = self.project.as_deref()
             && let Ok(rest) = path.strip_prefix(project)
         {
@@ -617,16 +630,21 @@ fn read_sources(paths: Vec<PathBuf>, naming: &SourceNaming) -> Result<Vec<PackSo
 /// is read whole and then copied into an `Arc<str>`. The size is checked from
 /// the directory entry, so an oversized file is never allocated at all.
 fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, Vec<Diag>) {
+    use proef_core::pack::{Admit, CorpusBudget};
+
     let mut sources = Vec::with_capacity(paths.len());
     let mut errors = Vec::new();
-    let mut budget = proef_core::pack::FragmentCorpus::MAX_TOTAL_BYTES;
+    // The decision (skip-without-charging, stop-not-skip on exhaustion) lives
+    // in core with the constants it binds; only the *measurement* is ours —
+    // the directory entry, so an oversized file is never allocated at all.
+    let mut budget = CorpusBudget::new();
     for path in paths {
         let name = naming.name(&path);
         // An unstattable file is left to the read below to report: it fails
         // there with the real cause, and reporting "cannot size" first would
         // explain the same file twice in different words.
         let size = std::fs::metadata(&path).map_or(0, |meta| meta.len());
-        match admit(&name, size, budget) {
+        match budget.admit(&name, size) {
             Admit::Skip(diag) => {
                 errors.push(diag);
                 continue;
@@ -635,7 +653,7 @@ fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, 
                 errors.push(diag);
                 break;
             }
-            Admit::Read { remaining } => budget = remaining,
+            Admit::Read => {}
         }
         match std::fs::read_to_string(&path) {
             Ok(text) => sources.push(PackSource {
@@ -649,40 +667,6 @@ fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, 
         }
     }
     (sources, errors)
-}
-
-/// What the corpus bound says about one file, decided before it is read.
-enum Admit {
-    /// Read it; `remaining` is the budget left afterwards.
-    Read { remaining: u64 },
-    /// Leave this one out and carry on with the rest.
-    Skip(Diag),
-    /// Stop reading the corpus here.
-    Stop(Diag),
-}
-
-/// The bound itself, as a pure decision over a name and a size.
-///
-/// Split from the reading so it can be exercised without writing 64 MiB to
-/// disk: the budget's whole job is to trip on an accumulation, and a test that
-/// had to build one would be slow enough that nobody would keep it.
-///
-/// An oversized file is skipped *without* charging the budget. It was never
-/// read, so charging for it would let one bad file silently shorten the corpus
-/// behind it — turning a per-file problem into a whole-corpus one.
-fn admit(name: &str, size: u64, budget: u64) -> Admit {
-    use proef_core::pack::FragmentCorpus;
-
-    if size > FragmentCorpus::MAX_FILE_BYTES {
-        return Admit::Skip(FragmentCorpus::oversized_file(name, size));
-    }
-    match budget.checked_sub(size) {
-        Some(remaining) => Admit::Read { remaining },
-        // Stop rather than skip-and-continue: past the budget every later file
-        // would report the same thing, and a corpus that is too big is one
-        // finding, not one per file.
-        None => Admit::Stop(FragmentCorpus::corpus_budget_exhausted(name)),
-    }
 }
 
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
@@ -739,50 +723,8 @@ pub fn warn_if_exclusive_matches_nothing(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{Admit, SourceNaming, admit, discover_features, pack_files};
-    use proef_core::pack::FragmentCorpus;
+    use super::{SourceNaming, discover_features, pack_files};
     use std::path::{Path, PathBuf};
-
-    /// The corpus bound, exhaustively — the accumulation case included, which
-    /// an end-to-end test could only reach by writing 64 MiB.
-    #[test]
-    fn the_corpus_bound_skips_one_huge_file_and_stops_on_an_accumulation() {
-        let budget = FragmentCorpus::MAX_TOTAL_BYTES;
-
-        // Ordinary file: read, budget charged.
-        let Admit::Read { remaining } = admit("a.hurl", 1024, budget) else {
-            panic!("an ordinary file must be read")
-        };
-        assert_eq!(remaining, budget - 1024);
-
-        // Exactly at the per-file cap is still fine — the cap is a ceiling, not
-        // an exclusive bound, so a file sized to it is not refused by rounding.
-        assert!(matches!(
-            admit("edge.hurl", FragmentCorpus::MAX_FILE_BYTES, budget),
-            Admit::Read { .. }
-        ));
-
-        // One byte over is skipped, and the rest of the corpus carries on.
-        let Admit::Skip(diag) = admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1, budget)
-        else {
-            panic!("an oversized file must be skipped")
-        };
-        assert_eq!(diag.code, "proef::pack::oversized_fragment_file");
-
-        // An accumulation of legal files stops the read, naming where. The
-        // sorted walk makes that name stable across runs.
-        let Admit::Stop(diag) = admit("last.hurl", 2, 1) else {
-            panic!("an exhausted budget must stop the read")
-        };
-        assert_eq!(diag.code, "proef::pack::fragment_corpus_too_large");
-
-        // A skipped file does not charge the budget: it was never read, and
-        // charging for it would let one bad file shorten the corpus behind it.
-        assert!(matches!(
-            admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1, 8),
-            Admit::Skip(_)
-        ));
-    }
 
     /// The naming rule, case by case. Each line is a spelling that reaches a
     /// durable artifact, so each is a contract rather than an implementation

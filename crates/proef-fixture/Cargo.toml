@@ -14,6 +14,10 @@ tiny_http = { workspace = true }
 # jiff (never chrono, per CLAUDE.md): the /health identity reports when it
 # answered. Only the dev fixture reads a clock; the sans-IO core never does.
 jiff = { workspace = true }
+# The introspection route reflects the bearer base64-encoded (the S1 shape).
+# Already compiled into every workspace build via proef-core, so this edge
+# costs nothing at build time.
+base64 = { workspace = true }
 
 [lints]
 workspace = true

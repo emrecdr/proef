@@ -45,20 +45,12 @@ impl Redactions {
     /// ignored — nothing to leak).
     pub fn new(values: impl IntoIterator<Item = String>) -> Self {
         let mut needles: Vec<String> = Vec::new();
-        let push = |needle: String, needles: &mut Vec<String>| {
-            if !needle.is_empty() && !needles.contains(&needle) {
-                needles.push(needle);
-            }
-        };
-        for value in values {
-            if value.is_empty() {
-                continue;
-            }
-            for form in derived_forms(&value) {
-                push(form, &mut needles);
-            }
-            push(value, &mut needles);
+        for value in values.into_iter().filter(|value| !value.is_empty()) {
+            needles.extend(derived_forms(&value));
+            needles.push(value);
         }
+        needles.sort_unstable();
+        needles.dedup();
         // Longest first: the unpadded base64 form is a prefix of the padded
         // one, and replacing the short needle first would leave a dangling
         // `***==`. Harmless to the invariant, confusing to a reader.
@@ -68,9 +60,30 @@ impl Redactions {
 
     /// `text` with every known secret value replaced.
     pub fn apply(&self, text: &str) -> String {
-        let mut out = text.to_owned();
-        for value in &self.0 {
-            out = out.replace(value, "***");
+        match self.applied(text) {
+            Some(redacted) => redacted,
+            None => text.to_owned(),
+        }
+    }
+
+    /// `Some(redacted)` when a needle occurred, `None` when the text is clean.
+    ///
+    /// The split exists for the miss path, which is nearly every call: this
+    /// runs per string field per event, inside the sink and **under the
+    /// reporter-stack mutex**, and deriving encoded forms multiplied the
+    /// needle count roughly ninefold per secret. A `contains` probe is a scan
+    /// with no allocation; `replace` allocates a fresh copy of the whole text
+    /// per needle whether or not anything matched. On a clean field —
+    /// a secret in a rendered string is the exceptional case — this now
+    /// allocates nothing, and [`Self::apply_event`] can hand the original
+    /// `Arc` back instead of re-wrapping an identical string per field.
+    fn applied(&self, text: &str) -> Option<String> {
+        let mut out: Option<String> = None;
+        for needle in &self.0 {
+            let haystack = out.as_deref().unwrap_or(text);
+            if haystack.contains(needle.as_str()) {
+                out = Some(haystack.replace(needle.as_str(), "***"));
+            }
         }
         out
     }
@@ -85,7 +98,13 @@ impl Redactions {
     /// the invariant (ADR-0005: secrets reach **no** sink) cannot silently
     /// erode as the schema grows.
     pub fn apply_event(&self, event: &Event) -> Event {
-        let s = |text: &Arc<str>| -> Arc<str> { Arc::from(self.apply(text)) };
+        // Clean fields — nearly all of them — keep their original `Arc`.
+        let s = |text: &Arc<str>| -> Arc<str> {
+            match self.applied(text) {
+                Some(redacted) => Arc::from(redacted),
+                None => Arc::clone(text),
+            }
+        };
         match event {
             Event::RunStarted { schema, run_id } => Event::RunStarted {
                 schema: *schema,
@@ -232,7 +251,12 @@ fn hex(bytes: &[u8], upper: bool) -> String {
 /// — the form `encodeURIComponent`, Python's `quote`, and Go's `QueryEscape`
 /// all emit. Hand-rolled rather than a dependency: it is ten lines, and the
 /// crate that does it only emits one variant anyway.
-fn percent_encode(value: &str) -> String {
+///
+/// Public because `proef-lsp` encodes document-URI path segments with the
+/// *same* unreserved set — it carried a byte-identical copy until the two were
+/// folded, and a one-character drift between them would silently change either
+/// redaction needles or LSP URIs. One character set, one function.
+pub fn percent_encode(value: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -626,25 +650,13 @@ mod tests {
                 prefix in "[a-z]{0,10}",
                 suffix in "[a-z]{0,10}",
             ) {
-                use base64::Engine as _;
-                use base64::engine::general_purpose as b64;
-
                 let redactions = Redactions::new([secret.clone()]);
-                let bytes = secret.as_bytes();
-                let Ok(quoted) = serde_json::to_string(&secret) else {
-                    unreachable!("a string always serializes")
-                };
-                let forms = [
-                    b64::STANDARD.encode(bytes),
-                    b64::STANDARD_NO_PAD.encode(bytes),
-                    b64::URL_SAFE.encode(bytes),
-                    b64::URL_SAFE_NO_PAD.encode(bytes),
-                    super::super::hex(bytes, false),
-                    super::super::hex(bytes, true),
-                    super::super::percent_encode(&secret),
-                    quoted[1..quoted.len() - 1].to_owned(),
-                ];
-                for form in &forms {
+                // The production list itself, not a hand-copy of it: a form
+                // added to `derived_forms` later is then tested the moment it
+                // exists, instead of silently passing on a subset. Oracle
+                // independence lives elsewhere — the end-to-end test pins the
+                // exact base64 literal a real server reflects.
+                for form in super::super::derived_forms(&secret) {
                     let rendered = format!("{prefix}{form}{suffix}");
                     let redacted = redactions.apply(&rendered);
                     prop_assert!(

@@ -57,6 +57,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Internal
 
+- **Cleanup pass over this cycle's four PRs** (reuse/simplification/efficiency/
+  altitude review). The corpus-bound *decision* moved into core as
+  `pack::CorpusBudget` — it was abstracted in the CLI and hand-copied in the
+  LSP, agreeing by copy rather than by construction; both readers now share it
+  and only measurement stays reader-local. `Redactions` stopped allocating on
+  the miss path (nearly every call: per string field per event under the
+  reporter-stack mutex, with the needle list ~9× larger since the encoded
+  forms) — clean fields now hand back their original `Arc`. A relative source
+  path is left exactly as it arrived, per its documented contract — it had
+  been falling through to a per-file canonicalize that could rewrite a
+  `../`-typed spelling. The LSP's percent-encoder folded onto core's
+  (byte-identical copies, one character set to drift). The fixture's
+  hand-rolled base64 became the crate call — its dependency-surface rationale
+  died when this same cycle made `base64` a workspace-wide compile. `diff`'s
+  path-or-id resolution moved beside its sibling in `record`. A `deny.toml`
+  home for the curl floor was tried and **reverted by mutation test**:
+  cargo-deny 0.19.8 mismatches build-metadata versions (`curl-sys@<0.4.90`
+  banned the *good* `0.4.90+curl-8.21.0`); the floor stays a unit test, now
+  scanning every lockfile entry rather than the first.
+
 - **The bundled libcurl cannot silently regress under the June-2026 CVE
   batch.** `curl-sys 0.4.90+curl-8.21.0` in the lockfile is past the batch —
   but only as a transitive accident of resolution, and the usual gates are
