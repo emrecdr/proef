@@ -113,6 +113,29 @@ fn stdio_server_exits_after_shutdown_and_exit() {
     }
 }
 
+/// Bounded wait for the server to exit after the `exit` notification.
+///
+/// An unbounded `child.wait()` here is how a hang becomes invisible rather
+/// than a failure: a server that never exited left this test — and its
+/// `proef lsp` child — alive for **five days**, because the runner's
+/// slow-timeout only labels a test SLOW; without `terminate-after` nothing
+/// ever kills it. Ten seconds matches the shutdown watchdog in the exit-
+/// contract test above; that watchdog stays separate because it *asserts*
+/// the exit status and drains stderr — this is only bounded cleanup for
+/// tests whose assertions already happened.
+fn reap(mut child: std::process::Child) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if child.try_wait().unwrap().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("proef lsp did not exit within 10s of the exit notification");
+}
+
 /// A `file:` URI for `path`, valid on both platform families.
 ///
 /// Windows paths use `\\`, which is an invalid escape inside a JSON string —
@@ -269,7 +292,7 @@ fn the_server_roots_at_the_workspace_the_client_announces() {
     );
     write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
     drop(stdin);
-    let _ = child.wait();
+    reap(child);
 }
 
 /// Go-to-definition on a `ref:` line reaches the `.hurl` file, with the
@@ -449,5 +472,5 @@ fn definition_on_a_ref_line_resolves_through_the_configured_fragment_root() {
     );
     write_msg(&mut stdin, r#"{"jsonrpc":"2.0","method":"exit"}"#);
     drop(stdin);
-    let _ = child.wait();
+    reap(child);
 }
