@@ -333,19 +333,23 @@ impl SourceNaming {
     /// Both sides are canonicalized or neither is, so a Windows `\\?\` prefix
     /// appears on both and cancels instead of reaching the name.
     fn relative(&self, path: &Path) -> Option<PathBuf> {
-        // A relative path is kept exactly as it arrived — the documented
-        // contract, and the common case (every typed-relative suite path
-        // reaches here). Without this, such paths fell through to the
-        // canonicalize fallback below: a syscall chain per discovered file to
-        // recompute a spelling the caller already typed — and for a `../`
-        // path, to *rewrite* it, against the contract.
-        if path.is_relative() {
-            return None;
-        }
         if let Some(project) = self.project.as_deref()
             && let Ok(rest) = path.strip_prefix(project)
         {
             return Some(rest.to_path_buf());
+        }
+        // A relative path that did not strip is kept exactly as it arrived —
+        // the documented contract, and the common case (every typed-relative
+        // suite path reaches here). The guard sits *after* the lexical strip,
+        // not before it: `is_relative` is platform-relative — on Windows a
+        // rootful, prefix-less `/proj/x` counts as relative — while
+        // `strip_prefix` is purely lexical and must keep working on every
+        // spelling. What the guard fences off is only the canonicalize
+        // fallback below: a syscall chain per discovered file to recompute a
+        // spelling the caller already typed — and for a `../` path, to
+        // *rewrite* it, against the contract.
+        if path.is_relative() {
+            return None;
         }
         let canonical = self.canonical.as_deref()?;
         path.canonicalize()
