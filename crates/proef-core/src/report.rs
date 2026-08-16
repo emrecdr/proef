@@ -15,14 +15,55 @@ use std::sync::{Arc, Mutex};
 use crate::event::{Event, EventSink};
 use crate::step::Status;
 
-/// Known secret values, replaced by `***` in every rendered string.
+/// Known secret values, replaced by `***` in every rendered string —
+/// **including their common encoded forms**.
+///
+/// Exact-match on the raw bytes is not enough, demonstrated live: a server
+/// that reflects a bearer token base64-encoded (an OAuth introspection
+/// endpoint, a debug echo, a JWT claim) puts `dG9r…` into an assert-failure
+/// detail, the raw needle never fires, and a string trivially decodable back
+/// to the live credential lands in the console and `events.jsonl` — the
+/// retained record CI uploads. GitHub's own masking documents the same
+/// limitation and the same remedy: register each transformed value as a
+/// needle too. So [`Self::new`] derives, per secret: base64 (standard and
+/// URL-safe alphabets, with and without padding), lowercase and uppercase
+/// hex, RFC 3986 percent-encoding, and the JSON-string escape. Derivation
+/// happens *here* so every construction site — the CLI sink, the engine's
+/// internal renderer, TAP — is covered by construction rather than by each
+/// remembering.
+///
+/// This cannot be complete, and does not claim to be: a secret reflected
+/// hashed, split, or re-encrypted matches no needle list. The set covers the
+/// reversible transforms that actually occur at HTTP boundaries.
+/// Over-redaction is the accepted failure direction — a false `***` in a
+/// detail string costs a puzzled reader, a false miss costs a credential.
 #[derive(Debug, Clone, Default)]
 pub struct Redactions(Vec<String>);
 
 impl Redactions {
-    /// Redact these values (empty values are ignored — nothing to leak).
+    /// Redact these values and their derived encoded forms (empty values are
+    /// ignored — nothing to leak).
     pub fn new(values: impl IntoIterator<Item = String>) -> Self {
-        Self(values.into_iter().filter(|v| !v.is_empty()).collect())
+        let mut needles: Vec<String> = Vec::new();
+        let push = |needle: String, needles: &mut Vec<String>| {
+            if !needle.is_empty() && !needles.contains(&needle) {
+                needles.push(needle);
+            }
+        };
+        for value in values {
+            if value.is_empty() {
+                continue;
+            }
+            for form in derived_forms(&value) {
+                push(form, &mut needles);
+            }
+            push(value, &mut needles);
+        }
+        // Longest first: the unpadded base64 form is a prefix of the padded
+        // one, and replacing the short needle first would leave a dangling
+        // `***==`. Harmless to the invariant, confusing to a reader.
+        needles.sort_by_key(|needle| std::cmp::Reverse(needle.len()));
+        Self(needles)
     }
 
     /// `text` with every known secret value replaced.
@@ -136,6 +177,75 @@ impl Redactions {
             Event::RunFinished { .. } => event.clone(),
         }
     }
+}
+
+/// Every *encoded* form of `value` a needle list can catch: the reversible
+/// transforms that occur at HTTP boundaries. Forms equal to the raw value —
+/// the percent-encoding of a secret with no reserved characters, the JSON
+/// escape of one with nothing to escape — are filtered by the caller's dedup.
+///
+/// Deliberately not here: hashes (not reversible — the credential is not in
+/// the record), gzip/deflate (never rendered as text), double encodings
+/// (base64-of-base64 starts an unbounded tower; one level is what echo
+/// endpoints produce).
+fn derived_forms(value: &str) -> Vec<String> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose as b64;
+
+    let bytes = value.as_bytes();
+    let mut forms = vec![
+        b64::STANDARD.encode(bytes),
+        b64::STANDARD_NO_PAD.encode(bytes),
+        b64::URL_SAFE.encode(bytes),
+        b64::URL_SAFE_NO_PAD.encode(bytes),
+        hex(bytes, false),
+        hex(bytes, true),
+        percent_encode(value),
+    ];
+    // The JSON string escape (`"` → `\"`, `\` → `\\`, control chars → `\uXXXX`)
+    // — what the secret looks like *inside* a rendered JSON body. serde_json
+    // wraps in quotes; the needle is the inner text.
+    if let Ok(quoted) = serde_json::to_string(value) {
+        forms.push(quoted[1..quoted.len() - 1].to_owned());
+    }
+    forms
+}
+
+/// Hex encoding of `bytes`, in one case. Both cases are needles — encoders
+/// split roughly evenly on this, unlike percent-encoding where uppercase is
+/// near-universal.
+fn hex(bytes: &[u8], upper: bool) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        if upper {
+            let _ = write!(out, "{byte:02X}");
+        } else {
+            let _ = write!(out, "{byte:02x}");
+        }
+    }
+    out
+}
+
+/// RFC 3986 percent-encoding: everything outside the unreserved set
+/// (`ALPHA / DIGIT / "-" / "." / "_" / "~"`) becomes `%XX` with uppercase hex
+/// — the form `encodeURIComponent`, Python's `quote`, and Go's `QueryEscape`
+/// all emit. Hand-rolled rather than a dependency: it is ten lines, and the
+/// crate that does it only emits one variant anyway.
+fn percent_encode(value: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
+        }
+    }
+    out
 }
 
 /// One reporter in the stack.
@@ -496,6 +606,70 @@ mod tests {
                 let rendered = format!("{prefix}{secret}{suffix}");
                 let redacted = redactions.apply(&rendered);
                 prop_assert!(!redacted.contains(&secret));
+            }
+
+            /// The invariant over the *encoded* forms (S1): a server that
+            /// reflects a secret base64-, hex-, percent- or JSON-escape-encoded
+            /// puts a string trivially decodable back to the credential into an
+            /// assert detail, and the raw needle never fires on it — measured
+            /// live before this existed, with the base64 form reaching the
+            /// console and `events.jsonl`.
+            ///
+            /// The generator includes `+`, `/`, spaces, quotes and backslashes
+            /// so the standard/URL-safe base64 alphabets actually diverge and
+            /// the percent- and JSON-escape forms actually differ from the raw
+            /// value — an alphanumeric-only secret would make three of the
+            /// seven assertions vacuously equal to the raw-needle case.
+            #[test]
+            fn redaction_removes_encoded_forms(
+                secret in "[a-zA-Z0-9+/ \"\\\\-]{6,24}",
+                prefix in "[a-z]{0,10}",
+                suffix in "[a-z]{0,10}",
+            ) {
+                use base64::Engine as _;
+                use base64::engine::general_purpose as b64;
+
+                let redactions = Redactions::new([secret.clone()]);
+                let bytes = secret.as_bytes();
+                let Ok(quoted) = serde_json::to_string(&secret) else {
+                    unreachable!("a string always serializes")
+                };
+                let forms = [
+                    b64::STANDARD.encode(bytes),
+                    b64::STANDARD_NO_PAD.encode(bytes),
+                    b64::URL_SAFE.encode(bytes),
+                    b64::URL_SAFE_NO_PAD.encode(bytes),
+                    super::super::hex(bytes, false),
+                    super::super::hex(bytes, true),
+                    super::super::percent_encode(&secret),
+                    quoted[1..quoted.len() - 1].to_owned(),
+                ];
+                for form in &forms {
+                    let rendered = format!("{prefix}{form}{suffix}");
+                    let redacted = redactions.apply(&rendered);
+                    prop_assert!(
+                        !redacted.contains(form.as_str()),
+                        "encoded form survived redaction: {form}"
+                    );
+                }
+            }
+
+            /// Ordinary text is left alone: a needle list derived from one
+            /// secret must not eat an unrelated rendering. (Over-redaction is
+            /// the accepted failure direction, but only on real matches —
+            /// this pins that derivation introduces no wildcards.)
+            #[test]
+            fn text_free_of_the_secret_and_its_forms_is_untouched(
+                secret in "[a-zA-Z0-9]{16,24}",
+                text in "[ -~]{0,60}",
+            ) {
+                let redactions = Redactions::new([secret.clone()]);
+                let redacted = redactions.apply(&text);
+                if redacted != text {
+                    // The only permitted reason for a change is that some
+                    // needle genuinely occurred in the input.
+                    prop_assert!(redacted.contains("***"));
+                }
             }
 
             /// The sink boundary redacts before fan-out: the JSONL run record

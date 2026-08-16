@@ -27,6 +27,17 @@ override, else the encrypted store `.proef-secrets.json` (chacha20poly1305 + rpa
 `{{secret_name}}` placeholders, never values; our reporters additionally redact by value
 (property-tested invariant).
 
+**Amendment (2026-08-16):** "redact by value" includes each secret's common
+*encoded* forms — base64 (both alphabets, with/without padding), hex (both
+cases), RFC 3986 percent-encoding, and the JSON-string escape — derived inside
+`Redactions::new` so every sink is covered by construction. Demonstrated live
+before the amendment: a server reflecting a bearer token base64-encoded put a
+trivially-decodable string into an assert-failure detail, the raw needle never
+fired, and the encoded credential reached the console and `events.jsonl`. The
+needle set covers the reversible transforms that occur at HTTP boundaries; a
+secret reflected hashed or re-encrypted matches no needle list, and the ADR
+does not claim otherwise. Over-redaction is the accepted failure direction.
+
 ## Consequences
 
 Artifacts are runnable by both toolchains with identical meaning; authors keep a familiar

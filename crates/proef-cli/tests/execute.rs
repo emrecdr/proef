@@ -1257,6 +1257,73 @@ fn encrypted_secret_store_drives_a_run() {
     );
 }
 
+/// A secret reflected back *encoded* is still redacted (S1).
+///
+/// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated
+/// live: the fixture's introspection route echoes the bearer base64-encoded (an
+/// OAuth-introspection shape), a failing assert then quotes that string in its
+/// detail, and — before `Redactions` derived encoded forms — `dG9r…` reached
+/// the console and `events.jsonl`, trivially `base64 -d`-able back to the live
+/// credential. The scenario *fails on purpose*: the leak only ever rode on the
+/// assert-failure detail, so a green run would test nothing.
+#[test]
+fn an_encoded_reflection_of_a_secret_never_reaches_the_record() {
+    // The base64 of `fixture-token`, pinned by the fixture's own unit test so
+    // this literal and the route cannot drift apart silently.
+    const ENCODED: &str = "Zml4dHVyZS10b2tlbg==";
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: the token comes back encoded\n    \
+         When the token is introspected\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  introspect:\n    match: the token is introspected\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/api/v1/token/introspect\n          \
+         Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          \
+         [Asserts]\n          jsonpath \"$.token_b64\" == \"will-not-match\"\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1); // the assert genuinely fails — that is the leaking path
+
+    let console = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !console.contains(ENCODED),
+        "encoded secret leaked into the console:\n{console}"
+    );
+    // Non-vacuity: the assert detail was actually rendered — redacted, not
+    // absent. Without this, a reporting change that dropped the detail line
+    // entirely would pass the scan above while testing nothing.
+    assert!(
+        console.contains("***"),
+        "expected a redacted assert detail in the console:\n{console}"
+    );
+
+    let run_dir = latest_run_dir(cwd.path());
+    let events = std::fs::read_to_string(run_dir.join("events.jsonl")).unwrap();
+    assert!(
+        !events.contains(ENCODED),
+        "encoded secret leaked into events.jsonl:\n{events}"
+    );
+    let log = std::fs::read_to_string(run_dir.join("run.log")).unwrap_or_default();
+    assert!(!log.contains(ENCODED), "encoded secret leaked into run.log");
+    // And the raw form stays out too — deriving needles must not have
+    // regressed the original invariant.
+    for text in [&console, &events, &log] {
+        assert!(!text.contains(API_TOKEN), "raw secret leaked");
+    }
+}
+
 /// TESTING-STRATEGY fixture cases: the negative-path endpoints have
 /// consumers. A wrong bearer asserts the 401 contract (green — asserting a
 /// refusal is a passing test), and a jsonpath over `/malformed`'s broken JSON
