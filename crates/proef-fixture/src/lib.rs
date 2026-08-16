@@ -221,6 +221,19 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
         ("GET", "/api/v1/admin/search/missing") => {
             respond_json(request, 404, r#"{"error":"unknown index"}"#);
         }
+        ("GET", "/api/v1/token/introspect") => {
+            // OAuth-introspection shape: the presented bearer comes back
+            // base64-encoded in the body. This is the S1 reflection case —
+            // the raw token never appears in the response, so exact-match
+            // redaction has nothing to fire on unless it also knows the
+            // encoded forms. Serves the regression test in
+            // `crates/proef-cli/tests/execute.rs`.
+            let body = format!(
+                r#"{{"active":true,"token_b64":"{}"}}"#,
+                base64_std(API_TOKEN)
+            );
+            respond_json(request, 200, &body);
+        }
         ("GET", "/api/v1/records/r-1") => respond_json(request, 200, r#"{"id":"r-1"}"#),
         ("POST", "/api/v1/records/r-1/notes") => {
             st.notes.push("n-1".to_owned());
@@ -332,4 +345,50 @@ fn json_response(status: u16, body: &str) -> tiny_http::Response<std::io::Cursor
 
 fn respond_json(request: tiny_http::Request, status: u16, body: &str) {
     let _ = request.respond(json_response(status, body));
+}
+
+/// Standard-alphabet base64 with padding, for the introspection route.
+///
+/// Hand-rolled rather than a dependency on purpose: this crate is the *fake
+/// foreign backend*, and its whole value is a minimal dependency surface —
+/// it encodes one constant, and twelve lines beat a crate edge for that.
+fn base64_std(value: &str) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = value.as_bytes();
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        out.push(ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    /// Pins the hand-rolled encoder against the value the S1 regression test
+    /// greps for — if either drifts, this names which.
+    #[test]
+    fn the_introspection_route_encodes_the_fixture_token() {
+        assert_eq!(super::base64_std(super::API_TOKEN), "Zml4dHVyZS10b2tlbg==");
+        assert_eq!(super::base64_std(""), "");
+        assert_eq!(super::base64_std("a"), "YQ==");
+        assert_eq!(super::base64_std("ab"), "YWI=");
+        assert_eq!(super::base64_std("abc"), "YWJj");
+    }
 }

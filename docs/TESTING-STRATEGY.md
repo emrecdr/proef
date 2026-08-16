@@ -14,7 +14,10 @@ error→exit-code mapping.
 pattern+generated text round-trips captures; resolver — `$${…}` escape round-trip,
 resolution is idempotent once fully resolved, depth cap always terminates; **secret-mask
 invariant** — for arbitrary events/reports containing a known secret value, rendered
-output never contains it (ADR-0005); World — snapshot/restore is an involution;
+output never contains it, **nor any of its derived encoded forms** (base64 both
+alphabets ± padding, hex both cases, percent-encoding, JSON-string escape —
+ADR-0005 as amended), with a companion property pinning that text free of the
+secret and its forms passes through untouched; World — snapshot/restore is an involution;
 **fragment scanner** (`proef-engine-hurl`) — over generated hurl files, every
 reported line lies inside the file, entries are accounted for exactly once, starts
 are ordered and distinct, and no fragment's text runs into the entry after it.

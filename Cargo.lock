@@ -1742,6 +1742,7 @@ dependencies = [
 name = "proef-core"
 version = "0.12.0"
 dependencies = [
+ "base64",
  "gherkin",
  "proptest",
  "schemars",

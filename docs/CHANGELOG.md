@@ -8,6 +8,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Security
 
+- **An encoded reflection of a secret is redacted (S1).** Redaction was
+  exact-match on the raw secret bytes, and a server that reflects a bearer
+  token *encoded* — an OAuth introspection endpoint, a debug echo, a JWT claim
+  — defeated it: a failing assert quoted the base64 form in its detail, and a
+  string trivially `base64 -d`-able back to the live credential reached the
+  **console and `events.jsonl`**, the retained record CI uploads. Demonstrated
+  live against 0.12.0 by an external research pass and reproduced here before
+  fixing. `Redactions::new` now derives each secret's common encoded forms as
+  additional needles — base64 (standard and URL-safe alphabets, with and
+  without padding), hex (both cases), RFC 3986 percent-encoding, and the
+  JSON-string escape — so every construction site (the CLI sink, the engine's
+  internal renderer, TAP) is covered by construction. This is the remedy
+  GitHub's own log-masking documents for the same limitation: register each
+  transformed value too. The needle set covers the reversible transforms that
+  occur at HTTP boundaries and does not claim completeness — a secret
+  reflected hashed or re-encrypted matches no needle list. Over-redaction is
+  the accepted failure direction. Property-tested over every derived form,
+  pinned end-to-end by a fixture route that echoes the bearer base64-encoded,
+  and recorded as an ADR-0005 amendment.
+
 - **The fragment corpus read is bounded.** `[run] fragments` names a directory
   proef did not write and does not control, and it was read with no per-file or
   total cap: a 279 MB file cost **601 MB of resident memory on `proef flows`** —

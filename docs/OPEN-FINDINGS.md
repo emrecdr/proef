@@ -371,6 +371,61 @@ invented defaults and printing "all checks passed", exit 0. A `project:` row now
 so it reaches `worst` and the exit code CI reads. Leniency still means *absent* —
 `doctor` must run outside a project — not *broken*.
 
+## Ingested — competitive research v2 (2026-08-16), validated claim-by-claim
+
+An external research pass (prototyped against the built 0.12.0 binary) plus its
+round-14 companion review. Each actionable claim was re-reproduced here before
+anything was written down. Disposition:
+
+### S1 — an encoded reflection of a secret defeated redaction *(shipped)*
+
+**The one defect in the set, confirmed by live reproduction**: a server
+reflecting the bearer token base64-encoded put `dG9r…` (trivially decodable)
+into an assert-failure detail; the raw needle never fired; the encoded
+credential reached the console and `events.jsonl`. The raw-form invariant was
+intact — this violated its *intent*. Shipped as derived needles inside
+`Redactions::new` (see the changelog and the ADR-0005 amendment); property- and
+mutation-tested, pinned end-to-end against a fixture introspection route.
+
+Not covered, on purpose: hashed/split/re-encrypted reflections (not needle-
+matchable), double encodings (an unbounded tower; echo endpoints produce one
+level). The research doc's companion ideas — a redaction-verifying scan over a
+finished run record, GitHub `::add-mask::` for captured secret-typed values,
+RF-style secret-typed macro *arguments* — are enhancements, not part of the
+defect, and await triage.
+
+### Corrections to the research set, so they are not re-litigated
+
+- **S4 (Trusted Publishing plan) rests on a false premise**: it plans a
+  *first* publish with a classic token, but all four crates have been live on
+  crates.io since 0.5.1 (0.12.0 current). Trusted Publishing can be configured
+  directly against the existing crates; the token sequence is unnecessary.
+- **S2's exposure check is right and already satisfied**: `Cargo.lock` carries
+  `curl-sys 0.4.90+curl-8.21.0`, past the June-2026 CVE batch. The *detection
+  blind spot* (RUSTSEC carries no advisories for `*-sys`-bundled C libraries)
+  is real; the proposed libcurl-version print in release artifacts awaits
+  triage with the rest.
+- **R3-16/R3-17 (browser and Android engines) are foreclosed**, not deferred:
+  proef is API-testing-with-hurl only — a standing decision, not a gap the
+  research reopens. The M6 line in CLAUDE.md is architectural readiness, with
+  nothing scheduled. The seam-hygiene half of R3-15 stands on its own merits
+  and awaits triage like the rest of the registry.
+- The round-14 review audited `214a39d` (a pre-amend commit never pushed;
+  what merged is `c3ac752`, differing by one deliberately-removed proptest
+  seed), counted 464 tests where 462 exist, and credited #63 with the LSP
+  corpus-holding change that shipped earlier — recorded here because review
+  counts have now drifted by +2 for three consecutive rounds.
+
+### Awaiting triage (the R3 registry)
+
+The enhancement registry (fail-fast, a flakiness-verdict command, sharding, a
+baseline flag for `diff`, JUnit attrs, CTRF, pack documentation generation,
+canary fixtures for hurl-8.1 option additions, publishing hardening) is
+recorded in the research documents and is a product call, not a defect backlog
+— nothing in it blocks correctness. Triage it as a set; the prototyped items
+(the flakiness fold, hash-mode sharding, the baseline flow) carry validation
+receipts worth keeping.
+
 ## Open — adoption report on 0.12.0 (ingested 2026-08-14)
 
 From a suite that ported to `ref:` at scale — 15 hurl files, 112 fragments, 21
