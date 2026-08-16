@@ -122,10 +122,20 @@ jobs:
       - name: Fuzz smoke
         # Explicit host triple: the prebuilt cargo-fuzz defaults to its own
         # musl build target, and sanitizers reject statically linked libc.
+        #
+        # Targets come from `cargo fuzz list`, not a list written here. The
+        # names were spelled out in this file *and* in nightly.yml, so a new
+        # target ran nowhere until both were edited — and nothing failed to say
+        # so, which is the same "looks covered, is not" failure the fragment
+        # targets exist to fix.
         run: |
           host=$(rustc +nightly -vV | sed -n 's/^host: //p')
-          for target in fuzz_match_pattern fuzz_resolve fuzz_pack_load fuzz_tag_expr; do
+          targets=$(cargo +nightly fuzz list)
+          test -n "$targets" || { echo "no fuzz targets discovered"; exit 1; }
+          for target in $targets; do
+            echo "::group::$target"
             cargo +nightly fuzz run "$target" --target "$host" -- -max_total_time=30
+            echo "::endgroup::"
           done
 
       # The mechanical form of "adding an engine leaves core diff-empty":

@@ -42,3 +42,10 @@ path = "fuzz_targets/fuzz_tag_expr.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_fragment_binding"
+path = "fuzz_targets/fuzz_fragment_binding.rs"
+test = false
+doc = false
+bench = false

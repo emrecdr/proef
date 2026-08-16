@@ -14,20 +14,43 @@ error→exit-code mapping.
 pattern+generated text round-trips captures; resolver — `$${…}` escape round-trip,
 resolution is idempotent once fully resolved, depth cap always terminates; **secret-mask
 invariant** — for arbitrary events/reports containing a known secret value, rendered
-output never contains it (ADR-0005); World — snapshot/restore is an involution.
+output never contains it (ADR-0005); World — snapshot/restore is an involution;
+**fragment scanner** (`proef-engine-hurl`) — over generated hurl files, every
+reported line lies inside the file, entries are accounted for exactly once, starts
+are ordered and distinct, and no fragment's text runs into the entry after it.
+That last one is the entry-boundary arithmetic's whole job, and it is asserted
+because a draft without it passed while the boundary was deliberately broken.
+The scanner is proptested rather than fuzzed on purpose: it needs `hurl_core`, and
+cargo dependencies are package-level, so putting it in `fuzz/` would compile hurl
+for every target there and drag native libraries into a job that has none.
 
 **Fuzz (cargo-fuzz, nightly job + PR smoke):** `fuzz_match_pattern` (pattern×text),
-`fuzz_resolve` (template strings), `fuzz_pack_load` (YAML bytes → loader must error,
-never panic). Parser-adjacent hand-written code is exactly where fuzzing pays.
-A fourth target, `fuzz_tag_expr`, is declared but listed in neither fuzz loop,
-so nothing fuzzes it today — only the compile check below builds it.
+`fuzz_resolve` (template strings), `fuzz_tag_expr` (tag expressions),
+`fuzz_pack_load` (YAML bytes → loader must error, never panic), and
+`fuzz_fragment_binding` (a pack against a real corpus: `ref:` resolution, unread
+`bind:` keys, a `bind:` colliding with a variable the fragment supplies itself).
+Parser-adjacent hand-written code is exactly where fuzzing pays.
+
+**Both loops take their target list from `cargo fuzz list`**, never a list written
+into a workflow. The names used to be spelled out in `ci.yml` *and* `nightly.yml`,
+so a target ran nowhere until both were edited and nothing failed to say so.
+
+`fuzz_fragment_binding` is **structure-aware** — it builds a well-formed pack and
+corpus from the input rather than hoping the fuzzer discovers one. That is a
+measured choice: a byte-oriented version never resolved a single `ref:` in 1.45
+million runs, because reaching those rules means finding valid YAML and a matching
+corpus name at once. When adding a target that needs structure, verify it *reaches*
+the code by probe — panic on the condition under test, run briefly, confirm it
+fires — because a target that compiles and finds nothing reads exactly like a
+target that compiles and finds no bugs.
+
 `fuzz/` is its own workspace (the root `Cargo.toml` excludes it, since fuzzing
 needs nightly), so no root-workspace command compiles it: a changed
 `proef-core` signature breaks the targets while every *root-workspace* gate
 stays green, leaving the fuzz jobs as the only signal.
 `cargo check --manifest-path fuzz/Cargo.toml --all-targets` runs on the pinned
 stable toolchain in seconds, so the gates job carries it — earlier than the
-fuzz smoke, on both gate platforms, and covering the target no loop names.
+fuzz smoke, and on both gate platforms.
 
 **Snapshot (insta):** emitter — golden corpus of (features + packs) → artifacts +
 sidecars, byte-stable (the canonical-format compatibility surface, ADR-0010);

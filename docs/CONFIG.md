@@ -173,6 +173,20 @@ one, the corpus is scanned **once per command**, not once per pack load: a run w
 `proef fmt` never touches these files: it normalizes hurl blocks *inside packs* by
 locating them in YAML, and a corpus you do not own is not proef's to rewrite.
 
+**The read is bounded.** A single corpus file over **8 MiB** is skipped with
+`proef::pack::oversized_fragment_file`, and the reader stops once the corpus as a whole
+passes **64 MiB** (`proef::pack::fragment_corpus_too_large`). Both name the file, both
+leave every other file loading, and a `ref:` into a skipped file then reports
+`unknown_ref` beneath them.
+
+These are not tuning knobs — they are the line past which the input is not a test corpus.
+A hurl file is human-authored text, so 8 MiB is on the order of 200,000 lines; the largest
+corpus anyone has reported is 15 files and 112 fragments. The bound exists because the
+root is *one config line*: pointed one directory too high it reads whatever is underneath,
+and a 279 MB file cost 601 MB of resident memory on `proef flows` — a command that never
+looks at a fragment. If you hit either limit, the fix is almost always to narrow
+`[run] fragments` to the directory that actually holds your hurl files.
+
 ## Suite setup & teardown (`[run] setup` / `[run] teardown`)
 
 `[run] setup` and `[run] teardown` each name a **feature file** run once around the whole

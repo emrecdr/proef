@@ -1761,6 +1761,7 @@ dependencies = [
  "hurl_core",
  "openssl-sys",
  "proef-core",
+ "proptest",
  "tempfile",
 ]
 

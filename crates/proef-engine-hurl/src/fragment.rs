@@ -523,3 +523,124 @@ mod tests {
         assert_eq!(err.line, 2);
     }
 }
+
+/// Properties over **generated hurl files** (R9-2).
+///
+/// Arbitrary bytes would be the wrong generator here and it is worth saying why:
+/// this module's own risk is the entry-boundary arithmetic — `starts[index]` to
+/// `starts[index + 1]`, the slice that decides which lines belong to which
+/// fragment — and random text dies in hurl's parser before reaching it. The
+/// same lesson the fragment fuzz target learned by measurement. So the strategy
+/// below *builds* files that parse, and spends its budget on the shapes that
+/// move a boundary: entries with and without annotations, blank lines and stray
+/// comments between them, and options/captures that lengthen an entry.
+#[cfg(test)]
+mod properties {
+    #![allow(clippy::unwrap_used)]
+
+    use super::scan;
+    use proef_core::engine::OPTION_FAMILIES;
+    use proptest::prelude::*;
+
+    /// One entry, as source text plus whether it carries an annotation.
+    fn entry() -> impl Strategy<Value = (String, bool)> {
+        (
+            prop::option::of("[a-z][a-z0-9.]{0,8}"),
+            any::<bool>(),
+            any::<bool>(),
+            0u8..4,
+        )
+            .prop_map(|(name, with_options, with_captures, blanks)| {
+                let mut text = String::new();
+                for _ in 0..blanks {
+                    // Blank and comment-only lines between entries are exactly
+                    // what shifts a start line without adding an entry.
+                    text.push_str("\n# filler\n");
+                }
+                let annotated = name.is_some();
+                if let Some(name) = &name {
+                    use std::fmt::Write as _;
+                    let _ = writeln!(text, "# @proef {name}");
+                }
+                text.push_str("GET http://example.invalid/p\n");
+                if with_options {
+                    text.push_str("[Options]\nretry: 2\n");
+                }
+                text.push_str("HTTP 200\n");
+                if with_captures {
+                    text.push_str("[Captures]\nid: jsonpath \"$.id\"\n");
+                }
+                (text, annotated)
+            })
+    }
+
+    proptest! {
+        /// Every reported line points into the file, every entry is accounted
+        /// for exactly once, and the lines come back in order.
+        ///
+        /// Ordering is the load-bearing one: a fragment's text runs to where the
+        /// *next* entry starts, so a start table that was out of order or that
+        /// skipped an unannotated entry would hand one fragment another's body —
+        /// silently, and into a durable artifact.
+        #[test]
+        fn a_scan_partitions_the_file_in_order_and_within_its_bounds(
+            entries in prop::collection::vec(entry(), 0..6)
+        ) {
+            let text: String = entries.iter().map(|(t, _)| t.as_str()).collect();
+            let annotated = entries.iter().filter(|(_, a)| *a).count();
+            let total = entries.len();
+            let line_count = text.lines().count().max(1);
+
+            let scanned = scan(&text).unwrap();
+
+            prop_assert_eq!(scanned.fragments.len(), annotated);
+            prop_assert_eq!(scanned.fragments.len() + scanned.unannotated.len(), total);
+
+            let mut lines: Vec<usize> = scanned.fragments.iter().map(|f| f.line).collect();
+            lines.extend(scanned.unannotated.iter().copied());
+            lines.sort_unstable();
+            for line in &lines {
+                prop_assert!(*line >= 1 && *line <= line_count, "line {} outside 1..={}", line, line_count);
+            }
+            let mut deduped = lines.clone();
+            deduped.dedup();
+            prop_assert_eq!(deduped.len(), lines.len(), "two entries claimed one start line");
+
+            for fragment in &scanned.fragments {
+                prop_assert!(fragment.text.ends_with('\n'), "entry text must end with a newline");
+                prop_assert!(!fragment.text.is_empty());
+                // The partition of *text*, not just of start lines. The line
+                // accounting above passes even when a fragment's body runs on
+                // into the entry after it — mutation-checked, and it did — so
+                // the boundary is pinned by what each fragment ends up holding.
+                // The generator emits exactly one request line per entry, so
+                // "one request line per fragment" is that partition, stated.
+                prop_assert_eq!(
+                    fragment.text.matches("GET http://example.invalid").count(),
+                    1,
+                    "fragment {} swallowed a neighbouring entry: {:?}",
+                    fragment.name, fragment.text
+                );
+                // And it begins where its annotation does, never at the file
+                // header or at the filler before it.
+                prop_assert!(
+                    fragment.text.starts_with(&format!("# @proef {}", fragment.name)),
+                    "fragment text must start at its annotation: {:?}", fragment.text
+                );
+                for family in &fragment.declared_options {
+                    prop_assert!(
+                        OPTION_FAMILIES.contains(&family.as_str()),
+                        "scanner emitted an option family the pack cannot match: {}", family
+                    );
+                }
+            }
+        }
+
+        /// Totality over free text: a corpus is foreign by design, so anything
+        /// may be in it. Err is a fine answer; a panic is not.
+        #[test]
+        fn scanning_arbitrary_text_never_panics(text in ".{0,400}") {
+            let _ = scan(&text);
+        }
+    }
+}
