@@ -13,7 +13,6 @@
 //! provider renders from a real `PathBuf`.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::path::{Component, Path, Prefix};
 use std::sync::Arc;
 
@@ -95,7 +94,7 @@ pub fn name_to_url(name: &str) -> Option<Uri> {
         match component {
             Component::Normal(seg) => {
                 raw.push('/');
-                percent_encode_segment(&seg.to_string_lossy(), &mut raw);
+                raw.push_str(&proef_core::report::percent_encode(&seg.to_string_lossy()));
             }
             Component::Prefix(prefix) => match prefix.kind() {
                 // A real drive renders with a bare colon (`file:///C:/…`) — the
@@ -110,7 +109,9 @@ pub fn name_to_url(name: &str) -> Option<Uri> {
                 }
                 _ => {
                     raw.push('/');
-                    percent_encode_segment(&prefix.as_os_str().to_string_lossy(), &mut raw);
+                    raw.push_str(&proef_core::report::percent_encode(
+                        &prefix.as_os_str().to_string_lossy(),
+                    ));
                 }
             },
             Component::RootDir | Component::CurDir | Component::ParentDir => {}
@@ -119,22 +120,11 @@ pub fn name_to_url(name: &str) -> Option<Uri> {
     raw.parse().ok()
 }
 
-/// Percent-encodes everything but the RFC 3986 "unreserved" characters.
-///
-/// Over-encoding (e.g. escaping bytes a path segment could legally carry
-/// bare) is always safe here: [`url_to_name`] decodes with `EStr::decode`,
-/// which is the exact inverse regardless of how conservatively we encoded.
-fn percent_encode_segment(segment: &str, out: &mut String) {
-    for byte in segment.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char);
-            }
-            // `write!` to a `String` is infallible; nothing to propagate.
-            _ => drop(write!(out, "%{byte:02X}")),
-        }
-    }
-}
+// Path segments are percent-encoded by `proef_core::report::percent_encode` —
+// the same RFC 3986 unreserved set redaction needles use; this file carried a
+// byte-identical copy until the two were folded. Over-encoding is always safe
+// here: [`url_to_name`] decodes with `EStr::decode`, the exact inverse
+// regardless of how conservatively we encoded.
 
 /// Open-buffer text keyed by *source name* (`url_to_name` of the document URI) —
 /// the same identity the rest of the pipeline uses. Keying by the decoded name

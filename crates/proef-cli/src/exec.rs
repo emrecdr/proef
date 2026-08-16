@@ -1250,20 +1250,17 @@ fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
 /// records without bound whatever `keep` says. Deliberate — guessing at
 /// user-named directories is the worse failure — and documented in CONFIG.md.
 fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
-    let Ok(entries) = std::fs::read_dir(runs_dir) else {
-        return;
-    };
-    let mut dirs: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
+    // `record::all_runs` is the one answer to "what is a run record here" —
+    // sorted, uuid-named directories only. Rotation adds a single further
+    // exclusion (the in-flight run), not a second enumeration rule.
+    let dirs: Vec<PathBuf> = crate::record::all_runs(runs_dir)
+        .into_iter()
         .filter(|p| {
             p.file_name()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| name != current_run && crate::fsutil::is_run_id(name))
+                .is_some_and(|name| name != current_run)
         })
         .collect();
-    dirs.sort();
     if dirs.len() > keep {
         let excess = dirs.len() - keep;
         for dir in dirs.into_iter().take(excess) {

@@ -110,7 +110,9 @@ jobs:
         run: |
           bin="target/${{ matrix.target }}/release/proef"
           [[ "${{ matrix.target }}" == *windows* ]] && bin="${bin}.exe"
-          "$bin" doctor || true
+          # Non-blocking but never silent: the print is the point, so a doctor
+          # that cannot run surfaces as a workflow warning, not a swallowed exit.
+          "$bin" doctor || echo "::warning::proef doctor did not run for ${{ matrix.target }} — no libcurl line for this artifact"
 
       - name: Stage artifact
         id: stage

@@ -49,6 +49,11 @@ deny = [
     # tokio-util (sync primitives only, default-features = false) — that one edge is
     # sanctioned; any other crate introducing tokio trips this ban.
     { crate = "tokio", reason = "no async runtime — tokio-util CancellationToken only (ADR-0006/0007)", wrappers = ["tokio-util"] },
+    # NOT here: the bundled-libcurl floor (curl-sys >= 0.4.90). A version-spec
+    # ban mismatches curl-sys's build-metadata versions in cargo-deny 0.19.8 —
+    # measured: `curl-sys@<0.4.90` banned `0.4.90+curl-8.21.0` (the good
+    # version) and `<0.4.91` banned nothing. The floor lives as a unit test in
+    # proef-engine-hurl (`bundled_curl_stays_at_or_past_the_cve_floor`).
 ]
 
 [sources]

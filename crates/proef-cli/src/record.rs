@@ -43,6 +43,45 @@ pub fn resolve_dir(runs_root: &Path, run_id: Option<&str>) -> Option<PathBuf> {
     }
 }
 
+/// One positional, resolved to a record: a run id under `root`, or a **path**
+/// — the record directory itself, or its events `.jsonl` under any name.
+///
+/// The path form is what a CI baseline flow actually has in hand: a record
+/// downloaded from the base branch's artifacts lands wherever the download
+/// step put it, not under this checkout's `runs-dir`. Before this, `diff`
+/// joined every argument onto `runs-dir`, so a path answered with
+/// `.proef-runs/.proef-runs/…/events.jsonl/events.jsonl: No such file` — the
+/// argument mangled into the complaint, and nothing saying paths were the
+/// problem.
+///
+/// Beside [`resolve_dir`] because the two answer halves of one question — how
+/// a positional names a record — and `diff` was carrying this half alone.
+/// Whether `explain`/`report` also accept paths is a product call; where the
+/// primitive lives is not, and the next command to grow the flow calls this
+/// rather than copying it.
+///
+/// Disambiguation is existence-on-disk, tried as a path first: a run id that
+/// *also* exists as a local file would be pathological (`runs-dir` may be `.`,
+/// but run dirs are uuid-named). A file is passed through as-is — a downloaded
+/// baseline keeps whatever name the download step gave it, and [`read_record`]
+/// takes the events file directly — and so is a directory, which is the
+/// record-dir form the run ids resolve to.
+pub fn locate(root: &Path, arg: &str) -> Result<PathBuf, String> {
+    let as_path = Path::new(arg);
+    if as_path.exists() {
+        return Ok(as_path.to_path_buf());
+    }
+    // Not on disk: a run id under runs-root — unless it was *spelled* as a
+    // path, where "id under root" is never what the caller meant and the
+    // joined complaint would name a directory they did not type.
+    if arg.contains(['/', '\\']) {
+        return Err(format!(
+            "`{arg}` does not exist (looked for a run directory or an events .jsonl file)"
+        ));
+    }
+    Ok(root.join(arg))
+}
+
 /// One scenario's outcome in a run record: aggregate status plus its steps.
 /// Steps are keyed `(text, ordinal)` for diffing — the authored `line` shifts
 /// when a file is edited above it, so text is the stable identity, and the

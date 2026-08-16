@@ -182,7 +182,74 @@ impl FragmentCorpus {
     pub fn empty() -> Self {
         Self::new(Vec::new(), &[])
     }
+}
 
+/// What the corpus bound says about one file, decided before it is read.
+#[derive(Debug)]
+pub enum Admit {
+    /// Read it.
+    Read,
+    /// Leave this one out and carry on with the rest.
+    Skip(Diag),
+    /// Stop reading the corpus here.
+    Stop(Diag),
+}
+
+/// The corpus read budget — the bound itself, as a pure decision over a name
+/// and a size, one admission at a time.
+///
+/// Lives here beside [`FragmentCorpus::MAX_FILE_BYTES`] and the two diagnostic
+/// constructors because the *semantics* that bind them are the policy: an
+/// oversized file is skipped **without charging the budget** (it was never
+/// read, and charging for it would let one bad file silently shorten the
+/// corpus behind it), and exhaustion is a **stop**, not skip-and-continue
+/// (past the budget every later file would report the same thing — one
+/// finding, not one per file). Both the CLI and the LSP read corpora; when
+/// this lived in one of them, the other re-implemented it by hand and only
+/// the original had a test.
+///
+/// How a file is *sized* stays with the reader — the CLI stats the directory
+/// entry so an oversized file is never allocated, the LSP measures text it
+/// already holds because an unsaved buffer has no file to stat. Measurement
+/// is reader-local; the decision is not. Splitting decision from IO is also
+/// what keeps it testable without writing 64 MiB to disk, and what lets it
+/// sit in the sans-IO core at all.
+#[derive(Debug)]
+pub struct CorpusBudget {
+    remaining: u64,
+}
+
+impl CorpusBudget {
+    /// A fresh budget of [`FragmentCorpus::MAX_TOTAL_BYTES`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            remaining: FragmentCorpus::MAX_TOTAL_BYTES,
+        }
+    }
+
+    /// Admit, skip, or stop on one file of `size` bytes named `name`.
+    pub fn admit(&mut self, name: &str, size: u64) -> Admit {
+        if size > FragmentCorpus::MAX_FILE_BYTES {
+            return Admit::Skip(FragmentCorpus::oversized_file(name, size));
+        }
+        match self.remaining.checked_sub(size) {
+            Some(remaining) => {
+                self.remaining = remaining;
+                Admit::Read
+            }
+            None => Admit::Stop(FragmentCorpus::corpus_budget_exhausted(name)),
+        }
+    }
+}
+
+impl Default for CorpusBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FragmentCorpus {
     /// The scan, run on first use and shared by every load thereafter.
     pub(crate) fn scanned(&self) -> &Scanned {
         self.scanned.get_or_init(|| {
@@ -768,6 +835,66 @@ impl Diag {
         match span {
             Some(span) => self.with_span(span),
             None => self,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Admit, CorpusBudget, FragmentCorpus};
+
+    /// The corpus bound, exhaustively — the accumulation case included, which
+    /// an end-to-end test could only reach by writing 64 MiB.
+    #[test]
+    fn the_corpus_bound_skips_one_huge_file_and_stops_on_an_accumulation() {
+        let mut budget = CorpusBudget::new();
+
+        // Ordinary file: read, budget charged.
+        assert!(matches!(budget.admit("a.hurl", 1024), Admit::Read));
+
+        // Exactly at the per-file cap is still fine — the cap is a ceiling, not
+        // an exclusive bound, so a file sized to it is not refused by rounding.
+        assert!(matches!(
+            budget.admit("edge.hurl", FragmentCorpus::MAX_FILE_BYTES),
+            Admit::Read
+        ));
+
+        // One byte over is skipped, and the rest of the corpus carries on.
+        let Admit::Skip(diag) = budget.admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1)
+        else {
+            panic!("an oversized file must be skipped")
+        };
+        assert_eq!(diag.code, "proef::pack::oversized_fragment_file");
+
+        // An accumulation of individually-legal files stops the read, naming
+        // where. Eight cap-sized files spend the total exactly; the sorted
+        // walk makes the stopping name stable across runs.
+        let mut exhausted = CorpusBudget::new();
+        for n in 0..8 {
+            assert!(matches!(
+                exhausted.admit(&format!("bulk-{n}.hurl"), FragmentCorpus::MAX_FILE_BYTES),
+                Admit::Read
+            ));
+        }
+        let Admit::Stop(diag) = exhausted.admit("last.hurl", 2) else {
+            panic!("an exhausted budget must stop the read")
+        };
+        assert_eq!(diag.code, "proef::pack::fragment_corpus_too_large");
+
+        // A skipped file does not charge the budget: it was never read, and
+        // charging for it would let one bad file shorten the corpus behind it.
+        // Sharpened: after the skip, the *whole* total still fits — eight
+        // cap-sized reads succeed, which fails if the skip charged anything.
+        let mut tight = CorpusBudget::new();
+        assert!(matches!(
+            tight.admit("huge.hurl", FragmentCorpus::MAX_FILE_BYTES + 1),
+            Admit::Skip(_)
+        ));
+        for n in 0..8 {
+            assert!(matches!(
+                tight.admit(&format!("after-{n}.hurl"), FragmentCorpus::MAX_FILE_BYTES),
+                Admit::Read
+            ));
         }
     }
 }

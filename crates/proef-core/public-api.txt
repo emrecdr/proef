@@ -957,6 +957,19 @@ pub fn proef_core::matcher::pattern_problems(&str, &[alloc::string::String]) -> 
 pub fn proef_core::matcher::prefix_rank(&str, &str) -> (u8, usize)
 pub fn proef_core::matcher::tokenize(&str) -> alloc::vec::Vec<proef_core::matcher::Token>
 pub mod proef_core::pack
+pub enum proef_core::pack::Admit
+pub proef_core::pack::Admit::Read
+pub proef_core::pack::Admit::Skip(proef_core::diag::Diag)
+pub proef_core::pack::Admit::Stop(proef_core::diag::Diag)
+impl core::fmt::Debug for proef_core::pack::Admit
+pub fn proef_core::pack::Admit::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::Admit
+impl core::marker::Send for proef_core::pack::Admit
+impl core::marker::Sync for proef_core::pack::Admit
+impl core::marker::Unpin for proef_core::pack::Admit
+impl core::marker::UnsafeUnpin for proef_core::pack::Admit
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::Admit
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::Admit
 pub enum proef_core::pack::MacroBody
 pub proef_core::pack::MacroBody::Expect(alloc::vec::Vec<proef_core::pack::ExpectItem>)
 pub proef_core::pack::MacroBody::Steps(alloc::vec::Vec<proef_core::pack::MacroStep>)
@@ -1005,6 +1018,21 @@ impl core::marker::Unpin for proef_core::pack::PayloadForm
 impl core::marker::UnsafeUnpin for proef_core::pack::PayloadForm
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::PayloadForm
 impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PayloadForm
+pub struct proef_core::pack::CorpusBudget
+impl proef_core::pack::CorpusBudget
+pub fn proef_core::pack::CorpusBudget::admit(&mut self, &str, u64) -> proef_core::pack::Admit
+pub fn proef_core::pack::CorpusBudget::new() -> Self
+impl core::default::Default for proef_core::pack::CorpusBudget
+pub fn proef_core::pack::CorpusBudget::default() -> Self
+impl core::fmt::Debug for proef_core::pack::CorpusBudget
+pub fn proef_core::pack::CorpusBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for proef_core::pack::CorpusBudget
+impl core::marker::Send for proef_core::pack::CorpusBudget
+impl core::marker::Sync for proef_core::pack::CorpusBudget
+impl core::marker::Unpin for proef_core::pack::CorpusBudget
+impl core::marker::UnsafeUnpin for proef_core::pack::CorpusBudget
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::pack::CorpusBudget
+impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::CorpusBudget
 pub struct proef_core::pack::ExpectItem
 pub proef_core::pack::ExpectItem::fragment: core::option::Option<alloc::string::String>
 pub proef_core::pack::ExpectItem::status: core::option::Option<alloc::string::String>
@@ -1047,14 +1075,15 @@ impl proef_core::pack::FragmentCorpus
 pub const proef_core::pack::FragmentCorpus::MAX_FILE_BYTES: u64
 pub const proef_core::pack::FragmentCorpus::MAX_TOTAL_BYTES: u64
 pub fn proef_core::pack::FragmentCorpus::corpus_budget_exhausted(&str) -> proef_core::diag::Diag
-pub fn proef_core::pack::FragmentCorpus::diagnostics(&self) -> &[proef_core::diag::Diag]
 pub fn proef_core::pack::FragmentCorpus::empty() -> Self
-pub fn proef_core::pack::FragmentCorpus::fragments(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
 pub fn proef_core::pack::FragmentCorpus::new(alloc::vec::Vec<proef_core::pack::PackSource>, &[proef_core::engine::StepKindSpec]) -> Self
 pub fn proef_core::pack::FragmentCorpus::oversized_file(&str, u64) -> proef_core::diag::Diag
-pub fn proef_core::pack::FragmentCorpus::unannotated(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<usize>>
 pub fn proef_core::pack::FragmentCorpus::unreadable_file(&str, &str) -> proef_core::diag::Diag
 pub fn proef_core::pack::FragmentCorpus::with_read_errors(self, alloc::vec::Vec<proef_core::diag::Diag>) -> Self
+impl proef_core::pack::FragmentCorpus
+pub fn proef_core::pack::FragmentCorpus::diagnostics(&self) -> &[proef_core::diag::Diag]
+pub fn proef_core::pack::FragmentCorpus::fragments(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, proef_core::pack::Fragment>
+pub fn proef_core::pack::FragmentCorpus::unannotated(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<usize>>
 impl core::fmt::Debug for proef_core::pack::FragmentCorpus
 pub fn proef_core::pack::FragmentCorpus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl !core::marker::Freeze for proef_core::pack::FragmentCorpus
@@ -1247,6 +1276,7 @@ impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporte
 pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::JsonlReporter<W>
 pub fn proef_core::report::JsonlReporter<W>::on_event(&mut self, &proef_core::event::Event)
+pub fn proef_core::report::percent_encode(&str) -> alloc::string::String
 pub fn proef_core::report::sink(alloc::vec::Vec<alloc::boxed::Box<dyn proef_core::report::Reporter>>, proef_core::report::Redactions) -> proef_core::event::EventSink
 pub mod proef_core::resolve
 pub enum proef_core::resolve::ResolveError

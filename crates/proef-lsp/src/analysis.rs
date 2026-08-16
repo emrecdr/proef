@@ -60,34 +60,26 @@ pub fn read_fragments(
     let overlay = OverlaySourceProvider::new(docs, disk);
     let mut sources = Vec::new();
     let mut errors = Vec::new();
-    let mut budget = FragmentCorpus::MAX_TOTAL_BYTES;
+    // The same core decision the CLI applies (`CorpusBudget`), for a sharper
+    // reason here: this corpus is *held* between requests, so an oversized
+    // file is resident for the whole editing session rather than for one
+    // command. Only the measurement is ours — text length after the read,
+    // because a source may be an unsaved buffer with no file to stat; the
+    // allocation is the editor's either way, and what this prevents is
+    // retaining it.
+    let mut budget = proef_core::pack::CorpusBudget::new();
     for name in overlay.discover_fragments().unwrap_or_default() {
         match overlay.read(&name) {
-            Ok(text) => {
-                // The same bound the CLI applies, for a sharper reason here:
-                // this corpus is *held* between requests, so an oversized file
-                // is resident for the whole editing session rather than for one
-                // command. Measured after the read because a source may be an
-                // unsaved buffer with no file to stat — the allocation is the
-                // editor's either way, and what this prevents is retaining it.
-                let size = text.len() as u64;
-                if size > FragmentCorpus::MAX_FILE_BYTES {
-                    errors.push(
-                        FragmentCorpus::oversized_file(&name, size)
-                            .with_source(name, Arc::from("")),
-                    );
-                    continue;
+            Ok(text) => match budget.admit(&name, text.len() as u64) {
+                proef_core::pack::Admit::Skip(diag) => {
+                    errors.push(diag.with_source(name, Arc::from("")));
                 }
-                let Some(rest) = budget.checked_sub(size) else {
-                    errors.push(
-                        FragmentCorpus::corpus_budget_exhausted(&name)
-                            .with_source(name, Arc::from("")),
-                    );
+                proef_core::pack::Admit::Stop(diag) => {
+                    errors.push(diag.with_source(name, Arc::from("")));
                     break;
-                };
-                budget = rest;
-                sources.push(PackSource { name, text });
-            }
+                }
+                proef_core::pack::Admit::Read => sources.push(PackSource { name, text }),
+            },
             // A corpus is foreign by design: one unreadable file reports itself
             // and the rest still load.
             // The same diagnostic the CLI reports, help text included — it is
