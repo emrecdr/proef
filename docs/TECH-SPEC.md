@@ -350,7 +350,7 @@ proef fragments [file|dir] [--env NAME] [--output json] [--check [--require-anno
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
-proef diff [base] [new] [--fail-on-regression]
+proef diff [base] [new] [--fail-on-regression]   # each side: run id, record dir, or events .jsonl
 proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]
 proef lsp

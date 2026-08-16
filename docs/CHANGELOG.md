@@ -42,7 +42,31 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   costs nothing: the scan stays lazy, so nothing is reported unless a pack
   actually names a fragment. Filed as R9-3.
 
+### Added
+
+- **`proef diff` takes a path.** Each side is now a run id, a record
+  *directory*, or an events *`.jsonl` file* under any name — the stream is the
+  record (ADR-0008), so all three must mean the same thing. The file form is
+  the CI baseline flow an adopting suite asked for: download the base branch's
+  `events.jsonl` artifact and `proef diff baseline.jsonl <new>
+  --fail-on-regression` gates the PR, with no shared record store. Previously
+  every argument was joined onto `runs-dir`, so a path produced
+  `.proef-runs/<your path>/events.jsonl: No such file` — the argument mangled
+  into the complaint. A path that does not exist now names itself; a `--baseline`
+  flag was considered and declined as a second spelling of the same positional.
+
 ### Internal
+
+- **The bundled libcurl cannot silently regress under the June-2026 CVE
+  batch.** `curl-sys 0.4.90+curl-8.21.0` in the lockfile is past the batch —
+  but only as a transitive accident of resolution, and the usual gates are
+  structurally blind here: RUSTSEC carries no advisories for CVEs in a
+  `*-sys`-bundled C library, so `cargo audit`/`deny` stay green however stale
+  the bundled curl is. A test now asserts the lockfile floor, and each release
+  build prints the libcurl actually linked into that artifact (`proef doctor`
+  already reported it; the release log now carries it per target). The hurl-8.1
+  watch items — `variables-file:`'s missing sandbox first among them — are
+  recorded as a pin-bump checklist in the thin-fork runbook.
 
 - **Fuzzing reaches the fragment rules.** `fuzz_pack_load` ran against an *empty*
   corpus, so `ref:` resolution, `bind:` keys nothing reads, a `bind:` colliding

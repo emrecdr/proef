@@ -198,6 +198,49 @@ mod tests {
         }
     }
 
+    /// The bundled-libcurl floor: `curl-sys` in the lockfile must stay at or
+    /// past the version that carries curl 8.20's June-2026 CVE batch fixes.
+    ///
+    /// This exists because the usual gates are structurally blind here:
+    /// RUSTSEC carries no advisories for CVEs in a `*-sys`-bundled C library,
+    /// so `cargo audit`/`cargo deny` stay green however stale the bundled curl
+    /// is, and the statically-linked targets (Windows, and any future musl)
+    /// ship whatever the lockfile resolved. Being past the batch today is a
+    /// *transitive accident* of resolution — this turns it into a floor a
+    /// `cargo update` cannot silently cross back under. On a legitimate hurl
+    /// upgrade that moves `curl-sys` forward, raise `FLOOR` alongside it.
+    #[test]
+    fn bundled_curl_stays_at_or_past_the_cve_floor() {
+        // 0.4.90 bundles curl 8.21.0; the June-2026 batch is fixed in 8.20.
+        const FLOOR: (u32, u32, u32) = (0, 4, 90);
+
+        let lockfile = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.lock"),
+        )
+        .unwrap();
+        let version = lockfile
+            .split("name = \"curl-sys\"")
+            .nth(1)
+            .and_then(|rest| rest.split("version = \"").nth(1))
+            .and_then(|rest| rest.split('"').next())
+            .unwrap();
+        // `0.4.90+curl-8.21.0` — semver build metadata after `+` is not part
+        // of the ordering.
+        let numeric = version.split('+').next().unwrap_or(version);
+        let mut parts = numeric.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+        let found = (
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+            parts.next().unwrap_or(0),
+        );
+        assert!(
+            found >= FLOOR,
+            "curl-sys {version} is under the {FLOOR:?} floor — the bundled libcurl \
+             regressed under the June-2026 CVE batch fixes (no RUSTSEC advisory will \
+             catch this; see the doc comment)"
+        );
+    }
+
     #[test]
     fn payload_probe_accepts_valid_and_rejects_broken_hurl() {
         assert!(validate_payload("GET http://x/one\nHTTP 200").is_ok());
