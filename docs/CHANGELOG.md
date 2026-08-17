@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-17 (a record that travels, and a secret that stays one)
+
 ### Security
 
 - **An encoded reflection of a secret is redacted (S1).** Redaction was
