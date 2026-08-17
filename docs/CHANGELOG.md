@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--rerun` after a cancelled run continues it, instead of a false green.**
+  `--max-fail` (and Ctrl-C) stop a run early with the never-reached scenarios
+  honestly recorded as skipped — but `--rerun` filtered to failures alone, so
+  stop → fix → rerun ran only the old failures and reported `exit 0` with most
+  of the suite never executed in either run. Reproduced live before fixing
+  (found by round-15 external review): stop at 2 of 6, fix, rerun →
+  `2 passed · 0 failed`, green, four scenarios untested. On a **cancelled**
+  base record `--rerun` now runs failures **plus** the cancellation-skipped
+  tail, and says so (`note: the last run was cancelled before N scenario(s)
+  ran…`); scenario-level skips only exist under cancellation, so a completed
+  base keeps the old semantics exactly. This also changes `--rerun` after
+  Ctrl-C — continuing the unfinished work is what stop → fix → continue always
+  meant. Mutation-tested: reverting the union fails the continuation test.
+
 ### Added
 
 - **`proef test --max-fail N`** stops the run after N suite-scenario failures

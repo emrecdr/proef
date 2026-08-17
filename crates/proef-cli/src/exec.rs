@@ -261,12 +261,24 @@ pub fn execute(
             crate::render::errln!("error: --rerun found no prior run record to rerun from");
             return ExitCode::UserError;
         };
-        match crate::record::failed_scenarios(&dir) {
-            Ok(failed) if failed.is_empty() => {
-                crate::render::outln!("no failed scenarios in the last run — nothing to rerun");
+        match crate::record::rerun_candidates(&dir) {
+            Ok(candidates) if candidates.scenarios.is_empty() => {
+                crate::render::outln!("nothing to rerun — the last run has no failed scenarios");
                 return ExitCode::Success;
             }
-            Ok(failed) => Some(failed),
+            Ok(candidates) => {
+                // Continuing a partial run is different work than retrying
+                // failures, and the developer should know which one this is —
+                // a silent green over a mostly-unexecuted suite was the bug.
+                if candidates.never_ran > 0 {
+                    crate::render::outln!(
+                        "note: the last run was cancelled before {} scenario(s) ran — \
+                         rerunning them along with the failures",
+                        candidates.never_ran
+                    );
+                }
+                Some(candidates.scenarios)
+            }
             Err(err) => {
                 crate::render::errln!("error: {err}");
                 return ExitCode::UserError;
