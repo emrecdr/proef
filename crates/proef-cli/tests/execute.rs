@@ -1313,6 +1313,73 @@ fn encrypted_secret_store_drives_a_run() {
     );
 }
 
+/// `--max-fail N` stops the run after N suite failures, honestly (R3-1).
+///
+/// The semantics every runner in the field shares — Playwright
+/// `--max-failures`, pytest `--maxfail`, nextest `--max-fail`: stop at the
+/// threshold, and the tests that never ran report as *not run*, never as
+/// passed. proef rides its graceful-cancel path, so the record is a complete
+/// **cancelled** run — which `diff --fail-on-regression` already refuses to
+/// certify, exactly right for a deliberately-partial run.
+#[test]
+fn max_fail_stops_after_the_threshold_and_records_the_rest_as_skipped() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    // Three scenarios that all fail (the fixture answers 200; the pack asserts
+    // 500). With --jobs 1 they run in file order, so --max-fail 1 must stop
+    // after the first: `ScenarioFinished` is emitted from the dispatcher
+    // thread, so the cancel lands before the next scenario is scheduled.
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: first\n    When health is mischecked\n  \
+         Scenario: second\n    When health is mischecked\n  \
+         Scenario: third\n    When health is mischecked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  bad:\n    match: health is mischecked\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 500\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1", "--max-fail", "1"])
+        .assert()
+        .code(1); // a test failure is still a test failure
+    let rendered = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        rendered.contains("--max-fail"),
+        "the stop must say why: {rendered}"
+    );
+
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    // One failure, two never-run scenarios recorded as skipped — not absent,
+    // and never passed. The record is a complete cancelled run.
+    assert!(
+        events.contains(r#""failed":1"#) && events.contains(r#""skipped":2"#),
+        "totals must show 1 failed / 2 skipped: {events}"
+    );
+    assert!(
+        events.contains(r#""cancelled":true"#),
+        "a max-fail stop is a cancelled run — diff must refuse to certify it: {events}"
+    );
+
+    // Without the flag, all three run and fail: the wrapper is pass-through
+    // when unset, so this pins that the flag *caused* the early stop above.
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(1);
+    let events = std::fs::read_to_string(latest_run_dir(cwd.path()).join("events.jsonl")).unwrap();
+    assert!(
+        events.contains(r#""failed":3"#),
+        "without --max-fail all three must run: {events}"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated

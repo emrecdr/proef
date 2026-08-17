@@ -6,6 +6,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`proef test --max-fail N`** stops the run after N suite-scenario failures
+  (`1` = fail fast) — the convention Playwright (`--max-failures`), pytest
+  (`--maxfail`) and cargo-nextest (`--max-fail`) share, with the shared honest
+  semantics: in-flight scenarios finish, the never-run rest record as
+  *skipped* (not absent, never passed), and teardown still runs on its own
+  token. The stop rides the graceful-cancel path Ctrl-C already exercises, so
+  the record is a complete **cancelled** run — which `diff
+  --fail-on-regression` already refuses to certify, exactly right for a
+  deliberately-partial one. `[run] setup`/`teardown` failures never count
+  toward the threshold (a broken fixture is not a failing test, ADR-0014).
+
+### Documentation
+
+- **The R3 enhancement registry is triaged** (OPEN-FINDINGS): `--max-fail`
+  built; a flakiness verdict over the run history and hash-mode sharding
+  validated as build-next (the 2026 flaky pipeline is detect → quarantine →
+  resolve, and the `@quarantine` tag already owns the middle step); CTRF,
+  pack doc and the pre-M6 seam refactors deferred with named triggers; OTel
+  and Cucumber-Messages exporters declined under ADR-0008's one-record rule;
+  items defined only in the absent v1 research document held for a spec.
+
 ## [0.13.0] - 2026-08-17 (a record that travels, and a secret that stays one)
 
 ### Security
