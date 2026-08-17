@@ -126,6 +126,10 @@ enum Command {
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
         #[arg(long)]
         env: Option<String>,
+        /// Stop after N scenario failures: in-flight scenarios finish, the
+        /// rest record as skipped, teardown still runs (`1` = fail fast)
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        max_fail: Option<u32>,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
@@ -425,6 +429,7 @@ fn main() -> std::process::ExitCode {
             sarif,
             rerun,
             env,
+            max_fail,
         } => {
             // Captured before `prepare` consumes `path`: `dry_run`'s "next
             // command" nudge must echo the path the user actually typed, not
@@ -475,6 +480,7 @@ fn main() -> std::process::ExitCode {
                                         active_env.as_deref(),
                                         run_id.clone(),
                                         rerun,
+                                        max_fail,
                                         config,
                                         cancel, // None = execute installs its own Ctrl-C handler
                                     )

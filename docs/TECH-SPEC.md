@@ -343,7 +343,7 @@ proef [--config PATH] <command>       # global: names the proef.toml to read
 proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
-                      [--run-id ID] [--rerun] [--sarif PATH (with --dry-run)]
+                      [--run-id ID] [--rerun] [--sarif PATH (with --dry-run)] [--max-fail N]
 proef flows [file|dir] [--env NAME] [--output json]
 proef macros [file|dir] [--env NAME] [--output json]
 proef fragments [file|dir] [--env NAME] [--output json] [--check [--require-annotated]]

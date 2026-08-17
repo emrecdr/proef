@@ -154,6 +154,7 @@ pub fn execute(
     active_env: Option<&str>,
     run_id: Option<String>,
     rerun: bool,
+    max_fail: Option<u32>,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -325,15 +326,6 @@ pub fn execute(
     // the core stays sans-IO. `stamp` runs on the emitting worker thread.
     let sink = stamp_scenario_timing(proef_core::report::sink(reporters, redactions.clone()));
 
-    // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
-    // which brackets its own work with `RunStarted`/`RunFinished`. A record
-    // must carry exactly one pair overall (ADR-0008), so the phases run
-    // against a wrapper that drops that pair, and a `RunRecord` guard owns
-    // the single pair for the whole run — opened below and closed by an
-    // explicit `drop` after teardown, with `Drop` as the backstop for every
-    // early return in between (see `RunRecord`).
-    let pool_sink = suppress_run_head_tail(sink.clone());
-
     // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
     // `--watch` the loop owns the handler and hands us its token instead.
     let cancel = external_cancel.unwrap_or_else(|| {
@@ -352,6 +344,26 @@ pub fn execute(
         });
         cancel
     });
+
+    // `--max-fail N`: cancel the run once N suite scenarios have failed —
+    // rides the graceful-cancel path Ctrl-C already exercises, so in-flight
+    // batches finish, the rest record as skipped, teardown still runs on its
+    // own token, and the record is a complete *cancelled* run. That last part
+    // is deliberate: `diff --fail-on-regression` refuses to certify a
+    // cancelled run, which is exactly right for a deliberately-partial one.
+    // Wrapped after the timing stamp so every emitter flows through it; the
+    // `phase` field keeps setup/teardown failures out of the count (setup
+    // aborts the run on its own, and by teardown the pool is already done).
+    let sink = trip_on_max_fail(sink, max_fail, cancel.clone());
+
+    // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
+    // which brackets its own work with `RunStarted`/`RunFinished`. A record
+    // must carry exactly one pair overall (ADR-0008), so the phases run
+    // against a wrapper that drops that pair, and a `RunRecord` guard owns
+    // the single pair for the whole run — opened below and closed by an
+    // explicit `drop` after teardown, with `Drop` as the backstop for every
+    // early return in between (see `RunRecord`).
+    let pool_sink = suppress_run_head_tail(sink.clone());
 
     let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
 
@@ -730,6 +742,49 @@ pub fn execute(
     }
 
     exit
+}
+
+/// Wrap `inner` so the run cancels once `max_fail` suite scenarios have
+/// failed (`--max-fail N`); `None` passes every event straight through.
+///
+/// A sink wrapper rather than runner surface because the event spine already
+/// carries exactly what the decision needs: `ScenarioFinished` says which
+/// scenario, with what status, in which phase — emitted from the dispatcher
+/// thread, so the cancel lands before the next scenario is scheduled and
+/// `--jobs 1 --max-fail 1` stops after precisely one failure. Counting only
+/// `phase: None` keeps `[run] setup`/`teardown` out of the threshold: a setup
+/// failure aborts the run by itself (ADR-0014), and by the time teardown runs
+/// the pool is already drained, so cancelling there would be a no-op that
+/// still misread cleanup trouble as suite failures.
+fn trip_on_max_fail(
+    inner: EventSink,
+    max_fail: Option<u32>,
+    cancel: CancellationToken,
+) -> EventSink {
+    let Some(threshold) = max_fail else {
+        return inner;
+    };
+    let failed = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    EventSink::new(move |event| {
+        if let Event::ScenarioFinished {
+            status: proef_core::step::Status::Failed,
+            phase: None,
+            ..
+        } = event
+        {
+            // `fetch_add` returns the previous count, so exactly one emitter
+            // crosses the threshold and prints — parallel failures cannot
+            // trip it twice or double-print under `--jobs N`.
+            if failed.fetch_add(1, Ordering::SeqCst) + 1 == threshold {
+                crate::render::errln!(
+                    "stopping: {threshold} scenario failure(s) reached (--max-fail) — \
+                     cancelling after current batches"
+                );
+                cancel.cancel();
+            }
+        }
+        inner.emit(event);
+    })
 }
 
 /// Wrap `inner` so scenario lifecycle events are stamped with run-relative

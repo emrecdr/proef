@@ -416,15 +416,76 @@ defect, and await triage.
   corpus-holding change that shipped earlier — recorded here because review
   counts have now drifted by +2 for three consecutive rounds.
 
-### Awaiting triage (the R3 registry)
+### The R3 registry — triaged 2026-08-17
 
-The enhancement registry (fail-fast, a flakiness-verdict command, sharding, a
-baseline flag for `diff`, JUnit attrs, CTRF, pack documentation generation,
-canary fixtures for hurl-8.1 option additions, publishing hardening) is
-recorded in the research documents and is a product call, not a defect backlog
-— nothing in it blocks correctness. Triage it as a set; the prototyped items
-(the flakiness fold, hash-mode sharding, the baseline flow) carry validation
-receipts worth keeping.
+Triaged as a set against the PRD, the ADRs, and current industry practice,
+with each seam re-validated against the tree first. The v1 research document
+was confirmed absent (only v2 exists on disk), so items defined only there are
+one-line summaries with no spec — that fact drives several verdicts below.
+
+**Built:**
+
+- **R3-1 `--max-fail N`** *(shipped with this triage)*. The convention is
+  universal — Playwright `--max-failures`, pytest `--maxfail`, nextest
+  `--max-fail` — with one shared semantics: stop after N failures, un-run
+  tests report as not-run rather than passed. proef's seams made it a CLI-only
+  change: a sink wrapper counts suite-scenario failures (the `phase` field
+  keeps setup/teardown out of the count) and cancels the run token, which is
+  the tested Ctrl-C drain path — in-flight batches finish, the rest record as
+  skipped, teardown still runs on its own token, and the record is a complete
+  *cancelled* run. That last part is free correctness: `diff
+  --fail-on-regression` already refuses to certify a cancelled run, which is
+  exactly right for a deliberately-partial one.
+- **R3-4 `diff` takes a record path** — shipped earlier (#65), with the
+  research's `--baseline` flag spelling declined as a second name for the
+  same positional.
+
+**Build next (validated, in order):**
+
+- **R3-2 a flakiness verdict over the run history.** The 2026 pipeline is
+  detect → quarantine → resolve, and proef already owns the middle step: the
+  `@quarantine` tag runs-but-does-not-gate. Detection over the retained
+  records (fail counts, status transitions, and the pass-on-retry class that
+  pass/fail-history tools structurally miss — the record keeps per-step
+  attempts) completes the loop with data proef already has. The research
+  prototyped the fold against real records; keep its receipts.
+- **R3-3 sharding, hash-mode only.** Discovery order is deterministic
+  (verified byte-identical), and the research measured the nextest lesson
+  concretely: naive index-slicing re-buckets 2 of 3 scenarios when one is
+  added; hash-by-`(file, scenario)` re-buckets none. Ship only the hash mode;
+  pin the filter→shard order when specifying.
+- **R3-6 JUnit attributes** — *after* a fresh spec written from what GitLab
+  and Jenkins actually consume. The original definition lives in the absent
+  v1 document; building from a two-word summary is guessing.
+
+**Deferred, with the trigger named:**
+
+- **R3-5 CTRF output** — on the first concrete consumer request. The format
+  has momentum but proef already emits JUnit, TAP, JSONL, a GH summary, SARIF
+  and HTML; a seventh format needs a consumer, not a trend.
+- **R3-18 generated pack documentation** — when pack-vocabulary discovery becomes a
+  reported adoption pain; the LSP currently serves that need interactively.
+- **R3-15 pre-M6 seam refactors** — when a second engine is actually
+  scheduled (M6 has nothing scheduled; the snapshot corpus already provides
+  the golden artifact-diff prerequisite).
+- **R3-7 `--affected-by`, R3-10 fake variants** — defined only in the absent
+  v1 document; need the source or a fresh spec before any verdict.
+- **R3-9 seeded shuffle** — already tracked as IMPROVEMENT-PLAN #14; no
+  second listing here.
+
+**Declined — do not re-raise** (moved to the standing section's rules):
+
+- **OTel trace export (R3-11) and Cucumber Messages (R3-12).** ADR-0008: the
+  JSONL event stream *is* the record, no second record format. Both are
+  re-encodings of the record for ecosystems that can convert from JSONL
+  outside proef; building them in creates permanent format-tracking
+  obligations against moving upstream schemas.
+- **Browser/Android engines (R3-16/R3-17)** — foreclosed by the standing
+  hurl-only decision, not deferred.
+- **S4's first-publish token sequence** — false premise; the crates have been
+  live since 0.5.1. The worthwhile residue (crates.io Trusted Publishing for
+  the *existing* crates, then the token-delete) is an owner-side dashboard
+  action, recommended to the user rather than something the repo can do.
 
 ## Open — adoption report on 0.12.0 (ingested 2026-08-14)
 
