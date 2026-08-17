@@ -1380,6 +1380,78 @@ fn max_fail_stops_after_the_threshold_and_records_the_rest_as_skipped() {
     );
 }
 
+/// `--rerun` after a cancelled run continues it — failures *and* the tail the
+/// run never reached (round-15 P2).
+///
+/// Without the union this was a silent false green: stop at the threshold,
+/// fix, rerun → only the old failures ran, `exit 0`, most of the suite never
+/// executed in either run. Stop → fix → continue is the workflow fail-fast
+/// exists for, so "continue" must mean the unfinished work too.
+#[test]
+fn rerun_after_a_max_fail_stop_continues_the_never_ran_tail() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: first\n    When health is mischecked\n  \
+         Scenario: second\n    When health is mischecked\n  \
+         Scenario: third\n    When health is mischecked\n",
+    )
+    .unwrap();
+    let pack = |code: u16| {
+        format!(
+            "macros:\n  bad:\n    match: health is mischecked\n    steps:\n      - hurl: |\n          \
+             GET ${{url:base}}/health\n          HTTP {code}\n"
+        )
+    };
+    let pack_path = cwd.path().join("suite/packs/p.yaml");
+
+    // Stop at the first failure: 1 failed, 2 never ran.
+    std::fs::write(&pack_path, pack(500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1", "--max-fail", "1"])
+        .assert()
+        .code(1);
+
+    // Fix everything, then continue.
+    std::fs::write(&pack_path, pack(200)).unwrap();
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(0);
+    let rendered = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    // The green is earned: all three scenarios ran — the failure retried AND
+    // the two the stopped run never reached — and the continuation said so.
+    assert!(
+        rendered.contains("3 passed"),
+        "the rerun must continue the never-ran tail, not just retry the failure: {rendered}"
+    );
+    assert!(
+        rendered.contains("cancelled before 2 scenario(s) ran"),
+        "continuing a partial run must be announced: {rendered}"
+    );
+
+    // A rerun from a *completed* base is unchanged: it retries failures only.
+    std::fs::write(&pack_path, pack(500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1"])
+        .assert()
+        .code(1); // completes: 3 failed, nothing skipped
+    std::fs::write(&pack_path, pack(200)).unwrap();
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(0);
+    let rendered = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        rendered.contains("3 passed") && !rendered.contains("note: the last run was cancelled"),
+        "a completed base keeps the old semantics, without the partial-run note: {rendered}"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated

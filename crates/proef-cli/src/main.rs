@@ -120,7 +120,8 @@ enum Command {
         /// Write validation diagnostics as a SARIF 2.1.0 log (requires --dry-run)
         #[arg(long, requires = "dry_run")]
         sarif: Option<PathBuf>,
-        /// Re-run only the scenarios that failed in the last run
+        /// Re-run the last run's failures — and, when it was cancelled
+        /// (`--max-fail`, Ctrl-C), the scenarios it never reached
         #[arg(long)]
         rerun: bool,
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)

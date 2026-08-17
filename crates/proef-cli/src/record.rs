@@ -289,20 +289,64 @@ pub fn read_record(record_dir: &Path) -> Result<Record, String> {
     Ok(parse_record(&events))
 }
 
-/// The `(file, scenario)` identity of every scenario that failed in a record —
-/// used by `--rerun` to re-run just the prior failures. A projection of
+/// What `--rerun` should run from a prior record, and how much of it is
+/// unfinished rather than failed.
+pub struct RerunCandidates {
+    /// `(file, scenario)` identities to run.
+    pub scenarios: Vec<(String, String)>,
+    /// How many of those are scenarios the base run **never completed** — its
+    /// cancellation-skipped tail. Zero on a completed record. Nonzero is worth
+    /// a console note: the developer is continuing a partial run, not merely
+    /// retrying failures.
+    pub never_ran: usize,
+}
+
+/// The scenarios `--rerun` should run: every failure — plus, on a **cancelled**
+/// record, every scenario the run never completed. A projection of
 /// [`read_record`] so there is one record reader, not two.
-pub fn failed_scenarios(record_dir: &Path) -> Result<Vec<(String, String)>, String> {
-    Ok(read_record(record_dir)?
+///
+/// The union is what makes fail-fast honest end to end. `--max-fail` (and
+/// Ctrl-C) stop a run early; the never-reached scenarios record as
+/// scenario-level `Skipped` so they are not silently absent — but a rerun
+/// that then filtered to `Failed` alone ran only the old failures and
+/// reported green with most of the suite still never executed. Reproduced
+/// live: stop at 2 of 6, fix, rerun → `2 passed · 0 failed`, exit 0, four
+/// scenarios untested in either run. Stop → fix → continue is the workflow
+/// fail-fast exists for, so "continue" must mean the unfinished work too.
+///
+/// Scoped by construction: scenario-level `Skipped` is emitted only under
+/// cancellation (the queue drain, and an in-flight scenario interrupted with
+/// no failed step — `runner.rs`), so on a completed record the union *is* the
+/// failure set and behavior is unchanged. Phases stay invisible to `--rerun`
+/// (ADR-0014): they are not in the pool `build_specs` filters, so returning
+/// one produced a run that matched nothing and blamed `--tags`/`--scenario`
+/// the user never passed. A phase re-runs by re-running the suite.
+pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
+    let record = read_record(record_dir)?;
+    let cancelled = record.completion == RunCompletion::Cancelled;
+    let mut never_ran = 0;
+    let scenarios = record
         .scenarios
         .into_iter()
-        // Phases are invisible to `--rerun` (ADR-0014), and they are not in the
-        // pool `build_specs` filters, so returning one produced a run that
-        // matched nothing and blamed `--tags`/`--scenario` the user never
-        // passed. A phase re-runs by re-running the suite.
-        .filter(|(_, run)| run.status == Status::Failed && run.phase.is_none())
+        .filter(|(_, run)| {
+            if run.phase.is_some() {
+                return false;
+            }
+            match run.status {
+                Status::Failed => true,
+                Status::Skipped if cancelled => {
+                    never_ran += 1;
+                    true
+                }
+                _ => false,
+            }
+        })
         .map(|(key, _)| key)
-        .collect())
+        .collect();
+    Ok(RerunCandidates {
+        scenarios,
+        never_ran,
+    })
 }
 
 #[cfg(test)]
