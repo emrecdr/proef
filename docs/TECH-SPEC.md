@@ -351,6 +351,7 @@ proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
 proef diff [base] [new] [--fail-on-regression]   # each side: run id, record dir, or events .jsonl
+proef flaky [--output json]                      # verdicts over the retained run history
 proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]
 proef lsp

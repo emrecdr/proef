@@ -14,6 +14,7 @@ mod disk_provider;
 mod envvar;
 mod exec;
 mod explain;
+mod flaky;
 mod fmt;
 mod front;
 mod fsutil;
@@ -207,6 +208,13 @@ enum Command {
     Explain {
         /// Run id (default: the latest run)
         run_id: Option<String>,
+    },
+    /// Flakiness verdicts over the retained run history: flapping,
+    /// passes-only-on-retry, always-failing
+    Flaky {
+        /// Machine output: `json` prints one object per scenario
+        #[arg(long, value_enum)]
+        output: Option<OutputFormat>,
     },
     /// Compare two run records: regressions, fixes, flakiness, perf deltas
     Diff {
@@ -662,6 +670,13 @@ fn main() -> std::process::ExitCode {
         Command::Explain { run_id } => match load_config(config_path) {
             Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref()),
             Err(code) => code,
+        },
+        Command::Flaky { output } => match json_only(output) {
+            Err(code) => code,
+            Ok(output_json) => match load_config(config_path) {
+                Ok(config) => flaky::flaky(&config.runs_dir(), output_json),
+                Err(code) => code,
+            },
         },
         Command::Diff {
             base,

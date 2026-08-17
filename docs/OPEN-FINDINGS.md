@@ -442,13 +442,15 @@ one-line summaries with no spec — that fact drives several verdicts below.
 
 **Build next (validated, in order):**
 
-- **R3-2 a flakiness verdict over the run history.** The 2026 pipeline is
-  detect → quarantine → resolve, and proef already owns the middle step: the
-  `@quarantine` tag runs-but-does-not-gate. Detection over the retained
-  records (fail counts, status transitions, and the pass-on-retry class that
-  pass/fail-history tools structurally miss — the record keeps per-step
-  attempts) completes the loop with data proef already has. The research
-  prototyped the fold against real records; keep its receipts.
+- **R3-2 a flakiness verdict** — *(shipped as `proef flaky`)*. The 2026
+  pipeline is detect → quarantine → resolve, and proef already owned the
+  middle step (`@quarantine` runs-but-does-not-gate); `flaky` is the missing
+  detect, a fold over the records `runs-dir` already retains, so the history
+  window is `[run] keep-runs` and no new state exists. Transition-counting
+  separates flaky from broken (a mutation test proved the test suite could
+  not initially tell that apart from a naive fail-rate — the F,F,P,P case
+  now pins it), per-step attempt counts surface the pass-only-on-retry
+  latent class, and a cancellation-skipped row is not evidence.
 - **R3-3 sharding, hash-mode only.** Discovery order is deterministic
   (verified byte-identical), and the research measured the nextest lesson
   concretely: naive index-slicing re-buckets 2 of 3 scenarios when one is

@@ -24,6 +24,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef flaky` — flakiness verdicts over the retained run history** (R3-2).
+  The 2026 discipline is detect → quarantine → resolve, and proef already
+  owned the middle step: `@quarantine` runs a scenario without gating the
+  exit code. This is the missing detect, a fold over the records `runs-dir`
+  already retains — the window is `[run] keep-runs`, and no new state is
+  written. Three signals from fields the record already carries (ADR-0008):
+  **flapping** (verdict changed between consecutive observed runs more than
+  once — transition-counting, not fail-rate, which is what separates *flaky*
+  from *broken*: a scenario failing every run is consistently broken, a
+  different problem), **passes only on retry** (green, but some step needed
+  more than one attempt — the latent flake pass/fail-history tools
+  structurally miss; the record keeps per-step attempts), and **always
+  failing**. A cancellation-skipped row is not evidence and does not count
+  toward a scenario's history; phases are excluded (ADR-0014). `--output
+  json` emits one object per scenario with the counts behind each verdict.
+  Fewer than two runs is refused (exit 2), the same answer `diff` gives.
+
 - **`proef test --max-fail N`** stops the run after N suite-scenario failures
   (`1` = fail fast) — the convention Playwright (`--max-failures`), pytest
   (`--maxfail`) and cargo-nextest (`--max-fail`) share, with the shared honest
