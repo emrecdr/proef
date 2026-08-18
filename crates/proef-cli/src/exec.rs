@@ -155,6 +155,7 @@ pub fn execute(
     run_id: Option<String>,
     rerun: bool,
     max_fail: Option<u32>,
+    shard: Option<(u32, u32)>,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -451,10 +452,29 @@ pub fn execute(
         rerun_set.as_deref(),
         &artifacts_dir,
     );
+    // `--shard I/N` — applied AFTER every other filter, so a shard is always
+    // "shard of what you selected" (the pinned filter→shard order): the same
+    // expression on every matrix job partitions one agreed-on set.
+    let before_shard = specs.len();
+    let mut specs = specs;
+    if let Some((index, count)) = shard {
+        specs.retain(|spec| shard_bucket(&spec.file, &spec.name, count) == index - 1);
+    }
     let selected = specs.len();
     if selected == 0 {
-        // A typo'd --tags/--scenario passing CI with zero tests run is the
-        // silent-green failure mode; make it loud (ADR-0009: user error).
+        // An empty *shard* of a non-empty selection is a small suite spread
+        // over a big matrix — a fact, not a mistake, and a matrix job must not
+        // fail on it. An empty *selection* stays the loud refusal below: a
+        // typo'd --tags passing CI with zero tests run is the silent-green
+        // failure mode (ADR-0009: user error), and sharding must not blunt it.
+        if let Some((index, count)) = shard
+            && before_shard > 0
+        {
+            crate::render::outln!(
+                "shard {index}/{count} selected 0 of {before_shard} scenario(s) —                  nothing to run in this shard"
+            );
+            return ExitCode::Success;
+        }
         return front::no_scenarios_matched();
     }
     let status_line = format!(
@@ -1160,6 +1180,31 @@ fn exclude_phase_features(
     });
 }
 
+/// Which shard a scenario belongs to: a stable hash of its run-wide identity,
+/// modulo the shard count.
+///
+/// **The assignment is a contract.** A CI matrix runs `--shard 1/N..N/N` on
+/// separate machines, and the value of hash-mode sharding — measured, and the
+/// reason index-slicing was rejected at triage — is that adding one scenario
+/// never re-buckets the others. That only holds if this function's output
+/// never changes for a given input, across proef versions: FNV-1a is spelled
+/// out here rather than borrowed from a std or crate hasher precisely because
+/// those make no cross-version stability promise (`DefaultHasher`'s docs say
+/// the opposite). The exact values are pinned by a unit test below; changing
+/// this function is a breaking change to every matrix that uses sharding.
+///
+/// The NUL joint makes the identity injective: `("a", "b\0c")` and
+/// `("a\0b", "c")` must not collide, and NUL appears in neither a path nor a
+/// scenario name.
+fn shard_bucket(file: &str, name: &str, count: u32) -> u32 {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64; // FNV-1a offset basis
+    for byte in file.bytes().chain(std::iter::once(0)).chain(name.bytes()) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
+    }
+    u32::try_from(hash % u64::from(count)).unwrap_or(0)
+}
+
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure
 /// re-lowers with the **live** World (ADR-0005 lower-time globals), emits the
 /// artifact, writes it into the run dir, and hands the same bytes to the
@@ -1367,6 +1412,38 @@ mod tests {
     use super::{RunRecord, rotate_runs, runner};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
+
+    /// The shard assignment is a contract: these literals were computed once
+    /// and frozen. If this test fails, the hash changed — which silently
+    /// re-buckets every scenario across every CI matrix that shards. That is
+    /// a breaking change to publish, never an implementation detail to slip.
+    #[test]
+    fn shard_assignment_is_frozen() {
+        use super::shard_bucket;
+        let file = "suite/case.feature";
+        for (name, at2, at3) in [
+            ("s1", 0, 2),
+            ("s2", 1, 2),
+            ("s3", 0, 1),
+            ("s4", 1, 1),
+            ("s5", 0, 0),
+            ("s6", 1, 0),
+        ] {
+            assert_eq!(shard_bucket(file, name, 2), at2, "{name} at N=2");
+            assert_eq!(shard_bucket(file, name, 3), at3, "{name} at N=3");
+        }
+        // The joint is what keeps `("ab","c")` and `("a","bc")` distinct —
+        // without it both would hash `abc`. (Injectivity rests on NUL
+        // appearing in neither component, which paths and scenario names
+        // guarantee; a NUL-bearing input could still collide, and the first
+        // draft of this test proved exactly that by violating the
+        // precondition and demanding injectivity anyway.)
+        assert_ne!(
+            shard_bucket("ab", "c", 1_000_000),
+            shard_bucket("a", "bc", 1_000_000),
+            "the (file, name) joint must keep the pair boundaries distinct"
+        );
+    }
 
     /// Rotation honours the configured budget, and still refuses to delete
     /// anything it did not name.

@@ -456,11 +456,13 @@ one-line summaries with no spec — that fact drives several verdicts below.
   decision; the asymmetry is a choice, not an omission, and the thresholds
   become contract (and move to `proef.toml`) only if a gating mode ever
   exists.
-- **R3-3 sharding, hash-mode only.** Discovery order is deterministic
-  (verified byte-identical), and the research measured the nextest lesson
-  concretely: naive index-slicing re-buckets 2 of 3 scenarios when one is
-  added; hash-by-`(file, scenario)` re-buckets none. Ship only the hash mode;
-  pin the filter→shard order when specifying.
+- **R3-3 sharding, hash-mode only** — *(shipped as `--shard I/N`)*. The
+  measured stability argument held end to end: the mutation test swapped
+  index-slicing back in and the insertion case (prepend, which shifts every
+  position) caught it — the *append* case did not, which is itself the
+  finding's point. The assignment is frozen by literal-pinned tests; changing
+  the hash is a breaking change to every sharded matrix. Filter→shard order
+  pinned; an empty shard of a non-empty selection exits 0 with a note.
 - **R3-6 JUnit attributes** — *after* a fresh spec written from what GitLab
   and Jenkins actually consume. The original definition lives in the absent
   v1 document; building from a two-word summary is guessing.

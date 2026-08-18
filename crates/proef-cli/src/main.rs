@@ -132,6 +132,11 @@ enum Command {
         /// rest record as skipped, teardown still runs (`1` = fail fast)
         #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
         max_fail: Option<u32>,
+        /// Run only this shard of the suite, e.g. `1/3` — scenarios are
+        /// assigned by a stable hash of `(file, scenario)`, so adding one
+        /// never re-buckets the others across a CI matrix
+        #[arg(long, value_parser = parse_shard)]
+        shard: Option<(u32, u32)>,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
@@ -268,6 +273,28 @@ enum SecretAction {
         /// Secret name to remove
         name: String,
     },
+}
+
+/// Parse `--shard I/N` (1-based): `1/3` is the first of three shards.
+/// Playwright's spelling, and the same validation everyone applies: both
+/// halves at least 1, index within count.
+fn parse_shard(raw: &str) -> Result<(u32, u32), String> {
+    let (index, count) = raw
+        .split_once('/')
+        .ok_or_else(|| "expected I/N, e.g. --shard 1/3".to_owned())?;
+    let index: u32 = index
+        .parse()
+        .map_err(|_| format!("`{index}` is not a shard index"))?;
+    let count: u32 = count
+        .parse()
+        .map_err(|_| format!("`{count}` is not a shard count"))?;
+    if index == 0 || count == 0 {
+        return Err("shards are 1-based: the first of three is 1/3".to_owned());
+    }
+    if index > count {
+        return Err(format!("shard {index}/{count}: index exceeds count"));
+    }
+    Ok((index, count))
 }
 
 /// Resolve the suite path when a command is given none: `[run] suite` from
@@ -439,6 +466,7 @@ fn main() -> std::process::ExitCode {
             rerun,
             env,
             max_fail,
+            shard,
         } => {
             // Captured before `prepare` consumes `path`: `dry_run`'s "next
             // command" nudge must echo the path the user actually typed, not
@@ -490,6 +518,7 @@ fn main() -> std::process::ExitCode {
                                         run_id.clone(),
                                         rerun,
                                         max_fail,
+                                        shard,
                                         config,
                                         cancel, // None = execute installs its own Ctrl-C handler
                                     )
