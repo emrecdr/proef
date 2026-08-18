@@ -4,7 +4,7 @@
 post-M5 work: external config/environments (ADR-0012), the v0.6–v0.8 correctness series,
 v0.9.0, and named hurl fragments (ADR-0018 — see the §3 amendment) · **Date:** 2026-07-28
 · **Owner:** Emre
-**Companion docs:** [ADRs](adr/) for the *why*, [TECH-SPEC](TECH-SPEC.md) for the *how*,
+**Companion docs:** [ADRs](README.md#decision-log-adr-index) for the *why*, [TECH-SPEC](TECH-SPEC.md) for the *how*,
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) for the *when*.
 
 ## 1. Problem & context

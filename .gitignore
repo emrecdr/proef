@@ -22,3 +22,6 @@ fuzz/coverage/
 
 # devt workflow state (recursive — catches sub-tree devt invocations)
 **/.devt/state/
+
+# mdBook output (the Pages workflow builds it; book.toml at the root)
+/book

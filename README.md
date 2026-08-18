@@ -9,6 +9,7 @@
 [![Gherkin](https://img.shields.io/badge/BDD-Gherkin-23D96C?logo=cucumber&logoColor=white)](https://cucumber.io/docs/gherkin/)
 [![Hurl](https://img.shields.io/badge/engine-Hurl-FF0288)](https://hurl.dev)
 [![E2E](https://img.shields.io/badge/testing-end--to--end-8A2BE2)](docs/README.md)
+[![Docs](https://img.shields.io/badge/docs-emrecdr.github.io%2Fproef-blue)](https://emrecdr.github.io/proef/)
 
 **proef** (Dutch: *test/trial* — and *tasting*) is a declarative, modular,
 multi-engine end-to-end test runner. Tests are Gherkin `.feature` files in plain
@@ -310,7 +311,8 @@ Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
 [`docs/CONFIG.md`](docs/CONFIG.md),
 [`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md), and — for CI consumers of the
 run record — [`docs/EVENTS.md`](docs/EVENTS.md).
-The maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
+The full corpus is rendered at <https://emrecdr.github.io/proef/>; the
+maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
 (ADR-0001…0018), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.
 

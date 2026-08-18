@@ -1,0 +1,80 @@
+# GitHub Pages: mdBook renders the docs/ corpus (nav: docs/SUMMARY.md, config:
+# root book.toml) and deploys it to https://emrecdr.github.io/proef/. Pages is
+# configured with build_type "workflow" — no Jekyll. The build job also runs on
+# PRs that touch the corpus so a nav break or an off-site doc is caught before
+# merge; only a push to main deploys. Deliberately NOT a required check —
+# branch protection stays at the existing four (see docs/CONTRIBUTING.md).
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "book.toml", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["docs/**", "book.toml", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions: {}
+
+# Deployments queue rather than cancel: an interrupted Pages deploy can leave
+# the site on a half-written artifact.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  MDBOOK_VERSION: 0.5.4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install mdbook
+        uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2.85.3
+        with:
+          tool: mdbook@${{ env.MDBOOK_VERSION }}
+      - name: every corpus doc is on the site
+        # Same scope the docs gates lint (docs/, docs/adr/) plus runbooks/;
+        # superpowers/ and upstream/ are archives and stay off the site, like
+        # they stay out of living_docs. A doc added without a SUMMARY.md entry
+        # would otherwise just silently not render.
+        run: |
+          missing=0
+          for f in docs/*.md docs/adr/*.md docs/runbooks/*.md; do
+            rel="${f#docs/}"
+            case "$rel" in
+              SUMMARY.md) continue ;;             # the nav itself
+              ADOPTION-REQUEST.md) continue ;;    # dated intake record, not indexed by the corpus
+            esac
+            if ! grep -Fq "($rel)" docs/SUMMARY.md; then
+              echo "::error file=docs/SUMMARY.md::$rel is not in docs/SUMMARY.md — add a chapter or extend the allowlist in pages.yml"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - run: mdbook build
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        if: github.event_name != 'pull_request'
+        with:
+          path: book
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

@@ -3,7 +3,7 @@
 **Status:** Round 1 (§1–§11) largely shipped; Round 2 (§12) — **Batches E, F & most of G
 shipped** (N2·N6a·N9·N8·N7·N4·N6b·N3; N1 deferred per ADR-0013) · **Date:** 2026-07-31,
 appended 2026-08-02 · **Owner:** Emre
-**Companion docs:** [PRD](PRD.md) (scope + the binding **non-goals**, §3), [adr/](adr/) (the
+**Companion docs:** [PRD](PRD.md) (scope + the binding **non-goals**, §3), [adr/](README.md#decision-log-adr-index) (the
 invariants every item must respect), [TECH-SPEC](TECH-SPEC.md) (types/pipeline),
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) (milestones + definition of done).
 

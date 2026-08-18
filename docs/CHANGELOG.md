@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
+  renders `docs/` on every push to `main` that touches it; the nav is
+  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
+  doc, and the pages workflow refuses a corpus doc that is not on the site.
+  The crate `homepage` points there from the next release.
+
 ## [0.14.0] - 2026-08-18 (proef at CI scale)
 
 ### Fixed
