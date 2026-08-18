@@ -24,6 +24,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef test --shard I/N` — stable hash-mode sharding** (R3-3). A CI matrix
+  runs `--shard 1/N` … `N/N` on separate machines; scenarios are assigned by a
+  frozen FNV-1a hash of the run-wide `(file, scenario)` identity, so **adding
+  a scenario never re-buckets the others** — the measured stability argument
+  that rejected index-slicing at triage (inserting one scenario re-bucketed
+  the whole shifted tail under slicing, nothing under hashing; the shard tests
+  pin both directions, and the assignment itself is frozen by literals — the
+  hash is a published contract, and changing it would be breaking). Sharding
+  applies **after** every other selector (the pinned filter→shard order), so
+  each matrix job partitions one agreed-on set. An empty shard of a non-empty
+  selection is a note and exit 0 — a small suite over a big matrix is a fact,
+  not a mistake — while an empty *selection* keeps the loud typo'd-filter
+  refusal, sharded or not.
+
 - **`proef flaky` — flakiness verdicts over the retained run history** (R3-2).
   The 2026 discipline is detect → quarantine → resolve, and proef already
   owned the middle step: `@quarantine` runs a scenario without gating the
