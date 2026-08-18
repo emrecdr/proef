@@ -217,3 +217,77 @@ fn every_documented_command_and_flag_exists() {
 // The other half of this file's job — `DIAGNOSTICS.md` and the emitted codes
 // agreeing in both directions — is `xtask docs-check`'s `check_diagnostics_index`.
 // It reads files and needs no built binary, which is the line this file draws.
+
+/// The reverse direction: every subcommand the binary exposes appears in
+/// README's command table and in TECH-SPEC §10's synopsis.
+///
+/// [`every_documented_command_and_flag_exists`] checks docs→binary; nothing
+/// checked binary→docs, so a new command could ship fully implemented and
+/// invisible — and did, four times (A4, TECH-SPEC §10 twice, then `flaky`,
+/// each caught by an external review rather than a gate). The DIAGNOSTICS
+/// index already models the bidirectional shape ("emitted but no row" and
+/// "row but nothing emits"); commands now get the same treatment.
+#[test]
+fn every_subcommand_is_documented() {
+    let root = workspace_root();
+    let help = {
+        let out = Command::cargo_bin("proef")
+            .unwrap()
+            .arg("--help")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    // The `Commands:` block of clap's help: one indented `name  summary` line
+    // per subcommand, ended by the `Options:` block.
+    let mut subcommands: Vec<String> = Vec::new();
+    let mut in_commands = false;
+    for line in help.lines() {
+        if line.trim_end() == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            if line.trim_start().starts_with("Options:") || line.trim().is_empty() {
+                break;
+            }
+            // A subcommand row is indented exactly two spaces; a wrapped
+            // summary continuation is indented to the summary column. Only
+            // the rows carry names.
+            if let Some(rest) = line.strip_prefix("  ")
+                && !rest.starts_with(' ')
+                && let Some(name) = rest.split_whitespace().next()
+                && name != "help"
+            {
+                subcommands.push(name.to_owned());
+            }
+        }
+    }
+    // Vacuity guard: a parse that finds nothing must fail loudly, not pass an
+    // empty loop — the exact failure mode this gate exists to prevent.
+    assert!(
+        subcommands.len() >= 10,
+        "expected the full subcommand list from --help, parsed only {subcommands:?}"
+    );
+
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let tech_spec = std::fs::read_to_string(root.join("docs/TECH-SPEC.md")).unwrap();
+    let mut failures: Vec<String> = Vec::new();
+    for sub in &subcommands {
+        if !readme.contains(&format!("`proef {sub}")) {
+            failures.push(format!("README.md has no row for `proef {sub}`"));
+        }
+        if !tech_spec.contains(&format!("proef {sub}")) {
+            failures.push(format!(
+                "docs/TECH-SPEC.md §10 does not mention `proef {sub}`"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "the binary exposes commands the documentation does not carry:\n  {}",
+        failures.join("\n  ")
+    );
+}

@@ -239,6 +239,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
+| `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing (`--output json`) |
 | `proef report [run-id]` | write a self-contained HTML report for a run (`-o FILE`) |
 | `proef schema` | print/install the pack JSON Schema (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |

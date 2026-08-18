@@ -450,7 +450,12 @@ one-line summaries with no spec — that fact drives several verdicts below.
   separates flaky from broken (a mutation test proved the test suite could
   not initially tell that apart from a naive fail-rate — the F,F,P,P case
   now pins it), per-step attempt counts surface the pass-only-on-retry
-  latent class, and a cancellation-skipped row is not evidence.
+  latent class, and a cancellation-skipped row is not evidence. **No
+  `--check` gate, deliberately** — its sibling `fragments` has one, but a
+  flakiness verdict is advisory by nature and `@quarantine` owns the gating
+  decision; the asymmetry is a choice, not an omission, and the thresholds
+  become contract (and move to `proef.toml`) only if a gating mode ever
+  exists.
 - **R3-3 sharding, hash-mode only.** Discovery order is deterministic
   (verified byte-identical), and the research measured the nextest lesson
   concretely: naive index-slicing re-buckets 2 of 3 scenarios when one is
