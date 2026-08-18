@@ -34,17 +34,68 @@ use std::path::Path;
 use proef_core::error::ExitCode;
 use proef_core::step::Status;
 
-use crate::record;
+use crate::record::{self, Key, label};
 
-/// One scenario's fold over the observed history.
+/// One observed run of one scenario — everything a verdict reads.
+struct Observation {
+    failed: bool,
+    /// Some step needed more than one attempt.
+    retried: bool,
+    duration_ms: u64,
+}
+
+/// One scenario's observed history: the runs that actually reached it, oldest
+/// first. Everything a verdict needs is derived at read time — counts held
+/// beside the observations they summarize were four fields of redundant state
+/// and a fold-body state machine, for sums a bounded slice answers directly.
 #[derive(Default)]
-struct History {
-    observed: u32,
-    fails: u32,
-    transitions: u32,
-    pass_on_retry: u32,
-    durations: Vec<u64>,
-    last_failed: Option<bool>,
+struct History(Vec<Observation>);
+
+impl History {
+    fn observed(&self) -> usize {
+        self.0.len()
+    }
+
+    fn fails(&self) -> usize {
+        self.0.iter().filter(|o| o.failed).count()
+    }
+
+    /// Consecutive observed runs whose verdict differs — the flap count.
+    fn transitions(&self) -> usize {
+        self.0
+            .windows(2)
+            .filter(|w| w[0].failed != w[1].failed)
+            .count()
+    }
+
+    fn pass_on_retry(&self) -> usize {
+        self.0.iter().filter(|o| !o.failed && o.retried).count()
+    }
+
+    /// Nearest-rank p95 of the observed durations (`sla::percentile`, the
+    /// crate's one implementation of the statistic).
+    fn p95_ms(&self) -> u64 {
+        let mut sorted: Vec<u64> = self.0.iter().map(|o| o.duration_ms).collect();
+        sorted.sort_unstable();
+        crate::sla::percentile(&sorted, 95).unwrap_or(0)
+    }
+
+    /// The classification, from the derived counts. Transition-counting rather
+    /// than fail-rate is the load-bearing choice: F,F,P,P is a fix that stuck
+    /// (one transition), not a flake — fail-rate cannot tell those apart.
+    fn verdict(&self) -> Verdict {
+        if self.transitions() >= 2 {
+            Verdict::Flaky
+        } else if self.pass_on_retry() > 0 {
+            Verdict::Latent
+        } else if self.observed() >= 2 && self.fails() == self.observed() {
+            Verdict::Broken
+        } else if self.observed() < 2 {
+            Verdict::New
+        } else {
+            Verdict::Healthy
+        }
+    }
 }
 
 /// The verdict, ordered by how urgently a human should look at it — the
@@ -110,60 +161,37 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
             }
         };
         for (key, run) in rec.scenarios {
-            if run.phase.is_some() || run.status == Status::Skipped {
+            if !run.is_suite() || run.status == Status::Skipped {
                 // A phase is not a suite scenario (ADR-0014); a skipped row is
                 // a run that never reached it — neither is stability evidence.
                 continue;
             }
-            let entry = histories.entry(key).or_default();
-            let failed = run.status == Status::Failed;
-            entry.observed += 1;
-            if failed {
-                entry.fails += 1;
-            }
-            if entry.last_failed.is_some_and(|last| last != failed) {
-                entry.transitions += 1;
-            }
-            entry.last_failed = Some(failed);
-            if !failed && run.steps.values().any(|s| s.attempts > 1) {
-                entry.pass_on_retry += 1;
-            }
-            entry
-                .durations
-                .push(run.steps.values().map(|s| s.duration_ms).sum());
+            histories.entry(key).or_default().0.push(Observation {
+                failed: run.status == Status::Failed,
+                retried: run.steps.values().any(|s| s.attempts > 1),
+                duration_ms: run.steps.values().map(|s| s.duration_ms).sum(),
+            });
         }
     }
 
-    let mut rows: Vec<((String, String), Verdict, History)> = histories
-        .into_iter()
-        .map(|(key, h)| {
-            let verdict = if h.transitions >= 2 {
-                Verdict::Flaky
-            } else if h.pass_on_retry > 0 {
-                Verdict::Latent
-            } else if h.observed >= 2 && h.fails == h.observed {
-                Verdict::Broken
-            } else if h.observed < 2 {
-                Verdict::New
-            } else {
-                Verdict::Healthy
-            };
-            (key, verdict, h)
-        })
-        .collect();
-    rows.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    let mut rows: Vec<(Key, History)> = histories.into_iter().collect();
+    rows.sort_by(|a, b| {
+        a.1.verdict()
+            .cmp(&b.1.verdict())
+            .then_with(|| a.0.cmp(&b.0))
+    });
 
     if output_json {
-        for ((file, scenario), verdict, h) in &rows {
+        for ((file, scenario), h) in &rows {
             let object = serde_json::json!({
                 "file": file,
                 "scenario": scenario,
-                "runs": h.observed,
-                "fails": h.fails,
-                "transitions": h.transitions,
-                "pass_on_retry": h.pass_on_retry,
-                "p95_ms": p95(&h.durations),
-                "verdict": verdict.key(),
+                "runs": h.observed(),
+                "fails": h.fails(),
+                "transitions": h.transitions(),
+                "pass_on_retry": h.pass_on_retry(),
+                "p95_ms": h.p95_ms(),
+                "verdict": h.verdict().key(),
             });
             crate::render::outln!("{object}");
         }
@@ -175,17 +203,15 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
 
 /// The human listing: header, one row per scenario worst-first, and the
 /// quarantine hand-off when anything was flagged.
-fn render_table(rows: &[((String, String), Verdict, History)], runs: usize, runs_root: &Path) {
+fn render_table(rows: &[(Key, History)], runs: usize, runs_root: &Path) {
     crate::render::outln!(
         "flakiness over {runs} run(s) under {} (window = [run] keep-runs)\n",
         runs_root.display()
     );
-    let width = rows
-        .iter()
-        .map(|((file, name), ..)| file.len() + name.len() + 4)
-        .max()
-        .unwrap_or(8)
-        .max(8);
+    // Labels once, width from the labels themselves — the spelling and the
+    // width can then never disagree about the separator.
+    let labels: Vec<String> = rows.iter().map(|(key, _)| label(key)).collect();
+    let width = labels.iter().map(String::len).max().unwrap_or(0).max(8);
     crate::render::outln!(
         "{:width$}  {:>4}  {:>5}  {:>11}  {:>13}  {:>6}  verdict",
         "scenario",
@@ -195,21 +221,20 @@ fn render_table(rows: &[((String, String), Verdict, History)], runs: usize, runs
         "pass-on-retry",
         "p95 ms",
     );
-    for ((file, name), verdict, h) in rows {
+    for ((_, h), name) in rows.iter().zip(&labels) {
         crate::render::outln!(
-            "{:width$}  {:>4}  {:>5}  {:>11}  {:>13}  {:>6}  {}",
-            format!("{file} :: {name}"),
-            h.observed,
-            h.fails,
-            h.transitions,
-            h.pass_on_retry,
-            p95(&h.durations),
-            verdict.word(),
+            "{name:width$}  {:>4}  {:>5}  {:>11}  {:>13}  {:>6}  {}",
+            h.observed(),
+            h.fails(),
+            h.transitions(),
+            h.pass_on_retry(),
+            h.p95_ms(),
+            h.verdict().word(),
         );
     }
     let flagged = rows
         .iter()
-        .filter(|(_, v, _)| matches!(v, Verdict::Flaky | Verdict::Latent))
+        .filter(|(_, h)| matches!(h.verdict(), Verdict::Flaky | Verdict::Latent))
         .count();
     if flagged > 0 {
         crate::render::outln!(
@@ -217,16 +242,4 @@ fn render_table(rows: &[((String, String), Verdict, History)], runs: usize, runs
              running without gating the exit code while it is fixed"
         );
     }
-}
-
-/// Nearest-rank p95 over the observed durations (max at small history sizes —
-/// exact by definition of nearest-rank, not an approximation).
-fn p95(durations: &[u64]) -> u64 {
-    if durations.is_empty() {
-        return 0;
-    }
-    let mut sorted = durations.to_vec();
-    sorted.sort_unstable();
-    let rank = (sorted.len() * 95).div_ceil(100);
-    sorted[rank.saturating_sub(1).min(sorted.len() - 1)]
 }

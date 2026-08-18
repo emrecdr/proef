@@ -1601,6 +1601,13 @@ fn explain_summarizes_the_latest_run() {
 /// The `cargo test` invocation that drives the harness's own test target — one
 /// place that knows the crate and target names, so a rename is not something to
 /// find twice.
+///
+/// **The `harness_` test-name prefix is load-bearing**: `.config/nextest.toml`
+/// widens the slow-timeout kill ceiling for `test(/^harness_/)` because these
+/// tests shell a real cargo build (216s measured on a cold cache). A test that
+/// calls this without the prefix — or a rename that drops it — silently loses
+/// the override and dies at the 120s global ceiling on cold CI, far from the
+/// cause. Keep the prefix, or move the filter with the name.
 fn harness_command() -> std::process::Command {
     let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(workspace_root())

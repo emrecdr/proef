@@ -36,7 +36,11 @@ impl SlaThresholds {
 /// Nearest-rank percentile of an ascending-sorted slice (`p` in `1..=100`), or
 /// `None` for an empty slice. All arithmetic stays in `usize` (step counts are
 /// small) to avoid a lossy index cast.
-fn percentile(sorted_ms: &[u64], p: usize) -> Option<u64> {
+///
+/// `pub(crate)`: `flaky` reports the same statistic over scenario durations.
+/// It carried its own copy briefly — two spellings of one rank formula in one
+/// crate, only this one unit-pinned — before being folded onto this.
+pub(crate) fn percentile(sorted_ms: &[u64], p: usize) -> Option<u64> {
     let n = sorted_ms.len();
     if n == 0 {
         return None;

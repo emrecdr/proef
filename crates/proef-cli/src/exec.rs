@@ -357,15 +357,8 @@ pub fn execute(
         cancel
     });
 
-    // `--max-fail N`: cancel the run once N suite scenarios have failed —
-    // rides the graceful-cancel path Ctrl-C already exercises, so in-flight
-    // batches finish, the rest record as skipped, teardown still runs on its
-    // own token, and the record is a complete *cancelled* run. That last part
-    // is deliberate: `diff --fail-on-regression` refuses to certify a
-    // cancelled run, which is exactly right for a deliberately-partial one.
-    // Wrapped after the timing stamp so every emitter flows through it; the
-    // `phase` field keeps setup/teardown failures out of the count (setup
-    // aborts the run on its own, and by teardown the pool is already done).
+    // `--max-fail`: wrapped after the timing stamp so every emitter flows
+    // through it. Semantics live on `trip_on_max_fail` itself.
     let sink = trip_on_max_fail(sink, max_fail, cancel.clone());
 
     // `[run] setup`, the suite, and `[run] teardown` each call `runner::run`,
@@ -776,7 +769,11 @@ fn trip_on_max_fail(
     let Some(threshold) = max_fail else {
         return inner;
     };
-    let failed = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    // A plain atomic moved into the closure: `EventSink::new` already wraps it
+    // in an `Arc<dyn Fn>`, so an inner Arc implied sharing that does not
+    // exist. `Relaxed` suffices — the counter synchronizes nothing; the cancel
+    // token carries its own ordering.
+    let failed = std::sync::atomic::AtomicU32::new(0);
     EventSink::new(move |event| {
         if let Event::ScenarioFinished {
             status: proef_core::step::Status::Failed,
@@ -787,7 +784,7 @@ fn trip_on_max_fail(
             // `fetch_add` returns the previous count, so exactly one emitter
             // crosses the threshold and prints — parallel failures cannot
             // trip it twice or double-print under `--jobs N`.
-            if failed.fetch_add(1, Ordering::SeqCst) + 1 == threshold {
+            if failed.fetch_add(1, Ordering::Relaxed) + 1 == threshold {
                 crate::render::errln!(
                     "stopping: {threshold} scenario failure(s) reached (--max-fail) — \
                      cancelling after current batches"

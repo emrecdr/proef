@@ -82,6 +82,17 @@ pub fn locate(root: &Path, arg: &str) -> Result<PathBuf, String> {
     Ok(root.join(arg))
 }
 
+/// A record's scenario identity, `(file, scenario name)` — the run-wide key
+/// ADR-0008 added `file` for.
+pub type Key = (String, String);
+
+/// The one display spelling of a [`Key`]: `file :: scenario`. `diff` and
+/// `flaky` both list record identities; two spellings of the same identity in
+/// two listings is exactly the drift a shared formatter exists to prevent.
+pub fn label(key: &Key) -> String {
+    format!("{} :: {}", key.0, key.1)
+}
+
 /// One scenario's outcome in a run record: aggregate status plus its steps.
 /// Steps are keyed `(text, ordinal)` for diffing — the authored `line` shifts
 /// when a file is edited above it, so text is the stable identity, and the
@@ -98,6 +109,15 @@ pub struct ScenarioRun {
     /// `proef.toml`, which is what let `explain`, `--rerun` and `diff` each
     /// disagree about which scenarios were phases.
     pub phase: Option<String>,
+}
+
+impl ScenarioRun {
+    /// Is this an ordinary suite scenario — not a `[run] setup`/`teardown`
+    /// phase? The ADR-0014 projection every record consumer applies (`diff`,
+    /// `--rerun`, `flaky`); spelled once here after being inlined three ways.
+    pub fn is_suite(&self) -> bool {
+        self.phase.is_none()
+    }
 }
 
 /// One step's diffable metrics: the `attempts`/`duration_ms` that make a diff a
@@ -324,25 +344,21 @@ pub struct RerunCandidates {
 pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
     let record = read_record(record_dir)?;
     let cancelled = record.completion == RunCompletion::Cancelled;
+    let mut scenarios = Vec::new();
     let mut never_ran = 0;
-    let scenarios = record
-        .scenarios
-        .into_iter()
-        .filter(|(_, run)| {
-            if run.phase.is_some() {
-                return false;
+    for (key, run) in record.scenarios {
+        if !run.is_suite() {
+            continue;
+        }
+        match run.status {
+            Status::Failed => scenarios.push(key),
+            Status::Skipped if cancelled => {
+                never_ran += 1;
+                scenarios.push(key);
             }
-            match run.status {
-                Status::Failed => true,
-                Status::Skipped if cancelled => {
-                    never_ran += 1;
-                    true
-                }
-                _ => false,
-            }
-        })
-        .map(|(key, _)| key)
-        .collect();
+            _ => {}
+        }
+    }
     Ok(RerunCandidates {
         scenarios,
         never_ran,

@@ -86,23 +86,16 @@ fn stdio_server_exits_after_shutdown_and_exit() {
     drop(stdin); // close our end of the pipe
 
     // Watchdog: poll for exit; kill + fail if the writer thread leaked the loop.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            // The process is dying (or dead) now, so its stderr write end is
-            // closing — safe to drain to EOF here without risking a deadlock
-            // against a still-running child.
-            let _ = child.kill();
-            let mut captured = String::new();
-            let _ = stderr.read_to_string(&mut captured);
-            panic!(
-                "proef lsp did not exit within 10s after shutdown/exit — writer thread leaked\nstderr:\n{captured}"
-            );
-        }
-        std::thread::sleep(Duration::from_millis(25));
+    let Some(status) = wait_bounded(&mut child) else {
+        // The process is dying (or dead) now, so its stderr write end is
+        // closing — safe to drain to EOF here without risking a deadlock
+        // against a still-running child.
+        let _ = child.kill();
+        let mut captured = String::new();
+        let _ = stderr.read_to_string(&mut captured);
+        panic!(
+            "proef lsp did not exit within 10s after shutdown/exit — writer thread leaked\nstderr:\n{captured}"
+        );
     };
     if !status.success() {
         // The child has already exited, so reading its stderr to EOF here
@@ -124,16 +117,25 @@ fn stdio_server_exits_after_shutdown_and_exit() {
 /// the exit status and drains stderr — this is only bounded cleanup for
 /// tests whose assertions already happened.
 fn reap(mut child: std::process::Child) {
+    if wait_bounded(&mut child).is_none() {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("proef lsp did not exit within 10s of the exit notification");
+    }
+}
+
+/// Poll for exit for up to 10s — the one poll loop both bounded waits share.
+/// The *tails* stay separate on purpose: the exit-contract watchdog asserts
+/// the status and drains stderr, `reap` only refuses to hang.
+fn wait_bounded(child: &mut std::process::Child) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
-        if child.try_wait().unwrap().is_some() {
-            return;
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("proef lsp did not exit within 10s of the exit notification");
+    None
 }
 
 /// A `file:` URI for `path`, valid on both platform families.

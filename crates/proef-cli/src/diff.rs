@@ -60,7 +60,7 @@ pub fn diff(
     // are still visible in the record and in `explain`, which labels them.
     let suite_only = |runs: &BTreeMap<Key, ScenarioRun>| -> BTreeMap<Key, ScenarioRun> {
         runs.iter()
-            .filter(|(_, run)| run.phase.is_none())
+            .filter(|(_, run)| run.is_suite())
             .map(|(key, run)| (key.clone(), run.clone()))
             .collect()
     };
@@ -144,12 +144,7 @@ fn resolve_pair(
     }
 }
 
-/// A `(file, scenario)` key rendered as `file :: scenario`.
-type Key = (String, String);
-
-fn label(key: &Key) -> String {
-    format!("{} :: {}", key.0, key.1)
-}
+use crate::record::{Key, label};
 
 /// The computed diff, bucketed for rendering.
 struct Report {
