@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-18 (proef at CI scale)
+
 ### Fixed
 
 - **`--rerun` after a cancelled run continues it, instead of a false green.**

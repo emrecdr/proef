@@ -253,6 +253,15 @@ one resolvable.
   itself in both paths — breaking: the secret store, the World and the run
   records move with the config rather than the shell, which reaches anyone who
   ran proef from a subdirectory
+- `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
+  never-run tail records as skipped, the record is a cancelled run `diff`
+  refuses to certify), `--rerun` continues a cancelled run instead of a false
+  green, `proef flaky` folds the retained history into verdicts (flapping by
+  transition-count, passes-only-on-retry, broken-not-flaky) completing the
+  detect→quarantine→resolve loop the `@quarantine` tag already anchored, and
+  `--shard I/N` partitions a matrix by a frozen identity hash so adding a
+  scenario never re-buckets the others — plus the reverse docs gate: every
+  subcommand must be documented, enforced rather than noticed
 - `v0.13.0` — a record that travels, and a secret that stays one: nothing proef
   records names the machine that produced it (one naming boundary, the dual of
   the path rule — breaking: artifact bytes change for path-less runs), and a
