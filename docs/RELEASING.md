@@ -252,7 +252,7 @@ one resolvable.
   honoured or refused by every subcommand, and `[run] exclusive-tags` validates
   itself in both paths — breaking: the secret store, the World and the run
   records move with the config rather than the shell, which reaches anyone who
-  ran proef from a subdirector
+  ran proef from a subdirectory
 - `v0.13.0` — a record that travels, and a secret that stays one: nothing proef
   records names the machine that produced it (one naming boundary, the dual of
   the path rule — breaking: artifact bytes change for path-less runs), and a
@@ -263,4 +263,4 @@ one resolvable.
   keep-runs` makes retention expressible, `diff` takes a record path for the
   CI-baseline flow, the bundled libcurl gets a CVE floor no advisory scanner
   would catch, and a hung test is a five-minute failure instead of a five-day
-  zombiey
+  zombie

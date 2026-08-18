@@ -31,12 +31,14 @@ fn scenario_events(name: &str, status: &str, attempts: u32) -> String {
 }
 
 /// Write run `n` (uuid-v7-shaped name, so `all_runs` orders it by suffix)
-/// holding the given scenario rows, completed (`cancelled: false`).
-fn write_run(root: &Path, n: usize, body: &str) {
+/// holding the given scenario rows.
+fn write_run(root: &Path, n: usize, body: &str, cancelled: bool) {
     let dir = root.join(format!(".proef-runs/0198f3c1-0000-7000-8000-{n:012}"));
     std::fs::create_dir_all(&dir).unwrap();
     let head = format!(r#"{{"event":"run_started","schema":1,"run_id":"r{n}"}}"#);
-    let tail = r#"{"event":"run_finished","passed":0,"failed":0,"skipped":0,"cancelled":false}"#;
+    let tail = format!(
+        r#"{{"event":"run_finished","passed":0,"failed":0,"skipped":0,"cancelled":{cancelled}}}"#
+    );
     std::fs::write(dir.join("events.jsonl"), format!("{head}\n{body}{tail}\n")).unwrap();
 }
 
@@ -61,7 +63,7 @@ fn seeded_history(cwd: &Path) {
             scenario_events("broken", "failed", 1),
             scenario_events("settled", settled_status, 1),
         );
-        write_run(cwd, n, &body);
+        write_run(cwd, n, &body, false);
     }
 }
 
@@ -139,21 +141,25 @@ fn a_skipped_row_is_not_stability_evidence() {
     let cwd = tempfile::tempdir().unwrap();
     std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
     // Runs 1 and 3: steady passes. Run 2: cancelled before `steady` ran.
-    write_run(cwd.path(), 1, &scenario_events("steady", "passed", 1));
-    let dir = cwd
-        .path()
-        .join(format!(".proef-runs/0198f3c1-0000-7000-8000-{:012}", 2));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("events.jsonl"),
-        concat!(
-            r#"{"event":"run_started","schema":1,"run_id":"r2"}"#, "\n",
-            r#"{"event":"scenario_finished","scenario":"steady","file":"f.feature","status":"skipped"}"#, "\n",
-            r#"{"event":"run_finished","passed":0,"failed":0,"skipped":1,"cancelled":true}"#, "\n",
-        ),
-    )
-    .unwrap();
-    write_run(cwd.path(), 3, &scenario_events("steady", "passed", 1));
+    write_run(
+        cwd.path(),
+        1,
+        &scenario_events("steady", "passed", 1),
+        false,
+    );
+    // Run 2: cancelled before `steady` ran — a scenario-level skipped row.
+    write_run(
+        cwd.path(),
+        2,
+        "{\"event\":\"scenario_finished\",\"scenario\":\"steady\",\"file\":\"f.feature\",\"status\":\"skipped\"}\n",
+        true,
+    );
+    write_run(
+        cwd.path(),
+        3,
+        &scenario_events("steady", "passed", 1),
+        false,
+    );
 
     let assert = proef(cwd.path())
         .args(["flaky", "--output", "json"])
@@ -171,7 +177,7 @@ fn a_skipped_row_is_not_stability_evidence() {
 fn fewer_than_two_runs_is_a_user_error() {
     let cwd = tempfile::tempdir().unwrap();
     std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
-    write_run(cwd.path(), 1, &scenario_events("only", "passed", 1));
+    write_run(cwd.path(), 1, &scenario_events("only", "passed", 1), false);
     let assert = proef(cwd.path()).args(["flaky"]).assert().code(2);
     let err = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(err.contains("need at least two runs"), "{err}");
