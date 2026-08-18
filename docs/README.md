@@ -12,7 +12,7 @@ under both a prototype native runner and stock hurl 8.0.1 on identical generated
 artifacts); implementation has since delivered milestones M0–M5 and everything after
 them — external config and environments, the correctness series, v0.9.0, and named hurl
 fragments. Only M6 (a second engine) is unscheduled. The repo-root `CLAUDE.md` carries
-the live status.
+the live status. This corpus is also published as a website: <https://emrecdr.github.io/proef/>.
 
 ## Reading order
 
@@ -27,7 +27,7 @@ the live status.
 | 0 | [DIAGNOSTICS.md](DIAGNOSTICS.md) | The greppable index of every diagnostic code | P2 pack maintainers |
 | 0 | [EVENTS.md](EVENTS.md) | The `events.jsonl` wire schema for CI consumers | CI engineers |
 | 1 | [PRD.md](PRD.md) | What are we building, for whom, and how do we know it works? | everyone |
-| 2 | [adr/](adr/) — ADR-0001 onward | Why is it built this way? Each decision, alternatives, consequences | engineers |
+| 2 | [adr/](#decision-log-adr-index) — ADR-0001 onward | Why is it built this way? Each decision, alternatives, consequences | engineers |
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
@@ -37,7 +37,7 @@ the live status.
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |
 | — | [SECURITY.md](SECURITY.md) | Threat model and vulnerability reporting | everyone |
 | — | [CHANGELOG.md](CHANGELOG.md) | Per-release change log (SemVer) | everyone |
-| — | [../CLAUDE.md](../CLAUDE.md) | Repo-root guidance for Claude Code: constraints, seam facts, commands, status | coding agents |
+| — | [../CLAUDE.md](https://github.com/emrecdr/proef/blob/main/CLAUDE.md) | Repo-root guidance for Claude Code: constraints, seam facts, commands, status | coding agents |
 
 ## Decision log (ADR index)
 

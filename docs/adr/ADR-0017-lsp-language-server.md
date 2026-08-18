@@ -1,7 +1,7 @@
 # ADR-0017 — `proef lsp` language server
 
 **Status:** Accepted · **Date:** 2026-08-03 (implemented 2026-08-03)
-**Design spec:** [docs/superpowers/specs/2026-08-03-proef-lsp-design.md](../superpowers/specs/2026-08-03-proef-lsp-design.md)
+**Design spec:** [docs/superpowers/specs/2026-08-03-proef-lsp-design.md](https://github.com/emrecdr/proef/blob/main/docs/superpowers/specs/2026-08-03-proef-lsp-design.md)
 
 ## Context
 

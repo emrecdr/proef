@@ -1,0 +1,19 @@
+# The GitHub Pages site (https://emrecdr.github.io/proef/) is mdBook rendering
+# the docs/ corpus in place — no staging copy, no second source of truth. The
+# nav is docs/SUMMARY.md, which the docs gates link-check like any other doc;
+# this config lives at the root so the nav is the only file the site adds to
+# docs/. Built and deployed by .github/workflows/pages.yml.
+[book]
+title = "proef"
+authors = ["Emre Camdere"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+
+[output.html]
+# Project pages serve under a subpath; mdBook needs it for the 404 page.
+site-url = "/proef/"
+git-repository-url = "https://github.com/emrecdr/proef"
+edit-url-template = "https://github.com/emrecdr/proef/edit/main/docs/{path}"

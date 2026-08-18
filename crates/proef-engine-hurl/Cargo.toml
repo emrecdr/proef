@@ -6,6 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 keywords = ["testing", "e2e", "hurl", "http"]
 categories = ["development-tools::testing"]
 publish = true

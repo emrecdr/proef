@@ -4,7 +4,7 @@ proef runs end-to-end API tests written as plain Gherkin prose. The prose stays
 readable by anyone; a YAML *pack* binds each sentence to real HTTP work. This
 walkthrough builds a two-file suite from nothing and runs it.
 
-Install first (see the [README](../README.md#installation)), then verify:
+Install first (see the [README](https://github.com/emrecdr/proef/blob/main/README.md#installation)), then verify:
 
 ```console
 $ proef doctor

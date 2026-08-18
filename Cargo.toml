@@ -20,6 +20,7 @@ edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/emrecdr/proef"
+homepage = "https://emrecdr.github.io/proef/"
 publish = false
 
 [workspace.dependencies]
