@@ -26,13 +26,24 @@ pub fn write_junit(
     files.sort_unstable();
     files.dedup();
 
+    let mut total = std::time::Duration::ZERO;
     for file in files {
         let mut suite = TestSuite::new(file);
+        let mut suite_time = std::time::Duration::ZERO;
         for outcome in summary.outcomes.iter().filter(|o| o.file.as_ref() == file) {
+            suite_time += outcome.steps.iter().map(|s| s.duration).sum::<std::time::Duration>();
             suite.add_test_case(test_case(outcome, redactions));
         }
+        // GitLab reads `time` on both `testsuite` and `testsuites` (it ignores
+        // the count attributes and `timestamp`); Jenkins reads suite `time`
+        // for duration. `timestamp` and `hostname` are deliberately absent:
+        // GitLab ignores both, Jenkins substitutes its own build clock and
+        // never reads `hostname` — and naming the machine would undo R12-1.
+        suite.set_time(suite_time);
+        total += suite_time;
         report.add_test_suite(suite);
     }
+    report.set_time(total);
 
     crate::fsutil::create_parents(path)
         .map_err(|err| format!("cannot create directory for {}: {err}", path.display()))?;
@@ -94,10 +105,21 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
             status
         }
     };
-    let mut case = TestCase::new(
-        format!("{}:{} {}", outcome.file, outcome.line, outcome.name),
-        status,
-    );
+    // Identity is `classname` + `name` in both consumers that matter: Jenkins
+    // keys test history on the pair, and GitLab's merge-request widget diffs
+    // head against base by it. The old single `name` embedded `file:line`, so
+    // any edit above a scenario re-identified every test below it and both
+    // tools saw a fleet of "new" tests. `classname` carries the file (GitLab
+    // displays it as the suite column; Jenkins groups by it), `name` carries
+    // the scenario alone — unique per file by construction, since outline
+    // instances are already `#N`-disambiguated. The line number is not
+    // identity: it lives in the failure detail and the artifact reference.
+    let mut case = TestCase::new(outcome.name.as_ref(), status);
+    case.set_classname(outcome.file.as_ref());
+    // GitLab reads a `file` attribute on the testcase for source linking;
+    // quick-junit does not model it, so it rides the extra-attribute map.
+    case.extra
+        .insert("file".into(), outcome.file.as_ref().into());
     case.set_time(outcome.steps.iter().map(|s| s.duration).sum());
     // Honest flaky reporting: a scenario that passed only after retries records
     // the attempt count instead of looking identical to a clean pass.

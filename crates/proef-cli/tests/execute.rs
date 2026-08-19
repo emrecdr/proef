@@ -292,6 +292,66 @@ fn failure_maps_to_feature_line_and_artifact_span() {
     assert_eq!(failures, 1, "{junit}");
 }
 
+/// R3-6: test identity in JUnit is `classname` + `name` — Jenkins keys its
+/// history on the pair and GitLab's MR widget diffs head against base by it.
+/// The old single `name` embedded `file:line`, so an edit above a scenario
+/// re-identified every test below it. `classname` now carries the file,
+/// `name` the scenario alone; `file` rides as an attribute (GitLab links it);
+/// `time` sits on suite and root (GitLab reads both and ignores the counts).
+/// `timestamp`/`hostname` are deliberately absent — GitLab ignores both,
+/// Jenkins substitutes its build clock and never reads hostname, and naming
+/// the machine would undo R12-1.
+#[test]
+fn junit_identity_is_classname_plus_stable_name() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: the health check passes\n    When the health endpoint is checked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let junit_path = cwd.path().join("report.xml");
+    proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--junit",
+            &junit_path.display().to_string(),
+        ])
+        .assert()
+        .code(0);
+    let junit = std::fs::read_to_string(&junit_path).unwrap();
+    assert!(
+        junit.contains(r#"classname="suite/case.feature""#),
+        "classname carries the file: {junit}"
+    );
+    assert!(
+        junit.contains(r#"name="the health check passes""#),
+        "name is the scenario alone — no file:line, so identity survives edits: {junit}"
+    );
+    assert!(
+        junit.contains(r#"file="suite/case.feature""#),
+        "GitLab reads a file attribute for source linking: {junit}"
+    );
+    assert!(
+        junit
+            .lines()
+            .any(|l| l.contains("<testsuite ") && l.contains(" time=")),
+        "suite time is present (GitLab reads it): {junit}"
+    );
+    assert!(
+        !junit.contains("hostname") && !junit.contains("timestamp"),
+        "no machine name (R12-1) and no wall clock: {junit}"
+    );
+}
+
 /// `--run-id` pins the injected run id on the run path — the JSON summary echoes
 /// it. Because `${fake:…}` keys on the run id, re-running with the same id
 /// reproduces the same fake data (the determinism itself is proven by the
