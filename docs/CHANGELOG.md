@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `{{x}}` inside a `bind:` value is validated at `--dry-run`, not at run
+  time.** hurl templates the injected `[Options] variable:` line when the entry
+  runs, so a name nothing supplies used to pass dry-run and die mid-run;
+  `proef::lower::unbound_placeholder` now names the placeholder and the bind key
+  at lower time, where the capture set is known. What legitimately supplies it:
+  an earlier step's capture, the fragment's own `[Options] variable:`, or a
+  secret in scope.
+- **A literal `bind:` that shadows an earlier capture is named, not silent.**
+  hurl's `variable:` assigns into one shared set, so the bound value replaces
+  the captured one from that entry on — sometimes intended, so it is a warning:
+  `proef::lower::bind_shadows_capture`. A secret bind cannot shadow (it skips
+  the `[Options]` path) and draws no warning.
+
 ### Added
 
 - **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
