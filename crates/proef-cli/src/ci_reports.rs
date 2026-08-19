@@ -31,7 +31,11 @@ pub fn write_junit(
         let mut suite = TestSuite::new(file);
         let mut suite_time = std::time::Duration::ZERO;
         for outcome in summary.outcomes.iter().filter(|o| o.file.as_ref() == file) {
-            suite_time += outcome.steps.iter().map(|s| s.duration).sum::<std::time::Duration>();
+            suite_time += outcome
+                .steps
+                .iter()
+                .map(|s| s.duration)
+                .sum::<std::time::Duration>();
             suite.add_test_case(test_case(outcome, redactions));
         }
         // GitLab reads `time` on both `testsuite` and `testsuites` (it ignores
