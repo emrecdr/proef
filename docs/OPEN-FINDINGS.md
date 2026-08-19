@@ -587,7 +587,7 @@ budget entirely. A CI minting a fresh id per build accumulates without bound.
 Guessing at user-named directories is the worse failure — `runs-dir` may be `.`
 — so this stays, documented in CONFIG.md rather than fixed.
 
-### R12-3 — a `[run] setup` test failure is invisible to JUnit
+### R12-3 — a `[run] setup` test failure is invisible to JUnit *(shipped)*
 
 Reproduced: a setup feature whose *assertion* fails exits **2** with
 `summary: 0 passed · 0 failed · 0 skipped`, and `--output junit` writes an empty
@@ -614,6 +614,14 @@ they are not re-litigated:
 
 So the open item is narrow: **the phase reporters run only for the pool.** Worth
 fixing at the reporter, not the exit code.
+
+**Shipped** at exactly that boundary: the CI-report block (JUnit, GitHub job
+summary, PR annotations) is one function both enders call, so a setup abort now
+writes the reports from the setup phase's own summary — one testcase, failed,
+suite named by the setup feature file. On `main` the gap was worse than filed:
+no JUnit file was written *at all* (the finding said "empty"). Exit codes are
+untouched, per ADR-0014. Nothing is fabricated for the pool that never ran —
+the test pins that too.
 
 ---
 
@@ -1002,7 +1010,7 @@ interpretive" and it is; `report.html`, which the inventory genuinely omitted, w
 
 | ID | Finding |
 |---|---|
-| B10 | The canary would chase a hurl **prerelease** (no semver filter) |
+| B10 | The canary would chase a hurl **prerelease** (no semver filter) — *shipped: the index parse (`latest_stable_in_index`) skips `-` versions, unit-pinned; build metadata needs no rule, crates.io refuses versions differing only by `+meta`* |
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
 | P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
 | Q1 | `EngineLowering` seam: structured payloads are **unreachable** today (pack validation rejects them first) — design debt, zero live misbehaviour |

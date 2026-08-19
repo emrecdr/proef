@@ -417,6 +417,19 @@ pub fn execute(
                 // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
                 if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                     crate::render::errln!("error: setup failed — aborting before the suite runs");
+                    // R12-3: the abort must still reach CI's readers. The
+                    // reports carry the setup scenario itself — honest, and
+                    // better than the missing file a JUnit-gated job used to
+                    // see. A JUnit write failure does not re-classify the
+                    // exit: the setup fault is the more specific verdict.
+                    write_ci_reports(
+                        &summary,
+                        &front.run_id,
+                        junit,
+                        &run_dir,
+                        &redactions,
+                        machine_stdout,
+                    );
                     return code;
                 }
                 // A setup that only skipped (interrupted, or watchdog-abandoned)
@@ -433,6 +446,14 @@ pub fn execute(
                 {
                     crate::render::errln!(
                         "error: setup ran no scenario to completion — aborting before the suite runs"
+                    );
+                    write_ci_reports(
+                        &summary,
+                        &front.run_id,
+                        junit,
+                        &run_dir,
+                        &redactions,
+                        machine_stdout,
                     );
                     return ExitCode::SystemError;
                 }
@@ -638,35 +659,15 @@ pub fn execute(
         }
     }
 
-    let mut junit_failed = false;
     // CI reports (US-8): JUnit XML + GitHub job summary.
-    let junit_path = match junit {
-        Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {
-            Some(run_dir.join("report.junit.xml"))
-        }
-        Some("auto") | None => None,
-        Some(path) => Some(PathBuf::from(path)),
-    };
-    if let Some(junit_path) = junit_path {
-        match crate::ci_reports::write_junit(&summary, &front.run_id, &junit_path, &redactions) {
-            Ok(()) => crate::render::errln!("junit report: {}", junit_path.display()),
-            Err(message) => {
-                // A CI job gating on this file must not see exit 0.
-                crate::render::errln!("error: {message}");
-                junit_failed = true;
-            }
-        }
-    }
-    crate::ci_reports::write_github_summary(&summary, &front.run_id, &redactions);
-    // GitHub annotations render each failure in the PR diff gutter. They are
-    // stdout workflow commands, so emit only under Actions and only when the
-    // human report (not `--output json`) owns stdout.
-    if !machine_stdout && std::env::var_os("GITHUB_ACTIONS").is_some() {
-        let annotations = crate::ci_reports::github_annotations(&summary, &redactions);
-        if !annotations.is_empty() {
-            crate::render::outln!("{}", annotations.trim_end());
-        }
-    }
+    let junit_failed = write_ci_reports(
+        &summary,
+        &front.run_id,
+        junit,
+        &run_dir,
+        &redactions,
+        machine_stdout,
+    );
 
     // `@quarantine` scenarios run and report, but their test-failures do not
     // gate the run (a System/User fault still does — quarantine is for flaky
@@ -1132,6 +1133,50 @@ fn run_phase(
         sink,
         cancel,
     ))
+}
+/// The CI-facing reports for one summary: `JUnit` XML, the GitHub job summary,
+/// and PR-gutter annotations. One function so every path that ends a run —
+/// the ordinary pool, and a setup abort (R12-3: a failed setup used to return
+/// before any of this, and a CI job reading `JUnit` saw no file at all) —
+/// emits the same set. Returns whether a requested `JUnit` file could not be
+/// written.
+fn write_ci_reports(
+    summary: &runner::RunSummary,
+    run_id: &str,
+    junit: Option<&str>,
+    run_dir: &Path,
+    redactions: &proef_core::report::Redactions,
+    machine_stdout: bool,
+) -> bool {
+    let mut junit_failed = false;
+    let junit_path = match junit {
+        Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {
+            Some(run_dir.join("report.junit.xml"))
+        }
+        Some("auto") | None => None,
+        Some(path) => Some(PathBuf::from(path)),
+    };
+    if let Some(junit_path) = junit_path {
+        match crate::ci_reports::write_junit(summary, run_id, &junit_path, redactions) {
+            Ok(()) => crate::render::errln!("junit report: {}", junit_path.display()),
+            Err(message) => {
+                // A CI job gating on this file must not see exit 0.
+                crate::render::errln!("error: {message}");
+                junit_failed = true;
+            }
+        }
+    }
+    crate::ci_reports::write_github_summary(summary, run_id, redactions);
+    // GitHub annotations render each failure in the PR diff gutter. They are
+    // stdout workflow commands, so emit only under Actions and only when the
+    // human report (not `--output json`) owns stdout.
+    if !machine_stdout && std::env::var_os("GITHUB_ACTIONS").is_some() {
+        let annotations = crate::ci_reports::github_annotations(summary, redactions);
+        if !annotations.is_empty() {
+            crate::render::outln!("{}", annotations.trim_end());
+        }
+    }
+    junit_failed
 }
 
 /// Classify a setup/teardown summary: `None` when every scenario passed, else
