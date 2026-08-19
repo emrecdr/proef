@@ -22,6 +22,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   testcase (GitLab source linking), `time` on suite and root. `timestamp` and
   `hostname` stay absent deliberately — ignored or substituted by both
   consumers, and a hostname would undo R12-1's provenance fix.
+- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
+  renders `docs/` on every push to `main` that touches it; the nav is
+  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
+  doc, and the pages workflow refuses a corpus doc that is not on the site.
+  The crate `homepage` points there from the next release.
 
 ### Fixed
 
@@ -37,14 +42,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the captured one from that entry on — sometimes intended, so it is a warning:
   `proef::lower::bind_shadows_capture`. A secret bind cannot shadow (it skips
   the `[Options]` path) and draws no warning.
-
-### Added
-
-- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
-  renders `docs/` on every push to `main` that touches it; the nav is
-  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
-  doc, and the pages workflow refuses a corpus doc that is not on the site.
-  The crate `homepage` points there from the next release.
 
 ## [0.14.0] - 2026-08-18 (proef at CI scale)
 
