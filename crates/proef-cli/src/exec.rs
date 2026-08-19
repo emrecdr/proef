@@ -1134,11 +1134,12 @@ fn run_phase(
         cancel,
     ))
 }
-/// The CI-facing reports for one summary: JUnit XML, the GitHub job summary,
+/// The CI-facing reports for one summary: `JUnit` XML, the GitHub job summary,
 /// and PR-gutter annotations. One function so every path that ends a run —
 /// the ordinary pool, and a setup abort (R12-3: a failed setup used to return
-/// before any of this, and a CI job reading JUnit saw no file at all) — emits
-/// the same set. Returns whether a requested JUnit file could not be written.
+/// before any of this, and a CI job reading `JUnit` saw no file at all) —
+/// emits the same set. Returns whether a requested `JUnit` file could not be
+/// written.
 fn write_ci_reports(
     summary: &runner::RunSummary,
     run_id: &str,
