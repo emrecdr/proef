@@ -1,6 +1,13 @@
 # The one home for the Linux native-dependency list (the hurl engine links
 # libcurl/libxml2/openssl). Used by ci.yml (gates + canary), nightly.yml,
 # and release.yml — add packages here, nowhere else.
+#
+# The apt options exist because a bare `apt-get` hung three gate jobs in one
+# day: a fresh runner races unattended-upgrades for the dpkg lock, and apt's
+# default is to wait on it silently forever (a composite step cannot carry
+# `timeout-minutes`, so the job sat until its 45-minute cap).
+# `DPkg::Lock::Timeout` bounds the lock wait; the Acquire options bound a
+# stalled mirror; the retry loop restarts a cleanly-failed attempt once.
 name: native-deps
 description: Native build prerequisites for the embedded hurl engine (Linux)
 runs:
@@ -8,6 +15,18 @@ runs:
   steps:
     - shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential pkg-config libssl-dev \
-          libcurl4-openssl-dev libxml2-dev libclang-dev
+        apt_flags=(
+          -o DPkg::Lock::Timeout=120
+          -o Acquire::http::Timeout=30
+          -o Acquire::Retries=3
+        )
+        for attempt in 1 2; do
+          if sudo apt-get "${apt_flags[@]}" update &&
+            sudo apt-get "${apt_flags[@]}" install -y build-essential pkg-config \
+              libssl-dev libcurl4-openssl-dev libxml2-dev libclang-dev; then
+            exit 0
+          fi
+          echo "apt attempt ${attempt} failed; retrying" >&2
+          sleep 10
+        done
+        exit 1
