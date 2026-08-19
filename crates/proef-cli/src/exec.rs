@@ -1178,7 +1178,6 @@ fn write_ci_reports(
     junit_failed
 }
 
-
 /// Classify a setup/teardown summary: `None` when every scenario passed, else
 /// the exit code to surface. A `System` fault → exit 3; a `User` fault → exit 2;
 /// a plain test failure → `on_test_failure` (a broken *setup* is a user error,
