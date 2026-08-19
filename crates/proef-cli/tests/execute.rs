@@ -721,6 +721,63 @@ fn setup_failure_aborts_the_run_as_a_user_error() {
     );
 }
 
+/// R12-3: the setup abort used to return before the CI-report block, so a job
+/// gating on `--junit` saw *no file at all* — indistinguishable from proef
+/// never running. The abort now writes the reports from the setup phase's own
+/// summary: one testcase, failed, named by the setup feature. The exit code is
+/// untouched — ADR-0014 decided 2, and the report is where the detail belongs.
+#[test]
+fn a_failed_setup_still_writes_the_junit_report() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml"])
+        .assert()
+        .code(2);
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        junit.contains(r#"failures="1""#),
+        "the setup failure is a counted failure: {junit}"
+    );
+    assert!(
+        junit.contains("setup.feature"),
+        "the suite is named by the setup feature, so a reader knows which phase died: {junit}"
+    );
+    assert!(
+        junit.contains("broken setup"),
+        "the scenario is named: {junit}"
+    );
+    assert!(
+        !junit.contains("should not run"),
+        "nothing is fabricated for a pool that never ran: {junit}"
+    );
+}
+
 /// ADR-0014: setup runs once before the pool and its `saveAs: global` reaches
 /// the pool (the suite fetching `${global:recordId}` only succeeds if setup's
 /// promotion merged first); teardown runs after; both are excluded from the

@@ -42,6 +42,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the captured one from that entry on — sometimes intended, so it is a warning:
   `proef::lower::bind_shadows_capture`. A secret bind cannot shadow (it skips
   the `[Options]` path) and draws no warning.
+- **A failed `[run] setup` reaches JUnit, the GitHub summary, and PR
+  annotations.** The abort used to return before the CI-report block, so a job
+  gating on `--junit` saw no file at all — indistinguishable from proef never
+  running. The reports now carry the setup scenario itself (suite named by the
+  setup feature file); exit codes are untouched (ADR-0014), and nothing is
+  fabricated for the pool that never ran.
 
 ## [0.14.0] - 2026-08-18 (proef at CI scale)
 
