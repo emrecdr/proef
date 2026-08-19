@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Breaking
+
+- **JUnit test identity is `classname` + `name`.** `classname` carries the
+  feature file, `name` the scenario alone; the old single `name` embedded
+  `file:line`, so an edit above a scenario re-identified every test below it
+  in Jenkins history and GitLab's MR diff. Anything keyed on the old
+  `file:line name` strings must re-key. The suite `skipped` count is now
+  spelled `skipped` (was `disabled`, which no consumer reads).
+
+### Added
+
+- **JUnit carries what GitLab and Jenkins actually read** (R3-6, specced from
+  GitLab's parser docs and Jenkins' `SuiteResult.java`): `file` on each
+  testcase (GitLab source linking), `time` on suite and root. `timestamp` and
+  `hostname` stay absent deliberately — ignored or substituted by both
+  consumers, and a hostname would undo R12-1's provenance fix.
+
 ### Fixed
 
 - **A `{{x}}` inside a `bind:` value is validated at `--dry-run`, not at run
