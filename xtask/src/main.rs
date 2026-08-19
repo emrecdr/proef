@@ -153,16 +153,27 @@ fn latest_hurl_version() -> Result<String, String> {
         return Err("index query failed".to_owned());
     }
     let body = String::from_utf8_lossy(&output.stdout);
+    latest_stable_in_index(&body).ok_or_else(|| "no versions parsed from the index".to_owned())
+}
+
+/// Last non-yanked **stable** version in a sparse-index body (publish order).
+/// The prerelease filter is B10: the index is append-ordered, so a published
+/// `9.0.0-beta.1` would otherwise become "latest" and the canary would test —
+/// and could go green against — a release that is not the upgrade target.
+/// Semver marks prereleases with `-`; build metadata (`+`) cannot be published
+/// as a distinct version on crates.io, so the dash test is the whole rule.
+fn latest_stable_in_index(body: &str) -> Option<String> {
     let mut latest = None;
     for line in body.lines() {
         if line.contains("\"yanked\":false")
             && let Some(rest) = line.split("\"vers\":\"").nth(1)
             && let Some(version) = rest.split('"').next()
+            && !version.contains('-')
         {
             latest = Some(version.to_owned());
         }
     }
-    latest.ok_or_else(|| "no versions parsed from the index".to_owned())
+    latest
 }
 
 fn run_ok(cmd: &mut Command) -> bool {
@@ -566,4 +577,23 @@ fn diff_lines(before: &str, after: &str) -> Vec<String> {
     out.extend(old.difference(&new).map(|l| format!("- {l}")));
     out.extend(new.difference(&old).map(|l| format!("+ {l}")));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest_stable_in_index;
+
+    /// B10: a trailing prerelease line must not win; a trailing yanked line
+    /// must not either. The last *stable, non-yanked* version does.
+    #[test]
+    fn the_canary_target_skips_prereleases_and_yanks() {
+        let body = concat!(
+            "{\"vers\":\"8.0.0\",\"yanked\":false}\n",
+            "{\"vers\":\"8.0.1\",\"yanked\":false}\n",
+            "{\"vers\":\"8.0.2\",\"yanked\":true}\n",
+            "{\"vers\":\"9.0.0-beta.1\",\"yanked\":false}\n",
+        );
+        assert_eq!(latest_stable_in_index(body).as_deref(), Some("8.0.1"));
+        assert_eq!(latest_stable_in_index(""), None);
+    }
 }

@@ -1010,7 +1010,7 @@ interpretive" and it is; `report.html`, which the inventory genuinely omitted, w
 
 | ID | Finding |
 |---|---|
-| B10 | The canary would chase a hurl **prerelease** (no semver filter) |
+| B10 | The canary would chase a hurl **prerelease** (no semver filter) — *shipped: the index parse (`latest_stable_in_index`) skips `-` versions, unit-pinned; build metadata needs no rule, crates.io refuses versions differing only by `+meta`* |
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
 | P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
 | Q1 | `EngineLowering` seam: structured payloads are **unreachable** today (pack validation rejects them first) — design debt, zero live misbehaviour |
