@@ -6,6 +6,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Breaking
+
+- **JUnit test identity is `classname` + `name`.** `classname` carries the
+  feature file, `name` the scenario alone; the old single `name` embedded
+  `file:line`, so an edit above a scenario re-identified every test below it
+  in Jenkins history and GitLab's MR diff. Anything keyed on the old
+  `file:line name` strings must re-key. The suite `skipped` count is now
+  spelled `skipped` (was `disabled`, which no consumer reads).
+
+### Added
+
+- **JUnit carries what GitLab and Jenkins actually read** (R3-6, specced from
+  GitLab's parser docs and Jenkins' `SuiteResult.java`): `file` on each
+  testcase (GitLab source linking), `time` on suite and root. `timestamp` and
+  `hostname` stay absent deliberately — ignored or substituted by both
+  consumers, and a hostname would undo R12-1's provenance fix.
+- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
+  renders `docs/` on every push to `main` that touches it; the nav is
+  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
+  doc, and the pages workflow refuses a corpus doc that is not on the site.
+  The crate `homepage` points there from the next release.
+
 ### Fixed
 
 - **A `{{x}}` inside a `bind:` value is validated at `--dry-run`, not at run
@@ -20,14 +42,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the captured one from that entry on — sometimes intended, so it is a warning:
   `proef::lower::bind_shadows_capture`. A secret bind cannot shadow (it skips
   the `[Options]` path) and draws no warning.
-
-### Added
-
-- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
-  renders `docs/` on every push to `main` that touches it; the nav is
-  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
-  doc, and the pages workflow refuses a corpus doc that is not on the site.
-  The crate `homepage` points there from the next release.
 
 ## [0.14.0] - 2026-08-18 (proef at CI scale)
 

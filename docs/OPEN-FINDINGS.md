@@ -480,9 +480,27 @@ one-line summaries with no spec — that fact drives several verdicts below.
   finding's point. The assignment is frozen by literal-pinned tests; changing
   the hash is a breaking change to every sharded matrix. Filter→shard order
   pinned; an empty shard of a non-empty selection exits 0 with a note.
-- **R3-6 JUnit attributes** — *after* a fresh spec written from what GitLab
-  and Jenkins actually consume. The original definition lives in the absent
-  v1 document; building from a two-word summary is guessing.
+- **R3-6 JUnit attributes** — *(shipped, from the fresh spec the triage
+  required)*. The spec was written from what the two consumers actually parse,
+  at source level: GitLab's docs enumerate testcase `classname`/`name`/`file`/
+  `time` plus suite and root `time` — and explicitly ignore the count
+  attributes and `timestamp`; Jenkins' `SuiteResult.java` reads suite
+  `name`/`package`/`id`/`time`/`timestamp` and case `classname`, and never
+  reads `hostname`. What shipped, and why:
+  - **Identity became `classname` + `name`** — Jenkins keys test history on
+    the pair, GitLab's MR widget diffs head against base by it, and the old
+    single `name` embedded `file:line`, so an edit above a scenario
+    re-identified every test below it (a fleet of "new" tests on both tools).
+    `classname` carries the feature file, `name` the scenario alone — unique
+    per file by construction (outline instances are `#N`-disambiguated).
+    **Breaking** for anything keyed on the old names.
+  - **`file` on the testcase** (GitLab source linking), **`time` on suite and
+    root** (both consumers), and the suite `skipped` count spelled `skipped`
+    (quick-junit 0.5 → 0.7; 0.5 wrote `disabled`, which neither consumer
+    reads).
+  - **`timestamp` and `hostname` deliberately absent** — GitLab ignores both,
+    Jenkins substitutes its own build clock and never reads `hostname`, and
+    naming the machine would undo R12-1. Additive later if a consumer asks.
 
 **Deferred, with the trigger named:**
 
