@@ -421,6 +421,73 @@ fn an_annotation_carrying_settings_is_refused() {
     );
 }
 
+/// R9-5: a `{{x}}` *inside a bind value* used to escape `--dry-run` entirely —
+/// hurl templates the injected `[Options] variable:` line at run time, so an
+/// unsupplied name died late, in exactly the way dry-run exists to prevent.
+#[test]
+fn a_bind_value_reading_nothing_is_refused_at_dry_run() {
+    let pack = PACK.replace(
+        r#"bind: { q: "${q}", index: "${index}" }"#,
+        r#"bind: { q: "{{ghost}}", index: "${index}" }"#,
+    );
+    let stderr = dry_run_error(CORPUS, &pack);
+    assert!(
+        stderr.contains("proef::lower::unbound_placeholder"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("ghost") && stderr.contains('q'),
+        "it must name the placeholder and the bind key: {stderr}"
+    );
+}
+
+/// R9-4: hurl's `[Options] variable:` assigns into one shared set, so a
+/// literal bind named like an earlier capture silently replaces it. A warning
+/// — the scenario still lowers and runs — because a fixed value over a live
+/// session is sometimes deliberate.
+#[test]
+fn a_bind_shadowing_a_capture_warns_and_still_lowers() {
+    let hurl = format!(
+        "{CORPUS}
+# @proef admin.reuse
+GET {{{{base}}}}/api/v1/admin/records/{{{{recordId}}}}
+HTTP 200
+"
+    );
+    let pack = format!(
+        "{PACK}  reuse:
+    match: \"the operator reopens the record\"
+    bind: {{ recordId: \"fixed-1\" }}
+    steps:
+      - ref: admin.reuse
+"
+    );
+    let feature = "Feature: F\n  Scenario: S\n    When the operator searches for \"Acme\"\n    And the operator reopens the record\n";
+    let dir = project(&hurl, &pack);
+    std::fs::write(dir.path().join("tests/features/a.feature"), feature).unwrap();
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    let assert = cmd
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&assert.get_output().stdout),
+        String::from_utf8_lossy(&assert.get_output().stderr)
+    );
+    assert!(
+        all.contains("proef::lower::bind_shadows_capture"),
+        "the shadow must be named: {all}"
+    );
+    assert!(
+        all.contains("recordId"),
+        "it must name the shadowed capture: {all}"
+    );
+}
+
 #[test]
 fn a_variable_nothing_supplies_is_refused() {
     // The corpus reads `{{index}}`; drop the binding that fed it.

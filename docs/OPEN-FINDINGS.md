@@ -189,7 +189,7 @@ The `Arc<str>` copy itself was left alone. Removing it means changing
 `PackSource`'s type across every reader, which is a wider change than a bound
 and buys a constant factor on an input that is now capped anyway.
 
-### R9-4 — a bind that shadows a capture is silent
+### R9-4 — a bind that shadows a capture is silent *(shipped)*
 
 hurl's `variable:` assigns into one shared set, so a pack- or macro-scope `bind:`
 re-assigning a name an earlier entry captured overrides it for every later entry,
@@ -197,10 +197,27 @@ with no diagnostic. A warning shaped like `option_declared_twice` fits — the
 difference is that this one is only decidable where the capture set is known, at
 lower time.
 
-### R9-5 — `{{x}}` inside a bind value is unvalidated at lower time
+**Shipped** as `proef::lower::bind_shadows_capture`, a warning per the verdict
+above — a fixed value over a live session is sometimes deliberate. Only a
+*literal* bind warns: a secret bind skips the `[Options]` path entirely, so the
+earlier capture's assignment stands and there is nothing to warn about (pinned
+by a unit test). En route it was validated that `unread_bind_key` already
+narrows the surface to binds a fragment in scope reads — the live gap was
+exactly the capture-shadow shape.
+
+### R9-5 — `{{x}}` inside a bind value is unvalidated at lower time *(shipped)*
 
 It fails at run time instead of at `--dry-run`: loud, but late, and the late half
 is what `--dry-run` exists to prevent.
+
+**Shipped** as the same `proef::lower::unbound_placeholder` the fragment check
+uses — one code for one defect class — naming both the placeholder and the bind
+key, anchored on the feature step (pack-line anchoring from lower time is R1's
+recorded deferral). The accepted suppliers, each pinned: an earlier step's
+capture, the fragment's own `[Options] variable:` (authored lines precede the
+injected ones), and a secret in scope — a run-time `{{secret}}` reference never
+puts the value in an artifact, unlike the `${secret:…}` splice that
+`secret_in_composite_bind` refuses.
 
 ### R9-6 — provenance is cwd-dependent *(shipped)*
 
@@ -463,9 +480,27 @@ one-line summaries with no spec — that fact drives several verdicts below.
   finding's point. The assignment is frozen by literal-pinned tests; changing
   the hash is a breaking change to every sharded matrix. Filter→shard order
   pinned; an empty shard of a non-empty selection exits 0 with a note.
-- **R3-6 JUnit attributes** — *after* a fresh spec written from what GitLab
-  and Jenkins actually consume. The original definition lives in the absent
-  v1 document; building from a two-word summary is guessing.
+- **R3-6 JUnit attributes** — *(shipped, from the fresh spec the triage
+  required)*. The spec was written from what the two consumers actually parse,
+  at source level: GitLab's docs enumerate testcase `classname`/`name`/`file`/
+  `time` plus suite and root `time` — and explicitly ignore the count
+  attributes and `timestamp`; Jenkins' `SuiteResult.java` reads suite
+  `name`/`package`/`id`/`time`/`timestamp` and case `classname`, and never
+  reads `hostname`. What shipped, and why:
+  - **Identity became `classname` + `name`** — Jenkins keys test history on
+    the pair, GitLab's MR widget diffs head against base by it, and the old
+    single `name` embedded `file:line`, so an edit above a scenario
+    re-identified every test below it (a fleet of "new" tests on both tools).
+    `classname` carries the feature file, `name` the scenario alone — unique
+    per file by construction (outline instances are `#N`-disambiguated).
+    **Breaking** for anything keyed on the old names.
+  - **`file` on the testcase** (GitLab source linking), **`time` on suite and
+    root** (both consumers), and the suite `skipped` count spelled `skipped`
+    (quick-junit 0.5 → 0.7; 0.5 wrote `disabled`, which neither consumer
+    reads).
+  - **`timestamp` and `hostname` deliberately absent** — GitLab ignores both,
+    Jenkins substitutes its own build clock and never reads `hostname`, and
+    naming the machine would undo R12-1. Additive later if a consumer asks.
 
 **Deferred, with the trigger named:**
 

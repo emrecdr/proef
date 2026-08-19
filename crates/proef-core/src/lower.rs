@@ -225,6 +225,29 @@ fn resolve_bindings(
     out
 }
 
+/// Every `{{name}}` a text reads — ADR-0005's run-time tier, whose spelling
+/// core already owns (`resolve` writes it when a secret becomes a run-time
+/// placeholder). A filter chain (`{{id | urlEncode}}`) reduces to its leading
+/// variable name; empty or malformed braces are left for hurl to reject.
+fn runtime_placeholders(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else { break };
+        let name: String = after[..end]
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            .collect();
+        if !name.is_empty() {
+            out.push(name);
+        }
+        rest = &after[end + 2..];
+    }
+    out
+}
+
 /// Every capture name produced by the steps lowered so far — what a fragment
 /// may read without binding it.
 fn captures_before(out: &[LoweredStep]) -> BTreeSet<String> {
@@ -515,6 +538,93 @@ fn expand_step(
         ),
     }
 }
+/// R9-5 / R9-4 — what a `bind:` value may read, and what a literal bind may
+/// not silently replace. Split from [`expand_ref_step`] purely for size; the
+/// parameters are the narrowed slice of that function's locals the two checks
+/// consume. Returns `false` after pushing an error — the step must not lower.
+fn lint_bind_values(
+    target: &str,
+    bindings: &Bindings,
+    captured: &BTreeSet<String>,
+    supplied: &[String],
+    prior_secrets: &BTreeMap<String, String>,
+    sinks: &mut Sinks,
+    at: &impl Fn(Diag) -> Diag,
+) -> bool {
+    // A bind value may itself read `{{…}}`: hurl templates the injected
+    // `[Options] variable:` line once when the entry evaluates (ADR-0018's
+    // binding path). What is assigned by then: a `[Captures]` name from an
+    // earlier step, the fragment's own `[Options] variable:` lines (authored
+    // lines precede the injected ones and evaluate in order), or a secret in
+    // scope (the session inserts every secret before the first entry — and a
+    // run-time `{{secret}}` reference, unlike a lower-time `${secret:…}`
+    // splice, never puts the value in the artifact). Anything else resolves
+    // against nothing at run time — the late failure `--dry-run` exists to
+    // prevent, and the same defect class as an unbound fragment placeholder,
+    // so the same code.
+    let unsupplied: Vec<(&str, String)> = bindings
+        .iter()
+        .filter_map(|(name, bound)| match bound {
+            Bound::Value(value) => Some((name.as_str(), value)),
+            Bound::Secret(_) => None,
+        })
+        .flat_map(|(name, value)| {
+            runtime_placeholders(value)
+                .into_iter()
+                .map(move |placeholder| (name, placeholder))
+        })
+        .filter(|(_, placeholder)| {
+            !captured.contains(placeholder)
+                && !supplied.contains(placeholder)
+                && !prior_secrets.contains_key(placeholder)
+                && !matches!(bindings.get(placeholder), Some(Bound::Secret(_)))
+        })
+        .collect();
+    if let Some((key, placeholder)) = unsupplied.first() {
+        let detail = unsupplied
+            .iter()
+            .map(|(key, placeholder)| format!("`{placeholder}` (in the value bound to `{key}`)"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        sinks.errors.push(at(Diag::error(
+            "proef::lower::unbound_placeholder",
+            format!(
+                "a `bind:` value for `{target}` reads {detail}, which nothing supplies by \
+                 the time the entry runs — no earlier step captures it, the fragment sets \
+                 no `[Options] variable:` for it, and no secret in scope carries the name"
+            ),
+        )
+        .with_help(format!(
+            "capture `{placeholder}` in an earlier step, or make the value bound to \
+             `{key}` literal"
+        ))));
+        return false;
+    }
+
+    // A literal bind whose name an earlier step *captured* re-assigns hurl's
+    // one shared variable set at this entry (`[Options] variable:` assigns, it
+    // does not scope) — silently replacing the captured value here and for
+    // every later entry. Sometimes intended (a fixed token against a live
+    // session), so a warning, not an error. Secrets cannot shadow: they skip
+    // the `[Options]` path entirely, so an earlier capture wins over the
+    // session-injected value.
+    for (name, bound) in bindings {
+        if matches!(bound, Bound::Value(_)) && captured.contains(name) {
+            sinks.warnings.push(at(Diag::warning(
+                "proef::lower::bind_shadows_capture",
+                format!(
+                    "`bind: {name}` overrides the `{name}` an earlier step captured — the \
+                     bound value wins for `{target}` and every entry after it"
+                ),
+            )
+            .with_help(
+                "rename the bound variable if the capture should survive, or drop the \
+                 bind to use the captured value",
+            )));
+        }
+    }
+    true
+}
 
 /// One `ref:` step: bind, check every read is supplied, then emit the
 /// fragment's own text with the bindings baked in (ADR-0018).
@@ -572,18 +682,19 @@ fn expand_ref_step(
         })
         .map(String::as_str)
         .collect();
-    // Captures are the expensive half — the scan re-reads every step lowered so
-    // far — so it only runs for names a binding did not already cover, which in
-    // a pack that binds what its fragment reads is none of them.
-    let missing: Vec<&str> = if unbound.is_empty() {
-        Vec::new()
+    // Captures are the expensive half — the scan re-reads every step lowered
+    // so far — so it runs only when something below consumes it: an unbound
+    // fragment placeholder, or any binding at all (the bind-value and shadow
+    // checks). Scenarios are small, so the rescan stays bounded.
+    let captured = if unbound.is_empty() && bindings.is_empty() {
+        BTreeSet::new()
     } else {
-        let available = captures_before(out);
-        unbound
-            .into_iter()
-            .filter(|name| !available.contains(*name))
-            .collect()
+        captures_before(out)
     };
+    let missing: Vec<&str> = unbound
+        .into_iter()
+        .filter(|name| !captured.contains(*name))
+        .collect();
     if !missing.is_empty() {
         // Anchored on the fragment, not on the pack step: the variable is
         // literally on that line of that file, and ADR-0018 promises a real
@@ -614,6 +725,18 @@ fn expand_ref_step(
                     missing[0], missing[0]
                 )),
         );
+        return;
+    }
+
+    if !lint_bind_values(
+        target,
+        &bindings,
+        &captured,
+        &fragment.supplied_variables,
+        &refs.secrets,
+        sinks,
+        at,
+    ) {
         return;
     }
 
@@ -2016,6 +2139,134 @@ mod tests {
             .unwrap_or_else(|| panic!("expected unbound_placeholder in {diags:?}"));
         assert!(diag.message.contains("missingOne"), "{}", diag.message);
         assert!(diag.help.is_some());
+    }
+
+    /// R9-5's good half: `{{captured}}` inside a bind value is ADR-0018's own
+    /// blessed pattern — hurl templates the injected line once at entry
+    /// evaluation, by which time the earlier step's capture is assigned.
+    #[test]
+    fn a_bind_value_reading_an_earlier_capture_lowers() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n      - ref: second\n        bind:\n          q: \"prefix-{{token}}\"\n",
+            "@first\n!token\n@second\n?q\n",
+        )
+        .expect("a bind value reading a capture lowers");
+        let texts: Vec<&str> = lowered
+            .batches
+            .iter()
+            .flat_map(|b| b.steps.iter())
+            .filter_map(|s| match &s.payload {
+                StepPayload::HurlEntries(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains(r#"variable: q="prefix-{{token}}""#)),
+            "the placeholder survives into the entry untouched: {texts:?}"
+        );
+        assert!(lowered.warnings.is_empty(), "{:?}", lowered.warnings);
+    }
+
+    /// R9-5: a `{{x}}` inside a bind value that nothing supplies used to pass
+    /// `--dry-run` and die at run time — late, which is what dry-run exists to
+    /// prevent. Same defect class as an unbound fragment placeholder, same code.
+    #[test]
+    fn a_bind_value_reading_nothing_is_refused() {
+        let diags = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          q: \"{{ghost}}\"\n",
+            "@f\n?q\n",
+        )
+        .expect_err("should refuse");
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::lower::unbound_placeholder")
+            .unwrap_or_else(|| panic!("expected unbound_placeholder in {diags:?}"));
+        assert!(diag.message.contains("ghost"), "{}", diag.message);
+        assert!(
+            diag.message.contains('q'),
+            "names the bind key: {}",
+            diag.message
+        );
+    }
+
+    /// The fragment's own `[Options] variable:` lines evaluate before the
+    /// injected ones, so a bind value may read them.
+    #[test]
+    fn a_bind_value_reading_the_fragments_own_variable_lowers() {
+        lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          q: \"page-{{page}}\"\n",
+            "@f\n?q\n=page\n",
+        )
+        .expect("a bind value reading the fragment's own variable lowers");
+    }
+
+    /// A run-time `{{secret}}` reference is not a lower-time `${secret:…}`
+    /// splice: the artifact keeps the placeholder and the session supplies the
+    /// value, so nothing leaks and the reference is legal.
+    #[test]
+    fn a_bind_value_reading_a_secret_in_scope_lowers() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          tok: ${secret:apiToken}\n          auth: \"Bearer {{tok}}\"\n",
+            "@f\n?tok\n?auth\n",
+        )
+        .expect("a bind value reading a secret in scope lowers");
+        let text = only_entry(&lowered);
+        assert!(
+            text.contains(r#"variable: auth="Bearer {{tok}}""#),
+            "the secret stays a placeholder in the artifact: {text}"
+        );
+        assert!(!text.contains("apiToken"), "no secret name leaks: {text}");
+    }
+
+    /// R9-4: hurl's `[Options] variable:` assigns into one shared set, so a
+    /// literal bind named like an earlier capture silently replaces it — worth
+    /// a warning, and only a warning, because a fixed value over a live
+    /// session is sometimes the point.
+    #[test]
+    fn a_literal_bind_shadowing_an_earlier_capture_warns() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n      - ref: second\n        bind:\n          token: \"fixed\"\n",
+            "@first\n!token\n@second\n?token\n",
+        )
+        .expect("shadowing lowers — it is a warning, not an error");
+        let warning = lowered
+            .warnings
+            .iter()
+            .find(|d| d.code == "proef::lower::bind_shadows_capture")
+            .unwrap_or_else(|| panic!("expected bind_shadows_capture in {:?}", lowered.warnings));
+        assert!(warning.message.contains("token"), "{}", warning.message);
+    }
+
+    /// A secret bind cannot shadow: it skips the `[Options]` path, so the
+    /// earlier capture's assignment stands at this entry.
+    #[test]
+    fn a_secret_bind_named_like_a_capture_does_not_warn() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n      - ref: second\n        bind:\n          token: ${secret:apiToken}\n",
+            "@first\n!token\n@second\n?token\n",
+        )
+        .expect("a secret bind lowers");
+        assert!(
+            !lowered
+                .warnings
+                .iter()
+                .any(|d| d.code == "proef::lower::bind_shadows_capture"),
+            "{:?}",
+            lowered.warnings
+        );
+    }
+
+    /// The reader behind both checks: filters reduce to the variable name,
+    /// whitespace is tolerated, malformed braces are hurl's problem.
+    #[test]
+    fn runtime_placeholders_reads_names_filters_and_ignores_junk() {
+        assert_eq!(
+            runtime_placeholders("a-{{id}}-b {{ name }} {{id | urlEncode}}"),
+            ["id", "name", "id"]
+        );
+        assert!(runtime_placeholders("no braces, {{}}, {{ | }}, {unclosed").is_empty());
     }
 
     /// Scope decides *when* a binding resolves, and that is observable through
