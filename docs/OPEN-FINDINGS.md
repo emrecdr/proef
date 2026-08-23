@@ -426,7 +426,7 @@ permitted by ADR-0008, and the reporters would need to decide whether to surface
 it. Filed rather than built — it is a design question about what the record
 should say, not a defect, and the run behaves correctly either way.
 
-### R11-7 — the corpus-read rule is shared, its *discovery* is not
+### R11-7 — the corpus-read rule is shared, its *discovery* is not *(closed 2026-08-23 — discovery unified: one walker, one `claims` predicate; the surviving asymmetry is size measurement — `fs::metadata` vs text length — deliberate and documented, an unsaved buffer has no file to stat)*
 
 `FragmentCorpus::unreadable_file` now gives both readers one diagnostic, but the
 CLI walks the fragment root with `std::fs` while the LSP reads through its
@@ -867,7 +867,7 @@ is whether a team with an existing hurl suite can move onto proef and
 **demonstrate** they lost nothing. M1 and M2 are that story. E1 is the first wall
 a real suite hits afterwards.
 
-### F1 — `proef.toml` now has two path-resolution rules
+### F1 — `proef.toml` now has two path-resolution rules *(closed — duplicate of shipped R11-1)*
 
 `[run] fragments` resolves relative to the **config file's directory** (ADR-0018);
 `suite`, `setup`, `teardown` and `runs-dir` stay relative to the **working
@@ -904,6 +904,12 @@ runnable under stock `hurl`. Item by item:
   amendment argues from the non-goal's own rationale instead, and says so. Measuring
   the port cost is still worth doing — it now informs priority rather than permission.
 
+**Closed 2026-08-23 (premise false — the "not fixed here" above HAS since been
+fixed, as shipped R11-1).** The exact fix this entry prescribed exists as
+`ProjectConfig::resolve` (`config.rs:328-338`): every path-valued key routes
+through it, its doc comment narrates this entry's story, and `CONFIG.md`
+documents the one rule. This entry and R11-1 were the same finding filed twice.
+
 ### M1 — `fmt` cannot canonicalize a standalone `.hurl` *(closed — foreclosed by ADR-0018)*
 
 **The report had this backwards** and it is worth recording why. It claimed `fmt`
@@ -932,7 +938,7 @@ test. Reopening this requires a superseding ADR, not a feature request.
 
 ### M2 — no mechanical equivalence check between a hurl corpus and its proef port *(deferred — trigger named below)*
 
-**Verified.** `Diff` takes `base`/`new` **run ids** only (`main.rs:187-195`); no
+**Verified when filed** (diff now also accepts record dirs and `.jsonl` paths — R3-4/#65 — but still reads no hurl report); no
 path reads a `hurl --report-json`, which the pinned hurl 8.0.1 does emit.
 
 **Why it matters.** The safe way to adopt proef is to run both suites until the
@@ -1124,7 +1130,7 @@ interpretive" and it is; `report.html`, which the inventory genuinely omitted, w
 | B10 | The canary would chase a hurl **prerelease** (no semver filter) — *shipped: the index parse (`latest_stable_in_index`) skips `-` versions, unit-pinned; build metadata needs no rule, crates.io refuses versions differing only by `+meta`* |
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
 | P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
-| Q1 | `EngineLowering` seam: structured payloads are **unreachable** today (pack validation rejects them first) — design debt, zero live misbehaviour |
+| Q1 | ~~structured payloads unreachable~~ *(premise false 2026-08-23: they parse, validate through the engine seam, lower and skip the hurl emitter — pinned by tests; `EngineLowering` was a review's name, never a symbol)* — what survives: no *registered* engine claims a structured kind, so the path runs only under test fixtures |
 | Q6 | `html.rs` re-derives the emitter slug (the event schema carries no slug field); `exec.rs`'s own comment forbids exactly this. Four `file_stem()` sites — correct today, future-drift risk |
 
 ---

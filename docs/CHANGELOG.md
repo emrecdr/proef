@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Breaking
+
+- **JUnit test identity is `classname` + `name`.** `classname` carries the
+  feature file, `name` the scenario alone; the old single `name` embedded
+  `file:line`, so an edit above a scenario re-identified every test below it
+  in Jenkins history and GitLab's MR diff. Anything keyed on the old
+  `file:line name` strings must re-key. The suite `skipped` count is now
+  spelled `skipped` (was `disabled`, which no consumer reads).
+
+### Added
+
+- **README documents every flag the binary exposes, enforced.** v0.14.0
+  shipped `--shard` and `--max-fail` with no README mention; the docs gate
+  gains the flags direction (same vacuity guard as the command half), and the
+  measured gap — those two plus `schema --add-to` — is closed.
+
+- **JUnit carries what GitLab and Jenkins actually read** (R3-6, specced from
+  GitLab's parser docs and Jenkins' `SuiteResult.java`): `file` on each
+  testcase (GitLab source linking), `time` on suite and root. `timestamp` and
+  `hostname` stay absent deliberately — ignored or substituted by both
+  consumers, and a hostname would undo R12-1's provenance fix.
+- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
+  renders `docs/` on every push to `main` that touches it; the nav is
+  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
+  doc, and the pages workflow refuses a corpus doc that is not on the site.
+  The crate `homepage` points there from the next release.
+
 ### Fixed
 
 - **Injected `[Options]` lines respect every section-ending shape.** The
@@ -53,43 +80,14 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   injected ones.** Injection used to land at the section head, so the
   fragment-supplies-it route the unbound check accepts was assigned too late
   to be read at run time — accepted at dry-run, wrong at execution.
-
-### Breaking
-
-- **JUnit test identity is `classname` + `name`.** `classname` carries the
-  feature file, `name` the scenario alone; the old single `name` embedded
-  `file:line`, so an edit above a scenario re-identified every test below it
-  in Jenkins history and GitLab's MR diff. Anything keyed on the old
-  `file:line name` strings must re-key. The suite `skipped` count is now
-  spelled `skipped` (was `disabled`, which no consumer reads).
-
-### Added
-
-- **README documents every flag the binary exposes, enforced.** v0.14.0
-  shipped `--shard` and `--max-fail` with no README mention; the docs gate
-  gains the flags direction (same vacuity guard as the command half), and the
-  measured gap — those two plus `schema --add-to` — is closed.
-
-- **JUnit carries what GitLab and Jenkins actually read** (R3-6, specced from
-  GitLab's parser docs and Jenkins' `SuiteResult.java`): `file` on each
-  testcase (GitLab source linking), `time` on suite and root. `timestamp` and
-  `hostname` stay absent deliberately — ignored or substituted by both
-  consumers, and a hostname would undo R12-1's provenance fix.
-- **The docs corpus is a website: <https://emrecdr.github.io/proef/>.** mdBook
-  renders `docs/` on every push to `main` that touches it; the nav is
-  `docs/SUMMARY.md`, which the existing docs gates link-check like any other
-  doc, and the pages workflow refuses a corpus doc that is not on the site.
-  The crate `homepage` points there from the next release.
-
-### Fixed
-
 - **A `{{x}}` inside a `bind:` value is validated at `--dry-run`, not at run
   time.** hurl templates the injected `[Options] variable:` line when the entry
   runs, so a name nothing supplies used to pass dry-run and die mid-run;
   `proef::lower::unbound_placeholder` now names the placeholder and the bind key
   at lower time, where the capture set is known. What legitimately supplies it:
-  an earlier step's capture, the fragment's own `[Options] variable:`, or a
-  secret in scope.
+  an earlier step's capture, the fragment's own `[Options] variable:`, a secret
+  in scope, or a sibling literal bind whose name sorts earlier (injected lines
+  are written and evaluated in name order).
 - **A literal `bind:` that shadows an earlier capture is named, not silent.**
   hurl's `variable:` assigns into one shared set, so the bound value replaces
   the captured one from that entry on — sometimes intended, so it is a warning:
@@ -101,6 +99,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   running. The reports now carry the setup scenario itself (suite named by the
   setup feature file); exit codes are untouched (ADR-0014), and nothing is
   fabricated for the pool that never ran.
+
+### Internal
+
+- **The canary stopped trusting the index's tail twice over**: it skips
+  prerelease versions (the sparse index is publish-ordered, so a `9.0.0-beta`
+  would have become "latest"), and refuses a backport older than the pin by
+  semver ordering (an `8.0.2` published after `9.0.0` would have produced a
+  green about a downgrade).
+- **`deny.toml`'s advisory ignores were dead and are gone.** The quick-xml
+  pair was ignored under "the patched release is unreachable" — the quick-junit
+  0.7 bump made it reachable and the workspace has been on the patched line;
+  the stale ignores would also have silenced any new advisory against it.
+  `quick-xml` itself re-pinned to quick-junit 0.7's in-tree copy (`=0.41.0`,
+  one lock generation); `lsp-server` rides to 0.10, `toml` to 1.x.
+
+### Documentation
+
+- **The corpus tells the truth again, audited claim-by-claim**: CONFIG
+  documents the `[env.<name>.run]` jobs-only rule a reader used to discover as
+  a parse error; GETTING-STARTED can produce its own output (it now states the
+  fixture token its §5 requires, and its reproduce command names the
+  `--secret` the replay needs); EVENTS carries the provenance, totals, and
+  field facts consumers implement against; TESTING-STRATEGY describes the CI
+  that exists; RELEASING's gate list predicts CI; TROUBLESHOOTING's exit-1 row
+  covers the `--check` family. The `#N` in an outline instance is documented
+  as positional, with the column-placeholder naming that keeps identity stable
+  across `--shard` and JUnit history.
 
 ## [0.14.0] - 2026-08-18 (proef at CI scale)
 
