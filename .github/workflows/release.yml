@@ -1,7 +1,7 @@
 # Release pipeline (docs/RELEASING.md): a pushed vX.Y.Z tag becomes a GitHub
 # Release carrying that version's CHANGELOG section plus prebuilt binaries for
-# five targets. Build provenance is attested per artifact once the repo is
-# public (attestations are unavailable on private repos); verify with
+# five targets. Build provenance is attested per artifact (the repo is public;
+# attestations would be unavailable on a private one); verify with
 # `gh attestation verify <archive> --owner emrecdr`. The Homebrew tap formula
 # regenerates from the same artifacts. `workflow_dispatch` runs the build
 # matrix only — a full smoke without publishing anything.

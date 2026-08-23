@@ -1,6 +1,9 @@
 //! Project configuration: `proef.toml` (TECH-SPEC §10 precedence — defaults <
-//! `proef.toml` < active environment (`[env.<name>]`) < environment variables <
-//! flags).
+//! `proef.toml` < active environment (`[env.<name>]`) < flags). No general
+//! environment-variable layer exists over these keys — `PROEF_ENV` selects the
+//! profile and `PROEF_SECRET_*`/`PROEF_KEY`/`PROEF_CONFIG_DIR` are their own
+//! channels, none of them an override of a `proef.toml` value (R17 deep audit:
+//! this comment claimed a fifth layer the code never had).
 //!
 //! Layout mirrors the base tables under each environment (the Wrangler/Cargo-profile
 //! model): `[url]`/`[vars]`/`[http]` are the base sections and

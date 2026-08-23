@@ -92,8 +92,13 @@ pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* 
                           // fragment files (ADR-0018): one Option, so extension and reader
                           // cannot disagree; discovery asks for the extension, never names one
                           pub fragments: Option<FragmentSupport> }
-pub struct FragmentSupport { pub ext: &'static str /* "hurl" */, pub scan: FragmentScanner }
-pub type FragmentScanner = fn(&str) -> Result<Vec<ScannedFragment>, FragmentScanError>;
+pub struct FragmentSupport { pub ext: &'static str /* "hurl" */, pub scan: FragmentScanner,
+                             // "which variables does one template value read", answered by the
+                             // engine's parser — a hurl function ({{newUuid}}) is not a variable
+                             pub template_reads: fn(&str) -> Vec<String> }
+pub type FragmentScanner = fn(&str) -> Result<ScannedFile, FragmentScanError>;
+// ScannedFile = { fragments: Vec<ScannedFragment>, unannotated: Vec<usize> } — the
+// unannotated entry lines feed `proef fragments`' listing, not the pack loader
 // Everything here is *read* from the entry — nothing is declared twice, so nothing can drift.
 // A scanner reports ONLY annotated entries: an unannotated one is not a fragment, and a
 // foreign corpus is mostly those, so building them only to be discarded is the bulk of a scan
