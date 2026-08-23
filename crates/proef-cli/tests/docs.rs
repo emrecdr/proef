@@ -291,3 +291,92 @@ fn every_subcommand_is_documented() {
         failures.join("\n  ")
     );
 }
+
+/// The flags half of the same direction (R17-2.6): v0.14.0 shipped `--shard`
+/// and `--max-fail` and the README said nothing — the command gate above is
+/// blind to flags because it parses only the `Commands:` block. Every long
+/// flag of every subcommand must appear backticked in the README; TECH-SPEC
+/// already carries full synopses (the forward gate checks those exist), so
+/// the README — the surface a new user actually reads — is the one that
+/// drifts. Measured burden before adding this: the README was already
+/// complete except the three flags that motivated the finding.
+#[test]
+fn every_flag_is_documented_in_the_readme() {
+    let root = workspace_root();
+    let help = {
+        let out = Command::cargo_bin("proef")
+            .unwrap()
+            .arg("--help")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let mut subcommands: Vec<String> = Vec::new();
+    let mut in_commands = false;
+    for line in help.lines() {
+        if line.trim_end() == "Commands:" {
+            in_commands = true;
+            continue;
+        }
+        if in_commands {
+            if line.trim_start().starts_with("Options:") || line.trim().is_empty() {
+                break;
+            }
+            if let Some(rest) = line.strip_prefix("  ")
+                && !rest.starts_with(' ')
+                && let Some(name) = rest.split_whitespace().next()
+                && name != "help"
+            {
+                subcommands.push(name.to_owned());
+            }
+        }
+    }
+    assert!(subcommands.len() >= 10, "parsed only {subcommands:?}");
+
+    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+    let mut flags: Vec<(String, String)> = Vec::new();
+    for sub in &subcommands {
+        let out = Command::cargo_bin("proef")
+            .unwrap()
+            .args([sub.as_str(), "--help"])
+            .output()
+            .unwrap();
+        let help = String::from_utf8_lossy(&out.stdout).into_owned();
+        for line in help.lines() {
+            // An option row: `  -j, --jobs <N>  …` or `      --shard <I/N>  …`.
+            let rest = line.trim_start();
+            let Some(flag) = rest
+                .strip_prefix("--")
+                .or_else(|| rest.split(", ").nth(1).and_then(|r| r.strip_prefix("--")))
+            else {
+                continue;
+            };
+            let name: String = flag
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+                .collect();
+            if !name.is_empty() && !matches!(name.as_str(), "help" | "version") {
+                flags.push((sub.clone(), format!("--{name}")));
+            }
+        }
+    }
+    flags.sort_unstable();
+    flags.dedup();
+    // Vacuity guard, same rationale as the command gate above.
+    assert!(
+        flags.len() >= 20,
+        "parsed only {} flags: {flags:?}",
+        flags.len()
+    );
+    let missing: Vec<String> = flags
+        .iter()
+        .filter(|(_, flag)| !readme.contains(flag.as_str()))
+        .map(|(sub, flag)| format!("`proef {sub}` exposes `{flag}`"))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the README does not mention:\n  {}",
+        missing.join("\n  ")
+    );
+}

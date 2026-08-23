@@ -18,6 +18,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **A failed teardown reaches JUnit as its own suite** (R17-2.5) — #78's
   rule made symmetric: a phase appears in the reports when it fails. A gated
   pipeline used to read a fully-passing report on an exit-3 run.
+- **A repeated warning is one warning with a count.** One authored mistake in
+  a macro shared by fifty scenarios rendered fifty times; identical warnings
+  now collapse to their first occurrence plus "(N sites across the suite)".
+- **`explain`'s truncated-record fallback counts the suite only** — a record
+  that died mid-setup folded the phase scenario into the totals three lines
+  above the label saying phases are excluded (ADR-0014).
 - **`bind:` values are read by hurl's parser, not a text scan** (R17-2.2). A
   hurl function (`{{newUuid}}`, `{{newDate}}`) no longer counts as an unbound
   variable — proef refused input stock hurl runs — and a sibling literal bind
@@ -39,6 +45,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   spelled `skipped` (was `disabled`, which no consumer reads).
 
 ### Added
+
+- **README documents every flag the binary exposes, enforced.** v0.14.0
+  shipped `--shard` and `--max-fail` with no README mention; the docs gate
+  gains the flags direction (same vacuity guard as the command half), and the
+  measured gap — those two plus `schema --add-to` — is closed.
 
 - **JUnit carries what GitLab and Jenkins actually read** (R3-6, specced from
   GitLab's parser docs and Jenkins' `SuiteResult.java`): `file` on each

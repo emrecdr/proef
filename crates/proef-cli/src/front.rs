@@ -226,6 +226,33 @@ pub fn run(
         .into_iter()
         .partition(|d| d.severity == proef_core::diag::Severity::Error);
     warnings.extend(softs);
+    // One authored mistake in a shared macro used to render once per
+    // (scenario × step) — a fifty-scenario suite got a fifty-warning wall for
+    // one line of YAML (R17-2.6). Identical (code, message) warnings collapse
+    // to their first occurrence, annotated with the repeat count; anchors
+    // differ per scenario, so the first stands for the class. Applied to every
+    // warning class on purpose: the same principle the LSP states as "no
+    // cascade of bogus follow-on errors".
+    let mut kept: Vec<Diag> = Vec::new();
+    let mut index_of: std::collections::BTreeMap<(String, String), usize> =
+        std::collections::BTreeMap::new();
+    let mut repeats: Vec<usize> = Vec::new();
+    for warning in warnings.drain(..) {
+        let key = (warning.code.to_owned(), warning.message.clone());
+        if let Some(&at) = index_of.get(&key) {
+            repeats[at] += 1;
+        } else {
+            index_of.insert(key, kept.len());
+            repeats.push(1);
+            kept.push(warning);
+        }
+    }
+    for (warning, count) in kept.iter_mut().zip(&repeats) {
+        if *count > 1 {
+            warning.message = format!("{} ({count} sites across the suite)", warning.message);
+        }
+    }
+    let warnings = kept;
 
     if errors.is_empty() {
         Ok(FrontEnd {
