@@ -6,15 +6,13 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = [
-    # quick-xml parsing DoS advisories (RUSTSEC-2026-0194/0195): both require
-    # parsing untrusted XML; quick-junit (our only consumer) uses quick-xml
-    # strictly as a serializer and proef never parses XML. quick-junit pins
-    # quick-xml <0.41 so the patched release is unreachable — drop these
-    # ignores when quick-junit bumps its quick-xml requirement.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
-]
+# No advisory ignores. The quick-xml pair (RUSTSEC-2026-0194/0195) sat here
+# with "drop when quick-junit bumps its quick-xml requirement" — the bump
+# happened (quick-junit 0.7 → quick-xml 0.41, the patched line) and the
+# ignores stayed, where they would also have silenced any NEW advisory filed
+# against 0.41.x. An ignore must name its expiry AND be checked at every dep
+# bump that could satisfy it.
+ignore = []
 
 [licenses]
 version = 2
