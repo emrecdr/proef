@@ -12,7 +12,7 @@ located diagnostics, no network). Every diagnostic code is indexed in
 | Code | Meaning | Typical fix |
 |---|---|---|
 | `0` | everything passed (warnings allowed) | — |
-| `1` | tests ran; at least one assertion failed (or the run was cancelled) | fix the system under test — or the expectation |
+| `1` | at least one check failed: a test assertion, a cancelled run — or a `--check`-style gate (`fmt --check`, `fragments --check`, `diff --fail-on-regression`) that found what it gates on | fix the system under test — or the expectation |
 | `2` | your input is at fault: packs, features, flags, filters, secrets, bad `{{var}}`/JSONPath | the diagnostic names the file and line |
 | `3` | the environment or proef is at fault: unreachable target, native libs, IO, output proef could not write (full disk, failing device) | check the target, `proef doctor`, disk |
 | `130` | interrupted twice — the second Ctrl-C is a hard exit (128 + SIGINT), so cleanup and the record's tail are skipped | the run record will read as *incomplete*; a single Ctrl-C cancels gracefully and still runs `[run] teardown` |
@@ -75,7 +75,7 @@ starts fresh. Values are re-enterable; nothing else references the file.
 nothing; exit 2 by design so a typo'd filter can never produce a silent
 green CI run.
 
-**A failure line ends in `via tests/hurl/admin.hurl#admin.search`** — not an error. The
+**A failure line carries `(via tests/hurl/admin.hurl#admin.search)`** — not an error. The
 step ran a *named fragment* (ADR-0018) rather than an inline `hurl:` block, and that is
 the third file involved: the request lives there, not in the feature or the pack. The
 spelling is the one `ref:` accepts, so it pastes straight back into a pack. Every failure
@@ -87,11 +87,15 @@ message says plainly. The usual cause is a missing `[run] fragments` in `proef.t
 without it nothing is scanned, so every `ref:` is unknown. Note the root resolves against
 the **config file's directory**, not your working directory.
 
-**"reads `{{name}}` that no `bind:` supplies"** (`lower::unbound_placeholder`) — a
+**"reads `name`, which nothing supplies"** (`lower::unbound_placeholder`) — a
 fragment's variables are not implicit: what the `.hurl` file reads must be bound at pack,
-macro or step scope, captured by an earlier step, or supplied by the fragment's own
-`[Options] variable:`. `--dry-run` reports it without a network. With `proef lsp`
-running, completing inside a `bind:` table offers exactly the names that fragment reads.
+macro or step scope, captured by an earlier step, supplied by the fragment's own
+`[Options] variable:`, or carried by a secret of that name — and inside a `bind:`
+*value*, an earlier-sorting sibling literal counts too (injected lines evaluate in name
+order). `--dry-run` reports it without a network. With `proef lsp` running, completing
+inside a `bind:` table offers what the pack's `ref:`ed fragments still need — the union
+over every fragment the pack refs (ranked by the nearest `ref:`, each labelled with its
+owner), minus the names a fragment supplies itself.
 
 **"`index` is supplied twice"** (`pack::option_declared_twice`) — the fragment sets the
 name in its own `[Options] variable:` *and* a `bind:` supplies it. Both reach the entry

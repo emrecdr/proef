@@ -38,7 +38,9 @@ adopter with an existing hurl corpus wants is visible from the first command
 rather than only in the docs. It is a deliberately *smaller* suite than the
 one this tutorial builds: no `Then the first hit is record "r-1"` step, no
 `firstHit` `expect:` macro, no `${secret:apiToken}`, and `search` targets a
-plain `/search` route instead of the tutorial's `/api/v1/admin/search/records`.
+plain `/search` route instead of the tutorial's `/api/v1/admin/search/records` —
+while adding one step the tutorial does not, `And the corpus reports its
+version`, whose macro is the scaffold's `ref:` example.
 Pasting the tutorial's `Then` line into the scaffold's feature file fails with
 `bind::unbound_step` — read on to build the fuller suite by hand, or extend
 the scaffold yourself once you understand the pieces.
@@ -147,7 +149,7 @@ A macro then reads `GET ${url:base}/api/${vars:apiVersion}/…` with **nothing
 declared in the feature**. Pick an environment at run time:
 
 ```console
-$ proef test                       # base [url]/[vars]; discovers the default `tests/` suite
+$ proef test                       # base [url]/[vars]; runs `[run] suite` — "suite/" in the file above (`tests/` is only the fallback when the key is unset)
 $ proef test --env prod            # [env.prod.*] deep-merged over the base (or set PROEF_ENV=prod)
 ```
 
@@ -198,17 +200,21 @@ gives packs autocomplete via the JSON Schema.
 Point `PROEF_BASE_URL` at any HTTP API you can reach — or start proef's own
 dev fixture in a second terminal: from a checkout, `cargo run -p xtask --
 fixture` binds the default `base` port (8787), so no `PROEF_BASE_URL` is needed
-(it prints a `PROEF_BASE_URL` line to export only if 8787 is busy or you pass
-`... -- fixture <port>`). Then:
+(it prints a `PROEF_BASE_URL` line to export only when it ends up somewhere
+other than 8787 — the port was busy, or you passed a different
+`... -- fixture <port>`). It also prints the fixture's own token line:
+`export PROEF_SECRET_APITOKEN=fixture-token` — the value the next step needs,
+because every `/api/v1/` route rejects anything else with a 401. Then:
 
 ```console
-$ proef secret set apiToken        # encrypted store; or: export PROEF_SECRET_APITOKEN=…
+$ proef secret set apiToken        # paste fixture-token; or: export PROEF_SECRET_APITOKEN=fixture-token
 $ proef test suite
 running 1 scenario(s) with 8 job(s) — run 019f…
 
   Scenario: A known record is found (suite/case.feature)
-    ✓ suite/case.feature:4 — the service is healthy (2ms)
-    ✓ suite/case.feature:5 — the operator searches for "Acme" (5ms)
+    ✓ suite/case.feature:3 — the service is healthy (2ms)
+    ✓ suite/case.feature:4 — the operator searches for "Acme" (5ms)
+    ✓ suite/case.feature:5 — the first hit is record "r-1" (0ms)
     ✓ scenario A known record is found
 
 summary: 1 passed · 0 failed · 0 skipped
@@ -219,13 +225,17 @@ reports.
 
 ## 6. When it fails
 
-A failing assert names the feature line, the artifact line, and hands you the
-exact command to reproduce it without proef:
+A failing assert names the feature line, the artifact line, and hands you a
+reproduce command (absolute paths; captures ride along in a `.vars` file):
 
 ```console
-  ✗ suite/case.feature:6 — assert failure (artifact case--a-known-record-is-found.hurl:12)
-  reproduce: hurl --test .proef-runs/<run-id>/artifacts/case--a-known-record-is-found.hurl
+  ✗ suite/case.feature:5 — assert failure (artifact case--a-known-record-is-found.hurl:12)
+  reproduce: hurl --test /abs/path/.proef-runs/<run-id>/artifacts/case--a-known-record-is-found.hurl --variables-file /abs/path/….vars
 ```
+
+Because this suite binds `${secret:apiToken}`, the replay also needs the
+secret — proef never writes its value anywhere, so add it yourself:
+`--secret apiToken=fixture-token` (the artifact's `# replay:` header says so).
 
 Every run leaves a record under `.proef-runs/<run-id>/`: `events.jsonl` (the
 machine-readable event stream), `run.log` (the console mirror), and
