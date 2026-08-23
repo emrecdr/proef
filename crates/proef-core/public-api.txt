@@ -898,6 +898,7 @@ impl core::marker::UnsafeUnpin for proef_core::lower::LoweredScenario
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::lower::LoweredScenario
 impl core::panic::unwind_safe::UnwindSafe for proef_core::lower::LoweredScenario
 pub fn proef_core::lower::lower(&proef_core::bind::BoundScenario, &proef_core::lower::LowerCtx<'_>) -> core::result::Result<proef_core::lower::LoweredScenario, alloc::vec::Vec<proef_core::diag::Diag>>
+pub fn proef_core::lower::quote_option(&str) -> alloc::string::String
 pub mod proef_core::matcher
 pub enum proef_core::matcher::PatternProblem
 pub proef_core::matcher::PatternProblem::AdjacentCaptures

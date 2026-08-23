@@ -69,43 +69,40 @@ pub fn install() {
 
 /// Print diagnostics to stderr, errors first.
 ///
-/// Identical `(code, message)` warnings collapse to their first occurrence
+/// Identical `(code, message)` diagnostics collapse to their first occurrence
 /// with a repeat count — one authored mistake in a macro shared by fifty
-/// scenarios is one warning on a console, not fifty. The collapse lives HERE,
-/// at rendering, and not in the front end's aggregation, because
-/// `front.warnings` also feeds SARIF, where one result *per site* is the
-/// point: a code-scanning consumer wants every anchor, a human wants the
-/// class. Deduping the shared list threw away the anchors SARIF exists to
-/// carry (R17 deep-audit).
+/// scenarios is one block on a console, not fifty. Errors collapse too: a
+/// broken macro usually fails to lower *everywhere*, so the error wall is the
+/// more common one (R17 deep-audit, second pass). The collapse lives HERE, at
+/// rendering, and not in the front end's aggregation, because the shared
+/// lists also feed SARIF, where one result *per site* is the point.
 pub fn print_all(diags: &[Diag]) {
     let (errors, warnings): (Vec<_>, Vec<_>) = diags
         .iter()
         .partition(|d| d.severity == proef_core::diag::Severity::Error);
-    let mut kept: Vec<&Diag> = Vec::new();
-    let mut repeats: Vec<usize> = Vec::new();
-    let mut index_of: std::collections::BTreeMap<(&str, &str), usize> =
-        std::collections::BTreeMap::new();
-    for warning in &warnings {
-        let key = (warning.code, warning.message.as_str());
-        if let Some(&at) = index_of.get(&key) {
-            repeats[at] += 1;
-        } else {
-            index_of.insert(key, kept.len());
-            repeats.push(1);
-            kept.push(warning);
+    for group in [errors, warnings] {
+        let mut kept: Vec<&Diag> = Vec::new();
+        let mut repeats: Vec<usize> = Vec::new();
+        let mut index_of: std::collections::BTreeMap<(&str, &str), usize> =
+            std::collections::BTreeMap::new();
+        for diag in &group {
+            let key = (diag.code, diag.message.as_str());
+            if let Some(&at) = index_of.get(&key) {
+                repeats[at] += 1;
+            } else {
+                index_of.insert(key, kept.len());
+                repeats.push(1);
+                kept.push(diag);
+            }
         }
-    }
-    for diag in &errors {
-        let report = miette::Report::new(Rendered::from(*diag));
-        errln!("{report:?}");
-    }
-    for (warning, count) in kept.iter().zip(&repeats) {
-        let mut shown: Diag = (**warning).clone();
-        if *count > 1 {
-            shown.message = format!("{} ({count} sites across the suite)", shown.message);
+        for (diag, count) in kept.iter().zip(&repeats) {
+            let mut shown: Diag = (**diag).clone();
+            if *count > 1 {
+                shown.message = format!("{} ({count} sites across the suite)", shown.message);
+            }
+            let report = miette::Report::new(Rendered::from(&shown));
+            errln!("{report:?}");
         }
-        let report = miette::Report::new(Rendered::from(&shown));
-        errln!("{report:?}");
     }
 }
 
