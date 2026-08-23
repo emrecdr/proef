@@ -8,6 +8,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **Every terminating path emits exactly one machine body** (R17-2.3/2.4).
+  An empty shard printed its prose note *as* the `--output json` body — `jq`
+  failed on the very path a sharded matrix guarantees one job takes — and a
+  setup abort printed nothing at all while JUnit carried the failure. The
+  note now goes to stderr under machine output (and lost a stray-space run);
+  never-ran paths report ADR-0014's suite-only zeros with the exit code
+  carrying the verdict.
+- **A failed teardown reaches JUnit as its own suite** (R17-2.5) — #78's
+  rule made symmetric: a phase appears in the reports when it fails. A gated
+  pipeline used to read a fully-passing report on an exit-3 run.
 - **`bind:` values are read by hurl's parser, not a text scan** (R17-2.2). A
   hurl function (`{{newUuid}}`, `{{newDate}}`) no longer counts as an unbound
   variable — proef refused input stock hurl runs — and a sibling literal bind

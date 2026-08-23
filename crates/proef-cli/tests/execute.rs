@@ -825,6 +825,53 @@ fn a_failed_setup_still_emits_the_machine_body() {
     );
 }
 
+/// R17-2.5: a failed teardown appears in JUnit as its own suite — #78's rule
+/// made symmetric (a phase appears in the reports when it fails). A gated
+/// pipeline used to read a fully-passing report on an exit-3 run.
+#[test]
+fn a_failed_teardown_reaches_junit_as_its_own_suite() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: broken teardown\n    When teardown probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: main case\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  teardownProbe:\n    match: teardown probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml"])
+        .assert()
+        .code(3);
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        junit.contains("teardown.feature") && junit.contains("broken teardown"),
+        "the failed phase is its own suite: {junit}"
+    );
+    assert!(
+        junit.contains("main case"),
+        "the pool suite is still there: {junit}"
+    );
+}
+
 /// ADR-0014: setup runs once before the pool and its `saveAs: global` reaches
 /// the pool (the suite fetching `${global:recordId}` only succeeds if setup's
 /// promotion merged first); teardown runs after; both are excluded from the

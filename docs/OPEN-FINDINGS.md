@@ -147,13 +147,18 @@ Confirmed, both halves, plus a third the round missed:
   now lands at the section's end; pinned by
   `a_fragments_own_variable_evaluates_first`.
 
-### R17-2.3 / 2.4 / 2.5 — machine output and phase reporting *(confirmed, queued)*
+### R17-2.3 / 2.4 / 2.5 — machine output and phase reporting *(shipped)*
 
-An empty shard writes prose (plus a stray-space run) where a `--output
-json`/TAP body belongs; a setup abort writes JUnit but zero machine-stdout
-bytes; a failed teardown reaches no report at all. One mechanism owed: every
-terminating path emits exactly one machine body, and phase summaries reach
-the CI reports.
+An empty shard wrote prose (plus a stray-space run) where a `--output
+json`/TAP body belongs; a setup abort wrote JUnit but zero machine-stdout
+bytes; a failed teardown reached no report at all. **Shipped as one
+mechanism each way:** `emit_machine_body` is called by every terminating
+path (pool, empty shard, both setup aborts) with ADR-0014 suite-only totals
+and the path's own exit code — the note moved to stderr under machine
+output — and a *failed* teardown's outcomes ride into `write_junit` as their
+own suite (#78's rule made symmetric; a green phase stays out). Deliberate
+scope: the GitHub summary keeps its pool-only totals — JUnit is where a
+gated consumer reads per-case truth, and phase failures are per-case there.
 
 ### R17-2.6 — batch *(confirmed, queued)*
 
