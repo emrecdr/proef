@@ -903,7 +903,7 @@ runnable under stock `hurl`. Item by item:
   amendment argues from the non-goal's own rationale instead, and says so. Measuring
   the port cost is still worth doing — it now informs priority rather than permission.
 
-### M1 — `fmt` cannot canonicalize a standalone `.hurl` *(report A2, reframed)*
+### M1 — `fmt` cannot canonicalize a standalone `.hurl` *(closed — foreclosed by ADR-0018)*
 
 **The report had this backwards** and it is worth recording why. It claimed `fmt`
 *refuses* a file outside a pack, and proposed teaching it to accept `.hurl` as a
@@ -918,7 +918,18 @@ no `hurl:` key to locate. That is a feature, not a flag.
 **Why it still ranks first.** It is what converts M2 from clerical to mechanical,
 and it is the cheapest unlock for the most valuable capability.
 
-### M2 — no mechanical equivalence check between a hurl corpus and its proef port *(report A1)*
+**Closed 2026-08-23, without building it.** This entry predates ADR-0018, which
+was accepted with the opposite principle: *proef reads files it does not own,
+so it must never write them — `fmt` refuses fragment files* (ADR-0018,
+"proef never writes"; carried as a hard constraint in `CLAUDE.md`). Building M1
+would diverge from an accepted ADR without a superseding one. And the goal M1
+served no longer needs it: it existed to make M2 mechanical — canonicalize both
+corpora, diff the text — but fragments removed the transcription M2 was
+guarding, so there is no ported copy whose equivalence needs proving. The file
+the backend team owns *is* what proef runs, pinned per-file by the both-runners
+test. Reopening this requires a superseding ADR, not a feature request.
+
+### M2 — no mechanical equivalence check between a hurl corpus and its proef port *(deferred — trigger named below)*
 
 **Verified.** `Diff` takes `base`/`new` **run ids** only (`main.rs:187-195`); no
 path reads a `hurl --report-json`, which the pinned hurl 8.0.1 does emit.
@@ -934,7 +945,18 @@ reading `.hurl` and *generating* Gherkin. This compares two **result** sets,
 which is `diff`'s existing job with one more input format. The non-goal
 forecloses a direction of data flow, not the ability to check your own work.
 
-### M3 — the port cost has never been measured *(report A3)*
+**Deferred 2026-08-23.** The urgency rested on transcription drift — a port
+that could silently assert less than its original. ADR-0018 removed the
+transcription: a migrating team annotates the corpus it already has, and the
+same bytes run under stock hurl and under proef (`fragments.rs` pins it
+per-file against the fixture). What remains defensible is a *results* diff for
+the trust-building window when both runners run in CI side by side —
+`diff`'s job with `hurl --report-json` as one more input. **Trigger:** the
+first concrete migration that runs both runners and asks to compare outcomes
+mechanically. Building a seventh input format ahead of a consumer is the same
+mistake the CTRF deferral records.
+
+### M3 — the port cost has never been measured *(closed — overtaken by ADR-0018)*
 
 `PRD.md:42` makes hurl import a **permanent** non-goal, and that rests on
 persona P3's "pastes between corpus and packs" (`PRD.md:57`) being cheap —
@@ -942,6 +964,15 @@ which nobody has measured. A 14-file, 844-line port is the first real datum
 available. Recording the hours settles a recurring argument in one direction or
 the other: cheap vindicates the non-goal with evidence instead of assertion,
 expensive earns the charter a re-examination with numbers rather than opinion.
+
+**Closed 2026-08-23.** The re-examination this measurement was meant to trigger
+happened: ADR-0018 narrowed the non-goal to *generation* and rewrote P3's job
+from "pastes between corpus and packs" to "annotates once" — the exact charter
+change M3 said the numbers should decide. The two field data points stand
+recorded (an 844-line/14-file corpus ported by raw paste at 100% coverage; a
+97-entry corpus that chose annotation and stopped the paste port deliberately),
+and no third answer would change a decision that has already been made and
+shipped.
 
 ### E1 — no intra-run serialization primitive *(report B1)*
 
@@ -1056,11 +1087,13 @@ every CI integration rather than by one team.
 - **`--rerun`** (`main.rs:120-122`, re-run only the last run's failures) fits
   conversion iteration exactly.
 
-### Suggested order
+### Suggested order *(historical — every item now resolved or parked)*
 
-M1 → M2 (adoption becomes provable) → E1 (dissolves E2). The two documentation
-items, C1 and C3, shipped in #43. E3, E4, D1, D2 and M3 are record-only — none
-blocks anyone today.
+The order was M1 → M2 (adoption becomes provable) → E1 (dissolves E2). E1
+shipped as `[run] exclusive-tags`; M1 closed against ADR-0018; M2 is deferred
+on a named trigger; M3 closed as overtaken. The two documentation items, C1
+and C3, shipped in #43. E3, E4, D1 and D2 remain record-only — none blocks
+anyone today.
 
 ---
 
