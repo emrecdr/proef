@@ -954,6 +954,26 @@ fn resolve_structured(
         other => other.clone(),
     })
 }
+/// May `trimmed` appear inside an author `[Options]` section without ending
+/// it? Options are single-line `key: value` pairs, and hurl's line
+/// terminators allow blanks and comments between them; anything else — a
+/// section header, the response line, a body (fenced or not), the next
+/// entry's method line — ends the section. Inputs here are already
+/// hurl-valid (pack load and the fragment scan both run the real parser), so
+/// an option-shaped line inside the section IS an option, never body text
+/// that happens to look like one.
+fn stays_in_options_section(trimmed: &str) -> bool {
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return true;
+    }
+    let Some((key, _)) = trimmed.split_once(':') else {
+        return false;
+    };
+    let mut chars = key.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
 /// Pre-scan for [`bake_entry_options`]: which entries carry an author-written
 /// `[Options]` section. Those only get extended — auto-injecting a fresh one
 /// as well would leave two `[Options]` sections in one entry, which hurl
@@ -1051,6 +1071,20 @@ fn bake_entry_options(
             out.push(line.to_owned());
             continue;
         }
+        // The author's section ends at the first line that could not sit
+        // inside it — checked before anything else consumes the line. The
+        // first version ran the method-line branch first, so an entry whose
+        // author `[Options]` was never followed by a response leaked its
+        // pending lines into the NEXT entry, where hurl parsed them as
+        // headers and the artifact validated green (silent wrong output);
+        // and its terminator list (`[`/`HTTP`/method) missed unfenced
+        // bodies, so the lines landed AFTER a JSON or XML body — invalid
+        // hurl, exit 2 on input that worked before the section-end move.
+        if in_author_options && !stays_in_options_section(trimmed) {
+            out.push(retry_lines.clone());
+            injected_current = true;
+            in_author_options = false;
+        }
         if is_method_line(trimmed) {
             in_entry_head = true;
             injected_current = false;
@@ -1071,16 +1105,6 @@ fn bake_entry_options(
             in_author_options = !injected_current;
             in_entry_head = false;
             continue;
-        }
-        // The author's section ends at the next section header, the response
-        // line, or the entry boundary — the injected lines land immediately
-        // before that, after every author-written option line.
-        if in_author_options
-            && (trimmed.starts_with('[') || trimmed.starts_with("HTTP") || is_method_line(trimmed))
-        {
-            out.push(retry_lines.clone());
-            injected_current = true;
-            in_author_options = false;
         }
         let is_header = in_entry_head && is_header_line(trimmed);
         if in_entry_head && !is_header && !injected_current && !has_author_options(entry) {
@@ -1667,6 +1691,92 @@ mod tests {
         // line supplies (R17-2.2's ordering half).
         assert!(
             baked.contains("[Options]\nverbose: true\nretry: 2\nretry-interval: 100ms"),
+            "{baked}"
+        );
+    }
+
+    /// The section-end move shipped covering one of five shapes; the other
+    /// four are pinned here. Two were live bugs: an unfenced body after the
+    /// author's `[Options]` swallowed the injected lines into invalid hurl
+    /// (exit 2 on input that worked before), and an entry whose author
+    /// section had no response line leaked its pending lines into the NEXT
+    /// entry, where hurl parsed them as headers and the artifact validated
+    /// green — the silent-wrong-output class.
+    #[test]
+    fn baked_options_flush_before_every_section_ending_shape() {
+        let retry = Some(crate::step::Retry {
+            count: 2,
+            interval_ms: 100,
+        });
+        let lines = "retry: 2\nretry-interval: 100ms";
+
+        // Unfenced JSON body: lines land before the body, not after it.
+        let baked = bake_entry_options(
+            "POST http://x/a\n[Options]\nverbose: true\n{\"a\": 1}\nHTTP 200\n",
+            retry,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            baked.contains(&format!("verbose: true\n{lines}\n{{\"a\": 1}}")),
+            "{baked}"
+        );
+
+        // Two entries, first without a response: the first entry keeps its
+        // lines at its section's end, and the second gets its own fresh
+        // `[Options]` — a step-level retry applies to every entry. The bug
+        // this pins against: entry 1's pending lines leaked past its
+        // boundary into entry 2's header block, where hurl parsed `retry: 2`
+        // as an HTTP header and the artifact validated green.
+        let baked = bake_entry_options(
+            "GET http://x/a\n[Options]\nverbose: true\nGET http://x/b\nHTTP 200\n",
+            retry,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            baked.contains(&format!("verbose: true\n{lines}\nGET http://x/b")),
+            "entry 1 flushes at its own boundary: {baked}"
+        );
+        assert!(
+            baked.contains(&format!("GET http://x/b\n[Options]\n{lines}")),
+            "entry 2's lines sit in a section, never in its headers: {baked}"
+        );
+
+        // EOF while still inside the author section.
+        let baked = bake_entry_options(
+            "GET http://x/a\n[Options]\nverbose: true\n",
+            retry,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            baked.ends_with(&format!("verbose: true\n{lines}\n")),
+            "{baked}"
+        );
+
+        // A fenced body directly after the author section.
+        let baked = bake_entry_options(
+            "POST http://x/a\n[Options]\nverbose: true\n```\nBODY\n```\nHTTP 200\n",
+            retry,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            baked.contains(&format!("verbose: true\n{lines}\n```")),
+            "{baked}"
+        );
+
+        // Blanks and comments stay inside the section: the author's later
+        // option still precedes the injected lines.
+        let baked = bake_entry_options(
+            "GET http://x/a\n[Options]\nverbose: true\n\n# note\nvariable: p=1\nHTTP 200\n",
+            retry,
+            None,
+            &BTreeMap::new(),
+        );
+        assert!(
+            baked.contains(&format!("variable: p=1\n{lines}\nHTTP 200")),
             "{baked}"
         );
     }

@@ -246,7 +246,8 @@ fn annotation_name(comment: &str) -> Option<String> {
 /// The value is parsed exactly as it will be evaluated: it reaches hurl as the
 /// right-hand side of an injected `[Options] variable:` line, whose value
 /// grammar is a template. Rather than re-implement that grammar, the value is
-/// placed in a probe entry's header — the same `Template` production — and the
+/// placed in a probe entry's quoted `variable:` option — the position bake
+/// itself injects into, so the probe and the evaluation agree on `#` — and the
 /// file handed to hurl's parser; the walk is the same [`Collect`] the fragment
 /// scanner uses, so "what does this text read" has exactly one answer in the
 /// tree, and `ExprKind::Function` (`{{newUuid}}`, `{{newDate}}`) never
@@ -255,7 +256,16 @@ fn annotation_name(comment: &str) -> Option<String> {
 /// refuses reports no reads: the emitted artifact is parse-validated anyway,
 /// so a malformed template still fails loudly there, under hurl's own error.
 pub(crate) fn template_reads(value: &str) -> Vec<String> {
-    let probe = format!("GET http://probe.invalid\nx-proef-probe: {value}\nHTTP 200\n");
+    // The probe puts the value in the *quoted* `[Options] variable:` position
+    // — the exact place bake injects it (always quoted, same escaping). The
+    // first version used an unquoted header position, whose grammar treats
+    // ` # ` as a comment opener: every read after a `#` went unreported, and
+    // an unbound variable sailed through `--dry-run` to die at run time —
+    // the same late failure this function exists to prevent.
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let probe = format!(
+        "GET http://probe.invalid\n[Options]\nvariable: proefprobe=\"{escaped}\"\nHTTP 200\n"
+    );
     let Ok(file) = hurl_core::parser::parse_hurl_file(&probe) else {
         return Vec::new();
     };
@@ -331,6 +341,14 @@ mod tests {
         assert_eq!(template_reads("{{newDate}}-{{q}}"), ["q"]);
         assert_eq!(template_reads("literal only"), Vec::<String>::new());
         assert_eq!(template_reads("broken {{"), Vec::<String>::new());
+        // `#` opens a comment in the unquoted grammar the first probe used —
+        // everything after it went unreported, and the unbound check let a
+        // dead variable through to run time. The quoted position keeps it.
+        assert_eq!(template_reads("{{a}} # {{b}}"), ["a", "b"]);
+        // Values containing the quote/escape characters survive the probe's
+        // own quoting (same escaping bake applies at injection).
+        assert_eq!(template_reads(r#"say "hi" to {{q}}"#), ["q"]);
+        assert_eq!(template_reads(r"back\slash {{q}}"), ["q"]);
     }
 
     const FILE: &str = concat!(
