@@ -16,6 +16,21 @@ fn main() -> ExitCode {
         None => usage("missing task"),
     }
 }
+/// The version the canary should test: `--version X.Y.Z`, else the newest
+/// stable in the index.
+fn canary_target(args: &[String]) -> Result<String, ExitCode> {
+    match args {
+        [flag, version] if flag == "--version" => Ok(version.clone()),
+        [] => latest_hurl_version().map_err(|message| {
+            eprintln!("canary: {message} (pass --version X.Y.Z to override)");
+            ExitCode::FAILURE
+        }),
+        _ => {
+            eprintln!("usage: cargo run -p xtask -- canary [--version X.Y.Z]");
+            Err(ExitCode::from(2))
+        }
+    }
+}
 
 /// The upgrade canary (ADR-0003, M4): build + test the whole workspace against
 /// the *next* hurl release in an isolated copy — pins never move automatically;
@@ -31,23 +46,24 @@ fn canary(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let target = match args {
-        [flag, version] if flag == "--version" => version.clone(),
-        [] => match latest_hurl_version() {
-            Ok(version) => version,
-            Err(message) => {
-                eprintln!("canary: {message} (pass --version X.Y.Z to override)");
-                return ExitCode::FAILURE;
-            }
-        },
-        _ => {
-            eprintln!("usage: cargo run -p xtask -- canary [--version X.Y.Z]");
-            return ExitCode::from(2);
-        }
+    let target = match canary_target(args) {
+        Ok(target) => target,
+        Err(code) => return code,
     };
 
     if target == pinned {
         eprintln!("canary: pinned hurl {pinned} is the latest release — nothing newer to test");
+        return ExitCode::SUCCESS;
+    }
+    // The index is publish-ordered, so a backport released after a major
+    // (8.0.2 after 9.0.0) arrives here as "latest" — and a green build
+    // against a *downgrade* would read as upgrade readiness (R17-2.6).
+    // Ordering, not just inequality.
+    if semver_key(&target) < semver_key(&pinned) {
+        eprintln!(
+            "canary: newest index entry hurl {target} is older than the pin {pinned} — \
+             a backport, not an upgrade target; nothing to test"
+        );
         return ExitCode::SUCCESS;
     }
     eprintln!("canary: testing hurl {target} (pinned: {pinned}) in an isolated workspace copy");
@@ -154,6 +170,17 @@ fn latest_hurl_version() -> Result<String, String> {
     }
     let body = String::from_utf8_lossy(&output.stdout);
     latest_stable_in_index(&body).ok_or_else(|| "no versions parsed from the index".to_owned())
+}
+
+/// `x.y.z` as an ordering key; a component that fails to parse sorts as 0,
+/// which can only make the canary refuse more, never test a downgrade.
+fn semver_key(version: &str) -> (u64, u64, u64) {
+    let mut parts = version.split('.').map(|p| p.parse().unwrap_or(0));
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
 }
 
 /// Last non-yanked **stable** version in a sparse-index body (publish order).
@@ -595,5 +622,18 @@ mod tests {
         );
         assert_eq!(latest_stable_in_index(body).as_deref(), Some("8.0.1"));
         assert_eq!(latest_stable_in_index(""), None);
+    }
+
+    /// R17-2.6: a backport published after a major must not read as the
+    /// upgrade target — ordering, not equality, decides.
+    #[test]
+    fn an_older_backport_never_outranks_the_pin() {
+        use super::semver_key;
+        assert!(semver_key("8.0.2") < semver_key("9.0.0"));
+        assert!(semver_key("8.0.2") > semver_key("8.0.1"));
+        assert!(
+            semver_key("10.0.0") > semver_key("9.9.9"),
+            "numeric, not lexicographic"
+        );
     }
 }

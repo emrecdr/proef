@@ -50,6 +50,13 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
             let count = |want: &[Status]| {
                 rec.scenarios
                     .values()
+                    // Suite scenarios only — the totals this fallback stands in
+                    // for exclude `[run] setup`/`teardown` (ADR-0014), and a
+                    // truncated record that died mid-setup would otherwise fold
+                    // the phase into the headline three lines above the label
+                    // saying it is excluded (R17-2.6; `is_suite` is the same
+                    // filter every other record consumer uses since #72).
+                    .filter(|run| run.is_suite())
                     .filter(|run| want.contains(&run.status))
                     .count()
             };

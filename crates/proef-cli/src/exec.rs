@@ -1575,6 +1575,89 @@ mod tests {
         );
     }
 
+    /// R17-2.1's surviving half: nothing asserted *balance*. The filed claim
+    /// — FNV's unmixed low bits collapse power-of-two shard counts — was
+    /// refuted by measurement (a model calibrated against the frozen literals
+    /// above): natural naming shapes are near-uniform, and the proposed
+    /// fmix64 finalizer measurably *worsened* them (empty shards at N=8 that
+    /// FNV does not produce), because FNV's parity-structured low bit walks
+    /// templated names round-robin. Collapse requires a degenerate corpus —
+    /// every name an even-length run of one character. This test pins the
+    /// distribution on the shapes real suites use, so a future hash change
+    /// that *does* skew fails here instead of in someone's CI matrix.
+    #[test]
+    fn natural_corpora_spread_across_shards() {
+        use super::shard_bucket;
+        let numbered: Vec<(String, String)> = (1..=20)
+            .map(|i| {
+                (
+                    "tests/features/api.feature".into(),
+                    format!("scenario {i} probes the endpoint"),
+                )
+            })
+            .collect();
+        let outline: Vec<(String, String)> = (1..=20)
+            .map(|i| {
+                (
+                    "tests/features/perm.feature".into(),
+                    format!("Same name #{i}"),
+                )
+            })
+            .collect();
+        let prose: Vec<(String, String)> = [
+            "an order is created",
+            "an order is cancelled",
+            "a cancelled order stays cancelled",
+            "the catalog lists new items",
+            "a search finds the record",
+            "an empty search says so",
+            "the admin resets a password",
+            "a token expires mid-session",
+            "a refund closes the ledger",
+            "pagination survives a deletion",
+            "the webhook retries twice",
+            "a duplicate is refused",
+            "the export contains headers",
+            "an import round-trips",
+            "the audit trail is ordered",
+            "a locked user cannot login",
+            "rate limits return 429",
+            "the health check passes",
+            "a slow endpoint times out",
+            "teardown leaves no rows",
+        ]
+        .iter()
+        .map(|n| ("tests/features/orders.feature".into(), (*n).into()))
+        .collect();
+
+        for (label, corpus) in [
+            ("numbered", &numbered),
+            ("outline", &outline),
+            ("prose", &prose),
+        ] {
+            for count in [2u32, 3, 4] {
+                let mut loads = vec![0usize; count as usize];
+                for (file, name) in corpus {
+                    loads[shard_bucket(file, name, count) as usize] += 1;
+                }
+                let (min, max) = (
+                    *loads.iter().min().unwrap_or(&0),
+                    *loads.iter().max().unwrap_or(&0),
+                );
+                assert!(
+                    min > 0,
+                    "{label} at N={count}: an empty shard buys zero wall-clock — {loads:?}"
+                );
+                // 20 scenarios over ≤4 shards: a 3× spread between the
+                // heaviest and lightest shard is the useful/broken line.
+                assert!(
+                    max <= 3 * min,
+                    "{label} at N={count}: skew defeats sharding's purpose — {loads:?}"
+                );
+            }
+        }
+    }
+
     /// Rotation honours the configured budget, and still refuses to delete
     /// anything it did not name.
     ///

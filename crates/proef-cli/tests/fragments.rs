@@ -421,6 +421,43 @@ fn an_annotation_carrying_settings_is_refused() {
     );
 }
 
+/// R17-2.6: one authored mistake in a shared macro is one warning, not one
+/// per scenario that uses it — the repeat count rides in the message.
+#[test]
+fn a_repeated_warning_collapses_to_one_with_a_count() {
+    let hurl = format!(
+        "{CORPUS}\n# @proef admin.reuse\nGET {{{{base}}}}/api/v1/admin/records/{{{{recordId}}}}\nHTTP 200\n"
+    );
+    let pack = format!(
+        "{PACK}  reuse:\n    match: \"the operator reopens the record\"\n    bind: {{ recordId: \"fixed-1\" }}\n    steps:\n      - ref: admin.reuse\n"
+    );
+    let feature = "Feature: F\n  Scenario: a\n    When the operator searches for \"x\"\n    And the operator reopens the record\n  Scenario: b\n    When the operator searches for \"y\"\n    And the operator reopens the record\n  Scenario: c\n    When the operator searches for \"z\"\n    And the operator reopens the record\n";
+    let dir = project(&hurl, &pack);
+    std::fs::write(dir.path().join("tests/features/a.feature"), feature).unwrap();
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    let assert = cmd
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&assert.get_output().stdout),
+        String::from_utf8_lossy(&assert.get_output().stderr)
+    );
+    assert_eq!(
+        all.matches("proef::lower::bind_shadows_capture").count(),
+        1,
+        "one warning for one authored mistake: {all}"
+    );
+    assert!(
+        all.contains("3 sites across the suite"),
+        "the collapse names its count: {all}"
+    );
+}
+
 /// R17-2.2: `{{newUuid}}` is a hurl *function*, and the engine's parser — not
 /// a core text scan — answers "what does this value read", so binding it needs
 /// no supplier. The refusal this pins against rejected input stock hurl runs.

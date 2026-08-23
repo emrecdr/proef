@@ -160,14 +160,17 @@ own suite (#78's rule made symmetric; a green phase stays out). Deliberate
 scope: the GitHub summary keeps its pool-only totals — JUnit is where a
 gated consumer reads per-case truth, and phase failures are per-case there.
 
-### R17-2.6 — batch *(confirmed, queued)*
+### R17-2.6 — batch *(shipped)*
 
-README omits `--shard`/`--max-fail` (and the #73 gate is blind to the flags
-direction); `explain`'s truncated-record fallback misses `is_suite()`; the
-canary's equality-only guard would green a backport older than the pin;
-`bind_shadows_capture` multiplies per scenario × step; the `quick-xml`
-`=0.38.4` pin comment is false since quick-junit 0.7 (two generations in the
-lock). P4s: the pages workflow comment claims `upstream/` stays off the site
+README omitted `--shard`/`--max-fail` (and the #73 gate was blind to the
+flags direction) — closed with a reverse-flags gate whose measured burden was
+exactly three flags; `explain`'s truncated-record fallback now filters
+through `is_suite()` (the fourth consumer #72's helper was built for); the
+canary refuses a backport older than the pin by semver ordering, not
+equality; identical warnings collapse to one with a repeat count (every
+class, at the front-end aggregation — `bind_shadows_capture` was the
+motivating fifty-warning wall); `quick-xml` rides at quick-junit 0.7's
+in-tree copy again, one generation in the lock. P4s: the pages workflow comment claims `upstream/` stays off the site
 while its `.patch` files serve 200; `docs/runbooks/` is on the site but never
 link-checked; outline identity is positional; the #79 comment overpromises
 that `file:line` survives in the failure detail.
