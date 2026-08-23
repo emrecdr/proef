@@ -15,6 +15,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, T
 /// case per scenario, engine-measured times, failure details inline.
 pub fn write_junit(
     summary: &RunSummary,
+    teardown: Option<&RunSummary>,
     run_id: &str,
     path: &Path,
     redactions: &Redactions,
@@ -22,7 +23,18 @@ pub fn write_junit(
     let mut report = Report::new("proef");
     report.set_uuid(uuid::Uuid::parse_str(run_id).unwrap_or_else(|_| uuid::Uuid::nil()));
 
-    let mut files: Vec<&str> = summary.outcomes.iter().map(|o| o.file.as_ref()).collect();
+    // A failed teardown's outcomes ride along as their own suite (named by
+    // the phase feature file, like #78's setup) — a JUnit-gated pipeline used
+    // to see a fully-passing report on an exit-3 run (R17-2.5). The summary
+    // totals elsewhere stay suite-only (ADR-0014); JUnit counts are per-case
+    // by construction, so the phase failure is visible without touching them.
+    let outcomes = || {
+        summary
+            .outcomes
+            .iter()
+            .chain(teardown.into_iter().flat_map(|t| t.outcomes.iter()))
+    };
+    let mut files: Vec<&str> = outcomes().map(|o| o.file.as_ref()).collect();
     files.sort_unstable();
     files.dedup();
 
@@ -30,7 +42,7 @@ pub fn write_junit(
     for file in files {
         let mut suite = TestSuite::new(file);
         let mut suite_time = std::time::Duration::ZERO;
-        for outcome in summary.outcomes.iter().filter(|o| o.file.as_ref() == file) {
+        for outcome in outcomes().filter(|o| o.file.as_ref() == file) {
             suite_time += outcome
                 .steps
                 .iter()

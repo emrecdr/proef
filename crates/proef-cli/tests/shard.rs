@@ -160,6 +160,45 @@ fn an_empty_shard_is_a_note_and_an_empty_selection_stays_loud() {
         .code(2);
 }
 
+/// R17-2.3: an empty shard is a run like any other to a machine consumer —
+/// exactly one `--output json`/TAP body on stdout, the note on stderr. It
+/// used to print the prose note *as* the body, so `jq` failed on the very
+/// path a sharded matrix guarantees one job will take.
+#[test]
+fn an_empty_shard_still_emits_the_machine_body() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    project(cwd.path(), &["only"]);
+
+    for shard in ["1/2", "2/2"] {
+        let assert = proef_in(cwd.path(), &fixture)
+            .args(["test", "suite", "--shard", shard, "--output", "json"])
+            .assert()
+            .code(0);
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+        let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|err| {
+            panic!("stdout must be exactly one JSON body ({err}): [{stdout}]")
+        });
+        assert_eq!(body["exit_code"], 0, "{body}");
+        let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+        if stderr.contains("nothing to run in this shard") {
+            assert_eq!(body["passed"], 0, "idle shard reports zeros: {body}");
+            // The note is prose for a human — single-spaced (the stray-space
+            // run was R17-2.3's cosmetic half) and never on stdout.
+            assert!(stderr.contains("scenario(s) — nothing to run"), "{stderr}");
+        }
+        let tap = proef_in(cwd.path(), &fixture)
+            .args(["test", "suite", "--shard", shard, "--output", "tap"])
+            .assert()
+            .code(0);
+        let tap_out = String::from_utf8_lossy(&tap.get_output().stdout).into_owned();
+        assert!(
+            tap_out.starts_with("TAP version 13"),
+            "TAP body on every path: [{tap_out}]"
+        );
+    }
+}
+
 /// `--shard` composes with the other selectors: it partitions the *filtered*
 /// set (the pinned filter→shard order), so every matrix job slicing the same
 /// expression partitions one agreed-on set.
