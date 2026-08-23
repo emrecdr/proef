@@ -408,7 +408,22 @@ pub fn execute(
             &fragments,
             config,
         ) {
-            Err(code) => return code,
+            Err(code) => {
+                // A phase that failed to even load (missing file, bad pack,
+                // missing secret) is still a terminating path — the machine
+                // body contract has no exceptions (R17-2.4 follow-up: this
+                // arm was the one path still returning zero stdout bytes).
+                emit_machine_body(
+                    output,
+                    &front.run_id,
+                    &empty_run_summary(),
+                    &[],
+                    &redactions,
+                    &run_dir,
+                    code,
+                );
+                return code;
+            }
             Ok(summary) => {
                 // `RunRecord`'s totals are the main-suite verdict only (ADR-0014):
                 // setup's own outcome still drives the exit code below, and its
