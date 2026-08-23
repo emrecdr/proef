@@ -1,6 +1,6 @@
 # `proef.toml` — the project configuration reference
 
-`proef.toml` lives in the project root (the directory you run `proef` from)
+`proef.toml` lives in the project root — found by searching **up** from the working directory, so any subdirectory works (a project is where its `proef.toml` is, not where your shell is)
 and is **committed project config** — it describes the suite, not your
 machine. Every key is optional; an absent file means all defaults. Unknown keys
 are rejected (`deny_unknown_fields`), so typos fail loudly instead of being
@@ -60,7 +60,7 @@ timeout-ms = 60000
 
 | Key | Default | Notes |
 |---|---|---|
-| `[run] suite` | *(unset)* | default path for `proef test`/`flows`/`artifacts`; falls back to the `tests/` convention, then errors. An explicit path always wins |
+| `[run] suite` | *(unset)* | default path for `proef test`/`flows`/`macros`/`fragments`/`artifacts` (and what `doctor` and `lsp` inspect); falls back to the `tests/` convention, then errors. An explicit path always wins |
 | `[run] jobs` | available parallelism | `--jobs` flag wins; live threads never exceed the scenario count |
 | `[run] runs-dir` | `.proef-runs` | run records rotate here; only uuid-named run dirs are ever touched |
 | `[run] keep-runs` | `200` | how many **past** records `runs-dir` retains, besides the one being written; `0` keeps none but the run in flight |
@@ -88,8 +88,13 @@ $ proef test --env prod      # [env.prod.*] merged over the base
 $ PROEF_ENV=staging proef test   # same, via the environment variable
 ```
 
-The rule is uniform: under `[env.<name>]`, `url.*` / `vars.*` override variables and
-`http.*` / `run.*` / `sla.*` override runner settings. A named-but-undefined `--env` is a
+The rule is *almost* uniform: under `[env.<name>]`, `url.*` / `vars.*` override
+variables and `http.*` / `sla.*` override runner settings wholesale — but
+`[env.<name>.run]` accepts **only `jobs`**. Every other `[run]` key (`suite`,
+`runs-dir`, `setup`, `teardown`, `exclusive-tags`, …) names *what the suite is*,
+not how hard to run it, and letting an environment swap those made two
+environments run different tests while claiming to be the same suite — so
+listing one there is a hard parse error (exit 2), never a silent no-op. A named-but-undefined `--env` is a
 user error (exit 2) listing the known environments. A `${url:key}` / `${vars:key}` referenced
 in a pack but defined in neither the base nor the active environment fails at lower time
 (`proef::resolve::missing_config_var`).

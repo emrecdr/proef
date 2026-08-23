@@ -74,6 +74,8 @@
 # ── per-environment overrides (select with --env <name> or PROEF_ENV) ──
 # Each [env.<name>.<section>] mirrors a base table and deep-merges over it,
 # key by key — list only what changes; everything else inherits the base.
+# Exception: [env.<name>.run] accepts only `jobs` — the other [run] keys name
+# what the suite IS, and an environment must not swap that (hard error).
 # [env.staging.url]
 # base = "https://staging.example.com"
 
