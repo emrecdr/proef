@@ -21,6 +21,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   injects into, so `"{{a}} # {{b}}"` reports both.
 - **A setup that fails to load still emits the machine body** — the last
   terminating path returning zero stdout bytes under `--output json`.
+- **SARIF keeps one result per site again.** The warning collapse shipped at
+  the front-end aggregation, which also feeds SARIF — a code-scanning
+  consumer lost every anchor but the first. The collapse now happens at
+  console rendering only; SARIF carries all sites, the console one line with
+  the count.
 
 - **Every terminating path emits exactly one machine body** (R17-2.3/2.4).
   An empty shard printed its prose note *as* the `--output json` body — `jq`

@@ -903,8 +903,53 @@ fn a_failed_teardown_reaches_junit_as_its_own_suite() {
         "the failed phase is its own suite: {junit}"
     );
     assert!(
+        junit.contains(r#"failures="1""#),
+        "a gate reads counts, not names — the teardown failure must be counted: {junit}"
+    );
+    assert!(
         junit.contains("main case"),
         "the pool suite is still there: {junit}"
+    );
+}
+
+/// The other half of the when-it-fails rule: a GREEN teardown stays out of
+/// JUnit, exactly as a green setup does. Without this, widening the
+/// `teardown_summary` stash to every run would pass every existing test.
+#[test]
+fn a_green_teardown_stays_out_of_junit() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: clean teardown\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: main case\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml"])
+        .assert()
+        .code(0);
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        !junit.contains("teardown"),
+        "a green phase is not a test result: {junit}"
     );
 }
 
