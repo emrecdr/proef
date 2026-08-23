@@ -256,13 +256,17 @@ fn annotation_name(comment: &str) -> Option<String> {
 /// refuses reports no reads: the emitted artifact is parse-validated anyway,
 /// so a malformed template still fails loudly there, under hurl's own error.
 pub(crate) fn template_reads(value: &str) -> Vec<String> {
+    // No braces, no reads — skips a full parse for the common literal value.
+    if !value.contains("{{") {
+        return Vec::new();
+    }
     // The probe puts the value in the *quoted* `[Options] variable:` position
     // — the exact place bake injects it (always quoted, same escaping). The
     // first version used an unquoted header position, whose grammar treats
     // ` # ` as a comment opener: every read after a `#` went unreported, and
     // an unbound variable sailed through `--dry-run` to die at run time —
     // the same late failure this function exists to prevent.
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = proef_core::lower::quote_option(value);
     let probe = format!(
         "GET http://probe.invalid\n[Options]\nvariable: proefprobe=\"{escaped}\"\nHTTP 200\n"
     );

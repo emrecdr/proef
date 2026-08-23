@@ -157,8 +157,12 @@ path (pool, empty shard, both setup aborts) with ADR-0014 suite-only totals
 and the path's own exit code — the note moved to stderr under machine
 output — and a *failed* teardown's outcomes ride into `write_junit` as their
 own suite (#78's rule made symmetric; a green phase stays out). Deliberate
-scope: the GitHub summary keeps its pool-only totals — JUnit is where a
-gated consumer reads per-case truth, and phase failures are per-case there.
+scope *as recorded then*: the GitHub summary keeps pool-only totals. The
+second audit pass showed the code does not hold to it — a setup abort passes
+the *setup* summary as the primary, so setup failures render in the GitHub
+summary while teardown failures do not. Queued: unify all three CI sinks on
+"a phase appears when it fails" at the `write_ci_reports` boundary, with
+totals staying suite-only everywhere (ADR-0014).
 
 ### R17-2.6 — batch *(shipped)*
 

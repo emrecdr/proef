@@ -421,6 +421,38 @@ fn an_annotation_carrying_settings_is_refused() {
     );
 }
 
+/// The error wall gets the same collapse the warning wall got — a broken
+/// macro usually fails to lower *everywhere*, so identical errors are the
+/// more common fifty-block wall. Distinct errors must survive uncollapsed.
+#[test]
+fn identical_errors_collapse_and_distinct_ones_survive() {
+    let pack = PACK.replace(
+        r#"bind: { q: "${q}", index: "${index}" }"#,
+        r#"bind: { q: "{{ghost}}", index: "${index}" }"#,
+    );
+    let feature = "Feature: F\n  Scenario: a\n    When the operator searches for \"x\"\n  Scenario: b\n    When the operator searches for \"y\"\n  Scenario: c\n    When the operator searches for \"z\"\n";
+    let dir = project(CORPUS, &pack);
+    std::fs::write(dir.path().join("tests/features/a.feature"), feature).unwrap();
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    let assert = cmd
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(2);
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert_eq!(
+        stderr.matches("proef::lower::unbound_placeholder").count(),
+        1,
+        "one error block for one authored mistake: {stderr}"
+    );
+    assert!(
+        stderr.contains("3 sites across the suite"),
+        "the collapse names its count: {stderr}"
+    );
+}
+
 /// R17-2.6: one authored mistake in a shared macro is one warning, not one
 /// per scenario that uses it — the repeat count rides in the message.
 #[test]

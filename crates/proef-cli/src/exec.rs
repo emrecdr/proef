@@ -378,6 +378,15 @@ pub fn execute(
         Ok(store) => Arc::new(Mutex::new(store)),
         Err(err) => {
             crate::render::errln!("error: {err}");
+            emit_machine_body(
+                output,
+                &front.run_id,
+                &empty_run_summary(),
+                &[],
+                &redactions,
+                &run_dir,
+                ExitCode::SystemError,
+            );
             return ExitCode::SystemError;
         }
     };
@@ -547,6 +556,18 @@ pub fn execute(
             );
             return ExitCode::Success;
         }
+        // Loud exit 2 by design — but a machine consumer still gets exactly
+        // one body (the fourth path this rule had to be applied to; the
+        // record is open and closes structurally like the other three).
+        emit_machine_body(
+            output,
+            &front.run_id,
+            &empty_run_summary(),
+            &[],
+            &redactions,
+            &run_dir,
+            ExitCode::UserError,
+        );
         return front::no_scenarios_matched();
     }
     let status_line = format!(

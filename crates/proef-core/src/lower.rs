@@ -118,7 +118,11 @@ fn mentions_secret(value: &str) -> bool {
 /// Escape a bound value for a quoted hurl option value. `\` and `"` are the
 /// two characters that would end or re-open the literal; `{{…}}` is left alone
 /// on purpose, since hurl expanding it is the point.
-fn quote_option(value: &str) -> String {
+/// Escape a value for a double-quoted hurl `[Options]` string. Public because
+/// the engine's `template_reads` probe must parse the value with **exactly**
+/// this escaping — the probe exists to agree with what `bake_entry_options`
+/// emits, and two private copies silently reopened that agreement once.
+pub fn quote_option(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
@@ -521,7 +525,9 @@ fn expand_step(
 /// consume. Returns `false` after pushing an error — the step must not lower.
 /// Everything that can legitimately supply a `{{variable}}` inside a bind
 /// value by the time its injected line evaluates — one bundle, because the
-/// four sources are only meaningful together (R17-2.2).
+/// sources are only meaningful together (R17-2.2). The fifth supplier — an
+/// earlier-sorting sibling literal — reads `bindings` itself, since it is a
+/// property of the map under inspection rather than outside context.
 struct Suppliers<'a> {
     /// `[Captures]` names of the steps lowered so far.
     captured: &'a BTreeSet<String>,

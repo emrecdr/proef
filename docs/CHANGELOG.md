@@ -35,6 +35,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **The machine-body contract closes its last two paths**: an empty selection
+  (`--scenario`/`--tags` matching nothing — loud exit 2 by design) and a
+  corrupt global-state file both emitted zero stdout bytes under
+  `--output json`.
+- **Identical errors collapse like identical warnings** — a broken macro
+  usually fails to lower *everywhere*, so the error wall was the more common
+  fifty-block wall; distinct errors still render separately, and SARIF keeps
+  every site.
+
 - **Injected `[Options]` lines respect every section-ending shape.** The
   section-end move covered one shape of five: an unfenced JSON/XML body after
   an author `[Options]` swallowed the injected lines into invalid hurl (exit
