@@ -162,7 +162,7 @@ fn wait_for_response<T: serde::de::DeserializeOwned>(client: &Connection, id: &R
         if let Message::Response(resp) = msg
             && &resp.id == id
         {
-            return serde_json::from_value(resp.result.unwrap()).unwrap();
+            return serde_json::from_value(resp.response_result.unwrap()).unwrap();
         }
     }
 }
@@ -875,8 +875,8 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
         panic!("expected a response, got {resp:?}");
     };
     let err = resp
-        .error
-        .expect("malformed params must produce an error response");
+        .response_result
+        .expect_err("malformed params must produce an error response");
     assert_eq!(err.code, -32602, "expected InvalidParams, got {err:?}");
 
     // Proof of life: a valid request afterwards is still answered normally.
