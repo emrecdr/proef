@@ -190,6 +190,16 @@ pub struct FragmentSupport {
     pub ext: &'static str,
     /// Reader for a whole file of that extension.
     pub scan: FragmentScanner,
+    /// The **variable** names a single template value reads, as the engine's
+    /// own parser answers it. This is the same question `scan` answers for a
+    /// whole file, asked of one `bind:` value — and it must be the engine's
+    /// answer because the engine's grammar decides what is a variable: hurl's
+    /// `{{newUuid}}` is a *function call*, and a text-level scan that reported
+    /// it as a variable made proef refuse input the engine itself runs
+    /// (R17-2.2). Unparseable text reports no reads: the emitted artifact is
+    /// parse-validated anyway, so a malformed template still fails loudly —
+    /// there, where the engine's own error names it.
+    pub template_reads: fn(&str) -> Vec<String>,
 }
 
 impl FragmentSupport {

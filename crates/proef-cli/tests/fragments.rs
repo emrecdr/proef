@@ -421,6 +421,25 @@ fn an_annotation_carrying_settings_is_refused() {
     );
 }
 
+/// R17-2.2: `{{newUuid}}` is a hurl *function*, and the engine's parser — not
+/// a core text scan — answers "what does this value read", so binding it needs
+/// no supplier. The refusal this pins against rejected input stock hurl runs.
+#[test]
+fn a_bind_value_calling_a_hurl_function_is_accepted() {
+    let pack = PACK.replace(
+        r#"bind: { q: "${q}", index: "${index}" }"#,
+        r#"bind: { q: "{{newUuid}}", index: "${index}" }"#,
+    );
+    let dir = project(CORPUS, &pack);
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    cmd.current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
 /// R9-5: a `{{x}}` *inside a bind value* used to escape `--dry-run` entirely —
 /// hurl templates the injected `[Options] variable:` line at run time, so an
 /// unsupplied name died late, in exactly the way dry-run exists to prevent.

@@ -85,7 +85,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 | `lower::bad_status` | `expect: status:` is not an HTTP status number | |
 | `lower::kind_unrouted` | Internal safety net: a lowered step's kind maps to no engine (registry drift — unreachable through the CLI, which is why it has no corpus case) | |
 | `lower::expansion_too_deep` | Macro expansion exceeded depth 32 at run time | |
-| `lower::unbound_placeholder` | A `{{variable}}` nothing supplies — read by the fragment, or inside a `bind:` value — with no `bind:` in scope, no earlier capture, no fragment-own `[Options] variable:`, and (for bind values) no secret of that name | |
+| `lower::unbound_placeholder` | A `{{variable}}` nothing supplies — read by the fragment, or inside a `bind:` value (as the engine's parser reads it: a hurl *function* like `{{newUuid}}` is not a variable) — with no `bind:` in scope, no earlier capture, no fragment-own `[Options] variable:`, no earlier-sorting sibling literal, and no secret of that name | |
 | `lower::bind_shadows_capture` | A literal `bind:` re-assigns a name an earlier step captured, so the bound value silently wins from that entry on (*warning*) | |
 | `lower::multiline_bind` | A `bind:` value that resolves to multiple lines — a hurl `[Options] variable:` is a single-line scalar; the inline `hurl: \|` form is what splices a multi-line body | |
 | `lower::secret_in_composite_bind` | A `bind:` value mixes `${secret:…}` into a larger string — bind the secret alone and put the surrounding text in the fragment | |

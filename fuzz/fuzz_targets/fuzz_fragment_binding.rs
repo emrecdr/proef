@@ -94,6 +94,7 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
     fragments: Some(FragmentSupport {
         ext: "frag",
         scan: synthetic_scan,
+        template_reads: |_| Vec::new(),
     }),
     options: None,
 }];

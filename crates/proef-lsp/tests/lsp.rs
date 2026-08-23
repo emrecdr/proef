@@ -481,6 +481,7 @@ fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
         fragments: Some(proef_core::engine::FragmentSupport {
             ext: "hurl",
             scan: fake_scan,
+            template_reads: |_| Vec::new(),
         }),
         options: None,
     }];
@@ -965,6 +966,7 @@ fn completion_inside_bind_offers_the_fragments_variables() {
         fragments: Some(proef_core::engine::FragmentSupport {
             ext: "hurl",
             scan: fake_scan,
+            template_reads: |_| Vec::new(),
         }),
         options: None,
     }];
