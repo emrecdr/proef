@@ -477,6 +477,11 @@ pub struct Fragment {
     pub supplied_variables: Vec<String>,
     /// The fragment file's text (for diagnostics).
     pub source: Arc<str>,
+    /// The engine's answer to "which variables does one template value read"
+    /// ([`crate::engine::FragmentSupport::template_reads`]), carried per
+    /// fragment so lowering can validate `bind:` values against the same
+    /// grammar that will evaluate them — without core learning that grammar.
+    pub template_reads: fn(&str) -> Vec<String>,
 }
 
 /// Path-boundary-aware pack-qualifier match: `api.yaml` qualifies
@@ -726,15 +731,15 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
         // claims is skipped rather than handed to whichever scanner happens to
         // be first: that guess would blame one engine's parser for another
         // engine's file, and route the fragment to the wrong engine at run time.
-        let Some((kind_name, scan)) = kinds.iter().find_map(|kind| {
+        let Some((kind_name, support)) = kinds.iter().find_map(|kind| {
             let support = kind.fragments?;
             support
                 .claims(&source.name)
-                .then_some((kind.prefix, support.scan))
+                .then_some((kind.prefix, support))
         }) else {
             continue;
         };
-        let scanned = match scan(&source.text) {
+        let scanned = match (support.scan)(&source.text) {
             Ok(scanned) => scanned,
             Err(err) => {
                 diags.push(
@@ -798,6 +803,7 @@ fn scan_fragments(sources: &[PackSource], kinds: &[StepKindSpec]) -> Scanned {
                     declared_options: entry.declared_options,
                     supplied_variables: entry.supplied_variables,
                     source: Arc::clone(&source.text),
+                    template_reads: support.template_reads,
                 },
             );
         }

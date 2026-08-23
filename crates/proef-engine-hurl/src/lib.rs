@@ -36,6 +36,7 @@ const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
     fragments: Some(FragmentSupport {
         ext: "hurl",
         scan: fragment::scan,
+        template_reads: fragment::template_reads,
     }),
     options: Some(recognise_option),
 }];

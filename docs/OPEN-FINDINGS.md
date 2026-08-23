@@ -104,6 +104,75 @@ compile gate.
 
 ---
 
+## Ingested — round 17 (2026-08-23), validated claim-by-claim
+
+Two P1s filed; one confirmed both ways it can be read, one refuted by
+measurement. Every confirmed item reproduced against `b5b320a` before any fix.
+
+### R17-2.1 — `--shard` hash collapse at power-of-two counts *(refuted — do not re-raise)*
+
+The filed claim: FNV-1a's unmixed low bits collapse the distribution at
+`N=2/4/8` ("100% of scenarios land in one shard"), fix with an fmix64
+finalizer. **Measured with a model calibrated against the frozen-literal test
+(exact match on every pinned value), the claim inverts.** Natural corpus
+shapes — numbered scenarios, prose names, outline `#N` instances, camelCase,
+verb templates, multi-file — are near-uniform under the current
+`fnv % count`: `[10,10]`, `[11,9]`, `[4,5,6,5]` at their widths. The proposed
+fmix64 is *worse* on the same corpora (`[7,13]` where FNV gives `[10,10]`,
+empty shards at `N=8` that FNV does not produce): FNV's parity-structured low
+bit behaves like round-robin on templated names, which real suites are full
+of. Collapse requires a degenerate corpus — every name an even-length run of
+one character — which no suite exhibits. The filed measurement tables do not
+reproduce from the calibrated function. What survives: **no test asserted
+balance** — shipped as a distribution test over natural name shapes, so a
+future hash change that *does* skew fails loudly.
+
+### R17-2.2 — `bind:` validation refused input the engine accepts *(shipped)*
+
+Confirmed, both halves, plus a third the round missed:
+
+- `{{newUuid}}` in a bind value was refused as an unbound variable; it is a
+  hurl **function** (`ExprKind::Function`), and stock hurl 8.0.1 runs the
+  equivalent line (reproduced both directions). "What does this text read" is
+  now the engine's answer — `FragmentSupport::template_reads`, the same AST
+  walk the fragment scanner uses — so the tree holds one answer, not two
+  disagreeing ones.
+- A sibling literal bind sorting before the bound key is a real supplier
+  (injected lines are written and evaluated in name order) and is now
+  accepted; a later-sorting sibling stays refused, with the ordering named in
+  the help.
+- **The round's fix list missed the ordering half:** injection landed at the
+  *head* of an author `[Options]` section, so the fragment-supplies-it route
+  the check accepts was assigned too late to be read at run time. Injection
+  now lands at the section's end; pinned by
+  `a_fragments_own_variable_evaluates_first`.
+
+### R17-2.3 / 2.4 / 2.5 — machine output and phase reporting *(confirmed, queued)*
+
+An empty shard writes prose (plus a stray-space run) where a `--output
+json`/TAP body belongs; a setup abort writes JUnit but zero machine-stdout
+bytes; a failed teardown reaches no report at all. One mechanism owed: every
+terminating path emits exactly one machine body, and phase summaries reach
+the CI reports.
+
+### R17-2.6 — batch *(confirmed, queued)*
+
+README omits `--shard`/`--max-fail` (and the #73 gate is blind to the flags
+direction); `explain`'s truncated-record fallback misses `is_suite()`; the
+canary's equality-only guard would green a backport older than the pin;
+`bind_shadows_capture` multiplies per scenario × step; the `quick-xml`
+`=0.38.4` pin comment is false since quick-junit 0.7 (two generations in the
+lock). P4s: the pages workflow comment claims `upstream/` stays off the site
+while its `.patch` files serve 200; `docs/runbooks/` is on the site but never
+link-checked; outline identity is positional; the #79 comment overpromises
+that `file:line` survives in the failure detail.
+
+### Standards note
+
+Rust 1.98.0 released 2026-08-20 (verified against the channel manifest). The
+round calls the pin overdue; house policy waits 3–4 weeks after `x.y.0` and
+targets `x.y.1` — the window opens ~2026-09-10.
+
 ## Open — round-9 residue (ingested 2026-08-12)
 
 The review's P1/P2 and three P3s shipped in #48 and #50. What follows is what was

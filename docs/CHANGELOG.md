@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`bind:` values are read by hurl's parser, not a text scan** (R17-2.2). A
+  hurl function (`{{newUuid}}`, `{{newDate}}`) no longer counts as an unbound
+  variable — proef refused input stock hurl runs — and a sibling literal bind
+  whose name sorts earlier now counts as a supplier, since injected
+  `[Options] variable:` lines are written and evaluated in name order. The
+  seam answers the question once: `FragmentSupport::template_reads`.
+- **A fragment's own `[Options] variable:` lines now evaluate before the
+  injected ones.** Injection used to land at the section head, so the
+  fragment-supplies-it route the unbound check accepts was assigned too late
+  to be read at run time — accepted at dry-run, wrong at execution.
+
 ### Breaking
 
 - **JUnit test identity is `classname` + `name`.** `classname` carries the

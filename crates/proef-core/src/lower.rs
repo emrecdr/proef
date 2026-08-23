@@ -225,29 +225,6 @@ fn resolve_bindings(
     out
 }
 
-/// Every `{{name}}` a text reads — ADR-0005's run-time tier, whose spelling
-/// core already owns (`resolve` writes it when a secret becomes a run-time
-/// placeholder). A filter chain (`{{id | urlEncode}}`) reduces to its leading
-/// variable name; empty or malformed braces are left for hurl to reject.
-fn runtime_placeholders(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut rest = text;
-    while let Some(start) = rest.find("{{") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("}}") else { break };
-        let name: String = after[..end]
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
-            .collect();
-        if !name.is_empty() {
-            out.push(name);
-        }
-        rest = &after[end + 2..];
-    }
-    out
-}
-
 /// Every capture name produced by the steps lowered so far — what a fragment
 /// may read without binding it.
 fn captures_before(out: &[LoweredStep]) -> BTreeSet<String> {
@@ -542,26 +519,44 @@ fn expand_step(
 /// not silently replace. Split from [`expand_ref_step`] purely for size; the
 /// parameters are the narrowed slice of that function's locals the two checks
 /// consume. Returns `false` after pushing an error — the step must not lower.
+/// Everything that can legitimately supply a `{{variable}}` inside a bind
+/// value by the time its injected line evaluates — one bundle, because the
+/// four sources are only meaningful together (R17-2.2).
+struct Suppliers<'a> {
+    /// `[Captures]` names of the steps lowered so far.
+    captured: &'a BTreeSet<String>,
+    /// The fragment's own `[Options] variable:` names (they evaluate first).
+    supplied: &'a [String],
+    /// Secret bindings from earlier steps (session-injected before entry 1).
+    secrets: &'a BTreeMap<String, String>,
+    /// The engine's parser answering "which variables does this text read".
+    reads: fn(&str) -> Vec<String>,
+}
+
 fn lint_bind_values(
     target: &str,
     bindings: &Bindings,
-    captured: &BTreeSet<String>,
-    supplied: &[String],
-    prior_secrets: &BTreeMap<String, String>,
+    suppliers: &Suppliers<'_>,
     sinks: &mut Sinks,
     at: &impl Fn(Diag) -> Diag,
 ) -> bool {
     // A bind value may itself read `{{…}}`: hurl templates the injected
     // `[Options] variable:` line once when the entry evaluates (ADR-0018's
-    // binding path). What is assigned by then: a `[Captures]` name from an
-    // earlier step, the fragment's own `[Options] variable:` lines (authored
-    // lines precede the injected ones and evaluate in order), or a secret in
-    // scope (the session inserts every secret before the first entry — and a
-    // run-time `{{secret}}` reference, unlike a lower-time `${secret:…}`
-    // splice, never puts the value in the artifact). Anything else resolves
-    // against nothing at run time — the late failure `--dry-run` exists to
-    // prevent, and the same defect class as an unbound fragment placeholder,
-    // so the same code.
+    // binding path). What `reads` reports is the *engine's* answer — its own
+    // parser over the same grammar that will evaluate the line, so a template
+    // function (`{{newUuid}}`) never registers as a variable (R17-2.2). What
+    // is assigned by evaluation time: a `[Captures]` name from an earlier
+    // step, the fragment's own `[Options] variable:` lines (authored lines
+    // now provably precede the injected ones — see `bake_entry_options`), a
+    // secret in scope (inserted before the first entry; a run-time
+    // `{{secret}}` reference, unlike a lower-time `${secret:…}` splice, never
+    // puts the value in the artifact), or a **sibling literal bind whose name
+    // sorts strictly before this one** — the injected lines are emitted in
+    // `BTreeMap` order and hurl evaluates them in order, so an
+    // earlier-sorting sibling has already been assigned. Anything else
+    // resolves against nothing at run time — the late failure `--dry-run`
+    // exists to prevent, and the same defect class as an unbound fragment
+    // placeholder, so the same code.
     let unsupplied: Vec<(&str, String)> = bindings
         .iter()
         .filter_map(|(name, bound)| match bound {
@@ -569,14 +564,17 @@ fn lint_bind_values(
             Bound::Secret(_) => None,
         })
         .flat_map(|(name, value)| {
-            runtime_placeholders(value)
+            (suppliers.reads)(value)
                 .into_iter()
                 .map(move |placeholder| (name, placeholder))
         })
-        .filter(|(_, placeholder)| {
-            !captured.contains(placeholder)
-                && !supplied.contains(placeholder)
-                && !prior_secrets.contains_key(placeholder)
+        .filter(|(key, placeholder)| {
+            let earlier_sibling = placeholder.as_str() < *key
+                && matches!(bindings.get(placeholder), Some(Bound::Value(_)));
+            !earlier_sibling
+                && !suppliers.captured.contains(placeholder)
+                && !suppliers.supplied.contains(placeholder)
+                && !suppliers.secrets.contains_key(placeholder)
                 && !matches!(bindings.get(placeholder), Some(Bound::Secret(_)))
         })
         .collect();
@@ -595,8 +593,9 @@ fn lint_bind_values(
             ),
         )
         .with_help(format!(
-            "capture `{placeholder}` in an earlier step, or make the value bound to \
-             `{key}` literal"
+            "capture `{placeholder}` in an earlier step, bind it as a literal whose \
+             name sorts before `{key}` (injected lines evaluate in name order), or \
+             make the value bound to `{key}` literal"
         ))));
         return false;
     }
@@ -609,7 +608,7 @@ fn lint_bind_values(
     // the `[Options]` path entirely, so an earlier capture wins over the
     // session-injected value.
     for (name, bound) in bindings {
-        if matches!(bound, Bound::Value(_)) && captured.contains(name) {
+        if matches!(bound, Bound::Value(_)) && suppliers.captured.contains(name) {
             sinks.warnings.push(at(Diag::warning(
                 "proef::lower::bind_shadows_capture",
                 format!(
@@ -731,9 +730,12 @@ fn expand_ref_step(
     if !lint_bind_values(
         target,
         &bindings,
-        &captured,
-        &fragment.supplied_variables,
-        &refs.secrets,
+        &Suppliers {
+            captured: &captured,
+            supplied: &fragment.supplied_variables,
+            secrets: &refs.secrets,
+            reads: fragment.template_reads,
+        },
         sinks,
         at,
     ) {
@@ -952,6 +954,32 @@ fn resolve_structured(
         other => other.clone(),
     })
 }
+/// Pre-scan for [`bake_entry_options`]: which entries carry an author-written
+/// `[Options]` section. Those only get extended — auto-injecting a fresh one
+/// as well would leave two `[Options]` sections in one entry, which hurl
+/// rejects. Slot 0 is the preamble before the first method line.
+fn author_options_by_entry(text: &str) -> Vec<bool> {
+    let mut author_options = vec![false];
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if is_method_line(trimmed) {
+            author_options.push(false);
+        } else if trimmed == "[Options]"
+            && let Some(last) = author_options.last_mut()
+        {
+            *last = true;
+        }
+    }
+    author_options
+}
 
 /// Inject `[Options] retry/retry-interval` after each entry's header block.
 ///
@@ -991,33 +1019,12 @@ fn bake_entry_options(
         return text.to_owned();
     }
     let retry_lines = option_lines.join("\n");
-    // Pre-scan: entries whose author already wrote an `[Options]` section only
-    // get that section extended — auto-injecting a fresh one as well would
-    // leave two `[Options]` sections in one entry, which hurl rejects. Slot 0
-    // is the preamble before the first method line.
-    let mut author_options = vec![false];
-    let mut in_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        if is_method_line(trimmed) {
-            author_options.push(false);
-        } else if trimmed == "[Options]"
-            && let Some(last) = author_options.last_mut()
-        {
-            *last = true;
-        }
-    }
+    let author_options = author_options_by_entry(text);
     let has_author_options = |entry: usize| author_options.get(entry).copied().unwrap_or(false);
     let mut out: Vec<String> = Vec::new();
     let mut in_entry_head = false; // between a method line and its first section/body
     let mut injected_current = false;
+    let mut in_author_options = false; // inside an author [Options] section, injection pending
     let mut in_fence = false; // inside a ```…``` body — no entry surgery there
     let mut entry = 0usize;
     for line in text.lines() {
@@ -1029,6 +1036,11 @@ fn bake_entry_options(
                 out.push("[Options]".to_owned());
                 out.push(retry_lines.clone());
                 injected_current = true;
+            }
+            if !in_fence && in_author_options {
+                out.push(retry_lines.clone());
+                injected_current = true;
+                in_author_options = false;
             }
             in_fence = !in_fence;
             in_entry_head = false;
@@ -1048,14 +1060,27 @@ fn bake_entry_options(
         }
         if trimmed == "[Options]" {
             // Extend the author's own section (once — a second author section
-            // is the pack's own parse error, not ours to widen).
+            // is the pack's own parse error, not ours to widen) — at its
+            // END, not its head. hurl evaluates `variable:` lines in order,
+            // and a bound value may read a variable the fragment supplies;
+            // injecting at the head put proef's lines before the author's,
+            // so the fragment-supplies-it route the unbound check accepts
+            // was assigned too late to be read (R17-2.2's ordering half,
+            // pinned by `a_fragments_own_variable_evaluates_first`).
             out.push(line.to_owned());
-            if !injected_current {
-                out.push(retry_lines.clone());
-                injected_current = true;
-            }
+            in_author_options = !injected_current;
             in_entry_head = false;
             continue;
+        }
+        // The author's section ends at the next section header, the response
+        // line, or the entry boundary — the injected lines land immediately
+        // before that, after every author-written option line.
+        if in_author_options
+            && (trimmed.starts_with('[') || trimmed.starts_with("HTTP") || is_method_line(trimmed))
+        {
+            out.push(retry_lines.clone());
+            injected_current = true;
+            in_author_options = false;
         }
         let is_header = in_entry_head && is_header_line(trimmed);
         if in_entry_head && !is_header && !injected_current && !has_author_options(entry) {
@@ -1068,6 +1093,9 @@ fn bake_entry_options(
     }
     if in_entry_head && !injected_current {
         out.push("[Options]".to_owned());
+        out.push(retry_lines.clone());
+    }
+    if in_author_options {
         out.push(retry_lines.clone());
     }
     let mut result = out.join("\n");
@@ -1634,8 +1662,11 @@ mod tests {
             "GET http://x/a\n[QueryStringParams]\nq: 1\n[Options]\nverbose: true\nHTTP 200\n";
         let baked = bake_entry_options(body, retry, None, &BTreeMap::new());
         assert_eq!(baked.matches("[Options]").count(), 1, "{baked}");
+        // Injection lands at the section's END — after the author's lines —
+        // so a bound value may read a variable the author's own `variable:`
+        // line supplies (R17-2.2's ordering half).
         assert!(
-            baked.contains("[Options]\nretry: 2\nretry-interval: 100ms\nverbose: true"),
+            baked.contains("[Options]\nverbose: true\nretry: 2\nretry-interval: 100ms"),
             "{baked}"
         );
     }
@@ -1936,6 +1967,33 @@ mod tests {
         })
     }
 
+    /// The stand-in answer to "what does this value read": a bare `{{ident}}`
+    /// splitter. Core only promises to *ask the kind* — function-awareness
+    /// (`{{newUuid}}` is not a variable) is the hurl engine's own behavior,
+    /// pinned by its `template_reads_reports_variables_and_never_functions`.
+    fn frag_template_reads(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(start) = rest.find("{{") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find("}}") else { break };
+            let name: String = after[..end]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+                .collect();
+            // `testFunction` plays the role hurl's `{{newUuid}}` plays in the
+            // real engine: a placeholder the kind's grammar says is NOT a
+            // variable. A test binding it proves core honors the kind's
+            // answer instead of scanning text itself.
+            if !name.is_empty() && name != "testFunction" {
+                out.push(name);
+            }
+            rest = &after[end + 2..];
+        }
+        out
+    }
+
     const FRAG_KINDS: &[StepKindSpec] = &[StepKindSpec {
         prefix: "hurl",
         schema: "true",
@@ -1943,6 +2001,7 @@ mod tests {
         fragments: Some(crate::engine::FragmentSupport {
             ext: "frag",
             scan: frag_scan,
+            template_reads: frag_template_reads,
         }),
         options: None,
     }];
@@ -2220,6 +2279,78 @@ mod tests {
         assert!(!text.contains("apiToken"), "no secret name leaks: {text}");
     }
 
+    /// R17-2.2: "what does this value read" is the engine's question. The
+    /// stand-in kind declares `testFunction` a non-variable (as hurl does for
+    /// `{{newUuid}}`), so binding it must lower — a core-side text scan
+    /// refused exactly this, rejecting input the engine itself runs.
+    #[test]
+    fn a_placeholder_the_kind_calls_a_function_needs_no_supplier() {
+        lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          q: \"{{testFunction}}\"\n",
+            "@f\n?q\n",
+        )
+        .expect("a function-shaped placeholder is not an unbound variable");
+    }
+
+    /// R17-2.2: injected `variable:` lines are emitted in name order and hurl
+    /// evaluates them in order, so a value may read a sibling literal that
+    /// sorts before it — the artifact itself carries the supplier first.
+    #[test]
+    fn a_bind_value_reading_an_earlier_sibling_lowers() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          base: \"http://x\"\n          q: \"idx-{{base}}\"\n",
+            "@f\n?base\n?q\n",
+        )
+        .expect("an earlier-sorting sibling is a real supplier");
+        let text = only_entry(&lowered);
+        let base_at = text.find("variable: base=").expect("base line");
+        let q_at = text.find("variable: q=").expect("q line");
+        assert!(base_at < q_at, "supplier precedes reader: {text}");
+    }
+
+    /// …and one that sorts *after* is not yet assigned when the line
+    /// evaluates, so it stays refused — with the ordering named in the help.
+    #[test]
+    fn a_bind_value_reading_a_later_sibling_is_refused() {
+        let diags = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          a: \"{{z}}\"\n          z: \"x\"\n",
+            "@f\n?a\n?z\n",
+        )
+        .expect_err("a later-sorting sibling is not assigned yet");
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::lower::unbound_placeholder")
+            .unwrap_or_else(|| panic!("expected unbound_placeholder in {diags:?}"));
+        assert!(diag.message.contains('z'), "{}", diag.message);
+        assert!(
+            diag.help
+                .as_deref()
+                .unwrap_or_default()
+                .contains("sorts before"),
+            "the help names the ordering rule: {:?}",
+            diag.help
+        );
+    }
+
+    /// R17-2.2's ordering half: the fragment-supplies-it route is only real if
+    /// the author's `[Options] variable:` line evaluates before the injected
+    /// ones. Injection lands at the section's end, and the artifact proves it.
+    #[test]
+    fn a_fragments_own_variable_evaluates_first() {
+        let lowered = lower_fragments(
+            "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: f\n        bind:\n          q: \"page-{{page}}\"\n",
+            "@f\n?q\n=page\n",
+        )
+        .expect("a bind value reading the fragment's own variable lowers");
+        let text = only_entry(&lowered);
+        let author_at = text.find("variable: page=").expect("author line");
+        let injected_at = text.find("variable: q=").expect("injected line");
+        assert!(
+            author_at < injected_at,
+            "the author's supplier must already be assigned when the injected line evaluates: {text}"
+        );
+    }
+
     /// R9-4: hurl's `[Options] variable:` assigns into one shared set, so a
     /// literal bind named like an earlier capture silently replaces it — worth
     /// a warning, and only a warning, because a fixed value over a live
@@ -2256,17 +2387,6 @@ mod tests {
             "{:?}",
             lowered.warnings
         );
-    }
-
-    /// The reader behind both checks: filters reduce to the variable name,
-    /// whitespace is tolerated, malformed braces are hurl's problem.
-    #[test]
-    fn runtime_placeholders_reads_names_filters_and_ignores_junk() {
-        assert_eq!(
-            runtime_placeholders("a-{{id}}-b {{ name }} {{id | urlEncode}}"),
-            ["id", "name", "id"]
-        );
-        assert!(runtime_placeholders("no braces, {{}}, {{ | }}, {unclosed").is_empty());
     }
 
     /// Scope decides *when* a binding resolves, and that is observable through

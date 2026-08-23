@@ -457,6 +457,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentScanEr
 pub struct proef_core::engine::FragmentSupport
 pub proef_core::engine::FragmentSupport::ext: &'static str
 pub proef_core::engine::FragmentSupport::scan: proef_core::engine::FragmentScanner
+pub proef_core::engine::FragmentSupport::template_reads: fn(&str) -> alloc::vec::Vec<alloc::string::String>
 impl proef_core::engine::FragmentSupport
 pub fn proef_core::engine::FragmentSupport::claims(&self, &str) -> bool
 impl core::clone::Clone for proef_core::engine::FragmentSupport
@@ -1056,6 +1057,7 @@ pub proef_core::pack::Fragment::name: alloc::string::String
 pub proef_core::pack::Fragment::placeholders: alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::source: alloc::sync::Arc<str>
 pub proef_core::pack::Fragment::supplied_variables: alloc::vec::Vec<alloc::string::String>
+pub proef_core::pack::Fragment::template_reads: fn(&str) -> alloc::vec::Vec<alloc::string::String>
 pub proef_core::pack::Fragment::text: alloc::string::String
 impl proef_core::pack::Fragment
 pub fn proef_core::pack::Fragment::qualified(&self) -> alloc::string::String

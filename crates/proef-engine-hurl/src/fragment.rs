@@ -240,6 +240,32 @@ fn annotation_name(comment: &str) -> Option<String> {
     Some(rest.trim().to_owned())
 }
 
+/// The variable names one template value reads — [`FragmentSupport::template_reads`]
+/// for the hurl kind ([`proef_core::engine::FragmentSupport`]).
+///
+/// The value is parsed exactly as it will be evaluated: it reaches hurl as the
+/// right-hand side of an injected `[Options] variable:` line, whose value
+/// grammar is a template. Rather than re-implement that grammar, the value is
+/// placed in a probe entry's header — the same `Template` production — and the
+/// file handed to hurl's parser; the walk is the same [`Collect`] the fragment
+/// scanner uses, so "what does this text read" has exactly one answer in the
+/// tree, and `ExprKind::Function` (`{{newUuid}}`, `{{newDate}}`) never
+/// registers as a variable (R17-2.2 — a text-level scan reported functions as
+/// unbound variables, refusing input the engine itself runs). Text the parser
+/// refuses reports no reads: the emitted artifact is parse-validated anyway,
+/// so a malformed template still fails loudly there, under hurl's own error.
+pub(crate) fn template_reads(value: &str) -> Vec<String> {
+    let probe = format!("GET http://probe.invalid\nx-proef-probe: {value}\nHTTP 200\n");
+    let Ok(file) = hurl_core::parser::parse_hurl_file(&probe) else {
+        return Vec::new();
+    };
+    let mut collect = Collect::default();
+    for entry in &file.entries {
+        visit::walk_entry(&mut collect, entry);
+    }
+    collect.placeholders
+}
+
 /// Reads and writes of one entry, gathered from hurl's own AST.
 ///
 /// Templates are *leaves* to the visitor — `visit_template`, `visit_url` and
@@ -294,6 +320,18 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    /// One answer to "what does this read", and it is the parser's: functions
+    /// are not variables, filters reduce to their subject, junk reads nothing.
+    #[test]
+    fn template_reads_reports_variables_and_never_functions() {
+        assert_eq!(template_reads("{{q}}"), ["q"]);
+        assert_eq!(template_reads("idx-{{base}}-{{q}}"), ["base", "q"]);
+        assert_eq!(template_reads("{{newUuid}}"), Vec::<String>::new());
+        assert_eq!(template_reads("{{newDate}}-{{q}}"), ["q"]);
+        assert_eq!(template_reads("literal only"), Vec::<String>::new());
+        assert_eq!(template_reads("broken {{"), Vec::<String>::new());
+    }
 
     const FILE: &str = concat!(
         "# a corpus file proef did not write\n",

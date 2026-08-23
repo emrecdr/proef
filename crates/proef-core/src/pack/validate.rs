@@ -1699,6 +1699,7 @@ mod tests {
         fragments: Some(crate::engine::FragmentSupport {
             ext: "frag",
             scan: fake_scan,
+            template_reads: |_| Vec::new(),
         }),
         options: Some(fake_recognise),
     }];

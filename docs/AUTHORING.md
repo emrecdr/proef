@@ -222,14 +222,19 @@ names are read off the `.hurl` file itself, so they cannot drift from it. If a
 name still goes unsupplied, `proef::lower::unbound_placeholder` names it at lower
 time — `--dry-run` is enough to surface that, no server needed.
 
-The same check reads *inside* your bind values: a `{{name}}` there is templated
-by hurl when the entry runs, so it must be supplied by then — an earlier step's
-capture (the usual shape: `bind: { path: "records/{{recordId}}" }`), the
-fragment's own `[Options] variable:`, or a secret in scope. And the reverse
-collision warns rather than fails: a literal `bind:` that re-uses a name an
-earlier step *captured* wins silently from that entry on (hurl's `variable:`
-assigns into one shared set), so `proef::lower::bind_shadows_capture` names it —
-rename the binding if the capture was the point.
+The same check reads *inside* your bind values — with hurl's own parser, so
+what hurl calls a function is never mistaken for a variable (`{{newUuid}}` and
+`{{newDate}}` need no supplier). A `{{name}}` that *is* a variable is templated
+when the entry runs, so it must be supplied by then: an earlier step's capture
+(the usual shape: `bind: { path: "records/{{recordId}}" }`), the fragment's own
+`[Options] variable:` (its lines evaluate before the injected ones), a secret
+in scope, or a sibling literal bind whose name sorts before this one — the
+injected lines are written and evaluated in name order, so `base` can feed `q`
+but not the other way around. And the reverse collision warns rather than
+fails: a literal `bind:` that re-uses a name an earlier step *captured* wins
+silently from that entry on (hurl's `variable:` assigns into one shared set),
+so `proef::lower::bind_shadows_capture` names it — rename the binding if the
+capture was the point.
 
 ## Asserting responses — the hurl vocabulary
 
