@@ -424,6 +424,7 @@ pub fn execute(
                     // exit: the setup fault is the more specific verdict.
                     write_ci_reports(
                         &summary,
+                        None,
                         &front.run_id,
                         junit,
                         &run_dir,
@@ -460,6 +461,7 @@ pub fn execute(
                     );
                     write_ci_reports(
                         &summary,
+                        None,
                         &front.run_id,
                         junit,
                         &run_dir,
@@ -558,6 +560,11 @@ pub fn execute(
     // none). Its failure is a distinct non-zero signal (exit 3), never a
     // silently-green suite — the suite's own verdict still stands.
     let mut teardown_exit = ExitCode::Success;
+    // A failed teardown's outcomes reach JUnit as their own suite (R17-2.5) —
+    // symmetric with #78's rule for setup: a phase appears in the reports
+    // when it fails. A green teardown stays out, exactly as a green setup
+    // does: the reports describe the suite, plus whatever phase broke.
+    let mut teardown_summary: Option<runner::RunSummary> = None;
     if let Some(teardown) = &teardown_path {
         // Cleanup outlives the interrupt. Teardown runs on its OWN token, never
         // the run's and never `cancel.child_token()` — a child cancels with its
@@ -604,6 +611,7 @@ pub fn execute(
                         "error: teardown failed — cleanup did not complete (the suite verdict stands)"
                     );
                     teardown_exit = ExitCode::SystemError;
+                    teardown_summary = Some(summary);
                 } else if !summary.outcomes.is_empty()
                     && summary
                         .outcomes
@@ -696,6 +704,7 @@ pub fn execute(
     // CI reports (US-8): JUnit XML + GitHub job summary.
     let junit_failed = write_ci_reports(
         &summary,
+        teardown_summary.as_ref(),
         &front.run_id,
         junit,
         &run_dir,
@@ -1217,6 +1226,7 @@ fn run_phase(
 /// written.
 fn write_ci_reports(
     summary: &runner::RunSummary,
+    teardown: Option<&runner::RunSummary>,
     run_id: &str,
     junit: Option<&str>,
     run_dir: &Path,
@@ -1232,7 +1242,7 @@ fn write_ci_reports(
         Some(path) => Some(PathBuf::from(path)),
     };
     if let Some(junit_path) = junit_path {
-        match crate::ci_reports::write_junit(summary, run_id, &junit_path, redactions) {
+        match crate::ci_reports::write_junit(summary, teardown, run_id, &junit_path, redactions) {
             Ok(()) => crate::render::errln!("junit report: {}", junit_path.display()),
             Err(message) => {
                 // A CI job gating on this file must not see exit 0.
