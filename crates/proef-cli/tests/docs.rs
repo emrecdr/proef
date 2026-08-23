@@ -344,6 +344,9 @@ fn every_flag_is_documented_in_the_readme() {
             .args([sub.as_str(), "--help"])
             .output()
             .unwrap();
+        // A subcommand whose help breaks must fail the gate, not silently
+        // contribute zero flags while the suite-wide count stays satisfied.
+        assert!(out.status.success(), "`proef {sub} --help` failed");
         let help = String::from_utf8_lossy(&out.stdout).into_owned();
         for line in help.lines() {
             // An option row: `  -j, --jobs <N>  …` or `      --shard <I/N>  …`.
@@ -371,9 +374,20 @@ fn every_flag_is_documented_in_the_readme() {
         "parsed only {} flags: {flags:?}",
         flags.len()
     );
+    // Backticked and boundary-terminated: a bare substring test marked
+    // `--scenario` documented because `--scenario-file` was — a real
+    // collision in this very flag set.
+    let documented = |flag: &str| {
+        readme.match_indices(flag).any(|(at, _)| {
+            let end = at + flag.len();
+            let next = readme[end..].chars().next();
+            readme[..at].ends_with('`')
+                && !matches!(next, Some(c) if c.is_ascii_alphanumeric() || c == '-')
+        })
+    };
     let missing: Vec<String> = flags
         .iter()
-        .filter(|(_, flag)| !readme.contains(flag.as_str()))
+        .filter(|(_, flag)| !documented(flag))
         .map(|(sub, flag)| format!("`proef {sub}` exposes `{flag}`"))
         .collect();
     assert!(
