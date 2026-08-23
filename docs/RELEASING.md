@@ -82,10 +82,13 @@ cargo build --workspace                            # refreshes Cargo.lock versio
 # checks it with --locked: refresh it too or that gate goes red on the release
 # commit.
 cargo check --manifest-path fuzz/Cargo.toml --all-targets
-# 3. Full gates:
+# 3. Full gates — the same set CI runs, so a green local pass predicts a green PR:
 cargo nextest run && cargo test --doc
 cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all --check
-cargo deny check && cargo audit
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
+cargo deny check && cargo audit && cargo machete
+cargo run -p xtask -- docs-check     # the gate a docs-touching release commit trips
+zizmor .github/workflows/
 # 4. Commit and open the release PR (no tag yet):
 git commit -am "release: vX.Y.Z"
 git push -u origin release/vX.Y.Z
@@ -112,8 +115,8 @@ The tag push triggers `.github/workflows/release.yml`, which:
    DLLs; macOS links the SDK's system libxml2 and vendors OpenSSL, so shipped
    binaries need no Homebrew), via `cargo auditable` (binaries stay scannable)
    with **no cache restore** (cache poisoning must not reach published
-   artifacts), attesting SLSA build provenance per artifact once the repo is
-   public;
+   artifacts), attesting SLSA build provenance per artifact (the repo is
+   public, so this runs unconditionally);
 2. publishes the GitHub Release with the version's CHANGELOG section and all
    five archives (asset names must stay in sync with the `binstall` metadata in
    the `proef` package manifest);
@@ -253,15 +256,6 @@ one resolvable.
   itself in both paths — breaking: the secret store, the World and the run
   records move with the config rather than the shell, which reaches anyone who
   ran proef from a subdirectory
-- `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
-  never-run tail records as skipped, the record is a cancelled run `diff`
-  refuses to certify), `--rerun` continues a cancelled run instead of a false
-  green, `proef flaky` folds the retained history into verdicts (flapping by
-  transition-count, passes-only-on-retry, broken-not-flaky) completing the
-  detect→quarantine→resolve loop the `@quarantine` tag already anchored, and
-  `--shard I/N` partitions a matrix by a frozen identity hash so adding a
-  scenario never re-buckets the others — plus the reverse docs gate: every
-  subcommand must be documented, enforced rather than noticed
 - `v0.13.0` — a record that travels, and a secret that stays one: nothing proef
   records names the machine that produced it (one naming boundary, the dual of
   the path rule — breaking: artifact bytes change for path-less runs), and a
@@ -273,3 +267,12 @@ one resolvable.
   CI-baseline flow, the bundled libcurl gets a CVE floor no advisory scanner
   would catch, and a hung test is a five-minute failure instead of a five-day
   zombie
+- `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
+  never-run tail records as skipped, the record is a cancelled run `diff`
+  refuses to certify), `--rerun` continues a cancelled run instead of a false
+  green, `proef flaky` folds the retained history into verdicts (flapping by
+  transition-count, passes-only-on-retry, broken-not-flaky) completing the
+  detect→quarantine→resolve loop the `@quarantine` tag already anchored, and
+  `--shard I/N` partitions a matrix by a frozen identity hash so adding a
+  scenario never re-buckets the others — plus the reverse docs gate: every
+  subcommand must be documented, enforced rather than noticed

@@ -1,9 +1,11 @@
 # Event schema — the run record for machine consumers
 
 `.proef-runs/<run-id>/events.jsonl` **is** the run record (ADR-0008): one JSON
-object per line, in emission order, no second format. Everything else —
-console tree, `--junit`, the GitHub summary, `proef explain` — derives from
-this stream. Consume it with `jq`, a log shipper, or anything line-oriented.
+object per line, in emission order, no second format. `proef explain`,
+`diff`, `flaky` and the console tree derive from this stream; `--junit` and
+the GitHub summary are built from the same run's in-memory outcome (identical
+content, different plumbing — the stream stays the only *persisted* format).
+Consume it with `jq`, a log shipper, or anything line-oriented.
 
 Wire shape: serde-tagged with `"event"`, `snake_case` names. The first line is
 always `run_started` and declares `schema` (currently `1`); the last is
@@ -21,14 +23,17 @@ they cannot know. Consumers should do the same rather than inferring zero.
 **One exception to "fields never change meaning", recorded rather than hidden.**
 `run_finished`'s `passed`/`failed`/`skipped` counted *every* phase before
 0.6.0; from 0.6.0 they are the **main-suite verdict** and exclude
-`[run] setup`/`teardown` (ADR-0014), so those totals agree with the exit code
-and every report. A pre-0.6.0 record read by a current consumer reports the
-older meaning.
+`[run] setup`/`teardown` (ADR-0014), so those totals agree with the exit code,
+`--output json`/TAP, and the summary line. One deliberate divergence: a
+*failed* phase additionally appears in JUnit as its own suite (a gated
+pipeline must see the failure), so JUnit's per-case counts can exceed these
+totals on a run whose setup or teardown broke. A pre-0.6.0 record read by a
+current consumer reports the older meaning.
 
 ## Variants
 
 **`run_started`** — head of every stream.
-`schema` (u32) · `run_id` (string, uuid-v7).
+`schema` (u32) · `run_id` (string — uuid-v7 by default, but `--run-id` passes any name through verbatim, so consumers must treat it as opaque).
 
 **`scenario_started`** — `scenario` (string) · `file` (string) · `timestamp_ms`
 (u64, run-relative ms — **only present** with injected timing) · `worker` (u64,
@@ -57,8 +62,10 @@ the messages from earlier, failed attempts of a step that ultimately passed;
 **`scenario_finished`** — `scenario` · `file` (feature path — with `scenario`,
 the run-wide identity: names are unique only within one file; absent in
 records that predate the field) · `status` · `timestamp_ms` (u64, run-relative
-end ms — **only present** with injected timing; carries no `worker`, since it is
-emitted from the main dispatcher thread, not the scenario's worker — ADR-0015).
+end ms — **only present** with injected timing) · `worker` (u64, **in the
+schema but never populated by proef's own writer today** — it is emitted from
+the main dispatcher thread, not the scenario's worker, so consumers must
+accept the field without expecting it — ADR-0015).
 
 **`phase`** — on `scenario_started`/`scenario_finished`, optional. `"setup"` or
 `"teardown"` when the scenario belongs to a `[run]` lifecycle phase, absent for
@@ -73,19 +80,20 @@ verdict**: scenario counts for the primary suite only (ADR-0014). `[run]
 setup`/`teardown` scenarios still appear as their own `scenario_started`/
 `scenario_finished` events earlier in the stream, but are excluded from these
 totals, so they agree with the console `summary:` line, `proef explain`,
-`proef report`'s HTML headline, `--output json`, JUnit, TAP, the SLA gate,
-and the exit code · `cancelled` (bool, **only present when true**).
+`proef report`'s HTML headline, `--output json`, TAP, the SLA gate, and the
+exit code — JUnit agrees too except that a *failed* phase rides in as its own
+suite (see above) · `cancelled` (bool, **only present when true**).
 
 ## Example stream
 
 ```json
 {"event":"run_started","schema":1,"run_id":"019f…"}
-{"event":"scenario_started","scenario":"reference","file":"suite/case.feature"}
+{"event":"scenario_started","scenario":"reference","file":"suite/case.feature","timestamp_ms":0,"worker":0}
 {"event":"batch_started","scenario":"reference","engine":"hurl","steps":2}
 {"event":"entry_running","scenario":"reference","engine":"hurl","entry":0,"retry":0}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":4,"text":"the cookie session is exercised"},"status":"passed","attempts":1,"duration_ms":12,"captures":[]}
 {"event":"step_finished","scenario":"reference","engine":"hurl","step":{"file":"suite/case.feature","line":5,"text":"the response status is 200"},"status":"passed","attempts":1,"duration_ms":0,"captures":[]}
-{"event":"scenario_finished","scenario":"reference","file":"suite/case.feature","status":"passed"}
+{"event":"scenario_finished","scenario":"reference","file":"suite/case.feature","status":"passed","timestamp_ms":12}
 {"event":"run_finished","passed":1,"failed":0,"skipped":0}
 ```
 

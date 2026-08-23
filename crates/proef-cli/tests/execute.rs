@@ -778,6 +778,42 @@ fn a_failed_setup_still_writes_the_junit_report() {
     );
 }
 
+/// The machine-body contract has no exceptions: a setup that fails to even
+/// LOAD (here: the configured file does not exist) is still a terminating
+/// path, and this arm was the last one returning zero stdout bytes under
+/// `--output json`.
+#[test]
+fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/missing.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: pool\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json"])
+        .assert()
+        .code(2);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|err| panic!("stdout must be one JSON body ({err}): [{stdout}]"));
+    assert_eq!(body["exit_code"], 2, "{body}");
+}
+
 /// R17-2.4: the setup abort writes the CI files (#78) **and** the machine
 /// body — `--output json` used to read zero bytes on this path, so four sinks
 /// told three stories. Totals are suite-only zeros (ADR-0014); the exit code
@@ -867,8 +903,53 @@ fn a_failed_teardown_reaches_junit_as_its_own_suite() {
         "the failed phase is its own suite: {junit}"
     );
     assert!(
+        junit.contains(r#"failures="1""#),
+        "a gate reads counts, not names — the teardown failure must be counted: {junit}"
+    );
+    assert!(
         junit.contains("main case"),
         "the pool suite is still there: {junit}"
+    );
+}
+
+/// The other half of the when-it-fails rule: a GREEN teardown stays out of
+/// JUnit, exactly as a green setup does. Without this, widening the
+/// `teardown_summary` stash to every run would pass every existing test.
+#[test]
+fn a_green_teardown_stays_out_of_junit() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/teardown.feature"),
+        "Feature: T\n  Scenario: clean teardown\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: main case\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml"])
+        .assert()
+        .code(0);
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        !junit.contains("teardown"),
+        "a green phase is not a test result: {junit}"
     );
 }
 

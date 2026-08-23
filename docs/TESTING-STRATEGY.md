@@ -140,11 +140,13 @@ Linux (ubuntu-latest, prereqs pre-baked) + macOS on every PR; Windows weekly (vc
 libs) while the port stabilizes, then per-PR (port green 2026-07-28: VCPKG_ROOT export,
 hurl's crates.io-missing icon supplied in CI, `/`-normalized path identifiers). Gates: fmt, clippy `-D warnings`, nextest (all crates),
 doctests, rustdoc `-D warnings`, deny, cargo-machete, zizmor (workflow static
-analysis), snapshot check (`insta test`), fuzz smoke
-(30 s/target), corpus dry-run, CLI suite. Nightly: full fuzz (10 min/target), canary, cargo-audit (advisories against
-unchanged code — deny covers PRs).
-Coverage: `cargo llvm-cov` report published as PR comment (informational, no hard gate
-pre-1.0).
+analysis), `xtask docs-check`, public-api snapshot, fuzz smoke
+(30 s/target), corpus dry-run, CLI suite. Snapshot tests (`insta`) run inside nextest —
+a drifted snapshot fails there, no separate step. Nightly: full fuzz (10 min/target),
+canary, cargo-audit (advisories against unchanged code — deny covers PRs).
+Coverage: **not measured in CI today** (filed as P13). A `cargo llvm-cov` PR comment
+remains the intended shape when it lands — informational, no hard gate pre-1.0; this
+paragraph previously described it as already running.
 
 ## 4. Test data management
 

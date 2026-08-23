@@ -170,10 +170,11 @@ canary refuses a backport older than the pin by semver ordering, not
 equality; identical warnings collapse to one with a repeat count (every
 class, at the front-end aggregation — `bind_shadows_capture` was the
 motivating fifty-warning wall); `quick-xml` rides at quick-junit 0.7's
-in-tree copy again, one generation in the lock. P4s: the pages workflow comment claims `upstream/` stays off the site
-while its `.patch` files serve 200; `docs/runbooks/` is on the site but never
-link-checked; outline identity is positional; the #79 comment overpromises
-that `file:line` survives in the failure detail.
+in-tree copy again, one generation in the lock. P4s *(all shipped in #87)*: the pages workflow comment now states that
+`upstream/`'s `.patch` files are served; `docs/runbooks/` entered both
+`living_docs` scanners; outline identity's positional `#N` is documented in
+AUTHORING with the column-placeholder remedy; the #79 comment stopped
+claiming `file:line` survives in the failure detail.
 
 ### Standards note
 

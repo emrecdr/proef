@@ -170,6 +170,7 @@ fn an_empty_shard_still_emits_the_machine_body() {
     let cwd = tempfile::tempdir().unwrap();
     project(cwd.path(), &["only"]);
 
+    let mut idle = 0;
     for shard in ["1/2", "2/2"] {
         let assert = proef_in(cwd.path(), &fixture)
             .args(["test", "suite", "--shard", shard, "--output", "json"])
@@ -182,6 +183,7 @@ fn an_empty_shard_still_emits_the_machine_body() {
         assert_eq!(body["exit_code"], 0, "{body}");
         let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
         if stderr.contains("nothing to run in this shard") {
+            idle += 1;
             assert_eq!(body["passed"], 0, "idle shard reports zeros: {body}");
             // The note is prose for a human — single-spaced (the stray-space
             // run was R17-2.3's cosmetic half) and never on stdout.
@@ -197,6 +199,9 @@ fn an_empty_shard_still_emits_the_machine_body() {
             "TAP body on every path: [{tap_out}]"
         );
     }
+    // Guarded assertions are only evidence if the guard fired: dropping the
+    // stderr note entirely would otherwise skip them all and pass.
+    assert_eq!(idle, 1, "exactly one of two shards is idle");
 }
 
 /// `--shard` composes with the other selectors: it partitions the *filtered*

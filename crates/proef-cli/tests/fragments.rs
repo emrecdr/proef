@@ -456,6 +456,23 @@ fn a_repeated_warning_collapses_to_one_with_a_count() {
         all.contains("3 sites across the suite"),
         "the collapse names its count: {all}"
     );
+    // SARIF keeps one result PER SITE — the collapse is console-only, at
+    // render time. A code-scanning consumer wants every anchor; deduping the
+    // shared warning list threw the anchors away (R17 deep-audit).
+    let mut cmd = Command::cargo_bin("proef").unwrap();
+    cmd.current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["test", "--dry-run", "--sarif", "out.sarif"])
+        .assert()
+        .code(0);
+    let sarif = std::fs::read_to_string(dir.path().join("out.sarif")).unwrap();
+    // 3 results (one ruleId reference each) + the rule's own definition.
+    assert_eq!(
+        sarif.matches(r#""ruleId""#).count(),
+        3,
+        "one SARIF result per site: {sarif}"
+    );
 }
 
 /// R17-2.2: `{{newUuid}}` is a hurl *function*, and the engine's parser — not
