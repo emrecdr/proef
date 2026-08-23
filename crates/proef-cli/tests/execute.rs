@@ -778,6 +778,42 @@ fn a_failed_setup_still_writes_the_junit_report() {
     );
 }
 
+/// The machine-body contract has no exceptions: a setup that fails to even
+/// LOAD (here: the configured file does not exist) is still a terminating
+/// path, and this arm was the last one returning zero stdout bytes under
+/// `--output json`.
+#[test]
+fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/missing.feature\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: pool\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json"])
+        .assert()
+        .code(2);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|err| panic!("stdout must be one JSON body ({err}): [{stdout}]"));
+    assert_eq!(body["exit_code"], 2, "{body}");
+}
+
 /// R17-2.4: the setup abort writes the CI files (#78) **and** the machine
 /// body — `--output json` used to read zero bytes on this path, so four sinks
 /// told three stories. Totals are suite-only zeros (ADR-0014); the exit code

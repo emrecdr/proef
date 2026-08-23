@@ -8,6 +8,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **Injected `[Options]` lines respect every section-ending shape.** The
+  section-end move covered one shape of five: an unfenced JSON/XML body after
+  an author `[Options]` swallowed the injected lines into invalid hurl (exit
+  2 on input that worked before), and an entry with an author section but no
+  response line leaked its pending lines into the *next* entry, where hurl
+  parsed `retry:` as an HTTP header and the artifact validated green. The
+  section now ends at the first line that could not sit inside it.
+- **A `#` inside a `bind:` value no longer hides the reads after it.** The
+  template probe parsed the value in an unquoted position where ` # ` opens a
+  comment; it now probes the quoted `variable:` position bake actually
+  injects into, so `"{{a}} # {{b}}"` reports both.
+- **A setup that fails to load still emits the machine body** — the last
+  terminating path returning zero stdout bytes under `--output json`.
+
 - **Every terminating path emits exactly one machine body** (R17-2.3/2.4).
   An empty shard printed its prose note *as* the `--output json` body — `jq`
   failed on the very path a sharded matrix guarantees one job takes — and a
