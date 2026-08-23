@@ -268,7 +268,7 @@ fn usage(problem: &str) -> ExitCode {
 /// that dangling link is the honest record.
 fn living_docs() -> Vec<PathBuf> {
     let mut out = vec![PathBuf::from("README.md"), PathBuf::from("CLAUDE.md")];
-    for dir in ["docs", "docs/adr"] {
+    for dir in ["docs", "docs/adr", "docs/runbooks"] {
         if let Ok(entries) = std::fs::read_dir(dir) {
             let mut found: Vec<PathBuf> = entries
                 .flatten()

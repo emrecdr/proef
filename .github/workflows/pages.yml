@@ -40,10 +40,13 @@ jobs:
         with:
           tool: mdbook@${{ env.MDBOOK_VERSION }}
       - name: every corpus doc is on the site
-        # Same scope the docs gates lint (docs/, docs/adr/) plus runbooks/;
-        # superpowers/ and upstream/ are archives and stay off the site, like
-        # they stay out of living_docs. A doc added without a SUMMARY.md entry
-        # would otherwise just silently not render.
+        # Same scope the docs gates lint (docs/, docs/adr/) plus runbooks/.
+        # superpowers/ and upstream/ are archives: their *.md never renders
+        # (mdBook renders only SUMMARY.md chapters), though non-Markdown
+        # statics — upstream/'s two .patch files — are copied and served,
+        # which is fine for a public repo and stated here so nobody reads
+        # "off the site" as "unreachable" (R17). A doc added without a
+        # SUMMARY.md entry would otherwise just silently not render.
         run: |
           missing=0
           for f in docs/*.md docs/adr/*.md docs/runbooks/*.md; do

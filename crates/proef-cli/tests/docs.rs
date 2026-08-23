@@ -43,11 +43,13 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The living corpus: what `docs/README.md` indexes, plus the root entry points.
+/// The living corpus: what `docs/README.md` indexes, plus the root entry points
+/// and `docs/runbooks/` — on the website since #76, so its links and examples
+/// are checked like every other page (R17: it was rendered but never linted).
 /// `docs/superpowers/` is an archive of dated plans and is not linted.
 fn living_docs(root: &Path) -> Vec<PathBuf> {
     let mut out = vec![root.join("README.md"), root.join("CLAUDE.md")];
-    for dir in ["docs", "docs/adr"] {
+    for dir in ["docs", "docs/adr", "docs/runbooks"] {
         if let Ok(entries) = std::fs::read_dir(root.join(dir)) {
             let mut found: Vec<PathBuf> = entries
                 .flatten()
