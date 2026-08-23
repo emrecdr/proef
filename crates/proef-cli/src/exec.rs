@@ -430,6 +430,17 @@ pub fn execute(
                         &redactions,
                         machine_stdout,
                     );
+                    // Suite totals are zeros by ADR-0014 — the pool never ran
+                    // — and the exit code carries the verdict (R17-2.4).
+                    emit_machine_body(
+                        output,
+                        &front.run_id,
+                        &empty_run_summary(),
+                        &[],
+                        &redactions,
+                        &run_dir,
+                        code,
+                    );
                     return code;
                 }
                 // A setup that only skipped (interrupted, or watchdog-abandoned)
@@ -454,6 +465,15 @@ pub fn execute(
                         &run_dir,
                         &redactions,
                         machine_stdout,
+                    );
+                    emit_machine_body(
+                        output,
+                        &front.run_id,
+                        &empty_run_summary(),
+                        &[],
+                        &redactions,
+                        &run_dir,
+                        ExitCode::SystemError,
                     );
                     return ExitCode::SystemError;
                 }
@@ -491,8 +511,22 @@ pub fn execute(
         if let Some((index, count)) = shard
             && before_shard > 0
         {
-            crate::render::outln!(
-                "shard {index}/{count} selected 0 of {before_shard} scenario(s) —                  nothing to run in this shard"
+            let note = format!(
+                "shard {index}/{count} selected 0 of {before_shard} scenario(s) — nothing to run in this shard"
+            );
+            if machine_stdout {
+                crate::render::errln!("{note}");
+            } else {
+                crate::render::outln!("{note}");
+            }
+            emit_machine_body(
+                output,
+                &front.run_id,
+                &empty_run_summary(),
+                &[],
+                &redactions,
+                &run_dir,
+                ExitCode::Success,
             );
             return ExitCode::Success;
         }
@@ -746,10 +780,53 @@ pub fn execute(
         exit
     };
 
+    emit_machine_body(
+        output,
+        &front.run_id,
+        &summary,
+        &non_gating,
+        &redactions,
+        &run_dir,
+        exit,
+    );
+
+    exit
+}
+/// The suite verdict of a run whose pool never executed: zeros, not
+/// cancelled. What ADR-0014 says the totals are on a path that ended before
+/// the first scenario — the exit code carries the actual verdict.
+fn empty_run_summary() -> runner::RunSummary {
+    runner::RunSummary {
+        outcomes: Vec::new(),
+        passed: 0,
+        failed: 0,
+        skipped: 0,
+        cancelled: false,
+    }
+}
+
+/// The machine-readable stdout body, emitted by **every** terminating path —
+/// the ordinary pool, an empty shard, a setup abort. R17-2.3/2.4: the early
+/// paths used to print prose (which broke `jq` mid-pipeline) or nothing at
+/// all (a `--output json` consumer read zero bytes on a failed setup), so a
+/// run had between zero and one bodies depending on how it ended. Exactly one
+/// body, always. Totals are the suite-only verdict (ADR-0014) — a path that
+/// never reached the pool reports zeros with its exit code, and the record
+/// path is always real: `RunRecord` opens before any of these paths and
+/// closes structurally on drop.
+fn emit_machine_body(
+    output: Option<OutputFormat>,
+    run_id: &str,
+    summary: &runner::RunSummary,
+    non_gating: &[(String, String)],
+    redactions: &proef_core::report::Redactions,
+    run_dir: &Path,
+    exit: ExitCode,
+) {
     match output {
         Some(OutputFormat::Json) => {
             let json = serde_json::json!({
-                "run_id": front.run_id.as_ref(),
+                "run_id": run_id,
                 "passed": summary.passed,
                 "failed": summary.failed,
                 "skipped": summary.skipped,
@@ -761,13 +838,11 @@ pub fn execute(
         // TAP v13 from the run's own scenario outcomes (one test point each),
         // quarantined scenarios mapped to `# TODO`; redacted like every sink.
         Some(OutputFormat::Tap) => {
-            let tap = crate::tap::render(&summary.outcomes, &non_gating, &redactions);
+            let tap = crate::tap::render(&summary.outcomes, non_gating, redactions);
             crate::render::outln!("{}", tap.trim_end());
         }
         None => {}
     }
-
-    exit
 }
 
 /// Wrap `inner` so the run cancels once `max_fail` suite scenarios have
