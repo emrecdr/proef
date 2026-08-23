@@ -129,7 +129,9 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
     // displays it as the suite column; Jenkins groups by it), `name` carries
     // the scenario alone — unique per file by construction, since outline
     // instances are already `#N`-disambiguated. The line number is not
-    // identity: it lives in the failure detail and the artifact reference.
+    // identity — deliberately not carried here at all: the failure detail
+    // names the *artifact* line (the replayable thing), and the feature line
+    // is one `proef explain` away. Consumers read `file`, not `line`.
     let mut case = TestCase::new(outcome.name.as_ref(), status);
     case.set_classname(outcome.file.as_ref());
     // GitLab reads a `file` attribute on the testcase for source linking;

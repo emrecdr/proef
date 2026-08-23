@@ -7,7 +7,12 @@ only at execution that could have failed earlier. Start with
 ## Feature files
 
 Standard Gherkin: `Feature:`, `Scenario:`, `Background:` (prepended to every
-scenario), `Rule:`, `Scenario Outline:` + `Examples:` (expanded, `#N`-deduped),
+scenario), `Rule:`, `Scenario Outline:` + `Examples:` (expanded, `#N`-deduped —
+note the `#N` is *positional*: inserting an Examples row above renames every
+instance below it, which re-keys their JUnit history and re-buckets them
+across `--shard`. A column placeholder in the outline's name
+(`Scenario Outline: search finds <q>`) keeps each instance's identity tied to
+its data instead of its row number),
 data tables (rows become step arguments), and docstrings (delivered to the
 macro as the `docstring` param). Keywords (`Given/When/Then/And`) don't affect
 binding — only the sentence text does.
