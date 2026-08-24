@@ -67,6 +67,14 @@ schema but never populated by proef's own writer today** — it is emitted from
 the main dispatcher thread, not the scenario's worker, so consumers must
 accept the field without expecting it — ADR-0015).
 
+**`env` / `metadata` / `shuffled`** — on `run_started`, all additive and
+absent when unset. `env` is the active `--env`/`PROEF_ENV` profile name;
+`metadata` is the explicit user-supplied map (`--meta k=v`, `[meta]`,
+`[env.<name>.meta]` — proef never harvests: no git, no hostname, no CI env
+sniffing; ADR-0020); `shuffled` says the order was re-dealt (the permutation
+is seeded by `run_id`, so the pair reproduces it). Keys and values pass the
+sink-boundary mask like every text field.
+
 **`tags`** — on `scenario_finished`, optional (additive; absent when the
 scenario carries none and in every pre-field stream). The accumulated tags
 (feature → rule → scenario → examples, deduped, authored order, `@`

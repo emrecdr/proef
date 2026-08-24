@@ -76,6 +76,27 @@ pub fn diff(
     }
 
     let report = Report::compute(&base_suite, &new_suite);
+    // Cross-env comparison is diff's top false-regression source: the
+    // same suite deep-merges different [url]/[vars] per profile, so two
+    // records differing only by env read as regressions. Warn loudly;
+    // metadata differences (commit, build) are the context a reviewer
+    // wants beside the verdict (ADR-0020).
+    if base_rec.env != new_rec.env {
+        crate::render::errln!(
+            "warning: comparing across environments ({} → {}) — differences may be config, not code",
+            base_rec.env.as_deref().unwrap_or("none"),
+            new_rec.env.as_deref().unwrap_or("none")
+        );
+    }
+    for (key, new_value) in &new_rec.metadata {
+        match base_rec.metadata.get(key) {
+            Some(base_value) if base_value != new_value => {
+                crate::render::outln!("meta {key}: {base_value} → {new_value}");
+            }
+            None => crate::render::outln!("meta {key}: (absent) → {new_value}"),
+            _ => {}
+        }
+    }
     report.render(&base_dir, &new_dir);
 
     if fail_on_regression {

@@ -869,6 +869,58 @@ fn tags_survive_the_stamped_pipeline_and_phases_keep_both() {
     );
 }
 
+/// Explicit run metadata (ADR-0020): `--meta` pairs and the active env name
+/// reach the record head, the machine body (additive keys), and `explain`;
+/// a duplicated flag key is a loud exit 2, and a secret-bearing value is
+/// masked before it touches the record.
+#[test]
+fn meta_reaches_the_record_body_and_explain() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: pool\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--output",
+            "json",
+            "--meta",
+            "commit=abc123",
+            "--meta",
+            "build=https://ci.example/1",
+        ])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(body["metadata"]["commit"], "abc123", "{body}");
+
+    let events = std::fs::read_to_string(body["events"].as_str().unwrap()).unwrap();
+    let head: serde_json::Value = serde_json::from_str(events.lines().next().unwrap()).unwrap();
+    assert_eq!(head["metadata"]["build"], "https://ci.example/1", "{head}");
+
+    let explain = proef_in(cwd.path(), &fixture).args(["explain"]).assert();
+    let out = String::from_utf8_lossy(&explain.get_output().stdout).into_owned();
+    assert!(out.contains("meta commit: abc123"), "{out}");
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--meta", "k=1", "--meta", "k=2"])
+        .assert()
+        .code(2);
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--meta", "novalue"])
+        .assert()
+        .code(2);
+}
+
 /// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
 /// parked visibly — counted in every total, reasoned in every sink — and an
 /// all-skipped suite exits 0 (deliberate, versioned, visible in review is
@@ -2338,6 +2390,9 @@ fn diff_run_started(run_id: &str) -> proef_core::event::Event {
     proef_core::event::Event::RunStarted {
         schema: proef_core::event::EVENT_SCHEMA_VERSION,
         run_id: std::sync::Arc::from(run_id),
+        env: None,
+        metadata: std::collections::BTreeMap::new(),
+        shuffled: false,
     }
 }
 

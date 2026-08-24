@@ -153,6 +153,7 @@ pub fn execute(
     max_fail: Option<u32>,
     shard: Option<(u32, u32)>,
     shuffle: bool,
+    metadata: &std::collections::BTreeMap<String, String>,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -377,7 +378,8 @@ pub fn execute(
     // makes a fifth impossible to forget. Paths that end before the pool
     // report zeroed totals (ADR-0014) with their exit code.
     let run = || -> (ExitCode, runner::RunSummary, Vec<(String, String)>) {
-        let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
+        let mut record =
+            RunRecord::open(&sink, &cancel, &front.run_id, active_env, metadata, shuffle);
 
         // Shared global store (scenario merge-back through the lock, §12).
         let store = match GlobalStore::load(&state_file) {
@@ -803,7 +805,11 @@ pub fn execute(
     let (exit, summary, non_gating) = run();
     emit_machine_body(
         output,
-        &front.run_id,
+        &RunHead {
+            run_id: &front.run_id,
+            env: active_env,
+            metadata,
+        },
         &summary,
         &non_gating,
         &redactions,
@@ -836,7 +842,7 @@ fn empty_run_summary() -> runner::RunSummary {
 /// real: `RunRecord` opens inside the funnel and closes structurally on drop.
 fn emit_machine_body(
     output: Option<OutputFormat>,
-    run_id: &str,
+    head: &RunHead<'_>,
     summary: &runner::RunSummary,
     non_gating: &[(String, String)],
     redactions: &proef_core::report::Redactions,
@@ -845,13 +851,24 @@ fn emit_machine_body(
 ) {
     match output {
         Some(OutputFormat::Json) => {
+            // `env`/`metadata` are additive keys (a jq pipeline keyed on the
+            // original five is unaffected); values ride pre-merged and are
+            // masked like every sink — a secret pasted into --meta must not
+            // round-trip through the body unredacted.
+            let metadata: std::collections::BTreeMap<String, String> = head
+                .metadata
+                .iter()
+                .map(|(key, value)| (redactions.apply(key), redactions.apply(value)))
+                .collect();
             let json = serde_json::json!({
-                "run_id": run_id,
+                "run_id": head.run_id,
                 "passed": summary.passed,
                 "failed": summary.failed,
                 "skipped": summary.skipped,
                 "exit_code": exit.code(),
                 "events": run_dir.join("events.jsonl").display().to_string(),
+                "env": head.env,
+                "metadata": metadata,
             });
             crate::render::outln!("{json}");
         }
@@ -1081,10 +1098,20 @@ struct RunRecord<'a> {
 impl<'a> RunRecord<'a> {
     /// Emit `RunStarted` and open the guard that will emit `RunFinished` when
     /// it drops.
-    fn open(sink: &'a EventSink, cancel: &'a CancellationToken, run_id: &Arc<str>) -> Self {
+    fn open(
+        sink: &'a EventSink,
+        cancel: &'a CancellationToken,
+        run_id: &Arc<str>,
+        env: Option<&str>,
+        metadata: &std::collections::BTreeMap<String, String>,
+        shuffled: bool,
+    ) -> Self {
         sink.emit(&Event::RunStarted {
             schema: proef_core::event::EVENT_SCHEMA_VERSION,
             run_id: Arc::clone(run_id),
+            env: env.map(Arc::from),
+            metadata: metadata.clone(),
+            shuffled,
         });
         Self {
             sink,
@@ -1247,6 +1274,15 @@ fn run_phase(
 /// before any of this, and a CI job reading `JUnit` saw no file at all) —
 /// emits the same set. Returns whether a requested `JUnit` file could not be
 /// written.
+/// The run's own identity and provenance, bundled for the machine body:
+/// the injected id plus the explicit env/metadata the head records
+/// (ADR-0020).
+struct RunHead<'a> {
+    run_id: &'a str,
+    env: Option<&'a str>,
+    metadata: &'a std::collections::BTreeMap<String, String>,
+}
+
 /// The run's verdict, bundled for the CI sinks: the suite summary, a
 /// failed teardown's own summary, and the quarantine (non-gating) list —
 /// the three inputs every sink reads together.
@@ -1871,7 +1907,14 @@ mod tests {
         let run_id: Arc<str> = Arc::from("test-run");
 
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-            let _record = RunRecord::open(&sink, &cancel, &run_id);
+            let _record = RunRecord::open(
+                &sink,
+                &cancel,
+                &run_id,
+                None,
+                &std::collections::BTreeMap::new(),
+                false,
+            );
             panic!("simulated mid-run crash");
         }));
         assert!(result.is_err(), "the closure must have panicked");

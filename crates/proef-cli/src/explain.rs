@@ -99,6 +99,12 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
             .unwrap_or_default(),
         record_dir.display()
     );
+    if let Some(env) = &rec.env {
+        crate::render::outln!("env: {env}");
+    }
+    for (key, value) in &rec.metadata {
+        crate::render::outln!("meta {key}: {value}");
+    }
     if rec.completion == RunCompletion::Incomplete {
         crate::render::outln!("⚠ run incomplete — no run_finished; results are partial");
     }

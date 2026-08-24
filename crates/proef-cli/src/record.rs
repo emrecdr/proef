@@ -166,6 +166,10 @@ pub struct Record {
     /// `(file, scenario) -> outcome`. Populated from every `scenario_finished`
     /// in the stream, `[run] setup`/`teardown` scenarios included — the record
     /// keeps their events, even though `totals` excludes them.
+    /// The active `--env` profile the head records, when any (ADR-0020).
+    pub env: Option<String>,
+    /// User-supplied run metadata from the head (ADR-0020).
+    pub metadata: BTreeMap<String, String>,
     pub scenarios: BTreeMap<(String, String), ScenarioRun>,
     /// Whether the run reached its tail `RunFinished`.
     pub completion: RunCompletion,
@@ -193,10 +197,30 @@ pub struct Record {
 /// events for something else (`report`'s `render_html`) can read and parse
 /// the file exactly once and derive both from the same in-memory events —
 /// two reads of a live run's `events.jsonl` can otherwise race and disagree
+/// Fold the head's provenance (ADR-0020): first head wins — a legacy
+/// multi-pair record's later heads are phase heads, not the run's.
+fn fold_head(event: &Event, env: &mut Option<String>, metadata: &mut BTreeMap<String, String>) {
+    if let Event::RunStarted {
+        env: head_env,
+        metadata: head_metadata,
+        ..
+    } = event
+        && env.is_none()
+        && metadata.is_empty()
+    {
+        *env = head_env.as_ref().map(ToString::to_string);
+        *metadata = head_metadata.clone();
+    }
+}
+
 /// on whether the tail `RunFinished` had landed yet.
 pub fn parse_record(events: &[Event]) -> Record {
     // Steps stream in before their `ScenarioFinished`; buffer them by
     // `(step.file, scenario)` and attach to each scenario as it closes.
+    // The head's provenance (ADR-0020): first head wins — a legacy multi-
+    // pair record's later heads are phase heads, not the run's.
+    let mut env: Option<String> = None;
+    let mut metadata: BTreeMap<String, String> = BTreeMap::new();
     let mut pending: BTreeMap<(String, String), BTreeMap<(String, usize), StepRun>> =
         BTreeMap::new();
     // Occurrence ordinal per (file, scenario, step text), so identical-text
@@ -239,6 +263,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                         },
                     );
             }
+            Event::RunStarted { .. } => fold_head(event, &mut env, &mut metadata),
             Event::ScenarioFinished {
                 scenario,
                 file,
@@ -285,6 +310,8 @@ pub fn parse_record(events: &[Event]) -> Record {
         completion,
         legacy_multi_pair,
         totals,
+        env,
+        metadata,
     }
 }
 
@@ -560,6 +587,9 @@ mod tests {
                 Event::RunStarted {
                     schema: proef_core::event::EVENT_SCHEMA_VERSION,
                     run_id: Arc::from("run-1"),
+                    env: None,
+                    metadata: std::collections::BTreeMap::new(),
+                    shuffled: false,
                 },
                 finished("failed", Status::Failed, None),
                 finished("parked", Status::Skipped, Some("@skip:migration")),

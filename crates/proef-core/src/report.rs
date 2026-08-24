@@ -106,9 +106,25 @@ impl Redactions {
             }
         };
         match event {
-            Event::RunStarted { schema, run_id } => Event::RunStarted {
+            Event::RunStarted {
+                schema,
+                run_id,
+                env,
+                metadata,
+                shuffled,
+            } => Event::RunStarted {
                 schema: *schema,
                 run_id: s(run_id),
+                env: env
+                    .as_deref()
+                    .map(|text| Arc::from(self.apply(text).as_str())),
+                // Keys and values both masked — a user can paste a
+                // secret-bearing URL into either position.
+                metadata: metadata
+                    .iter()
+                    .map(|(key, value)| (self.apply(key), self.apply(value)))
+                    .collect(),
+                shuffled: *shuffled,
             },
             Event::ScenarioStarted {
                 scenario,
@@ -542,6 +558,9 @@ mod tests {
             Event::RunStarted {
                 schema: 1,
                 run_id: Arc::from("run-1"),
+                env: None,
+                metadata: std::collections::BTreeMap::new(),
+                shuffled: false,
             },
             Event::ScenarioStarted {
                 scenario: Arc::from("S"),

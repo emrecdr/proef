@@ -739,8 +739,11 @@ pub proef_core::event::Event::RunFinished::failed: usize
 pub proef_core::event::Event::RunFinished::passed: usize
 pub proef_core::event::Event::RunFinished::skipped: usize
 pub proef_core::event::Event::RunStarted
+pub proef_core::event::Event::RunStarted::env: core::option::Option<alloc::sync::Arc<str>>
+pub proef_core::event::Event::RunStarted::metadata: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub proef_core::event::Event::RunStarted::run_id: alloc::sync::Arc<str>
 pub proef_core::event::Event::RunStarted::schema: u32
+pub proef_core::event::Event::RunStarted::shuffled: bool
 pub proef_core::event::Event::ScenarioFinished
 pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::phase: core::option::Option<alloc::sync::Arc<str>>

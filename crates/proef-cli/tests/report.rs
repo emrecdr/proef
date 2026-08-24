@@ -72,6 +72,9 @@ fn html_report_is_snapshot_locked() {
         Event::RunStarted {
             schema: EVENT_SCHEMA_VERSION,
             run_id: Arc::from("report-0001"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
         },
         step(
             "tests/features/501_search.feature",
@@ -145,6 +148,9 @@ fn timeline_renders_from_injected_timing() {
         Event::RunStarted {
             schema: EVENT_SCHEMA_VERSION,
             run_id: Arc::from("t"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
         },
         started("A", "a.feature", 0, 0),
         started("B", "b.feature", 5, 1),
@@ -196,6 +202,9 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         Event::RunStarted {
             schema: EVENT_SCHEMA_VERSION,
             run_id: Arc::from("run-1"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
         },
         with_fragment,
         finished("S", "tests/features/a.feature", Status::Failed),
@@ -211,6 +220,9 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         Event::RunStarted {
             schema: EVENT_SCHEMA_VERSION,
             run_id: Arc::from("run-1"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
         },
         step(
             "tests/features/a.feature",
