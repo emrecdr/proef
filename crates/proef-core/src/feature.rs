@@ -172,6 +172,12 @@ fn expand_scenario(
 ) {
     let mut tags = inherited_tags.to_vec();
     tags.extend(scenario.tags.iter().cloned());
+    // A scenario's tags are a *set in authored order* — first occurrence
+    // wins, so a tag repeated at feature and scenario level is one tag to
+    // every consumer (selection, stats, the record). Owner-enforced here,
+    // at the one accumulation point, rather than each consumer's guess.
+    let mut seen = std::collections::BTreeSet::new();
+    tags.retain(|tag| seen.insert(tag.clone()));
     let base_steps: Vec<&gherkin::Step> = backgrounds
         .iter()
         .flatten()

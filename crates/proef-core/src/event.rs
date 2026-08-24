@@ -54,6 +54,13 @@ pub enum Event {
         /// read as "no phase", which is what they were.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phase: Option<Arc<str>>,
+        /// The scenario ran with the pool to itself (`[run]
+        /// exclusive-tags`, ADR-0007 scheduling) — recorded so a timeline
+        /// post-mortem can answer "why did the pool drain before this
+        /// started" from the record alone (R11-6). Additive; absent =
+        /// false, which is what every pre-field record meant.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        exclusive: bool,
     },
     /// A batch of contiguous same-engine steps was dispatched.
     BatchStarted {
@@ -156,6 +163,14 @@ pub enum Event {
         /// every non-skipped scenario and every pre-field stream.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<Arc<str>>,
+        /// The scenario's accumulated tags (feature → rule → scenario →
+        /// examples, deduped, authored order, `@` stripped) — on the
+        /// *finished* event because the cancel-skip path emits no
+        /// `scenario_started`, and per-tag skip counts are a column the
+        /// rollup needs. Additive; empty (and unserialized) for untagged
+        /// scenarios and every pre-field stream.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tags: Vec<String>,
     },
     /// The run finished. Tail of every stream.
     RunFinished {

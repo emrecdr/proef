@@ -809,6 +809,66 @@ fn an_empty_selection_still_emits_the_machine_body() {
     assert_eq!(body["exit_code"], 2, "{body}");
 }
 
+/// Tags reach the record through the REAL stamped pipeline (R18 wave-2).
+/// The two sink wrappers rebuild scenario events field-by-field, so a new
+/// field silently vanishes from every stamped stream unless threaded — this
+/// pins the threading: a tagged suite scenario's `scenario_finished` carries
+/// its tags, and a `[run] setup` scenario keeps BOTH `phase` and its tags.
+#[test]
+fn tags_survive_the_stamped_pipeline_and_phases_keep_both() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  @provisioning\n  Scenario: provision\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @smoke @api\n  Scenario: pool\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let events = std::fs::read_to_string(body["events"].as_str().unwrap()).unwrap();
+    let finished: Vec<serde_json::Value> = events
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|e| e["event"] == "scenario_finished")
+        .collect();
+    let suite = finished
+        .iter()
+        .find(|e| e["scenario"] == "pool")
+        .expect("suite scenario in record");
+    assert_eq!(
+        suite["tags"],
+        serde_json::json!(["smoke", "api"]),
+        "{suite}"
+    );
+    let setup = finished
+        .iter()
+        .find(|e| e["scenario"] == "provision")
+        .expect("setup scenario in record");
+    assert_eq!(setup["phase"], "setup", "{setup}");
+    assert_eq!(
+        setup["tags"],
+        serde_json::json!(["provisioning"]),
+        "{setup}"
+    );
+}
+
 /// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
 /// parked visibly — counted in every total, reasoned in every sink — and an
 /// all-skipped suite exits 0 (deliberate, versioned, visible in review is
@@ -2311,6 +2371,7 @@ fn diff_scenario_finished() -> proef_core::event::Event {
         worker: None,
         phase: None,
         reason: None,
+        tags: Vec::new(),
     }
 }
 
@@ -2782,6 +2843,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             timestamp_ms: None,
             worker: None,
             phase: None,
+            exclusive: false,
         },
         Event::StepFinished {
             scenario: Arc::from("second"),
@@ -3263,6 +3325,7 @@ fn a_truncated_record_counts_a_warned_scenario_as_passed() {
                 worker: None,
                 phase: None,
                 reason: None,
+                tags: Vec::new(),
             },
         ],
     );

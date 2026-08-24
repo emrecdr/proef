@@ -552,7 +552,7 @@ discovery, which is a different claim.
 nothing was silent — both defeat the reason the setting is a config expression
 rather than a reserved tag name.
 
-### R11-6 — exclusivity is invisible in the run record
+### R11-6 — exclusivity is invisible in the run record *(shipped — RF wave 2)*
 
 `Event::ScenarioStarted` carries no field saying a scenario ran exclusively, so a
 post-mortem cannot tell a deliberate drain from a stall: the record shows
@@ -560,6 +560,10 @@ parallelism dropping to one and nothing explaining why. An additive field is
 permitted by ADR-0008, and the reporters would need to decide whether to surface
 it. Filed rather than built — it is a design question about what the record
 should say, not a defect, and the run behaves correctly either way.
+
+**Closed (2026-08-24):** `scenario_started` carries additive `exclusive` —
+the very bool the scheduler read, never re-evaluated. Surfaced in the HTML
+timeline title only; every other reporter deliberately ignores it.
 
 ### R11-7 — the corpus-read rule is shared, its *discovery* is not *(closed 2026-08-23 — discovery unified: one walker, one `claims` predicate; the surviving asymmetry is size measurement — `fs::metadata` vs text length — deliberate and documented, an unsaved buffer has no file to stat)*
 

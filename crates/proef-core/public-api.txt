@@ -747,9 +747,11 @@ pub proef_core::event::Event::ScenarioFinished::phase: core::option::Option<allo
 pub proef_core::event::Event::ScenarioFinished::reason: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
+pub proef_core::event::Event::ScenarioFinished::tags: alloc::vec::Vec<alloc::string::String>
 pub proef_core::event::Event::ScenarioFinished::timestamp_ms: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioFinished::worker: core::option::Option<u64>
 pub proef_core::event::Event::ScenarioStarted
+pub proef_core::event::Event::ScenarioStarted::exclusive: bool
 pub proef_core::event::Event::ScenarioStarted::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioStarted::phase: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::event::Event::ScenarioStarted::scenario: alloc::sync::Arc<str>
@@ -1457,6 +1459,7 @@ pub proef_core::runner::ScenarioOutcome::name: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioOutcome::reason: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::runner::ScenarioOutcome::status: proef_core::step::Status
 pub proef_core::runner::ScenarioOutcome::steps: alloc::vec::Vec<proef_core::step::StepOutcome>
+pub proef_core::runner::ScenarioOutcome::tags: alloc::sync::Arc<[alloc::string::String]>
 impl core::fmt::Debug for proef_core::runner::ScenarioOutcome
 pub fn proef_core::runner::ScenarioOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for proef_core::runner::ScenarioOutcome
@@ -1474,6 +1477,7 @@ pub proef_core::runner::ScenarioSpec::line: usize
 pub proef_core::runner::ScenarioSpec::name: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioSpec::prepare: proef_core::runner::PrepareFn
 pub proef_core::runner::ScenarioSpec::skip: core::option::Option<alloc::sync::Arc<str>>
+pub proef_core::runner::ScenarioSpec::tags: alloc::sync::Arc<[alloc::string::String]>
 impl core::marker::Freeze for proef_core::runner::ScenarioSpec
 impl core::marker::Send for proef_core::runner::ScenarioSpec
 impl !core::marker::Sync for proef_core::runner::ScenarioSpec

@@ -67,6 +67,17 @@ schema but never populated by proef's own writer today** — it is emitted from
 the main dispatcher thread, not the scenario's worker, so consumers must
 accept the field without expecting it — ADR-0015).
 
+**`tags`** — on `scenario_finished`, optional (additive; absent when the
+scenario carries none and in every pre-field stream). The accumulated tags
+(feature → rule → scenario → examples, deduped, authored order, `@`
+stripped). On the *finished* event only: the cancel-skip path emits no
+`scenario_started`, and per-tag skip counts need every scenario.
+
+**`exclusive`** — on `scenario_started`, optional bool (absent = `false`,
+which is what every pre-field record meant). The scenario ran with the pool
+to itself (`[run] exclusive-tags`) — the bool the scheduler itself read,
+recorded for timeline post-mortems (R11-6).
+
 **`reason`** — on `scenario_finished`, optional (additive; absent in
 pre-field records and on every non-skipped scenario). Why the scenario is
 `skipped`: an authored skip carries the pasteable tag spelling (`@skip` /

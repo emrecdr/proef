@@ -52,3 +52,11 @@ variants, `RunFinished` gained a `cancelled` flag, and `StepFinished` gained a
 `detail` failure field — all serialized only when present, so pre-existing
 streams parse unchanged. The additive-only rule held; this note keeps the
 variant inventory honest.
+
+**2026-08-24 (RF wave 2):** `scenario_finished` gained `reason` (why a
+scenario is skipped — authored spellings start with `@`, mechanical prose
+never does; ADR-0019) and `tags` (the accumulated tag set, finished-event
+only because the cancel-skip path emits no start); `scenario_started` gained
+`exclusive` (the scheduler's own bool, R11-6); `step_finished` gained
+`reproduce_hint` (the failing request's redacted curl). All
+serialized only when present; `EVENT_SCHEMA_VERSION` stays 1.
