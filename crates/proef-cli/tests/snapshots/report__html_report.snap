@@ -23,7 +23,7 @@ expression: "render_html(&events, \"artifacts\")"
 <summary><span class="pill fail">failed</span> <span class="loc">tests/features/502_login.feature</span> Login rejects a bad password <a class="artifact" href="artifacts/502-login--login-rejects-a-bad-password.hurl">artifact</a></summary>
 <ol class="steps">
 <li class="fail"><span class="glyph">✗</span> the guest logs in<span class="meta">:4 · 2× · 120ms</span><span class="track"><span class="bar fail" style="margin-left:0.0%;width:100.0%"></span></span><pre class="detail">assert failure: expected HTTP 401 but was 200
-  at 502-login--login-rejects-a-bad-password.hurl:9</pre></li>
+  at 502-login--login-rejects-a-bad-password.hurl:9</pre><pre class="detail">reproduce: curl the-guest-logs-in</pre></li>
 </ol>
 </details>
 </body>

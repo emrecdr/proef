@@ -23,8 +23,39 @@ struct StepRow {
     attempts: u32,
     duration_ms: u64,
     detail: Option<String>,
+    /// The redacted curl of the failing request, straight from the record.
+    reproduce_hint: Option<String>,
     /// `file.hurl#name` when the step ran a named fragment (ADR-0018).
     fragment: Option<String>,
+}
+
+/// Fold one `step_finished` into its scenario block; returns the attempts
+/// folded so the caller's total stays in one place.
+fn push_step_row(block: &mut ScenarioBlock, event: &Event) -> u64 {
+    let Event::StepFinished {
+        step,
+        status,
+        attempts,
+        duration_ms,
+        detail,
+        fragment,
+        reproduce_hint,
+        ..
+    } = event
+    else {
+        return 0;
+    };
+    block.steps.push(StepRow {
+        line: step.line,
+        text: step.text.to_string(),
+        status: *status,
+        attempts: *attempts,
+        duration_ms: *duration_ms,
+        detail: detail.clone(),
+        reproduce_hint: reproduce_hint.clone(),
+        fragment: fragment.clone(),
+    });
+    u64::from(*attempts)
 }
 
 /// One scenario's block: identity, aggregate status, and its steps in order.
@@ -58,28 +89,10 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
     for event in events {
         match event {
             Event::RunStarted { run_id: id, .. } => run_id = id.to_string(),
-            Event::StepFinished {
-                scenario,
-                step,
-                status,
-                attempts,
-                duration_ms,
-                detail,
-                fragment,
-                ..
-            } => {
+            Event::StepFinished { scenario, step, .. } => {
                 total_steps += 1;
-                total_attempts += u64::from(*attempts);
                 let at = block_index(&mut blocks, &mut index, &step.file, scenario);
-                blocks[at].steps.push(StepRow {
-                    line: step.line,
-                    text: step.text.to_string(),
-                    status: *status,
-                    attempts: *attempts,
-                    duration_ms: *duration_ms,
-                    detail: detail.clone(),
-                    fragment: fragment.clone(),
-                });
+                total_attempts += push_step_row(&mut blocks[at], event);
             }
             Event::ScenarioStarted {
                 scenario,
@@ -282,6 +295,9 @@ fn render_block(
         elapsed_ms += step.duration_ms;
         if let Some(detail) = &step.detail {
             let _ = write!(html, "<pre class=\"detail\">{}</pre>", esc(detail));
+        }
+        if let Some(hint) = &step.reproduce_hint {
+            let _ = write!(html, "<pre class=\"detail\">reproduce: {}</pre>", esc(hint));
         }
         // Every `ref:` step, not only failing ones: this is a per-step listing
         // rather than a failure list, so a green report answers "which file did

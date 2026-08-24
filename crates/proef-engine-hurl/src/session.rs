@@ -230,6 +230,7 @@ impl EngineSession for HurlSession {
                     &[],
                     Some("skipped by `when:` guard"),
                     &[],
+                    None,
                 );
                 continue;
             }
@@ -271,6 +272,7 @@ impl EngineSession for HurlSession {
                         &[],
                         Some(detail),
                         &[],
+                        None,
                     );
                 }
                 continue;
@@ -298,6 +300,7 @@ impl EngineSession for HurlSession {
                         &[],
                         Some(NO_ENTRIES_DETAIL),
                         &[],
+                        None,
                     );
                 }
                 continue;
@@ -624,6 +627,9 @@ impl EngineSession for HurlSession {
                     &captures,
                     detail.as_deref(),
                     &attempt_details,
+                    // Moved into the outcome just pushed — read back rather
+                    // than cloned; the outcome and the event must agree.
+                    outcomes.last().and_then(|o| o.reproduce_hint.as_deref()),
                 );
             }
         }
@@ -807,6 +813,7 @@ fn emit_step(
     captures: &[String],
     detail: Option<&str>,
     attempt_details: &[String],
+    reproduce_hint: Option<&str>,
 ) {
     events.emit(&Event::StepFinished {
         scenario: Arc::clone(scenario),
@@ -819,6 +826,7 @@ fn emit_step(
         fragment: step.fragment.clone(),
         detail: detail.map(ToOwned::to_owned),
         attempt_details: attempt_details.to_vec(),
+        reproduce_hint: reproduce_hint.map(ToOwned::to_owned),
     });
 }
 

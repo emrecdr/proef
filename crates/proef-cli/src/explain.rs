@@ -169,6 +169,7 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             attempts,
             detail,
             fragment,
+            reproduce_hint,
             ..
         } = event
         else {
@@ -190,11 +191,17 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             .as_deref()
             .map(|name| format!("\n      via {name}"))
             .unwrap_or_default();
+        // The record now carries what the console printed at run time — the
+        // post-mortem tool must not know less than the live console did.
+        let reproduce = reproduce_hint
+            .as_deref()
+            .map(|hint| format!("\n      reproduce: {hint}"))
+            .unwrap_or_default();
         failures
             .entry((step.file.to_string(), scenario.to_string()))
             .or_default()
             .push(format!(
-                "  ✗ {}:{} — {} ({attempts} attempt(s)){why}{via}",
+                "  ✗ {}:{} — {} ({attempts} attempt(s)){why}{via}{reproduce}",
                 step.file, step.line, step.text
             ));
     }
