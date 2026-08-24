@@ -109,6 +109,13 @@ pub enum Event {
         /// single-attempt step, so pre-existing streams are unchanged.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         attempt_details: Vec<String>,
+        /// The redacted curl of the failing request (R18 wave-1). The engine
+        /// always computed it, the console always printed it — and the record
+        /// dropped it, so `explain` and the HTML report could never show the
+        /// one artifact an API post-mortem reaches for first. Additive:
+        /// absent on passing steps and on every pre-field stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reproduce_hint: Option<String>,
     },
     /// A scenario finished.
     ScenarioFinished {
@@ -228,6 +235,7 @@ mod tests {
             fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
             detail: None,
             attempt_details: vec!["attempt 1: HTTP 404 (retried)".to_owned()],
+            reproduce_hint: Some("curl -X POST http://api.invalid/records".to_owned()),
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         let back: Event = serde_json::from_str(&json).unwrap_or(Event::RunFinished {

@@ -39,6 +39,10 @@ fn step(
         fragment: None,
         detail: detail.map(str::to_owned),
         attempt_details: Vec::new(),
+        // Failing steps carry the redacted curl in the real stream — populate
+        // it here so the snapshot pins the report's reproduce line.
+        reproduce_hint: (status == Status::Failed)
+            .then(|| format!("curl {}", text.replace(' ', "-"))),
     }
 }
 
@@ -174,6 +178,7 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
         detail: Some("Assert status code".to_owned()),
         attempt_details: Vec::new(),
+        reproduce_hint: None,
     };
     let events = vec![
         Event::RunStarted {

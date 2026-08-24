@@ -154,6 +154,7 @@ impl Redactions {
                 fragment,
                 detail,
                 attempt_details,
+                reproduce_hint,
             } => Event::StepFinished {
                 scenario: s(scenario),
                 engine: s(engine),
@@ -177,6 +178,7 @@ impl Redactions {
                     .iter()
                     .map(|text| self.apply(text))
                     .collect(),
+                reproduce_hint: reproduce_hint.as_deref().map(|text| self.apply(text)),
             },
             Event::ScenarioFinished {
                 scenario,
@@ -536,6 +538,7 @@ mod tests {
                 fragment: None,
                 detail: None,
                 attempt_details: Vec::new(),
+                reproduce_hint: None,
             },
             Event::ScenarioFinished {
                 scenario: Arc::from("S"),
@@ -728,6 +731,7 @@ mod tests {
                     captures: vec![format!("cap-{secret}")],
                     fragment: Some(format!("{secret}.hurl#admin.search")),
                     detail: Some(format!("boom {secret}")),
+                    reproduce_hint: None,
                     attempt_details: vec![format!("earlier boom {secret}")],
                 });
                 sink.emit(&Event::RunFinished {
@@ -772,6 +776,7 @@ mod tests {
                         fragment: None,
                         detail: None,
                         attempt_details: Vec::new(),
+                    reproduce_hint: None,
                     });
                     console.on_event(&Event::ScenarioFinished {
                         scenario: Arc::from("S"),

@@ -809,6 +809,52 @@ fn an_empty_selection_still_emits_the_machine_body() {
     assert_eq!(body["exit_code"], 2, "{body}");
 }
 
+/// The record carries what the console printed at run time: a failing
+/// step's redacted curl reaches `events.jsonl`, and `explain` — the
+/// post-mortem tool — prints it back (R18 wave-1: the hint existed on the
+/// outcome, printed once to the live console, and died at the record
+/// boundary; `explain` knew less than the console did).
+#[test]
+fn a_failing_steps_reproduce_hint_reaches_the_record_and_explain() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: fails\n    When the probe expects absence\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  probe:\n    match: the probe expects absence\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 404\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json"])
+        .assert()
+        .code(1);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    let events = std::fs::read_to_string(body["events"].as_str().unwrap()).unwrap();
+    let hint = events
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|e| e["event"] == "step_finished" && e["status"] == "failed")
+        .find_map(|e| e["reproduce_hint"].as_str().map(ToOwned::to_owned))
+        .expect("the failing step_finished must carry reproduce_hint");
+    assert!(hint.starts_with("curl"), "a pasteable curl: {hint}");
+
+    let explain = proef_in(cwd.path(), &fixture).args(["explain"]).assert();
+    let out = String::from_utf8_lossy(&explain.get_output().stdout).into_owned();
+    assert!(
+        out.contains("reproduce: curl"),
+        "explain prints the hint the console printed live: {out}"
+    );
+}
+
 /// The machine-body contract has no exceptions: a setup that fails to even
 /// LOAD (here: the configured file does not exist) is still a terminating
 /// path, and this arm was the last one returning zero stdout bytes under
@@ -2146,6 +2192,7 @@ fn diff_step_finished() -> proef_core::event::Event {
         fragment: None,
         detail: None,
         attempt_details: Vec::new(),
+        reproduce_hint: None,
     }
 }
 
@@ -2644,6 +2691,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             fragment: None,
             detail: None,
             attempt_details: Vec::new(),
+            reproduce_hint: None,
         },
         Event::StepFinished {
             scenario: Arc::from("second"),
@@ -2660,6 +2708,7 @@ fn truncated_with_in_flight_events(run_id: &str) -> Vec<proef_core::event::Event
             fragment: None,
             detail: None,
             attempt_details: Vec::new(),
+            reproduce_hint: None,
         },
         // No `ScenarioFinished` for "second", and no tail `RunFinished` at all.
     ]

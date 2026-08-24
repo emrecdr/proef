@@ -46,6 +46,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   pinned. Recording a `shuffled` marker in the run head is deferred to the
   planned `RunStarted` additions (env/metadata), one wire change instead of
   two.
+- **The failing step's `reproduce: curl …` reaches the record.** The engine
+  always computed the redacted curl and the live console always printed it —
+  and the record dropped it, so `explain` and the HTML report knew less than
+  the console did. `StepFinished` gains additive `reproduce_hint` (absent on
+  passing steps and every pre-field stream); `explain` and the report print
+  it; the sink-boundary mask covers it like `detail`.
 - **README documents every flag the binary exposes, enforced.** v0.14.0
   shipped `--shard` and `--max-fail` with no README mention; the docs gate
   gains the flags direction (same vacuity guard as the command half), and the

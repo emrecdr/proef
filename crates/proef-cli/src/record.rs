@@ -403,6 +403,7 @@ mod tests {
             fragment: None,
             detail: None,
             attempt_details: Vec::new(),
+            reproduce_hint: None,
         }
     }
 
