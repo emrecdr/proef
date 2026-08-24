@@ -39,6 +39,12 @@ pub struct ScenarioSpec {
     pub file_root: Option<std::path::PathBuf>,
     /// Lower + emit against the live World snapshot (pure; runs in-thread).
     pub prepare: PrepareFn,
+    /// Authored skip: `Some(reason)` parks the scenario as `Skipped` without
+    /// preparing or spawning it — visible in every sink, counted in totals.
+    /// The reason is the pasteable tag spelling (`@skip` / `@skip:reason`),
+    /// computed at the CLI edge like `exclusive`; core never reads tags
+    /// (ADR-0014's split).
+    pub skip: Option<Arc<str>>,
     /// Run this scenario with the pool to itself (ADR-0007 scheduling).
     ///
     /// Not "one of these at a time" but "nothing else at all": the motivating
@@ -152,6 +158,9 @@ pub struct ScenarioOutcome {
     pub line: usize,
     /// Aggregate status.
     pub status: Status,
+    /// Why `Skipped`, when it is: the authored tag spelling (starts with
+    /// `@`) or proef's fixed cancellation prose. `None` otherwise.
+    pub reason: Option<Arc<str>>,
     /// Step outcomes, in execution order.
     pub steps: Vec<StepOutcome>,
     /// Non-test fault, when one occurred.
@@ -356,6 +365,35 @@ pub fn run(
             // a pool an exclusive scenario already owns. Enforcing only the
             // first would let the very next fill iteration start a neighbour
             // beside it.
+            if let Some(reason) = next.skip.clone() {
+                let Some((_, spec)) = queue.pop_front() else {
+                    break;
+                };
+                gate.finish_scenario(
+                    &Event::ScenarioFinished {
+                        scenario: Arc::clone(&spec.name),
+                        file: Arc::clone(&spec.file),
+                        status: Status::Skipped,
+                        timestamp_ms: None,
+                        worker: None,
+                        phase: None,
+                        reason: Some(Arc::clone(&reason)),
+                    },
+                    &spec.file,
+                    &spec.name,
+                );
+                outcomes.push(ScenarioOutcome {
+                    file: spec.file,
+                    name: spec.name,
+                    line: spec.line,
+                    status: Status::Skipped,
+                    reason: Some(reason),
+                    steps: Vec::new(),
+                    fault: None,
+                    artifact_slug: None,
+                });
+                continue;
+            }
             if (next.exclusive || exclusive_active) && !active.is_empty() {
                 break;
             }
@@ -372,6 +410,7 @@ pub fn run(
                         timestamp_ms: None,
                         worker: None,
                         phase: None,
+                        reason: Some(Arc::from("run cancelled")),
                     },
                     &spec.file,
                     &spec.name,
@@ -381,6 +420,7 @@ pub fn run(
                     name: spec.name,
                     line: spec.line,
                     status: Status::Skipped,
+                    reason: Some(Arc::from("run cancelled")),
                     steps: Vec::new(),
                     fault: None,
                     artifact_slug: None,
@@ -433,6 +473,7 @@ pub fn run(
                             timestamp_ms: None,
                             worker: None,
                             phase: None,
+                            reason: outcome.reason.clone(),
                         },
                         &outcome.file,
                         &outcome.name,
@@ -513,6 +554,7 @@ fn sweep_expired(
             name: Arc::clone(name),
             line: *line,
             status: Status::Failed,
+            reason: None,
             steps: Vec::new(),
             fault: Some(Fault::System(
                 "batch budget exceeded — scenario thread abandoned (ADR-0007)".to_owned(),
@@ -527,6 +569,7 @@ fn sweep_expired(
                 timestamp_ms: None,
                 worker: None,
                 phase: None,
+                reason: None,
             },
             &outcome.file,
             &outcome.name,
@@ -579,6 +622,7 @@ fn spawn_scenario(
                 name: identity.1,
                 line: identity.2,
                 status: Status::Failed,
+                reason: None,
                 steps: Vec::new(),
                 fault: Some(Fault::System(format!(
                     "scenario thread panicked: {message}"
@@ -610,6 +654,9 @@ fn run_scenario(
         name: Arc::clone(&name),
         line,
         status,
+        // The only Skipped this closure ever builds is the in-flight
+        // interrupt (no failed step, run cancelled) — the reason says so.
+        reason: matches!(status, Status::Skipped).then(|| Arc::from("run cancelled")),
         steps,
         fault,
         artifact_slug,

@@ -491,6 +491,7 @@ pub fn flows(
                     "name": scenario.name,
                     "tags": scenario.tags,
                     "featureDescription": feature.file.description,
+                    "skip": crate::front::reserved::skip_reason(&scenario.tags),
                 });
                 crate::render::outln!("{json}");
             }

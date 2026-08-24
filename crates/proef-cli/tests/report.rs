@@ -54,6 +54,7 @@ fn finished(scenario: &str, file: &str, status: Status) -> Event {
         timestamp_ms: None,
         worker: None,
         phase: None,
+        reason: None,
     }
 }
 
@@ -127,6 +128,7 @@ fn timeline_renders_from_injected_timing() {
             timestamp_ms: Some(ts),
             worker: Some(worker),
             phase: None,
+            reason: None,
         }
     };
     let events = vec![

@@ -32,11 +32,14 @@ pub fn render(
         });
         let verb = if failed { "not ok" } else { "ok" };
         let directive = if outcome.status == Status::Skipped {
-            " # SKIP not run"
+            // The reason travels in the directive: the authored tag
+            // spelling, or the mechanical cause; "not run" only when a
+            // pre-reason record left nothing better to say.
+            format!(" # SKIP {}", outcome.reason.as_deref().unwrap_or("not run"))
         } else if failed && quarantined {
-            " # TODO quarantined"
+            " # TODO quarantined".to_owned()
         } else {
-            ""
+            String::new()
         };
         let _ = writeln!(
             out,
@@ -128,6 +131,7 @@ mod tests {
             name: Arc::from(name),
             line: 1,
             status,
+            reason: None,
             steps,
             fault: None,
             artifact_slug: None,
@@ -194,5 +198,18 @@ mod tests {
             &Redactions::new(std::iter::once("hunter2".to_owned())),
         );
         assert!(!tap.contains("hunter2"), "secret must not reach TAP: {tap}");
+    }
+
+    /// The authored reason rides the SKIP directive; reason-less outcomes
+    /// keep the fixed "not run".
+    #[test]
+    fn a_reasoned_skip_carries_its_reason_in_the_directive() {
+        let mut outcome = outcome("f.feature", "parked", Status::Skipped, None);
+        outcome.reason = Some(std::sync::Arc::from("@skip:migration"));
+        let tap = render(&[outcome], &[], &Redactions::new(std::iter::empty()));
+        assert!(
+            tap.contains("ok 1 - parked # SKIP @skip:migration\n"),
+            "{tap}"
+        );
     }
 }

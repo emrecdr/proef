@@ -187,6 +187,7 @@ impl Redactions {
                 timestamp_ms,
                 worker,
                 phase,
+                reason,
             } => Event::ScenarioFinished {
                 scenario: s(scenario),
                 file: s(file),
@@ -194,6 +195,9 @@ impl Redactions {
                 timestamp_ms: *timestamp_ms,
                 worker: *worker,
                 phase: phase.clone(),
+                reason: reason
+                    .as_deref()
+                    .map(|text| Arc::from(self.apply(text).as_str())),
             },
             Event::RunFinished { .. } => event.clone(),
         }
@@ -393,9 +397,9 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                     step.text
                 );
                 let line = self.redactions.apply(&line);
-                // A warning with no reason is unusable — say why. (Failures
-                // get the richer end-of-run list instead.)
-                let warn_detail = (*status == Status::Warned)
+                // A warning or a skip with no reason is unusable — say
+                // why. (Failures get the richer end-of-run list instead.)
+                let warn_detail = matches!(status, Status::Warned | Status::Skipped)
                     .then_some(detail.as_deref())
                     .flatten()
                     .map(|d| self.redactions.apply(&format!("      ↳ {d}")));
@@ -409,6 +413,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 scenario,
                 file,
                 status,
+                reason,
                 ..
             } => {
                 let lines = self
@@ -420,7 +425,11 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 for line in lines {
                     let _ = writeln!(self.out, "{line}");
                 }
-                let _ = writeln!(self.out, "    {} scenario {scenario}", glyph(*status));
+                let why = reason
+                    .as_deref()
+                    .map(|reason| format!(" — {reason}"))
+                    .unwrap_or_default();
+                let _ = writeln!(self.out, "    {} scenario {scenario}{why}", glyph(*status));
             }
             Event::RunFinished {
                 passed,
@@ -547,6 +556,7 @@ mod tests {
                 timestamp_ms: None,
                 worker: None,
                 phase: None,
+                reason: None,
             },
             Event::RunFinished {
                 passed: 1,
@@ -785,6 +795,7 @@ mod tests {
                         timestamp_ms: None,
                         worker: None,
                         phase: None,
+            reason: None,
                     });
                 }
                 let text = String::from_utf8(out).unwrap();

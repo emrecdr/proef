@@ -109,6 +109,10 @@ pub struct ScenarioRun {
     /// `proef.toml`, which is what let `explain`, `--rerun` and `diff` each
     /// disagree about which scenarios were phases.
     pub phase: Option<String>,
+    /// Why `Skipped`, when it is. Authored skips carry the tag spelling
+    /// and always start with `@`; mechanical cancellation prose never
+    /// does — the split `rerun_candidates` keys on.
+    pub reason: Option<String>,
 }
 
 impl ScenarioRun {
@@ -240,6 +244,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                 file,
                 status,
                 phase,
+                reason,
                 ..
             } => {
                 let key = (file.to_string(), scenario.to_string());
@@ -249,6 +254,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                     ScenarioRun {
                         status: *status,
                         phase: phase.as_ref().map(ToString::to_string),
+                        reason: reason.as_ref().map(ToString::to_string),
                         steps,
                     },
                 );
@@ -352,7 +358,18 @@ pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
         }
         match run.status {
             Status::Failed => scenarios.push(key),
-            Status::Skipped if cancelled => {
+            // An authored skip is not "never ran" — its reason is the tag
+            // spelling (starts with `@`; mechanical prose never does), and
+            // re-queueing it after a cancelled run would re-skip it while
+            // the `never_ran` note lied about continuing a partial run.
+            // Pre-reason records read as mechanical, which they were.
+            Status::Skipped
+                if cancelled
+                    && !run
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.starts_with('@')) =>
+            {
                 never_ran += 1;
                 scenarios.push(key);
             }
@@ -415,6 +432,7 @@ mod tests {
             timestamp_ms: None,
             worker: None,
             phase: None,
+            reason: None,
         }
     }
 
@@ -515,5 +533,60 @@ mod tests {
             legacy.legacy_multi_pair,
             "more than one run_finished means the record predates 0.6.0"
         );
+    }
+
+    /// The rerun rule's authored/mechanical split: on a cancelled record, a
+    /// mechanically-skipped scenario is "never ran" and re-queues; an
+    /// authored `@skip` (reason starts with `@`) does not — re-running it
+    /// would re-skip it while the never-ran note lied. Pre-reason records
+    /// (no field) read as mechanical, which they were.
+    #[test]
+    fn an_authored_skip_is_not_requeued_by_rerun() {
+        let dir = tempfile::tempdir().unwrap();
+        let finished = |name: &str, status: Status, reason: Option<&str>| Event::ScenarioFinished {
+            scenario: Arc::from(name),
+            file: Arc::from("f.feature"),
+            status,
+            timestamp_ms: None,
+            worker: None,
+            phase: None,
+            reason: reason.map(Arc::from),
+        };
+        write_events(
+            dir.path(),
+            &[
+                Event::RunStarted {
+                    schema: proef_core::event::EVENT_SCHEMA_VERSION,
+                    run_id: Arc::from("run-1"),
+                },
+                finished("failed", Status::Failed, None),
+                finished("parked", Status::Skipped, Some("@skip:migration")),
+                finished("never-ran", Status::Skipped, Some("run cancelled")),
+                finished("legacy-skip", Status::Skipped, None),
+                Event::RunFinished {
+                    passed: 0,
+                    failed: 1,
+                    skipped: 3,
+                    cancelled: true,
+                },
+            ],
+        );
+        let candidates = rerun_candidates(dir.path()).unwrap();
+        let names: Vec<&str> = candidates
+            .scenarios
+            .iter()
+            .map(|(_, name)| name.as_str())
+            .collect();
+        assert!(names.contains(&"failed"), "{names:?}");
+        assert!(names.contains(&"never-ran"), "{names:?}");
+        assert!(
+            names.contains(&"legacy-skip"),
+            "pre-reason reads mechanical: {names:?}"
+        );
+        assert!(
+            !names.contains(&"parked"),
+            "an authored skip must not re-queue: {names:?}"
+        );
+        assert_eq!(candidates.never_ran, 2, "{names:?}");
     }
 }

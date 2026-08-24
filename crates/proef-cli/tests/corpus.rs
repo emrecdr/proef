@@ -140,6 +140,37 @@ fn flows_carries_the_feature_description() {
     );
 }
 
+/// `flows --output json` computes the authored-skip reason with the same
+/// recognizer the runner uses — the harness maps it to libtest's ignored
+/// flag, so the two must never disagree.
+#[test]
+fn flows_reports_the_skip_reason() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/f.feature"),
+        "Feature: F\n  @skip:migration\n  Scenario: parked\n    When x\n  Scenario: live\n    When x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  x:\n    match: x\n    steps:\n      - hurl: |\n          GET http://127.0.0.1:1/x\n          HTTP 200\n",
+    )
+    .unwrap();
+    let assert = proef()
+        .current_dir(cwd.path())
+        .args(["flows", "suite", "--output", "json"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let rows: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(rows[0]["skip"], "@skip:migration", "{rows:?}");
+    assert_eq!(rows[1]["skip"], serde_json::Value::Null, "{rows:?}");
+}
+
 #[test]
 fn schema_prints_merged_json() {
     let assert = proef().arg("schema").assert().code(0);

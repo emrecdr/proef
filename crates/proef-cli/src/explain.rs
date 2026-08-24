@@ -118,6 +118,8 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
         );
     }
 
+    print_skipped(&rec);
+
     if rec
         .scenarios
         .values()
@@ -155,6 +157,28 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
 }
 
 /// `(file, scenario) -> per-step failure lines` (`file:line`, message,
+/// Skipped scenarios with their reasons — an authored `@skip` is a
+/// deliberate, versioned act and the post-mortem should say so; a mechanical
+/// skip explains a cancelled run's shape. Reason-less rows (pre-field
+/// records) stay silent rather than inventing prose.
+fn print_skipped(rec: &record::Record) {
+    let skipped_with_reason: Vec<_> = rec
+        .scenarios
+        .iter()
+        .filter(|(_, run)| run.status == Status::Skipped && run.reason.is_some())
+        .collect();
+    if !skipped_with_reason.is_empty() {
+        crate::render::outln!("");
+        for (key, run) in &skipped_with_reason {
+            crate::render::outln!(
+                "skipped: {} — {}",
+                key.1,
+                run.reason.as_deref().unwrap_or_default()
+            );
+        }
+    }
+}
+
 /// attempts) — the detail the record's `StepRun` doesn't carry. Keyed by
 /// `(file, scenario)`, matching `Record::scenarios`' run-wide identity
 /// (ADR-0008): two same-named scenarios in different files must not share

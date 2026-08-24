@@ -744,6 +744,7 @@ pub proef_core::event::Event::RunStarted::schema: u32
 pub proef_core::event::Event::ScenarioFinished
 pub proef_core::event::Event::ScenarioFinished::file: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::phase: core::option::Option<alloc::sync::Arc<str>>
+pub proef_core::event::Event::ScenarioFinished::reason: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::event::Event::ScenarioFinished::scenario: alloc::sync::Arc<str>
 pub proef_core::event::Event::ScenarioFinished::status: proef_core::step::Status
 pub proef_core::event::Event::ScenarioFinished::timestamp_ms: core::option::Option<u64>
@@ -1453,6 +1454,7 @@ pub proef_core::runner::ScenarioOutcome::fault: core::option::Option<proef_core:
 pub proef_core::runner::ScenarioOutcome::file: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioOutcome::line: usize
 pub proef_core::runner::ScenarioOutcome::name: alloc::sync::Arc<str>
+pub proef_core::runner::ScenarioOutcome::reason: core::option::Option<alloc::sync::Arc<str>>
 pub proef_core::runner::ScenarioOutcome::status: proef_core::step::Status
 pub proef_core::runner::ScenarioOutcome::steps: alloc::vec::Vec<proef_core::step::StepOutcome>
 impl core::fmt::Debug for proef_core::runner::ScenarioOutcome
@@ -1471,6 +1473,7 @@ pub proef_core::runner::ScenarioSpec::file_root: core::option::Option<std::path:
 pub proef_core::runner::ScenarioSpec::line: usize
 pub proef_core::runner::ScenarioSpec::name: alloc::sync::Arc<str>
 pub proef_core::runner::ScenarioSpec::prepare: proef_core::runner::PrepareFn
+pub proef_core::runner::ScenarioSpec::skip: core::option::Option<alloc::sync::Arc<str>>
 impl core::marker::Freeze for proef_core::runner::ScenarioSpec
 impl core::marker::Send for proef_core::runner::ScenarioSpec
 impl !core::marker::Sync for proef_core::runner::ScenarioSpec

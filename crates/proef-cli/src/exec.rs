@@ -40,10 +40,6 @@ pub const STATE_FILE: &str = ".proef-state.json";
 /// wanting about five of them.
 pub(crate) const DEFAULT_KEEP_RUNS: usize = 200;
 
-/// A scenario tagged `@quarantine` runs and reports, but its test-failure does
-/// not gate the exit code (`RunSummary::exit_code_excluding`).
-const QUARANTINE_TAG: &str = "quarantine";
-
 /// Tell a first-time reader that a failed run never reached a target, rather
 /// than leaving them with a bare connection error.
 ///
@@ -437,8 +433,11 @@ pub fn execute(
                         // see. A JUnit write failure does not re-classify the
                         // exit: the setup fault is the more specific verdict.
                         write_ci_reports(
-                            &summary,
-                            None,
+                            &Verdict {
+                                summary: &summary,
+                                teardown: None,
+                                non_gating: &[],
+                            },
                             &front.run_id,
                             junit,
                             &run_dir,
@@ -463,8 +462,11 @@ pub fn execute(
                             "error: setup ran no scenario to completion — aborting before the suite runs"
                         );
                         write_ci_reports(
-                            &summary,
-                            None,
+                            &Verdict {
+                                summary: &summary,
+                                teardown: None,
+                                non_gating: &[],
+                            },
                             &front.run_id,
                             junit,
                             &run_dir,
@@ -652,6 +654,27 @@ pub fn execute(
             crate::render::errln!("warning: cannot persist global state: {err}");
         }
 
+        // `@quarantine` scenarios run and report, but their test-failures do not
+        // gate the run (a System/User fault still does — quarantine is for flaky
+        // tests, not broken input or infra).
+        let non_gating: Vec<(String, String)> = front
+            .features
+            .iter()
+            .flat_map(|feature| {
+                feature
+                    .scenarios
+                    .iter()
+                    .filter(|scenario| {
+                        scenario
+                            .lowered
+                            .tags
+                            .iter()
+                            .any(|tag| tag == crate::front::reserved::QUARANTINE)
+                    })
+                    .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
+            })
+            .collect();
+
         // Failure details (feature line + artifact span already inside details).
         // Redacted like every other sink — engine details are pre-redacted, but
         // fault messages can quote resolved user input.
@@ -709,8 +732,11 @@ pub fn execute(
 
         // CI reports (US-8): JUnit XML + GitHub job summary.
         let junit_failed = write_ci_reports(
-            &summary,
-            teardown_summary.as_ref(),
+            &Verdict {
+                summary: &summary,
+                teardown: teardown_summary.as_ref(),
+                non_gating: &non_gating,
+            },
             &front.run_id,
             junit,
             &run_dir,
@@ -718,26 +744,6 @@ pub fn execute(
             machine_stdout,
         );
 
-        // `@quarantine` scenarios run and report, but their test-failures do not
-        // gate the run (a System/User fault still does — quarantine is for flaky
-        // tests, not broken input or infra).
-        let non_gating: Vec<(String, String)> = front
-            .features
-            .iter()
-            .flat_map(|feature| {
-                feature
-                    .scenarios
-                    .iter()
-                    .filter(|scenario| {
-                        scenario
-                            .lowered
-                            .tags
-                            .iter()
-                            .any(|tag| tag == QUARANTINE_TAG)
-                    })
-                    .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
-            })
-            .collect();
         let quarantined_failures = summary
             .outcomes
             .iter()
@@ -966,6 +972,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                 file,
                 status,
                 phase,
+                reason,
                 ..
             } => {
                 release_slot(scenario, file);
@@ -976,6 +983,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                     timestamp_ms: Some(now_ms()),
                     worker: None,
                     phase: phase.clone(),
+                    reason: reason.clone(),
                 });
             }
             other => inner.emit(other),
@@ -1029,6 +1037,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             status,
             timestamp_ms,
             worker,
+            reason,
             ..
         } => inner.emit(&Event::ScenarioFinished {
             scenario: scenario.clone(),
@@ -1037,6 +1046,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             timestamp_ms: *timestamp_ms,
             worker: *worker,
             phase: Some(Arc::clone(&label)),
+            reason: reason.clone(),
         }),
         other => inner.emit(other),
     })
@@ -1233,9 +1243,17 @@ fn run_phase(
 /// before any of this, and a CI job reading `JUnit` saw no file at all) —
 /// emits the same set. Returns whether a requested `JUnit` file could not be
 /// written.
+/// The run's verdict, bundled for the CI sinks: the suite summary, a
+/// failed teardown's own summary, and the quarantine (non-gating) list —
+/// the three inputs every sink reads together.
+struct Verdict<'a> {
+    summary: &'a runner::RunSummary,
+    teardown: Option<&'a runner::RunSummary>,
+    non_gating: &'a [(String, String)],
+}
+
 fn write_ci_reports(
-    summary: &runner::RunSummary,
-    teardown: Option<&runner::RunSummary>,
+    verdict: &Verdict<'_>,
     run_id: &str,
     junit: Option<&str>,
     run_dir: &Path,
@@ -1251,7 +1269,14 @@ fn write_ci_reports(
         Some(path) => Some(PathBuf::from(path)),
     };
     if let Some(junit_path) = junit_path {
-        match crate::ci_reports::write_junit(summary, teardown, run_id, &junit_path, redactions) {
+        match crate::ci_reports::write_junit(
+            verdict.summary,
+            verdict.teardown,
+            verdict.non_gating,
+            run_id,
+            &junit_path,
+            redactions,
+        ) {
             Ok(()) => crate::render::errln!("junit report: {}", junit_path.display()),
             Err(message) => {
                 // A CI job gating on this file must not see exit 0.
@@ -1260,12 +1285,12 @@ fn write_ci_reports(
             }
         }
     }
-    crate::ci_reports::write_github_summary(summary, run_id, redactions);
+    crate::ci_reports::write_github_summary(verdict.summary, run_id, redactions);
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--output json`) owns stdout.
     if !machine_stdout && std::env::var_os("GITHUB_ACTIONS").is_some() {
-        let annotations = crate::ci_reports::github_annotations(summary, redactions);
+        let annotations = crate::ci_reports::github_annotations(verdict.summary, redactions);
         if !annotations.is_empty() {
             crate::render::outln!("{}", annotations.trim_end());
         }
@@ -1469,6 +1494,7 @@ fn build_specs(
                 file: Arc::clone(&file_arc),
                 name: Arc::from(scenario.lowered.name.as_str()),
                 line: scenario.lowered.line,
+                skip: crate::front::reserved::skip_reason(&scenario.lowered.tags).map(Arc::from),
                 file_root: Some(crate::fsutil::parent_dir(Path::new(
                     feature.file.path.as_str(),
                 ))),
@@ -1601,6 +1627,7 @@ mod tests {
             line: 1,
             file_root: None,
             exclusive: false,
+            skip: None,
             prepare: Box::new(|_| unreachable!("never prepared in this test")),
         };
         let mut specs: Vec<ScenarioSpec> = ["a", "b", "c", "d", "e", "f"]
@@ -1910,6 +1937,7 @@ mod tests {
             name: "s".into(),
             line: 1,
             status: Status::Failed,
+            reason: None,
             steps: Vec::new(),
             fault,
             artifact_slug: None,

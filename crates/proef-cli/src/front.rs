@@ -23,6 +23,31 @@ use proef_core::world::{GlobalStore, World};
 
 use crate::registry;
 
+/// The reserved tag namespace — recognized here at the CLI edge, never in
+/// core (ADR-0014's split: tags stay dumb data until the front decides what
+/// they mean). Exactly one recognizer per reserved tag; `exec`, `flows` and
+/// the harness consume the computed answer, never re-derive it.
+pub(crate) mod reserved {
+    /// `@quarantine` — runs, reports, does not gate the exit code.
+    pub(crate) const QUARANTINE: &str = "quarantine";
+
+    /// The authored-skip reason of a scenario, when any tag spells one:
+    /// `@skip` (fixed reason) or `@skip:<token>` (the token is the reason).
+    /// The returned string is the pasteable tag spelling itself — starting
+    /// with `@`, which is the contract `--rerun` keys on to tell authored
+    /// skips from mechanical ones. `--tags "not @skip*"` excludes both
+    /// spellings (glob atoms); the tag list stays exactly as authored.
+    pub(crate) fn skip_reason(tags: &[String]) -> Option<String> {
+        tags.iter().find_map(|tag| {
+            if tag == "skip" {
+                Some("@skip".to_owned())
+            } else {
+                tag.strip_prefix("skip:").map(|_| format!("@{tag}"))
+            }
+        })
+    }
+}
+
 /// One fully-processed feature.
 pub struct LoadedFeature {
     /// The parsed feature (tags, source).

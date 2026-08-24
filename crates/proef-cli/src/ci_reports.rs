@@ -16,6 +16,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, T
 pub fn write_junit(
     summary: &RunSummary,
     teardown: Option<&RunSummary>,
+    non_gating: &[(String, String)],
     run_id: &str,
     path: &Path,
     redactions: &Redactions,
@@ -48,7 +49,13 @@ pub fn write_junit(
                 .iter()
                 .map(|s| s.duration)
                 .sum::<std::time::Duration>();
-            suite.add_test_case(test_case(outcome, redactions));
+            suite.add_test_case(test_case(
+                outcome,
+                non_gating.iter().any(|(file, name)| {
+                    file.as_str() == outcome.file.as_ref() && name.as_str() == outcome.name.as_ref()
+                }),
+                redactions,
+            ));
         }
         // GitLab reads `time` on both `testsuite` and `testsuites` (it ignores
         // the count attributes and `timestamp`); Jenkins reads suite `time`
@@ -80,7 +87,7 @@ fn flaky_pass_attempts(outcome: &ScenarioOutcome) -> Option<u32> {
     (attempts > 1).then_some(attempts)
 }
 
-fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
+fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactions) -> TestCase {
     let status = match (outcome.status, &outcome.fault) {
         (Status::Passed | Status::Warned, _) => {
             let mut status = TestCaseStatus::success();
@@ -95,7 +102,44 @@ fn test_case(outcome: &ScenarioOutcome, redactions: &Redactions) -> TestCase {
             }
             status
         }
-        (Status::Skipped, _) => TestCaseStatus::skipped(),
+        (Status::Skipped, _) => {
+            let mut status = TestCaseStatus::skipped();
+            if let Some(reason) = outcome
+                .reason
+                .as_deref()
+                .map(ToOwned::to_owned)
+                .or_else(|| {
+                    outcome
+                        .steps
+                        .iter()
+                        .find(|s| s.status == Status::Skipped)
+                        .and_then(|s| s.detail.clone())
+                })
+            {
+                status.set_message(redactions.apply(&reason));
+            }
+            status
+        }
+        // A quarantined test-failure does not gate the exit code, and the
+        // XML must not say otherwise: Jenkins marks UNSTABLE on a plain
+        // <failure> regardless of exit 0, so every dashboard contradicted
+        // the verdict (RF-audit; RF converts the status for the same
+        // reason). User/System faults stay failures — quarantine is for
+        // flaky tests, not broken input.
+        (Status::Failed, None) if quarantined => {
+            let mut status = TestCaseStatus::skipped();
+            let detail = outcome
+                .steps
+                .iter()
+                .filter(|s| s.status == Status::Failed)
+                .filter_map(|s| s.detail.as_deref())
+                .collect::<Vec<_>>()
+                .join("; ");
+            status.set_message(
+                redactions.apply(&format!("quarantined failure (non-gating): {detail}")),
+            );
+            status
+        }
         (Status::Failed, fault) => {
             let (kind, message) = match fault {
                 Some(Fault::System(message) | Fault::User(message)) => {
@@ -321,6 +365,7 @@ mod provenance_tests {
                 name: "S".into(),
                 line: 2,
                 status: Status::Failed,
+                reason: None,
                 steps: vec![StepOutcome {
                     step: StepRef {
                         file: Arc::from("tests/features/a.feature"),
@@ -401,6 +446,7 @@ mod escaping_tests {
                 name: "s".into(),
                 line: 3,
                 status: Status::Failed,
+                reason: None,
                 steps: Vec::new(),
                 fault: Some(Fault::System("boom".to_owned())),
                 artifact_slug: None,
