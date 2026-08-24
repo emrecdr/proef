@@ -1328,6 +1328,18 @@ fn shard_bucket(file: &str, name: &str, count: u32) -> u32 {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3); // FNV prime
     }
+    // Murmur3's fmix64 finalizer (R18). Raw FNV's multiplier is odd, so the
+    // accumulator's low bit is the XOR-parity of the input bytes' low bits —
+    // and a scenario named after its feature file (the commonest Gherkin
+    // convention) duplicates content between the two halves of the identity,
+    // whose parity contributions cancel: the whole corpus lands in one shard
+    // at N=2. The finalizer avalanches every input bit into every output bit,
+    // which is the property `% count` actually needs.
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51_afd7_ed55_8ccd);
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+    hash ^= hash >> 33;
     u32::try_from(hash % u64::from(count)).unwrap_or(0)
 }
 
@@ -1548,12 +1560,12 @@ mod tests {
         use super::shard_bucket;
         let file = "suite/case.feature";
         for (name, at2, at3) in [
-            ("s1", 0, 2),
-            ("s2", 1, 2),
-            ("s3", 0, 1),
-            ("s4", 1, 1),
-            ("s5", 0, 0),
-            ("s6", 1, 0),
+            ("s1", 1, 1),
+            ("s2", 0, 0),
+            ("s3", 1, 2),
+            ("s4", 0, 0),
+            ("s5", 1, 0),
+            ("s6", 0, 0),
         ] {
             assert_eq!(shard_bucket(file, name, 2), at2, "{name} at N=2");
             assert_eq!(shard_bucket(file, name, 3), at3, "{name} at N=3");
@@ -1571,16 +1583,21 @@ mod tests {
         );
     }
 
-    /// R17-2.1's surviving half: nothing asserted *balance*. The filed claim
-    /// — FNV's unmixed low bits collapse power-of-two shard counts — was
-    /// refuted by measurement (a model calibrated against the frozen literals
-    /// above): natural naming shapes are near-uniform, and the proposed
-    /// fmix64 finalizer measurably *worsened* them (empty shards at N=8 that
-    /// FNV does not produce), because FNV's parity-structured low bit walks
-    /// templated names round-robin. Collapse requires a degenerate corpus —
-    /// every name an even-length run of one character. This test pins the
-    /// distribution on the shapes real suites use, so a future hash change
-    /// that *does* skew fails here instead of in someone's CI matrix.
+    /// R17-2.1, corrected by round 18. The first version of this test held
+    /// the file path constant in all three corpora — precisely the condition
+    /// under which raw FNV behaves — and its doc claimed collapse needed a
+    /// degenerate corpus. Round 18 falsified that with the most common
+    /// convention there is, the scenario named after its feature file:
+    /// FNV's multiplier is odd, so the hash's low bit is the XOR-parity of
+    /// the input bytes' low bits, and content mirrored between path and name
+    /// contributes twice and cancels — a corpus-constant parity, every
+    /// scenario in one shard at N=2 (reproduced: [20,0]; odd buckets empty
+    /// at N=4). The `mirrored` corpus below is that shape, kept red against
+    /// any future un-mixed hash. Bounds are calibrated to what a well-mixed
+    /// hash yields at 20 items: no empty shard at any N (random emptiness
+    /// here is ~1e-6 — an empty is proof of structure), and the 3× skew
+    /// bound at N=2 only, because at N=3/4 a fair deal of 20 legitimately
+    /// produces spreads like [2,7,5,6] that a ratio bound would misread.
     #[test]
     fn natural_corpora_spread_across_shards() {
         use super::shard_bucket;
@@ -1626,10 +1643,42 @@ mod tests {
         .map(|n| ("tests/features/orders.feature".into(), (*n).into()))
         .collect();
 
+        let mirrored: Vec<(String, String)> = [
+            "checkout_flow",
+            "user_signup",
+            "password_reset",
+            "order_cancel",
+            "invoice_export",
+            "team_invite",
+            "token_refresh",
+            "webhook_retry",
+            "search_filter",
+            "profile_update",
+            "cart_merge",
+            "refund_flow",
+            "audit_export",
+            "rate_limit",
+            "session_expiry",
+            "catalog_sync",
+            "address_check",
+            "email_verify",
+            "plan_upgrade",
+            "data_import",
+        ]
+        .iter()
+        .map(|stem| {
+            (
+                format!("tests/features/{stem}.feature"),
+                format!("{} works", stem.replace('_', " ")),
+            )
+        })
+        .collect();
+
         for (label, corpus) in [
             ("numbered", &numbered),
             ("outline", &outline),
             ("prose", &prose),
+            ("mirrored", &mirrored),
         ] {
             for count in [2u32, 3, 4] {
                 let mut loads = vec![0usize; count as usize];
@@ -1644,12 +1693,16 @@ mod tests {
                     min > 0,
                     "{label} at N={count}: an empty shard buys zero wall-clock — {loads:?}"
                 );
-                // 20 scenarios over ≤4 shards: a 3× spread between the
-                // heaviest and lightest shard is the useful/broken line.
-                assert!(
-                    max <= 3 * min,
-                    "{label} at N={count}: skew defeats sharding's purpose — {loads:?}"
-                );
+                // The skew bound holds only at N=2: with 20 items over 3-4
+                // buckets a fully mixed hash legitimately deals [2,7,5,6],
+                // which a ratio bound would reject — randomness itself would
+                // fail it. Emptiness is the property; skew is a smell.
+                if count == 2 {
+                    assert!(
+                        max <= 3 * min,
+                        "{label} at N={count}: skew defeats sharding's purpose — {loads:?}"
+                    );
+                }
             }
         }
     }

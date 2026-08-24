@@ -8,6 +8,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Breaking
 
+- **`--shard` assignments re-deal: the hash gained a mixing finalizer.** Raw
+  FNV-1a's low bit is the XOR-parity of the input bytes, so a scenario named
+  after its feature file — the commonest Gherkin convention — collapsed to
+  one shard at `N=2` and left odd shards empty at `N=4`, silently (the empty
+  shard exits 0). `shard_bucket` now finalizes with Murmur3's `fmix64`; every
+  scenario re-buckets, so all jobs of one matrix must run the same proef
+  version (already true in practice). Round-18 finding, reproduced and
+  mechanism-verified before fixing; the balance test gained the
+  name-mirrors-file corpus it was structurally blind to.
 - **JUnit test identity is `classname` + `name`.** `classname` carries the
   feature file, `name` the scenario alone; the old single `name` embedded
   `file:line`, so an edit above a scenario re-identified every test below it

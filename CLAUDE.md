@@ -30,7 +30,9 @@ milestones land.
 
 ## Toolchain (pinned)
 
-Always **latest stable Rust** (1.97.1 at writing), pinned via `rust-toolchain.toml`;
+**Latest stable Rust, adopted at its `x.y.1` point release** (~3-4 weeks after
+`x.y.0` — new minors wait out their first patch; 1.97.1 at writing), pinned via
+`rust-toolchain.toml`;
 edition 2024; workspace `resolver = "3"`. Tools to install once:
 `cargo install cargo-nextest cargo-deny cargo-audit cargo-insta just`
 (plus `cargo-fuzz` for fuzz targets, `cargo-llvm-cov` for coverage).
