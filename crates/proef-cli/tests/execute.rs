@@ -28,6 +28,12 @@ use proef_fixture::{API_TOKEN, Fixture};
 /// since it exercises the full `[url]` endpoint catalog.)
 const BASE_URL_CONFIG: &str = "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n";
 
+/// The one-macro pack the setup/teardown/machine-body tests share: a single
+/// `suiteProbe` step against the fixture's `/health` — one spelling, written
+/// per temp CWD beside whatever the test actually varies.
+const PROBE_PACK: &str = "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+     - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n";
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -685,7 +691,7 @@ fn setup_failure_aborts_the_run_as_a_user_error() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -733,7 +739,7 @@ fn a_failed_setup_still_writes_the_junit_report() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -785,22 +791,13 @@ fn an_empty_selection_still_emits_the_machine_body() {
     let fixture = Fixture::start().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
-    std::fs::write(
-        cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
     std::fs::write(
         cwd.path().join("suite/case.feature"),
         "Feature: F\n  Scenario: pool\n    When the suite probes health\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
-        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
         .args(["test", "suite", "--output", "json", "--scenario", "nope"])
@@ -823,7 +820,7 @@ fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/missing.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/missing.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -831,12 +828,7 @@ fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
         "Feature: F\n  Scenario: pool\n    When the suite probes health\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
-        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
         .args(["test", "suite", "--output", "json"])
@@ -859,7 +851,7 @@ fn a_failed_setup_still_emits_the_machine_body() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -905,7 +897,7 @@ fn a_failed_teardown_reaches_junit_as_its_own_suite() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"suite/teardown.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -956,7 +948,7 @@ fn a_green_teardown_stays_out_of_junit() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"suite/teardown.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -969,12 +961,7 @@ fn a_green_teardown_stays_out_of_junit() {
         "Feature: F\n  Scenario: main case\n    When the suite probes health\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
-        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     proef_in(cwd.path(), &fixture)
         .args(["test", "suite", "--junit", "report.xml"])
@@ -998,8 +985,10 @@ fn setup_shares_globals_teardown_runs_and_both_are_excluded() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\n\
-         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+        format!(
+            "{BASE_URL_CONFIG}[run]\n\
+         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n"
+        ),
     )
     .unwrap();
     std::fs::write(
@@ -1063,7 +1052,7 @@ fn bare_filename_setup_at_project_root_resolves_packs() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\nsetup = \"setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsuite = \"suite\"\nsetup = \"setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -1109,7 +1098,7 @@ fn write_teardown_only_suite(cwd: &Path) {
     std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
     std::fs::write(
         cwd.join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/teardown.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"suite/teardown.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -1207,7 +1196,7 @@ fn explain_details_a_failing_setup() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -1361,7 +1350,7 @@ fn single_file_setup_still_runs_once() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsuite = \"suite\"\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -1374,12 +1363,7 @@ fn single_file_setup_still_runs_once() {
         "Feature: S\n  Scenario: provision\n    When the suite probes health\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
-        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     proef_in(cwd.path(), &fixture)
         .args(["test"])
@@ -2371,8 +2355,10 @@ fn write_phase_suite(cwd: &Path) {
     std::fs::create_dir_all(cwd.join("suite/packs")).unwrap();
     std::fs::write(
         cwd.join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsuite = \"suite\"\n\
-         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n",
+        format!(
+            "{BASE_URL_CONFIG}[run]\nsuite = \"suite\"\n\
+         setup = \"suite/setup.feature\"\nteardown = \"suite/teardown.feature\"\n"
+        ),
     )
     .unwrap();
     std::fs::write(
@@ -2527,7 +2513,7 @@ fn setup_failure_still_closes_the_record_with_one_pair() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nsetup = \"suite/setup.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -2807,7 +2793,7 @@ fn a_nonexistent_teardown_path_fails_before_the_suite_runs() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"suite/absent.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"suite/absent.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -2815,12 +2801,7 @@ fn a_nonexistent_teardown_path_fails_before_the_suite_runs() {
         "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
     )
     .unwrap();
-    std::fs::write(
-        cwd.path().join("suite/packs/p.yaml"),
-        "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-    )
-    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     proef_in(cwd.path(), &fixture)
         .args(["test", "suite"])
@@ -2862,12 +2843,7 @@ fn dry_run_validates_the_setup_and_teardown_features() {
             "Feature: F\n  Scenario: passes\n    When the suite probes health\n",
         )
         .unwrap();
-        std::fs::write(
-            cwd.path().join("suite/packs/p.yaml"),
-            "macros:\n  suiteProbe:\n    match: the suite probes health\n    steps:\n      \
-             - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
-        )
-        .unwrap();
+        std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
         proef_in(cwd.path(), &fixture)
             .args(["test", "suite", "--dry-run"])
@@ -2898,7 +2874,7 @@ fn teardown_runs_after_the_pool_is_interrupted() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"teardown.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"teardown.feature\"\n"),
     )
     .unwrap();
     std::fs::write(
@@ -2992,7 +2968,7 @@ fn explain_labels_the_phase_block_even_beside_a_suite_failure() {
     std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
     std::fs::write(
         cwd.path().join("proef.toml"),
-        "[url]\nbase = \"${env:PROEF_BASE_URL}\"\n[run]\nteardown = \"teardown.feature\"\n",
+        format!("{BASE_URL_CONFIG}[run]\nteardown = \"teardown.feature\"\n"),
     )
     .unwrap();
     std::fs::write(

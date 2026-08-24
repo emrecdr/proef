@@ -111,6 +111,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Internal
 
+- **The machine body has one exit.** `execute`'s six terminating paths each
+  pasted the same empty-body emission; they now return through a single
+  funnel with the one `emit_machine_body` call after it, so a new path
+  cannot forget the contract — and the empty-selection body takes its exit
+  code from the refusal itself instead of restating it. Post-merge cleanup
+  pass over the deep-audit cycle; behavior pinned by the existing path tests.
+- **The probe and bake share the whole `variable:` line.** `template_reads`
+  re-spelled the injected `[Options] variable:` line by hand around the
+  shared escaper; `proef_core::lower::variable_option_line` now builds it for
+  both, and `quote_option` returns to being private (library-surface swap;
+  unreleased either way). The section-end flush in `bake_entry_options` also
+  drops its fence-branch duplicate — one check covers all shapes — and the
+  console collapse builds its annotated message without cloning the
+  diagnostic on the common single-site path.
 - **The canary stopped trusting the index's tail twice over**: it skips
   prerelease versions (the sparse index is publish-ordered, so a `9.0.0-beta`
   would have become "latest"), and refuses a backport older than the pin by

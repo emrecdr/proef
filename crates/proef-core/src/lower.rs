@@ -115,15 +115,24 @@ fn mentions_secret(value: &str) -> bool {
     false
 }
 
-/// Escape a bound value for a quoted hurl option value. `\` and `"` are the
-/// two characters that would end or re-open the literal; `{{…}}` is left alone
-/// on purpose, since hurl expanding it is the point.
-/// Escape a value for a double-quoted hurl `[Options]` string. Public because
-/// the engine's `template_reads` probe must parse the value with **exactly**
-/// this escaping — the probe exists to agree with what `bake_entry_options`
-/// emits, and two private copies silently reopened that agreement once.
-pub fn quote_option(value: &str) -> String {
+/// Escape a bound value for a double-quoted hurl option value. `\` and `"`
+/// are the two characters that would end or re-open the literal; `{{…}}` is
+/// left alone on purpose, since hurl expanding it is the point.
+fn quote_option(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The injected `[Options]` line binding one hurl variable — always quoted,
+/// because an unquoted value that happens to read as a number or a boolean
+/// would be stored as one (`variable_value` tries those first), and `records`
+/// vs `2` vs `true` must not become three different types by accident. hurl
+/// evaluates the quoted form as a template, which is what lets a bound
+/// `${url:…}` containing `{{captured}}` finish resolving. Public because the
+/// engine's `template_reads` probe must parse a value in **exactly** this
+/// spelling — the probe exists to agree with what `bake_entry_options` emits,
+/// and a privately re-spelled copy silently reopened that agreement once.
+pub fn variable_option_line(name: &str, value: &str) -> String {
+    format!("variable: {name}=\"{}\"", quote_option(value))
 }
 
 /// Does this macro reference any fragment? Bindings resolve only when they can
@@ -1027,13 +1036,8 @@ fn bake_entry_options(
     if let Some(delay_ms) = delay_ms {
         option_lines.push(format!("delay: {delay_ms}ms"));
     }
-    // Always quoted: an unquoted value that happens to read as a number or a
-    // boolean would be stored as one (`variable_value` tries those first), and
-    // `records` vs `2` vs `true` must not become three different types by
-    // accident. hurl evaluates the quoted form as a template, which is what
-    // lets a bound `${url:…}` containing `{{captured}}` finish resolving.
     for (name, value) in bindings {
-        option_lines.push(format!("variable: {name}=\"{}\"", quote_option(value)));
+        option_lines.push(variable_option_line(name, value));
     }
     // Nothing to inject: a `ref:` step whose bindings are all secrets, or whose
     // variables all come from earlier captures, would otherwise pay the whole
@@ -1055,6 +1059,23 @@ fn bake_entry_options(
     let mut entry = 0usize;
     for line in text.lines() {
         let trimmed = line.trim();
+        // The author's section ends at the first line that could not sit
+        // inside it — checked before anything else consumes the line, fence
+        // openers included (a ``` fails the key-shape test like any other
+        // section-ending line, so this one check covers what used to be a
+        // second copy inside the fence branch). The first version ran the
+        // method-line branch first, so an entry whose author `[Options]` was
+        // never followed by a response leaked its pending lines into the
+        // NEXT entry, where hurl parsed them as headers and the artifact
+        // validated green (silent wrong output); and its terminator list
+        // (`[`/`HTTP`/method) missed unfenced bodies, so the lines landed
+        // AFTER a JSON or XML body — invalid hurl, exit 2 on input that
+        // worked before the section-end move.
+        if !in_fence && in_author_options && !stays_in_options_section(trimmed) {
+            out.push(retry_lines.clone());
+            injected_current = true;
+            in_author_options = false;
+        }
         if trimmed.starts_with("```") {
             // A fence opening directly after the entry head is the body — the
             // options section belongs immediately before it.
@@ -1062,11 +1083,6 @@ fn bake_entry_options(
                 out.push("[Options]".to_owned());
                 out.push(retry_lines.clone());
                 injected_current = true;
-            }
-            if !in_fence && in_author_options {
-                out.push(retry_lines.clone());
-                injected_current = true;
-                in_author_options = false;
             }
             in_fence = !in_fence;
             in_entry_head = false;
@@ -1076,20 +1092,6 @@ fn bake_entry_options(
         if in_fence {
             out.push(line.to_owned());
             continue;
-        }
-        // The author's section ends at the first line that could not sit
-        // inside it — checked before anything else consumes the line. The
-        // first version ran the method-line branch first, so an entry whose
-        // author `[Options]` was never followed by a response leaked its
-        // pending lines into the NEXT entry, where hurl parsed them as
-        // headers and the artifact validated green (silent wrong output);
-        // and its terminator list (`[`/`HTTP`/method) missed unfenced
-        // bodies, so the lines landed AFTER a JSON or XML body — invalid
-        // hurl, exit 2 on input that worked before the section-end move.
-        if in_author_options && !stays_in_options_section(trimmed) {
-            out.push(retry_lines.clone());
-            injected_current = true;
-            in_author_options = false;
         }
         if is_method_line(trimmed) {
             in_entry_head = true;
