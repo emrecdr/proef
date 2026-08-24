@@ -120,22 +120,22 @@ the run id (R3-9, one determinism knob) · `reproduce_hint` into the record
 (the console knew more than `explain` did). The shard parity fix (#96) was
 round 18's, not RF's, but shipped in the same wave.
 
-### RF wave 2 — designed, queued *(the schema wave; land skip → tags → meta)*
+### RF wave 2 — the schema wave *(all three shipped, #103–#105)*
 
-- **RF-W2-skip** — `@skip` / `@skip:reason-token` (prefix verified to parse
+- **RF-W2-skip** *(shipped — ADR-0019, #103)* — `@skip` / `@skip:reason-token` (prefix verified to parse
   as one tag); `reason` on `ScenarioFinished`+`ScenarioOutcome`; one
   reserved-tag module (quarantine moves in); the two mapped collisions are
   the point of the work: `--rerun` re-queues Skipped-on-cancelled (authored
   reasons start with `@`, mechanical never do), and `diff` buckets
   Failed→Skipped as *fixed* — three-way bucketing required. All-skipped →
   exit 0 (ADR-0009 argument recorded); harness → libtest-mimic ignored.
-- **RF-W2-tags** — `tags` on `ScenarioFinished` only (the cancel-skip path
+- **RF-W2-tags** *(shipped — #104)* — `tags` on `ScenarioFinished` only (the cancel-skip path
   emits no `Started`), `exclusive` on `ScenarioStarted` (closes R11-6),
   schema stays 1; HTML + GH-summary per-tag tables, suite-only per
   ADR-0014; the quarantine `non_gating` list re-derivation collapses into
   the new one owner; D1 becomes its predicted recipe. NOT building RF's
   tagstat combine/link/doc knobs.
-- **RF-W2-meta** — `--meta k=v` + `[meta]`/`[env.<name>.meta]` on the
+- **RF-W2-meta** *(shipped — ADR-0020, #105)* — `--meta k=v` + `[meta]`/`[env.<name>.meta]` on the
   existing precedence chain; `RunStarted.env` auto-recorded (handed-over,
   not harvested — R12-1's real axis); values through the one sink-boundary
   mask; JUnit `<properties>` deferred by the named-consumer method; never
