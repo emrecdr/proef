@@ -334,6 +334,12 @@ pub fn run(
     gate.emit_run_level(&Event::RunStarted {
         schema: EVENT_SCHEMA_VERSION,
         run_id: Arc::clone(&config.run_id),
+        // The CLI's own head (RunRecord::open) carries env/metadata/
+        // shuffled; this library-visible head is suppressed under
+        // `proef test` and stays minimal for harness callers.
+        env: None,
+        metadata: std::collections::BTreeMap::new(),
+        shuffled: false,
     });
 
     let (tx, rx) = mpsc::channel::<Msg>();

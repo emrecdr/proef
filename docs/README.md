@@ -62,6 +62,7 @@ the live status. This corpus is also published as a website: <https://emrecdr.gi
 | [0017](adr/ADR-0017-lsp-language-server.md) | `proef lsp` language server: sync lsp-server, whole-suite wholesale recompute, injectable-provider + collect-all front-end refactor | Accepted |
 | [0018](adr/ADR-0018-named-hurl-fragments.md) | Named hurl fragments: `ref:` as a second macro body form, `# @proef <name>` in real `.hurl` files, explicit `bind:` scopes | Accepted |
 | [0019](adr/ADR-0019-reserved-tags-and-the-authored-skip.md) | Reserved tags and the authored skip: `@skip[:reason]` at the CLI edge, reasons in every sink, authored-vs-mechanical split for `--rerun`, quarantine aligned in JUnit | Accepted |
+| [0020](adr/ADR-0020-run-metadata-is-explicit-injection-only.md) | Run metadata is explicit-injection-only: `--meta`/`[meta]`/`[env.<name>.meta]`, `run_started` gains `env`/`metadata`/`shuffled`, harvested-vs-handed-over is the boundary | Accepted |
 
 ## Naming & identifiers
 

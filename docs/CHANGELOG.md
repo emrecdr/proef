@@ -37,6 +37,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`--meta key=value` and `[meta]`/`[env.<name>.meta]` record explicit run
+  metadata** (ADR-0020, RF wave 2): commit, build URL, team — recorded in
+  the run head, shown by the HTML report, GitHub summary, `explain`,
+  `diff` (which now also warns on cross-env comparisons) and the
+  `--output json` body (additive keys). The active `--env` profile name and
+  the `--shuffle` marker ride the same head. proef never harvests: no git,
+  no hostname, no CI env sniffing — the shell harvests, proef records.
+  Everything passes the sink-boundary mask, keys and values both. Library
+  (Breaking): `RunRecord::open` and `exec::execute` take the head inputs.
 - **Per-tag verdicts in the HTML report and the GitHub summary** (RF wave
   2): tags now reach the record — additive `tags` on `scenario_finished`
   (finished-only: the cancel-skip path emits no start), additive

@@ -28,6 +28,24 @@ pub enum Event {
         schema: u32,
         /// Injected run identifier (uuid-v7-derived; core never generates it).
         run_id: Arc<str>,
+        /// The active `--env`/`PROEF_ENV` profile name (ADR-0020): user-
+        /// chosen input, not a harvested machine fact — without it two
+        /// records of one suite against different `[env.<name>]` merges
+        /// read as regressions in `diff`. Additive; absent = no profile.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        env: Option<Arc<str>>,
+        /// Explicit user-supplied run metadata (`--meta k=v`, `[meta]`,
+        /// `[env.<name>.meta]`), redacted at the sink boundary like every
+        /// text field. proef never harvests: no git, no hostname, no CI
+        /// env sniffing (ADR-0020; R12-1's boundary). Additive; empty is
+        /// unserialized.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        metadata: std::collections::BTreeMap<String, String>,
+        /// The execution order was re-dealt (`--shuffle`); the permutation
+        /// is seeded by `run_id`, so this bool plus the id reproduces the
+        /// order exactly. Additive; absent = authored order.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        shuffled: bool,
     },
     /// A scenario began executing.
     ScenarioStarted {
@@ -233,6 +251,9 @@ mod tests {
         let event = Event::RunStarted {
             schema: EVENT_SCHEMA_VERSION,
             run_id: Arc::from("run-0001"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         assert_eq!(

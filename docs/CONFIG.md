@@ -215,6 +215,32 @@ Both features are excluded from the pool, so a setup/teardown feature inside the
 directory never also runs as an ordinary scenario. Auth is already covered by pre-set
 secrets, so setup is for **seeding/provisioning**, not obtaining a runtime token.
 
+## Run metadata (`[meta]`, `[env.<name>.meta]`, `--meta`)
+
+Key/value pairs recorded in the run head and shown by the HTML report, the
+GitHub summary, `explain` and `diff` — never interpreted, never harvested.
+Static facts live in config; invocation facts ride the flag; the active env
+profile's table deep-merges over the base, and flags win over both — the
+same base < env < flags chain as every other setting:
+
+```toml
+[meta]
+team = "payments"
+
+[env.staging.meta]
+tier = "staging"
+```
+
+```sh
+proef test --meta commit=$(git rev-parse HEAD) --meta build=$CI_JOB_URL
+```
+
+proef itself never reads git, the hostname, or CI variables — if you want
+the SHA recorded, your shell harvests it and proef records it (ADR-0020).
+The active `--env` profile *name* is recorded automatically as its own
+field: it is user-chosen input, and without it two records of one suite
+against different `[env.<name>]` merges read as regressions in `diff`.
+
 ## Scenarios that cannot share the pool (`[run] exclusive-tags`)
 
 Some scenarios cannot run beside anything: one asserting absolute positions

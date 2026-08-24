@@ -144,6 +144,12 @@ enum Command {
         /// one knob for order and fakes alike
         #[arg(long)]
         shuffle: bool,
+        /// Attach `key=value` run metadata (repeatable): recorded in the
+        /// run head, shown by the report, summary, `explain` and `diff`.
+        /// Merged over `[meta]` and `[env.<name>.meta]`; proef never
+        /// harvests metadata itself (no git, no hostname)
+        #[arg(long = "meta", value_name = "KEY=VALUE")]
+        meta: Vec<String>,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
@@ -284,6 +290,27 @@ enum SecretAction {
 
 /// Parse `--shard I/N` (1-based): `1/3` is the first of three shards.
 /// Playwright's spelling, and the same validation everyone applies: both
+/// Parse repeated `--meta KEY=VALUE` flags: first `=` splits, empty keys and
+/// flag-level duplicates are refused (config-vs-flag overrides are the
+/// designed use; flag-vs-flag duplicates are a typo).
+fn parse_meta_flags(
+    pairs: &[String],
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let mut parsed = std::collections::BTreeMap::new();
+    for pair in pairs {
+        let Some((key, value)) = pair.split_once('=') else {
+            return Err(format!("--meta expects KEY=VALUE, got `{pair}`"));
+        };
+        if key.is_empty() {
+            return Err(format!("--meta expects a non-empty key in `{pair}`"));
+        }
+        if parsed.insert(key.to_owned(), value.to_owned()).is_some() {
+            return Err(format!("--meta key `{key}` given twice"));
+        }
+    }
+    Ok(parsed)
+}
+
 /// halves at least 1, index within count.
 fn parse_shard(raw: &str) -> Result<(u32, u32), String> {
     let (index, count) = raw
@@ -475,10 +502,14 @@ fn main() -> std::process::ExitCode {
             max_fail,
             shard,
             shuffle,
+            meta,
         } => {
             // Captured before `prepare` consumes `path`: `dry_run`'s "next
             // command" nudge must echo the path the user actually typed, not
             // a defaulted one a bare `proef test` already finds on its own.
+            // `--meta` pairs parse once; the error surfaces where the run
+            // would start (exit 2, loud over last-wins on a duplicate key).
+            let meta_pairs = parse_meta_flags(&meta);
             let path_given = path.is_some();
             // Kept for `--watch`: each rerun re-resolves the suite from the
             // config it just re-read, and the typed path still has to win.
@@ -514,23 +545,30 @@ fn main() -> std::process::ExitCode {
                                         config,
                                     )
                                 } else {
-                                    exec::execute(
-                                        path,
-                                        tag_filter.as_ref(),
-                                        jobs,
-                                        output,
-                                        junit.as_deref(),
-                                        scenario.as_deref(),
-                                        scenario_file.as_deref(),
-                                        active_env.as_deref(),
-                                        run_id.clone(),
-                                        rerun,
-                                        max_fail,
-                                        shard,
-                                        shuffle,
-                                        config,
-                                        cancel, // None = execute installs its own Ctrl-C handler
-                                    )
+                                    match &meta_pairs {
+                                        Err(message) => {
+                                            render::errln!("error: {message}");
+                                            proef_core::error::ExitCode::UserError
+                                        }
+                                        Ok(pairs) => exec::execute(
+                                            path,
+                                            tag_filter.as_ref(),
+                                            jobs,
+                                            output,
+                                            junit.as_deref(),
+                                            scenario.as_deref(),
+                                            scenario_file.as_deref(),
+                                            active_env.as_deref(),
+                                            run_id.clone(),
+                                            rerun,
+                                            max_fail,
+                                            shard,
+                                            shuffle,
+                                            &config.metadata(active_env.as_deref(), pairs),
+                                            config,
+                                            cancel, // None = execute installs its own Ctrl-C handler
+                                        ),
+                                    }
                                 }
                             };
                             if watch_mode {

@@ -91,11 +91,23 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
     let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
     let mut total_steps = 0usize;
     let mut total_attempts = 0u64;
+    let mut env: Option<String> = None;
+    let mut metadata: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     let mut run_finished: Option<(usize, usize, usize)> = None;
 
     for event in events {
         match event {
-            Event::RunStarted { run_id: id, .. } => run_id = id.to_string(),
+            Event::RunStarted {
+                run_id: id,
+                env: head_env,
+                metadata: head_metadata,
+                ..
+            } => {
+                run_id = id.to_string();
+                env = head_env.as_ref().map(ToString::to_string);
+                metadata = head_metadata.clone();
+            }
             Event::StepFinished { scenario, step, .. } => {
                 total_steps += 1;
                 let at = block_index(&mut blocks, &mut index, &step.file, scenario);
@@ -163,18 +175,13 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
          <h1>proef run <code>{run}</code></h1>",
         run = esc(&run_id)
     );
-    html.push_str("<p class=\"summary\">");
-    tally(&mut html, "pass", passed, "passed");
-    tally(&mut html, "fail", failed, "failed");
-    tally(&mut html, "skip", skipped, "skipped");
-    if warned > 0 {
-        tally(&mut html, "warn", warned, "warned");
-    }
-    let _ = writeln!(
-        html,
-        "<span class=\"steps\">{total_steps} steps · {total_attempts} attempts</span></p>"
+    render_provenance_and_summary(
+        &mut html,
+        env.as_deref(),
+        &metadata,
+        (passed, failed, skipped, warned),
+        (total_steps, total_attempts),
     );
-
     render_tag_table(&mut html, &blocks);
     render_timeline(&mut html, &blocks);
     for block in &blocks {
@@ -339,6 +346,45 @@ fn render_block(
 /// mirroring `RunSummary::passed`; time is the sum of the block's step
 /// durations, so it works on records without injected timing. Rendered only
 /// when a suite scenario carries a tag — a tagless suite gets no empty
+/// The header strip under the `<h1>`: explicit provenance (env, metadata —
+/// ADR-0020) when present, then the totals bar.
+fn render_provenance_and_summary(
+    html: &mut String,
+    env: Option<&str>,
+    metadata: &std::collections::BTreeMap<String, String>,
+    totals: (usize, usize, usize, usize),
+    steps: (usize, u64),
+) {
+    let (passed, failed, skipped, warned) = totals;
+    let (total_steps, total_attempts) = steps;
+    if env.is_some() || !metadata.is_empty() {
+        html.push_str("<p class=\"summary\">");
+        if let Some(env) = env {
+            let _ = write!(html, "<span class=\"steps\">env: {}</span> ", esc(env));
+        }
+        for (key, value) in metadata {
+            let _ = write!(
+                html,
+                "<span class=\"steps\">{}: {}</span> ",
+                esc(key),
+                esc(value)
+            );
+        }
+        html.push_str("</p>\n");
+    }
+    html.push_str("<p class=\"summary\">");
+    tally(html, "pass", passed, "passed");
+    tally(html, "fail", failed, "failed");
+    tally(html, "skip", skipped, "skipped");
+    if warned > 0 {
+        tally(html, "warn", warned, "warned");
+    }
+    let _ = writeln!(
+        html,
+        "<span class=\"steps\">{total_steps} steps · {total_attempts} attempts</span></p>"
+    );
+}
+
 /// section, and pre-field records are unchanged.
 fn render_tag_table(html: &mut String, blocks: &[ScenarioBlock]) {
     use std::collections::BTreeMap;

@@ -60,6 +60,11 @@ pub struct ProjectConfig {
     /// `[http]` table.
     #[serde(default)]
     pub http: HttpTable,
+    /// `[meta]` table — static run metadata (team, component); merged
+    /// under the active `[env.<name>.meta]`, then under `--meta` flags
+    /// (ADR-0020). Values proef records verbatim and never interprets.
+    #[serde(default)]
+    pub meta: BTreeMap<String, String>,
     /// `[sla]` table — the opt-in run-level latency budget.
     #[serde(default)]
     pub sla: SlaTable,
@@ -170,6 +175,9 @@ pub struct EnvProfile {
     /// `[env.<name>.vars]` — variable overrides.
     #[serde(default)]
     pub vars: BTreeMap<String, String>,
+    /// `[env.<name>.meta]` — metadata overrides (deep-merged over `[meta]`).
+    #[serde(default)]
+    pub meta: BTreeMap<String, String>,
     /// `[env.<name>.http]` — HTTP setting overrides.
     #[serde(default)]
     pub http: HttpTable,
@@ -448,6 +456,27 @@ impl ProjectConfig {
     /// The injected `${url:…}` / `${vars:…}` scope for the active environment,
     /// keyed `"<namespace>:<key>"` (deep-merged: base then env override). Passed
     /// into `LowerCtx::config_vars` so the sans-IO core resolves these without
+    /// The run's metadata: `[meta]` under the active `[env.<name>.meta]` under
+    /// the `--meta` flags — the same base < env < flags chain as every other
+    /// setting (ADR-0020). Flag pairs arrive pre-parsed and pre-checked (a
+    /// duplicate flag key is exit 2 at the parse, loud over last-wins).
+    pub fn metadata(
+        &self,
+        active_env: Option<&str>,
+        flag_pairs: &BTreeMap<String, String>,
+    ) -> BTreeMap<String, String> {
+        let mut merged = self.meta.clone();
+        if let Some(profile) = active_env.and_then(|name| self.env.get(name)) {
+            for (key, value) in &profile.meta {
+                merged.insert(key.clone(), value.clone());
+            }
+        }
+        for (key, value) in flag_pairs {
+            merged.insert(key.clone(), value.clone());
+        }
+        merged
+    }
+
     /// reading any file itself.
     pub fn config_vars(
         &self,
