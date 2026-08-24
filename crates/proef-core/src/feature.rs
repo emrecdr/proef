@@ -28,6 +28,12 @@ pub struct FeatureFile {
     pub source: Arc<str>,
     /// Feature-level tags (without `@`).
     pub tags: Vec<String>,
+    /// The free-prose description block under the `Feature:` line, as
+    /// authored (None when absent). The parser always produced it; dropping
+    /// it meant `flows` could never show the one paragraph written for
+    /// exactly that reader (R18 wave-1, via Robot Framework's
+    /// `[Documentation]` → report pipeline).
+    pub description: Option<String>,
     /// All concrete scenarios, in authored order.
     pub scenarios: Vec<ScenarioDef>,
 }
@@ -142,6 +148,12 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
         path: path.to_owned(),
         source,
         tags: strip_tag_markers(&feature.tags),
+        description: feature
+            .description
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .map(ToOwned::to_owned),
         scenarios,
     })
 }

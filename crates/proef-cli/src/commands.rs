@@ -490,6 +490,7 @@ pub fn flows(
                     "line": scenario.line,
                     "name": scenario.name,
                     "tags": scenario.tags,
+                    "featureDescription": feature.file.description,
                 });
                 crate::render::outln!("{json}");
             }
@@ -498,6 +499,11 @@ pub fn flows(
     }
     for feature in &front.features {
         crate::render::outln!("{} — {}", feature.file.path, feature.file.name);
+        if let Some(description) = &feature.file.description {
+            for line in description.lines() {
+                crate::render::outln!("  {line}");
+            }
+        }
         for scenario in &feature.scenarios {
             let scenario = &scenario.lowered;
             let tags = if scenario.tags.is_empty() {

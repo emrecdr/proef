@@ -97,6 +97,49 @@ fn flows_lists_the_corpus() {
     );
 }
 
+/// The description block under `Feature:` reaches both flows outputs — the
+/// parser always produced it; proef used to drop it on the floor (R18
+/// wave-1). Self-contained: the reference corpus stays description-free
+/// because its line numbers anchor snapshots.
+#[test]
+fn flows_carries_the_feature_description() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/f.feature"),
+        "Feature: Billing\n  Invoices are issued nightly; these flows guard the totals.\n\n  Scenario: s\n    When x\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  x:\n    match: x\n    steps:\n      - hurl: |\n          GET http://127.0.0.1:1/x\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let human = proef()
+        .current_dir(cwd.path())
+        .args(["flows", "suite"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&human.get_output().stdout).into_owned();
+    assert!(
+        stdout.contains("Invoices are issued nightly"),
+        "the prose reaches the human listing: {stdout}"
+    );
+
+    let json = proef()
+        .current_dir(cwd.path())
+        .args(["flows", "suite", "--output", "json"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&json.get_output().stdout).into_owned();
+    let row: serde_json::Value = serde_json::from_str(stdout.lines().next().unwrap()).unwrap();
+    assert_eq!(
+        row["featureDescription"], "Invoices are issued nightly; these flows guard the totals.",
+        "{row}"
+    );
+}
+
 #[test]
 fn schema_prints_merged_json() {
     let assert = proef().arg("schema").assert().code(0);
