@@ -104,12 +104,50 @@ compile gate.
 
 ---
 
+## Ingested — round 18 (2026-08-24), validated claim-by-claim
+
+### R18-1 — the shard hash collapse, round two *(confirmed — shipped)*
+
+Round 18 tested this registry's R17-2.1 refutation instead of restating the
+round-17 claim, and won the half that matters. The mechanism is arithmetic,
+not statistics: FNV-1a's multiplier is odd, so the accumulator's low bit is
+exactly the XOR-parity of the input bytes' low bits; a scenario named after
+its feature file — the commonest Gherkin convention — duplicates content
+across the `(file, name)` identity, whose parity contributions cancel,
+leaving a corpus-constant bit: `N=2 → [20,0]`, odd buckets empty at `N=4`
+(reproduced against the real `shard_bucket`, then pinned red in the balance
+test before the fix). The R17 balance test could not see it **by
+construction** — all three corpora held the file constant, the one condition
+under which raw FNV behaves. Shipped: Murmur3 `fmix64` finalizer on
+`shard_bucket` (Breaking: every matrix re-deals), the `mirrored` corpus in
+`natural_corpora_spread_across_shards`, and bounds recalibrated to what a
+well-mixed hash yields (no empty shard at any `N`; the 3× skew bound at
+`N=2` only — a fair deal of 20 over 4 buckets legitimately produces
+`[2,7,5,6]`). The reviewer's own concession stands for the record: fmix64 is
+mildly worse on constant-file corpora (`[7,13]` vs `[10,10]`), which is
+randomness, not structure — no empties.
+
+### R18-2 — Rust pin "four days overdue" *(refuted — and the policy is now written)*
+
+The pin follows the practiced policy — adopt a new stable at its `x.y.1`
+point release, ~3–4 weeks after `x.y.0` (1.98.1 expected mid-September) —
+but the reviewer read CLAUDE.md's "always latest stable Rust", which said
+otherwise. An unwritten policy that contradicts the written one is a docs
+defect on our side: the policy now lives in CLAUDE.md and RELEASING.md, and
+the pin bump lands on 1.98.1, as it always would have.
+
+### R18 closures
+
+Eleven round-17 closures re-verified by the reviewer against `cc75129` with
+original repros; nothing reopened. The review singles out the machine-body
+funnel and the flags-direction docs gate as the durable forms of their fixes.
+
 ## Ingested — round 17 (2026-08-23), validated claim-by-claim
 
 Two P1s filed; one confirmed both ways it can be read, one refuted by
 measurement. Every confirmed item reproduced against `b5b320a` before any fix.
 
-### R17-2.1 — `--shard` hash collapse at power-of-two counts *(refuted — do not re-raise)*
+### R17-2.1 — `--shard` hash collapse at power-of-two counts *(refuted for constant-file corpora; corrected by R18-1)*
 
 The filed claim: FNV-1a's unmixed low bits collapse the distribution at
 `N=2/4/8` ("100% of scenarios land in one shard"), fix with an fmix64
@@ -126,6 +164,13 @@ one character — which no suite exhibits. The filed measurement tables do not
 reproduce from the calibrated function. What survives: **no test asserted
 balance** — shipped as a distribution test over natural name shapes, so a
 future hash change that *does* skew fails loudly.
+
+**Round-18 correction:** the refutation above held only where its evidence
+did — every corpus it measured kept the file path constant. Round 18 showed
+the varying-file half was real (see R18-1): the low bit of raw FNV is byte
+parity, and a scenario named after its feature file cancels to a
+corpus-constant parity — `[20,0]` at `N=2`. "Degenerate corpus only" was this
+registry's error, not the reviewer's.
 
 ### R17-2.2 — `bind:` validation refused input the engine accepts *(shipped)*
 

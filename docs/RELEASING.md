@@ -36,6 +36,11 @@ set, always. Never version a crate individually.
   additive variants/fields do not bump it.
 - The **hurl pins** (`=8.0.1`) never move as a side effect of a release. Upgrades go
   exclusively through the canary + runbook (IMPLEMENTATION-PLAN §7, ADR-0003).
+- **Toolchain policy**: the pin tracks latest stable Rust but adopts a new
+  minor only at its `x.y.1` point release, ~3-4 weeks after `x.y.0` (tools and
+  third-party crates track latest immediately; exact pins like hurl outrank
+  everything). A reviewer reading "latest stable" as "bump on release day"
+  prompted writing this down (R18-2).
 - **MSRV** is the toolchain pinned in `rust-toolchain.toml`; it may rise in any
   MINOR release pre-1.0 and is not a separate contract yet.
 
