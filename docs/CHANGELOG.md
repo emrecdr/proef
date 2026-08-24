@@ -37,6 +37,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   it under the feature header; `--output json` rows gain
   `featureDescription: string|null` (additive). Library: `FeatureFile` gains
   `description`.
+- **`--shuffle` re-deals the execution order,** seeded by the run id — one
+  determinism knob for order and fakes alike, so `--shuffle --run-id <id>`
+  reproduces an order-dependent failure exactly (Robot Framework's
+  `--randomize`, minus the parallel seed it threads separately). Applied
+  after `--shard`, so membership never moves; under `--watch` every unpinned
+  rerun re-deals, deliberately. The permutation is version-stable and
+  pinned. Recording a `shuffled` marker in the run head is deferred to the
+  planned `RunStarted` additions (env/metadata), one wire change instead of
+  two.
 - **README documents every flag the binary exposes, enforced.** v0.14.0
   shipped `--shard` and `--max-fail` with no README mention; the docs gate
   gains the flags direction (same vacuity guard as the command half), and the

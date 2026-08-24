@@ -60,6 +60,82 @@ fn ran(assert: &assert_cmd::assert::Assert) -> BTreeSet<String> {
 
 const SIX: [&str; 6] = ["s1", "s2", "s3", "s4", "s5", "s6"];
 
+/// The scenario names in execution order — `--jobs 1` makes the console tree
+/// flush one scenario at a time, so stdout order is run order.
+fn ran_in_order(assert: &assert_cmd::assert::Assert) -> Vec<String> {
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    out.lines()
+        .filter_map(|l| l.trim().strip_prefix("Scenario: "))
+        .map(|rest| rest.split_whitespace().next().unwrap_or("").to_owned())
+        .collect()
+}
+
+/// `--shuffle` is seeded by the run id: same id → the same order twice; the
+/// pinned id provably re-deals (model-verified non-identity permutation);
+/// and the set of what ran never changes.
+#[test]
+fn shuffle_reorders_reproducibly() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    project(cwd.path(), &SIX);
+
+    let shuffled = |fixture: &Fixture| {
+        proef_in(cwd.path(), fixture)
+            .args([
+                "test",
+                "suite",
+                "--jobs",
+                "1",
+                "--shuffle",
+                "--run-id",
+                "shuffle-proof-0001",
+            ])
+            .assert()
+            .code(0)
+    };
+    let a = ran_in_order(&shuffled(&fixture));
+    let b = ran_in_order(&shuffled(&fixture));
+    assert_eq!(a, b, "one id is one order");
+
+    let plain = ran_in_order(
+        &proef_in(cwd.path(), &fixture)
+            .args(["test", "suite", "--jobs", "1"])
+            .assert()
+            .code(0),
+    );
+    assert_ne!(a, plain, "the pinned id must actually re-deal");
+    assert_eq!(
+        a.iter().collect::<BTreeSet<_>>(),
+        plain.iter().collect::<BTreeSet<_>>(),
+        "shuffle re-orders, never re-selects"
+    );
+}
+
+/// Shard membership is hash-of-identity and order-independent — `--shuffle`
+/// must not move a scenario across shards.
+#[test]
+fn shuffle_leaves_shard_membership_alone() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    project(cwd.path(), &SIX);
+
+    let plain = ran(&proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--shard", "1/2"])
+        .assert());
+    let shuffled = ran(&proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--shard",
+            "1/2",
+            "--shuffle",
+            "--run-id",
+            "any-id",
+        ])
+        .assert());
+    assert_eq!(plain, shuffled, "membership is identity-hashed, not order");
+}
+
 /// The shards partition the selection: disjoint, and their union is exactly
 /// the un-sharded set — no scenario lost, none run twice.
 #[test]

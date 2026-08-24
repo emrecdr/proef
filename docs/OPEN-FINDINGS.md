@@ -641,8 +641,10 @@ one-line summaries with no spec — that fact drives several verdicts below.
   the golden artifact-diff prerequisite).
 - **R3-7 `--affected-by`, R3-10 fake variants** — defined only in the absent
   v1 document; need the source or a fresh spec before any verdict.
-- **R3-9 seeded shuffle** — already tracked as IMPROVEMENT-PLAN #14; no
-  second listing here.
+- **R3-9 seeded shuffle** — **shipped** as `--shuffle` (RF-audit wave 1).
+  The old pointer here was dangling: IMPROVEMENT-PLAN #14 is the *fakes*
+  seed and never mentioned order. The shipped form honors #14's actual
+  rule anyway — the permutation is seeded by the run id, no parallel seed.
 
 **Declined — do not re-raise** (moved to the standing section's rules):
 
