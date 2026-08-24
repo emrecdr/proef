@@ -104,6 +104,92 @@ compile gate.
 
 ---
 
+## Ingested — Robot Framework capability audit (2026-08-24)
+
+A deliberate mining of Robot Framework 7.x for transferable ideas, run as
+five extended-context investigations (one per adoption candidate, plus a
+counter-audit attacking the first-pass verdicts), every load-bearing claim
+reproduced against the tree before anything shipped.
+
+### RF wave 1 *(shipped, #96–#101)*
+
+Detail cap at the engine boundary (RF's 40-line rule) · tag-atom globs
+(`*`/`?`, anchored; the silent-no-match became the intended selection) ·
+`flows` feature descriptions (parsed, was dropped) · `--shuffle` seeded by
+the run id (R3-9, one determinism knob) · `reproduce_hint` into the record
+(the console knew more than `explain` did). The shard parity fix (#96) was
+round 18's, not RF's, but shipped in the same wave.
+
+### RF wave 2 — designed, queued *(the schema wave; land skip → tags → meta)*
+
+- **RF-W2-skip** — `@skip` / `@skip:reason-token` (prefix verified to parse
+  as one tag); `reason` on `ScenarioFinished`+`ScenarioOutcome`; one
+  reserved-tag module (quarantine moves in); the two mapped collisions are
+  the point of the work: `--rerun` re-queues Skipped-on-cancelled (authored
+  reasons start with `@`, mechanical never do), and `diff` buckets
+  Failed→Skipped as *fixed* — three-way bucketing required. All-skipped →
+  exit 0 (ADR-0009 argument recorded); harness → libtest-mimic ignored.
+- **RF-W2-tags** — `tags` on `ScenarioFinished` only (the cancel-skip path
+  emits no `Started`), `exclusive` on `ScenarioStarted` (closes R11-6),
+  schema stays 1; HTML + GH-summary per-tag tables, suite-only per
+  ADR-0014; the quarantine `non_gating` list re-derivation collapses into
+  the new one owner; D1 becomes its predicted recipe. NOT building RF's
+  tagstat combine/link/doc knobs.
+- **RF-W2-meta** — `--meta k=v` + `[meta]`/`[env.<name>.meta]` on the
+  existing precedence chain; `RunStarted.env` auto-recorded (handed-over,
+  not harvested — R12-1's real axis); values through the one sink-boundary
+  mask; JUnit `<properties>` deferred by the named-consumer method; never
+  in artifacts; ADR codifying explicit-injection-only ships with it. A
+  `shuffled: bool` marker rides the same `RunStarted` change (deferred out
+  of #100 for one wire change instead of two).
+
+**Hazard both schema items must clear:** `stamp_scenario_timing` and
+`phase_sink` (exec.rs) rebuild scenario events field-by-field — a new field
+compiles clean and is silently stripped from every stamped stream unless
+threaded there, with an integration test per field.
+
+### RF wave 3 — queued behind wave 2
+
+- **Rerun merge-at-report** — the missing half of `--rerun` (see E2 below).
+- **Console modes** (`--console full|dotted|quiet`; sink mutex already
+  prevents interleaving; failure details already print post-pool) + OSC-8
+  hyperlinks on printed paths.
+- **Quarantine in JUnit** — surface disagreement, needs a decision: JUnit
+  shows a plain `<failure>` for a quarantined failure, so Jenkins marks
+  UNSTABLE while proef exits 0. RF converts the status so all surfaces
+  agree; mapping to `<skipped message="quarantined: …">` is the candidate.
+  **Human decision, not yet taken.**
+
+### Deferred with named triggers
+
+Report-size mechanism (first >1k-scenario record; failures-only render, one
+mechanism not three knobs) · `--runemptysuite` (first CI consumer; settle
+the early-error record first) · `--tagstatlink`-style issue links (after
+RF-W2-tags) · JUnit `<properties>` (a Jenkins-`keepProperties` user).
+
+### Rejected, and where the basis actually lives
+
+`--nostatusrc` (ADR-0009 is a contract) · argfiles/`ROBOT_OPTIONS`
+(proef.toml is the one channel) · pre-run modifiers, custom parsers,
+listener API (PRD §3 non-goals + product identity) · GROUP · `Set Test
+Message` · `--exitonerror` (`--max-fail` is the one early stop) ·
+`robot:private` (the macro listing exists to *show* the vocabulary).
+**Two stances the counter-audit showed are held but unwritten** — control
+flow lives in packs (`when:`/`optional:`/`retry:`), prose stays
+declarative; and proef has no runtime extension surface, the record is the
+observation API — both belong in AUTHORING or a short ADR when wave 2's
+ADR is written anyway.
+
+### Counter-audit corrections *(for the record)*
+
+"`--rerun` ahead of RF" was half wrong — ahead on selection (cancelled-tail
+union), missing the merge half entirely; see E2. "HTML report ahead of
+log.html" — ahead on visualization, was behind on forensics (the
+`reproduce_hint` gap, now closed by #101; request/response excerpts remain
+a deliberate non-goal until asked). "@quarantine ≈ `--skiponfailure`" holds
+only for exit-code CI (see wave 3). RF 7.4 added a `Secret` type — proef's
+redaction invariant predates it; banked as an ahead.
+
 ## Ingested — round 18 (2026-08-24), validated claim-by-claim
 
 ### R18-1 — the shard hash collapse, round two *(confirmed — shipped)*
@@ -1088,6 +1174,15 @@ file, one report and one exit code. Kept open rather than closed outright
 because a suite may still split invocations for reasons E1 does not address
 (different environments, different `--tags` in separate CI jobs), and nothing
 merges those.
+
+**Widened by the RF audit (2026-08-24):** the class includes `--rerun`'s own
+CI story, which this entry never named — a rerun writes a new record whose
+JUnit/report contain only the re-run subset, so "the one JUnit at the end"
+of the standard retry workflow describes 3 scenarios of a 300-scenario
+suite. RF's answer is `rebot --merge`. The proef shape, when built: overlay
+a rerun record onto its base at `report`/JUnit emission — composition over
+records, never a merged record file (ADR-0008); an additive
+`RunStarted.rerun_of` field would make records self-describing for it.
 
 ### E3 — no per-scenario state reset hook *(report B3)*
 
