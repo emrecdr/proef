@@ -261,15 +261,14 @@ pub(crate) fn template_reads(value: &str) -> Vec<String> {
         return Vec::new();
     }
     // The probe puts the value in the *quoted* `[Options] variable:` position
-    // — the exact place bake injects it (always quoted, same escaping). The
-    // first version used an unquoted header position, whose grammar treats
-    // ` # ` as a comment opener: every read after a `#` went unreported, and
-    // an unbound variable sailed through `--dry-run` to die at run time —
-    // the same late failure this function exists to prevent.
-    let escaped = proef_core::lower::quote_option(value);
-    let probe = format!(
-        "GET http://probe.invalid\n[Options]\nvariable: proefprobe=\"{escaped}\"\nHTTP 200\n"
-    );
+    // — literally the line bake injects, built by the same function, so the
+    // key spelling and the escaping cannot drift apart. The first version
+    // used an unquoted header position, whose grammar treats ` # ` as a
+    // comment opener: every read after a `#` went unreported, and an unbound
+    // variable sailed through `--dry-run` to die at run time — the same late
+    // failure this function exists to prevent.
+    let line = proef_core::lower::variable_option_line("proefprobe", value);
+    let probe = format!("GET http://probe.invalid\n[Options]\n{line}\nHTTP 200\n");
     let Ok(file) = hurl_core::parser::parse_hurl_file(&probe) else {
         return Vec::new();
     };

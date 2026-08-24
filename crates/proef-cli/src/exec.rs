@@ -371,460 +371,421 @@ pub fn execute(
     // early return in between (see `RunRecord`).
     let pool_sink = suppress_run_head_tail(sink.clone());
 
-    let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
+    // The machine-body funnel (R17-2.3/2.4 and follow-ups): from here the run
+    // exists — id, run dir, redactions — and every way out of it, the pool as
+    // much as an empty shard, an empty selection, a setup abort or a store
+    // failure, returns THROUGH this closure to the one `emit_machine_body`
+    // below. Four audit rounds each found another terminating path emitting
+    // prose or zero stdout bytes under `--output json`; a single exit is what
+    // makes a fifth impossible to forget. Paths that end before the pool
+    // report zeroed totals (ADR-0014) with their exit code.
+    let run = || -> (ExitCode, runner::RunSummary, Vec<(String, String)>) {
+        let mut record = RunRecord::open(&sink, &cancel, &front.run_id);
 
-    // Shared global store (scenario merge-back through the lock, §12).
-    let store = match GlobalStore::load(&state_file) {
-        Ok(store) => Arc::new(Mutex::new(store)),
-        Err(err) => {
-            crate::render::errln!("error: {err}");
-            emit_machine_body(
-                output,
+        // Shared global store (scenario merge-back through the lock, §12).
+        let store = match GlobalStore::load(&state_file) {
+            Ok(store) => Arc::new(Mutex::new(store)),
+            Err(err) => {
+                crate::render::errln!("error: {err}");
+                return (ExitCode::SystemError, empty_run_summary(), Vec::new());
+            }
+        };
+
+        let engines = Arc::new(registry::engines());
+
+        // Suite-level setup/teardown (ADR-0014): a feature run once before / after
+        // the pool at the CLI edge, sharing the store so its `saveAs: global`
+        // promotions reach every scenario. The core runner stays tag-agnostic.
+        let setup_path = config.setup();
+        let teardown_path = config.teardown();
+
+        // Setup runs first and merges its globals *before* the pool snapshots the
+        // store. A setup failure aborts here, never masked — a broken fixture is a
+        // user/system fault, not a test failure that would gate on exit 1.
+        if let Some(setup) = &setup_path {
+            match run_phase(
+                "setup",
+                setup,
                 &front.run_id,
-                &empty_run_summary(),
-                &[],
-                &redactions,
-                &run_dir,
-                ExitCode::SystemError,
-            );
-            return ExitCode::SystemError;
-        }
-    };
-
-    let engines = Arc::new(registry::engines());
-
-    // Suite-level setup/teardown (ADR-0014): a feature run once before / after
-    // the pool at the CLI edge, sharing the store so its `saveAs: global`
-    // promotions reach every scenario. The core runner stays tag-agnostic.
-    let setup_path = config.setup();
-    let teardown_path = config.teardown();
-
-    // Setup runs first and merges its globals *before* the pool snapshots the
-    // store. A setup failure aborts here, never masked — a broken fixture is a
-    // user/system fault, not a test failure that would gate on exit 1.
-    if let Some(setup) = &setup_path {
-        match run_phase(
-            "setup",
-            setup,
-            &front.run_id,
-            &config_vars,
-            &http_defaults,
-            &store,
-            &engines,
-            &phase_sink("setup", sink.clone()),
-            &cancel,
-            &artifacts_dir,
-            &fragments,
-            config,
-        ) {
-            Err(code) => {
+                &config_vars,
+                &http_defaults,
+                &store,
+                &engines,
+                &phase_sink("setup", sink.clone()),
+                &cancel,
+                &artifacts_dir,
+                &fragments,
+                config,
+            ) {
                 // A phase that failed to even load (missing file, bad pack,
-                // missing secret) is still a terminating path — the machine
-                // body contract has no exceptions (R17-2.4 follow-up: this
-                // arm was the one path still returning zero stdout bytes).
-                emit_machine_body(
-                    output,
-                    &front.run_id,
-                    &empty_run_summary(),
-                    &[],
-                    &redactions,
-                    &run_dir,
-                    code,
-                );
-                return code;
-            }
-            Ok(summary) => {
-                // `RunRecord`'s totals are the main-suite verdict only (ADR-0014):
-                // setup's own outcome still drives the exit code below, and its
-                // scenarios are still visible as events in the record, but it is
-                // never folded into `passed`/`failed`/`skipped` — those must match
-                // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
-                if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
-                    crate::render::errln!("error: setup failed — aborting before the suite runs");
-                    // R12-3: the abort must still reach CI's readers. The
-                    // reports carry the setup scenario itself — honest, and
-                    // better than the missing file a JUnit-gated job used to
-                    // see. A JUnit write failure does not re-classify the
-                    // exit: the setup fault is the more specific verdict.
-                    write_ci_reports(
-                        &summary,
-                        None,
-                        &front.run_id,
-                        junit,
-                        &run_dir,
-                        &redactions,
-                        machine_stdout,
-                    );
-                    // Suite totals are zeros by ADR-0014 — the pool never ran
-                    // — and the exit code carries the verdict (R17-2.4).
-                    emit_machine_body(
-                        output,
-                        &front.run_id,
-                        &empty_run_summary(),
-                        &[],
-                        &redactions,
-                        &run_dir,
-                        code,
-                    );
-                    return code;
-                }
-                // A setup that only skipped (interrupted, or watchdog-abandoned)
-                // carries no fault, so `phase_failed` waves it through — and the
-                // suite would then run against state setup never created. Abort
-                // for the same reason a failure aborts. This is also what keeps
-                // teardown gated on setup-success (ADR-0014): the early return is
-                // the gate, and teardown must not dismantle what was never built.
-                if !summary.outcomes.is_empty()
-                    && summary
-                        .outcomes
-                        .iter()
-                        .all(|o| o.status == proef_core::step::Status::Skipped)
-                {
-                    crate::render::errln!(
-                        "error: setup ran no scenario to completion — aborting before the suite runs"
-                    );
-                    write_ci_reports(
-                        &summary,
-                        None,
-                        &front.run_id,
-                        junit,
-                        &run_dir,
-                        &redactions,
-                        machine_stdout,
-                    );
-                    emit_machine_body(
-                        output,
-                        &front.run_id,
-                        &empty_run_summary(),
-                        &[],
-                        &redactions,
-                        &run_dir,
-                        ExitCode::SystemError,
-                    );
-                    return ExitCode::SystemError;
+                // missing secret) is a terminating path like any other.
+                Err(code) => return (code, empty_run_summary(), Vec::new()),
+                Ok(summary) => {
+                    // `RunRecord`'s totals are the main-suite verdict only (ADR-0014):
+                    // setup's own outcome still drives the exit code below, and its
+                    // scenarios are still visible as events in the record, but it is
+                    // never folded into `passed`/`failed`/`skipped` — those must match
+                    // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
+                    if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
+                        crate::render::errln!(
+                            "error: setup failed — aborting before the suite runs"
+                        );
+                        // R12-3: the abort must still reach CI's readers. The
+                        // reports carry the setup scenario itself — honest, and
+                        // better than the missing file a JUnit-gated job used to
+                        // see. A JUnit write failure does not re-classify the
+                        // exit: the setup fault is the more specific verdict.
+                        write_ci_reports(
+                            &summary,
+                            None,
+                            &front.run_id,
+                            junit,
+                            &run_dir,
+                            &redactions,
+                            machine_stdout,
+                        );
+                        return (code, empty_run_summary(), Vec::new());
+                    }
+                    // A setup that only skipped (interrupted, or watchdog-abandoned)
+                    // carries no fault, so `phase_failed` waves it through — and the
+                    // suite would then run against state setup never created. Abort
+                    // for the same reason a failure aborts. This is also what keeps
+                    // teardown gated on setup-success (ADR-0014): the early return is
+                    // the gate, and teardown must not dismantle what was never built.
+                    if !summary.outcomes.is_empty()
+                        && summary
+                            .outcomes
+                            .iter()
+                            .all(|o| o.status == proef_core::step::Status::Skipped)
+                    {
+                        crate::render::errln!(
+                            "error: setup ran no scenario to completion — aborting before the suite runs"
+                        );
+                        write_ci_reports(
+                            &summary,
+                            None,
+                            &front.run_id,
+                            junit,
+                            &run_dir,
+                            &redactions,
+                            machine_stdout,
+                        );
+                        return (ExitCode::SystemError, empty_run_summary(), Vec::new());
+                    }
                 }
             }
         }
-    }
 
-    // A setup/teardown feature must not also run as an ordinary suite scenario.
-    exclude_phase_features(&mut front, setup_path.as_ref(), teardown_path.as_ref());
+        // A setup/teardown feature must not also run as an ordinary suite scenario.
+        exclude_phase_features(&mut front, setup_path.as_ref(), teardown_path.as_ref());
 
-    let specs = build_specs(
-        &front,
-        tags,
-        exclusive_tags.as_ref(),
-        scenario_filter,
-        scenario_file_filter,
-        rerun_set.as_deref(),
-        &artifacts_dir,
-    );
-    // `--shard I/N` — applied AFTER every other filter, so a shard is always
-    // "shard of what you selected" (the pinned filter→shard order): the same
-    // expression on every matrix job partitions one agreed-on set.
-    let before_shard = specs.len();
-    let mut specs = specs;
-    if let Some((index, count)) = shard {
-        specs.retain(|spec| shard_bucket(&spec.file, &spec.name, count) == index - 1);
-    }
-    let selected = specs.len();
-    if selected == 0 {
-        // An empty *shard* of a non-empty selection is a small suite spread
-        // over a big matrix — a fact, not a mistake, and a matrix job must not
-        // fail on it. An empty *selection* stays the loud refusal below: a
-        // typo'd --tags passing CI with zero tests run is the silent-green
-        // failure mode (ADR-0009: user error), and sharding must not blunt it.
-        if let Some((index, count)) = shard
-            && before_shard > 0
-        {
-            let note = format!(
-                "shard {index}/{count} selected 0 of {before_shard} scenario(s) — nothing to run in this shard"
-            );
-            if machine_stdout {
-                crate::render::errln!("{note}");
-            } else {
-                crate::render::outln!("{note}");
-            }
-            emit_machine_body(
-                output,
-                &front.run_id,
-                &empty_run_summary(),
-                &[],
-                &redactions,
-                &run_dir,
-                ExitCode::Success,
-            );
-            return ExitCode::Success;
-        }
-        // Loud exit 2 by design — but a machine consumer still gets exactly
-        // one body (the fourth path this rule had to be applied to; the
-        // record is open and closes structurally like the other three).
-        emit_machine_body(
-            output,
-            &front.run_id,
-            &empty_run_summary(),
-            &[],
-            &redactions,
-            &run_dir,
-            ExitCode::UserError,
-        );
-        return front::no_scenarios_matched();
-    }
-    let status_line = format!(
-        "running {selected} scenario(s) with {effective_jobs} job(s) — run {}",
-        front.run_id
-    );
-    if machine_stdout {
-        crate::render::errln!("{status_line}");
-    } else {
-        crate::render::outln!("{status_line}");
-    }
-
-    let run_config = RunConfig {
-        run_id: Arc::clone(&front.run_id),
-        jobs: effective_jobs,
-        default_batch_budget: Duration::from_millis(
-            http_defaults.timeout_ms.saturating_mul(4).max(60_000),
-        ),
-        secrets,
-        http: http_defaults,
-    };
-    let summary = runner::run(specs, &engines, &store, &run_config, &pool_sink, &cancel);
-    record.add(&summary);
-
-    // Suite-level teardown: runs after the pool (setup succeeded, or there was
-    // none). Its failure is a distinct non-zero signal (exit 3), never a
-    // silently-green suite — the suite's own verdict still stands.
-    let mut teardown_exit = ExitCode::Success;
-    // A failed teardown's outcomes reach JUnit as their own suite (R17-2.5) —
-    // symmetric with #78's rule for setup: a phase appears in the reports
-    // when it fails. A green teardown stays out, exactly as a green setup
-    // does: the reports describe the suite, plus whatever phase broke.
-    let mut teardown_summary: Option<runner::RunSummary> = None;
-    if let Some(teardown) = &teardown_path {
-        // Cleanup outlives the interrupt. Teardown runs on its OWN token, never
-        // the run's and never `cancel.child_token()` — a child cancels with its
-        // parent, which is exactly the behaviour being fixed. On Ctrl-C the pool
-        // stops and cleanup still happens, so an interrupted run does not strand
-        // whatever setup created (ADR-0014: cleanup is reliable).
-        //
-        // ADR-0007's responsive interrupt is preserved by the escape hatch that
-        // already exists: a second Ctrl-C hard-exits (130) out of teardown too.
-        // A hung teardown is bounded by the same batch budgets and watchdog as
-        // any other phase, so this needs no timeout of its own.
-        let teardown_cancel = CancellationToken::new();
-        if cancel.is_cancelled() {
-            crate::render::errln!(
-                "cleaning up — running teardown after the interrupt (Ctrl-C again to skip)"
-            );
-        }
-        match run_phase(
-            "teardown",
-            teardown,
-            &front.run_id,
-            &config_vars,
-            &http_defaults,
-            &store,
-            &engines,
-            &phase_sink("teardown", sink.clone()),
-            &teardown_cancel,
+        let specs = build_specs(
+            &front,
+            tags,
+            exclusive_tags.as_ref(),
+            scenario_filter,
+            scenario_file_filter,
+            rerun_set.as_deref(),
             &artifacts_dir,
-            &fragments,
-            config,
-        ) {
-            // The phase's own exit code, not a blanket 3: a teardown path that
-            // does not exist is a user error like any other, and flattening it
-            // told the operator "system fault" for their own typo.
-            Err(code) => teardown_exit = code,
-            Ok(summary) => {
-                // Excluded from `record`'s totals for the same reason setup is
-                // (above): teardown's own scenario events still land in the
-                // record, and its failure still forces the exit code (below),
-                // but a green suite with a broken teardown must not misread as
-                // the API under test having failed (ADR-0014).
-                if phase_failed(&summary, ExitCode::SystemError).is_some() {
-                    crate::render::errln!(
-                        "error: teardown failed — cleanup did not complete (the suite verdict stands)"
-                    );
-                    teardown_exit = ExitCode::SystemError;
-                    teardown_summary = Some(summary);
-                } else if !summary.outcomes.is_empty()
-                    && summary
-                        .outcomes
-                        .iter()
-                        .all(|o| o.status == proef_core::step::Status::Skipped)
-                {
-                    // A phase that only skipped carries no fault and no failure,
-                    // so `phase_failed` returns `None` and the whole thing passes
-                    // in silence — the shape that let cancelled cleanup vanish.
-                    // Whatever the cause (an interrupt that reached this token, a
-                    // watchdog abandonment), cleanup did not run and saying so is
-                    // the point of having a teardown phase at all.
-                    crate::render::errln!(
-                        "error: teardown ran no scenario to completion — cleanup did not run"
-                    );
-                    teardown_exit = ExitCode::SystemError;
-                }
-            }
+        );
+        // `--shard I/N` — applied AFTER every other filter, so a shard is always
+        // "shard of what you selected" (the pinned filter→shard order): the same
+        // expression on every matrix job partitions one agreed-on set.
+        let before_shard = specs.len();
+        let mut specs = specs;
+        if let Some((index, count)) = shard {
+            specs.retain(|spec| shard_bucket(&spec.file, &spec.name, count) == index - 1);
         }
-    }
-
-    // Close the record here, at the same point every phase has finished and
-    // before the failure details / JUnit / SLA report below are printed —
-    // `ConsoleReporter` keys its `summary:` line off `RunFinished`
-    // (report.rs), so closing later would print that line after the failure
-    // detail instead of before it. Every early return above this point closes
-    // the record too, via `RunRecord::drop`, with whatever totals had
-    // accumulated so far — never zero-but-silently-missing.
-    drop(record);
-
-    // Persist the World (atomic temp+rename, 0600 — ADR-0005).
-    if let Ok(guard) = store.lock()
-        && let Err(err) = guard.save(&state_file)
-    {
-        crate::render::errln!("warning: cannot persist global state: {err}");
-    }
-
-    // Failure details (feature line + artifact span already inside details).
-    // Redacted like every other sink — engine details are pre-redacted, but
-    // fault messages can quote resolved user input.
-    for outcome in &summary.outcomes {
-        if let Some(fault) = &outcome.fault {
-            let (kind, message) = match fault {
-                runner::Fault::User(message) => ("user error", message),
-                runner::Fault::System(message) => ("system error", message),
-            };
-            crate::render::errln!(
-                "{kind}: {}:{} {} — {}",
-                outcome.file,
-                outcome.line,
-                outcome.name,
-                redactions.apply(message)
+        let selected = specs.len();
+        if selected == 0 {
+            // An empty *shard* of a non-empty selection is a small suite spread
+            // over a big matrix — a fact, not a mistake, and a matrix job must not
+            // fail on it. An empty *selection* stays the loud refusal below: a
+            // typo'd --tags passing CI with zero tests run is the silent-green
+            // failure mode (ADR-0009: user error), and sharding must not blunt it.
+            if let Some((index, count)) = shard
+                && before_shard > 0
+            {
+                let note = format!(
+                    "shard {index}/{count} selected 0 of {before_shard} scenario(s) — nothing to run in this shard"
+                );
+                if machine_stdout {
+                    crate::render::errln!("{note}");
+                } else {
+                    crate::render::outln!("{note}");
+                }
+                return (ExitCode::Success, empty_run_summary(), Vec::new());
+            }
+            // Loud exit 2 by design; the refusal's own return value is the one
+            // source of the code, so the body can never disagree with the exit.
+            return (
+                front::no_scenarios_matched(),
+                empty_run_summary(),
+                Vec::new(),
             );
         }
-        for step in &outcome.steps {
-            if step.status == proef_core::step::Status::Failed
-                && let Some(detail) = &step.detail
-            {
+        let status_line = format!(
+            "running {selected} scenario(s) with {effective_jobs} job(s) — run {}",
+            front.run_id
+        );
+        if machine_stdout {
+            crate::render::errln!("{status_line}");
+        } else {
+            crate::render::outln!("{status_line}");
+        }
+
+        let run_config = RunConfig {
+            run_id: Arc::clone(&front.run_id),
+            jobs: effective_jobs,
+            default_batch_budget: Duration::from_millis(
+                http_defaults.timeout_ms.saturating_mul(4).max(60_000),
+            ),
+            secrets,
+            http: http_defaults,
+        };
+        let summary = runner::run(specs, &engines, &store, &run_config, &pool_sink, &cancel);
+        record.add(&summary);
+
+        // Suite-level teardown: runs after the pool (setup succeeded, or there was
+        // none). Its failure is a distinct non-zero signal (exit 3), never a
+        // silently-green suite — the suite's own verdict still stands.
+        let mut teardown_exit = ExitCode::Success;
+        // A failed teardown's outcomes reach JUnit as their own suite (R17-2.5) —
+        // symmetric with #78's rule for setup: a phase appears in the reports
+        // when it fails. A green teardown stays out, exactly as a green setup
+        // does: the reports describe the suite, plus whatever phase broke.
+        let mut teardown_summary: Option<runner::RunSummary> = None;
+        if let Some(teardown) = &teardown_path {
+            // Cleanup outlives the interrupt. Teardown runs on its OWN token, never
+            // the run's and never `cancel.child_token()` — a child cancels with its
+            // parent, which is exactly the behaviour being fixed. On Ctrl-C the pool
+            // stops and cleanup still happens, so an interrupted run does not strand
+            // whatever setup created (ADR-0014: cleanup is reliable).
+            //
+            // ADR-0007's responsive interrupt is preserved by the escape hatch that
+            // already exists: a second Ctrl-C hard-exits (130) out of teardown too.
+            // A hung teardown is bounded by the same batch budgets and watchdog as
+            // any other phase, so this needs no timeout of its own.
+            let teardown_cancel = CancellationToken::new();
+            if cancel.is_cancelled() {
                 crate::render::errln!(
-                    "  ✗ {}:{} — {}{}",
-                    step.step.file,
-                    step.step.line,
-                    redactions.apply(detail),
-                    crate::render::via(step.fragment.as_deref())
+                    "cleaning up — running teardown after the interrupt (Ctrl-C again to skip)"
                 );
-                if let Some(hint) = &step.reproduce_hint {
-                    crate::render::errln!("    curl: {}", redactions.apply(hint));
+            }
+            match run_phase(
+                "teardown",
+                teardown,
+                &front.run_id,
+                &config_vars,
+                &http_defaults,
+                &store,
+                &engines,
+                &phase_sink("teardown", sink.clone()),
+                &teardown_cancel,
+                &artifacts_dir,
+                &fragments,
+                config,
+            ) {
+                // The phase's own exit code, not a blanket 3: a teardown path that
+                // does not exist is a user error like any other, and flattening it
+                // told the operator "system fault" for their own typo.
+                Err(code) => teardown_exit = code,
+                Ok(summary) => {
+                    // Excluded from `record`'s totals for the same reason setup is
+                    // (above): teardown's own scenario events still land in the
+                    // record, and its failure still forces the exit code (below),
+                    // but a green suite with a broken teardown must not misread as
+                    // the API under test having failed (ADR-0014).
+                    if phase_failed(&summary, ExitCode::SystemError).is_some() {
+                        crate::render::errln!(
+                            "error: teardown failed — cleanup did not complete (the suite verdict stands)"
+                        );
+                        teardown_exit = ExitCode::SystemError;
+                        teardown_summary = Some(summary);
+                    } else if !summary.outcomes.is_empty()
+                        && summary
+                            .outcomes
+                            .iter()
+                            .all(|o| o.status == proef_core::step::Status::Skipped)
+                    {
+                        // A phase that only skipped carries no fault and no failure,
+                        // so `phase_failed` returns `None` and the whole thing passes
+                        // in silence — the shape that let cancelled cleanup vanish.
+                        // Whatever the cause (an interrupt that reached this token, a
+                        // watchdog abandonment), cleanup did not run and saying so is
+                        // the point of having a teardown phase at all.
+                        crate::render::errln!(
+                            "error: teardown ran no scenario to completion — cleanup did not run"
+                        );
+                        teardown_exit = ExitCode::SystemError;
+                    }
                 }
             }
         }
-        // The artifact is re-executable — hand the exact command over. The
-        // slug travels with the outcome; the emitter's naming is never
-        // re-derived here (it would silently drift on emitter changes).
-        if outcome.status == proef_core::step::Status::Failed
-            && let Some(slug) = &outcome.artifact_slug
+
+        // Close the record here, at the same point every phase has finished and
+        // before the failure details / JUnit / SLA report below are printed —
+        // `ConsoleReporter` keys its `summary:` line off `RunFinished`
+        // (report.rs), so closing later would print that line after the failure
+        // detail instead of before it. Every early return above this point closes
+        // the record too, via `RunRecord::drop`, with whatever totals had
+        // accumulated so far — never zero-but-silently-missing.
+        drop(record);
+
+        // Persist the World (atomic temp+rename, 0600 — ADR-0005).
+        if let Ok(guard) = store.lock()
+            && let Err(err) = guard.save(&state_file)
         {
-            let artifact = artifacts_dir.join(format!("{slug}.hurl"));
-            if artifact.exists() {
-                let vars = artifacts_dir.join(format!("{slug}.vars"));
-                let vars_arg = if vars.exists() {
-                    format!(" --variables-file {}", vars.display())
-                } else {
-                    String::new()
+            crate::render::errln!("warning: cannot persist global state: {err}");
+        }
+
+        // Failure details (feature line + artifact span already inside details).
+        // Redacted like every other sink — engine details are pre-redacted, but
+        // fault messages can quote resolved user input.
+        for outcome in &summary.outcomes {
+            if let Some(fault) = &outcome.fault {
+                let (kind, message) = match fault {
+                    runner::Fault::User(message) => ("user error", message),
+                    runner::Fault::System(message) => ("system error", message),
                 };
-                crate::render::errln!("  reproduce: hurl --test {}{vars_arg}", artifact.display());
+                crate::render::errln!(
+                    "{kind}: {}:{} {} — {}",
+                    outcome.file,
+                    outcome.line,
+                    outcome.name,
+                    redactions.apply(message)
+                );
+            }
+            for step in &outcome.steps {
+                if step.status == proef_core::step::Status::Failed
+                    && let Some(detail) = &step.detail
+                {
+                    crate::render::errln!(
+                        "  ✗ {}:{} — {}{}",
+                        step.step.file,
+                        step.step.line,
+                        redactions.apply(detail),
+                        crate::render::via(step.fragment.as_deref())
+                    );
+                    if let Some(hint) = &step.reproduce_hint {
+                        crate::render::errln!("    curl: {}", redactions.apply(hint));
+                    }
+                }
+            }
+            // The artifact is re-executable — hand the exact command over. The
+            // slug travels with the outcome; the emitter's naming is never
+            // re-derived here (it would silently drift on emitter changes).
+            if outcome.status == proef_core::step::Status::Failed
+                && let Some(slug) = &outcome.artifact_slug
+            {
+                let artifact = artifacts_dir.join(format!("{slug}.hurl"));
+                if artifact.exists() {
+                    let vars = artifacts_dir.join(format!("{slug}.vars"));
+                    let vars_arg = if vars.exists() {
+                        format!(" --variables-file {}", vars.display())
+                    } else {
+                        String::new()
+                    };
+                    crate::render::errln!(
+                        "  reproduce: hurl --test {}{vars_arg}",
+                        artifact.display()
+                    );
+                }
             }
         }
-    }
 
-    // CI reports (US-8): JUnit XML + GitHub job summary.
-    let junit_failed = write_ci_reports(
-        &summary,
-        teardown_summary.as_ref(),
-        &front.run_id,
-        junit,
-        &run_dir,
-        &redactions,
-        machine_stdout,
-    );
-
-    // `@quarantine` scenarios run and report, but their test-failures do not
-    // gate the run (a System/User fault still does — quarantine is for flaky
-    // tests, not broken input or infra).
-    let non_gating: Vec<(String, String)> = front
-        .features
-        .iter()
-        .flat_map(|feature| {
-            feature
-                .scenarios
-                .iter()
-                .filter(|scenario| {
-                    scenario
-                        .lowered
-                        .tags
-                        .iter()
-                        .any(|tag| tag == QUARANTINE_TAG)
-                })
-                .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
-        })
-        .collect();
-    let quarantined_failures = summary
-        .outcomes
-        .iter()
-        .filter(|o| o.status == proef_core::step::Status::Failed && o.fault.is_none())
-        .filter(|o| {
-            non_gating.iter().any(|(file, name)| {
-                file.as_str() == o.file.as_ref() && name.as_str() == o.name.as_ref()
-            })
-        })
-        .count();
-    if quarantined_failures > 0 {
-        crate::render::errln!(
-            "note: {quarantined_failures} quarantined scenario(s) failed but did not gate the run"
+        // CI reports (US-8): JUnit XML + GitHub job summary.
+        let junit_failed = write_ci_reports(
+            &summary,
+            teardown_summary.as_ref(),
+            &front.run_id,
+            junit,
+            &run_dir,
+            &redactions,
+            machine_stdout,
         );
-    }
 
-    // Run-level SLA gate (opt-in via `proef.toml [sla]`). A breach prints on
-    // stderr and folds into the exit code as a test failure — but only when the
-    // run is otherwise clean, so it never downgrades a `User`/`System` fault.
-    // With no `[sla]` table configured this is inert (exit unchanged).
-    let base_exit = summary.exit_code_excluding(&non_gating);
-    let exit = match crate::sla::check(&summary, sla_thresholds) {
-        Some(report) if base_exit == ExitCode::Success => {
-            crate::render::errln!("{report}");
-            ExitCode::TestFailure
+        // `@quarantine` scenarios run and report, but their test-failures do not
+        // gate the run (a System/User fault still does — quarantine is for flaky
+        // tests, not broken input or infra).
+        let non_gating: Vec<(String, String)> = front
+            .features
+            .iter()
+            .flat_map(|feature| {
+                feature
+                    .scenarios
+                    .iter()
+                    .filter(|scenario| {
+                        scenario
+                            .lowered
+                            .tags
+                            .iter()
+                            .any(|tag| tag == QUARANTINE_TAG)
+                    })
+                    .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
+            })
+            .collect();
+        let quarantined_failures = summary
+            .outcomes
+            .iter()
+            .filter(|o| o.status == proef_core::step::Status::Failed && o.fault.is_none())
+            .filter(|o| {
+                non_gating.iter().any(|(file, name)| {
+                    file.as_str() == o.file.as_ref() && name.as_str() == o.name.as_ref()
+                })
+            })
+            .count();
+        if quarantined_failures > 0 {
+            crate::render::errln!(
+                "note: {quarantined_failures} quarantined scenario(s) failed but did not gate the run"
+            );
         }
-        Some(report) => {
-            crate::render::errln!("{report}");
-            base_exit
+
+        // Run-level SLA gate (opt-in via `proef.toml [sla]`). A breach prints on
+        // stderr and folds into the exit code as a test failure — but only when the
+        // run is otherwise clean, so it never downgrades a `User`/`System` fault.
+        // With no `[sla]` table configured this is inert (exit unchanged).
+        let base_exit = summary.exit_code_excluding(&non_gating);
+        let exit = match crate::sla::check(&summary, sla_thresholds) {
+            Some(report) if base_exit == ExitCode::Success => {
+                crate::render::errln!("{report}");
+                ExitCode::TestFailure
+            }
+            Some(report) => {
+                crate::render::errln!("{report}");
+                base_exit
+            }
+            None => base_exit,
+        };
+        // A teardown/cleanup fault (exit 3) outranks any test result.
+        let exit = if teardown_exit.code() > exit.code() {
+            teardown_exit
+        } else {
+            exit
+        };
+
+        // A run that never reached its target leaves a first-time reader with a bare
+        // `system error` and no way to know the tool is working as intended. The
+        // run's own outcomes decide, not the config alone — see the predicate.
+        if exit != ExitCode::Success {
+            note_scaffold_state(&config_vars, &summary, path);
         }
-        None => base_exit,
-    };
-    // A teardown/cleanup fault (exit 3) outranks any test result.
-    let exit = if teardown_exit.code() > exit.code() {
-        teardown_exit
-    } else {
-        exit
-    };
 
-    // A run that never reached its target leaves a first-time reader with a bare
-    // `system error` and no way to know the tool is working as intended. The
-    // run's own outcomes decide, not the config alone — see the predicate.
-    if exit != ExitCode::Success {
-        note_scaffold_state(&config_vars, &summary, path);
-    }
+        // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
+        // It used to be applied as a `return` after the machine-readable body had
+        // already been printed, so `--output json` reported an `exit_code` the
+        // process then exited past — a body that disagrees with its own program is
+        // worse than no body, because a consumer has no way to notice.
+        let exit = if junit_failed {
+            ExitCode::SystemError
+        } else {
+            exit
+        };
 
-    // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
-    // It used to be applied as a `return` after the machine-readable body had
-    // already been printed, so `--output json` reported an `exit_code` the
-    // process then exited past — a body that disagrees with its own program is
-    // worse than no body, because a consumer has no way to notice.
-    let exit = if junit_failed {
-        ExitCode::SystemError
-    } else {
-        exit
+        (exit, summary, non_gating)
     };
 
+    let (exit, summary, non_gating) = run();
     emit_machine_body(
         output,
         &front.run_id,
@@ -834,7 +795,6 @@ pub fn execute(
         &run_dir,
         exit,
     );
-
     exit
 }
 /// The suite verdict of a run whose pool never executed: zeros, not
@@ -850,15 +810,15 @@ fn empty_run_summary() -> runner::RunSummary {
     }
 }
 
-/// The machine-readable stdout body, emitted by **every** terminating path —
-/// the ordinary pool, an empty shard, a setup abort. R17-2.3/2.4: the early
-/// paths used to print prose (which broke `jq` mid-pipeline) or nothing at
-/// all (a `--output json` consumer read zero bytes on a failed setup), so a
-/// run had between zero and one bodies depending on how it ended. Exactly one
-/// body, always. Totals are the suite-only verdict (ADR-0014) — a path that
-/// never reached the pool reports zeros with its exit code, and the record
-/// path is always real: `RunRecord` opens before any of these paths and
-/// closes structurally on drop.
+/// The machine-readable stdout body — emitted from exactly one place, the
+/// funnel at the end of `execute`, which every terminating path returns
+/// through. R17-2.3/2.4 and follow-ups: this used to be called site-by-site,
+/// and four audit rounds each found another path printing prose (which broke
+/// `jq` mid-pipeline) or nothing at all (a `--output json` consumer read zero
+/// bytes on a failed setup); the single call site is what ended that class.
+/// Totals are the suite-only verdict (ADR-0014) — a path that never reached
+/// the pool reports zeros with its exit code, and the record path is always
+/// real: `RunRecord` opens inside the funnel and closes structurally on drop.
 fn emit_machine_body(
     output: Option<OutputFormat>,
     run_id: &str,

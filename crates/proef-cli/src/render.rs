@@ -81,26 +81,26 @@ pub fn print_all(diags: &[Diag]) {
         .iter()
         .partition(|d| d.severity == proef_core::diag::Severity::Error);
     for group in [errors, warnings] {
-        let mut kept: Vec<&Diag> = Vec::new();
-        let mut repeats: Vec<usize> = Vec::new();
+        let mut kept: Vec<(&Diag, usize)> = Vec::new();
         let mut index_of: std::collections::BTreeMap<(&str, &str), usize> =
             std::collections::BTreeMap::new();
         for diag in &group {
             let key = (diag.code, diag.message.as_str());
             if let Some(&at) = index_of.get(&key) {
-                repeats[at] += 1;
+                kept[at].1 += 1;
             } else {
                 index_of.insert(key, kept.len());
-                repeats.push(1);
-                kept.push(diag);
+                kept.push((diag, 1));
             }
         }
-        for (diag, count) in kept.iter().zip(&repeats) {
-            let mut shown: Diag = (**diag).clone();
-            if *count > 1 {
-                shown.message = format!("{} ({count} sites across the suite)", shown.message);
+        for &(diag, count) in &kept {
+            // `Rendered` owns its message, so the count annotation lands there
+            // — no intermediate `Diag` clone on the common single-site path.
+            let mut rendered = Rendered::from(diag);
+            if count > 1 {
+                rendered.message = format!("{} ({count} sites across the suite)", rendered.message);
             }
-            let report = miette::Report::new(Rendered::from(&shown));
+            let report = miette::Report::new(rendered);
             errln!("{report:?}");
         }
     }
