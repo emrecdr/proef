@@ -151,6 +151,11 @@ struct Report {
     regressed: Vec<Key>,     // was not-failing, now failing
     fixed: Vec<Key>,         // was failing, now passing
     still_failing: Vec<Key>, // failing in both
+    // A transition INTO Skipped is its own verdict (R18 wave-2): tagging
+    // a failing scenario `@skip` used to land in `fixed` — and
+    // `--fail-on-regression` certified it. The bool says whether the
+    // baseline was failing, which is the half a reviewer cares about.
+    now_skipped: Vec<(Key, bool)>,
     added: Vec<(Key, Status)>,
     removed: Vec<Key>,
     flaky: Vec<String>,  // scenarios whose retries rose (rendered lines)
@@ -163,6 +168,7 @@ impl Report {
             regressed: Vec::new(),
             fixed: Vec::new(),
             still_failing: Vec::new(),
+            now_skipped: Vec::new(),
             added: Vec::new(),
             removed: Vec::new(),
             flaky: Vec::new(),
@@ -174,11 +180,21 @@ impl Report {
                 Some(base_run) => {
                     let was_fail = base_run.status == Status::Failed;
                     let now_fail = new_run.status == Status::Failed;
-                    match (was_fail, now_fail) {
-                        (false, true) => report.regressed.push(key.clone()),
-                        (true, false) => report.fixed.push(key.clone()),
-                        (true, true) => report.still_failing.push(key.clone()),
-                        (false, false) => {}
+                    if new_run.status == Status::Skipped {
+                        // Into-Skipped is neither fixed nor regressed;
+                        // "fixed" here certified skipping a failing test.
+                        report.now_skipped.push((key.clone(), was_fail));
+                    } else if base_run.status == Status::Skipped {
+                        // Out of Skipped: no meaningful baseline — the
+                        // `added` shape, honest about what is known.
+                        report.added.push((key.clone(), new_run.status));
+                    } else {
+                        match (was_fail, now_fail) {
+                            (false, true) => report.regressed.push(key.clone()),
+                            (true, false) => report.fixed.push(key.clone()),
+                            (true, true) => report.still_failing.push(key.clone()),
+                            (false, false) => {}
+                        }
                     }
                     report.note_flaky(key, base_run, new_run);
                     report.note_slower(key, base_run, new_run);
@@ -241,6 +257,17 @@ impl Report {
         crate::render::outln!("diff {} → {}", run_name(base_dir), run_name(new_dir));
         section("regressed", "passed → failed", &self.regressed);
         section("fixed", "failed → passed", &self.fixed);
+        if !self.now_skipped.is_empty() {
+            crate::render::outln!("\n  now skipped ({}):", self.now_skipped.len());
+            for (key, was_failing) in &self.now_skipped {
+                let was = if *was_failing {
+                    " (was failing)"
+                } else {
+                    " (was passing)"
+                };
+                crate::render::outln!("    {} — {}{was}", key.0, key.1);
+            }
+        }
         section("still failing", "", &self.still_failing);
         if !self.added.is_empty() {
             crate::render::outln!("\n  new ({}):", self.added.len());
@@ -327,6 +354,7 @@ mod tests {
             ("f.feature".to_string(), "S".to_string()),
             ScenarioRun {
                 status: Status::Passed,
+                reason: None,
                 steps: step_map,
                 phase: None,
             },
@@ -347,5 +375,37 @@ mod tests {
             "a step with no baseline must not be reported as flaky: {:?}",
             report.flaky
         );
+    }
+
+    /// Into-Skipped is its own verdict: tagging a failing scenario `@skip`
+    /// must not read as *fixed* (the old bucketing did exactly that, and
+    /// `--fail-on-regression` certified it), and out-of-Skipped has no
+    /// meaningful baseline — the `added` shape, not a regression.
+    #[test]
+    fn skip_transitions_have_their_own_bucket() {
+        let run = |status: Status| {
+            let mut scenarios = BTreeMap::new();
+            scenarios.insert(
+                ("f.feature".to_string(), "S".to_string()),
+                ScenarioRun {
+                    status,
+                    reason: None,
+                    steps: BTreeMap::new(),
+                    phase: None,
+                },
+            );
+            scenarios
+        };
+        let report = Report::compute(&run(Status::Failed), &run(Status::Skipped));
+        assert!(report.fixed.is_empty(), "skipping a failure is not a fix");
+        assert_eq!(report.now_skipped.len(), 1);
+        assert!(report.now_skipped[0].1, "the baseline was failing");
+
+        let report = Report::compute(&run(Status::Skipped), &run(Status::Failed));
+        assert!(
+            report.regressed.is_empty(),
+            "a skipped baseline was never passing"
+        );
+        assert_eq!(report.added.len(), 1, "no baseline — the added shape");
     }
 }

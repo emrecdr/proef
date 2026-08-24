@@ -64,6 +64,8 @@ struct ScenarioBlock {
     file: String,
     name: String,
     status: Option<Status>,
+    /// Why `Skipped`, when the record says so.
+    reason: Option<String>,
     steps: Vec<StepRow>,
     /// Run-relative start/end ms and worker index — injected observability
     /// (ADR-0015), present only when the record carries timing. When present
@@ -111,10 +113,12 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                 status,
                 timestamp_ms,
                 worker,
+                reason,
                 ..
             } => {
                 let at = block_index(&mut blocks, &mut index, file, scenario);
                 blocks[at].status = Some(*status);
+                blocks[at].reason = reason.as_ref().map(ToString::to_string);
                 blocks[at].end_ms = *timestamp_ms;
                 if blocks[at].worker.is_none() {
                     blocks[at].worker = *worker;
@@ -243,6 +247,9 @@ fn render_block(
         file = esc(&block.file),
         name = esc(&block.name),
     );
+    if let Some(reason) = &block.reason {
+        let _ = write!(html, " <span class=\"loc\">— {}</span>", esc(reason));
+    }
     if status == Status::Failed && headline_failed == 0 {
         html.push_str(
             " <span class=\"phase-note\">setup/teardown — excluded from totals above</span>",

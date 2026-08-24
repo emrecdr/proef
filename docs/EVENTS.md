@@ -67,6 +67,13 @@ schema but never populated by proef's own writer today** — it is emitted from
 the main dispatcher thread, not the scenario's worker, so consumers must
 accept the field without expecting it — ADR-0015).
 
+**`reason`** — on `scenario_finished`, optional (additive; absent in
+pre-field records and on every non-skipped scenario). Why the scenario is
+`skipped`: an authored skip carries the pasteable tag spelling (`@skip` /
+`@skip:reason`), which always begins with `@`; a mechanical skip
+(cancellation) carries proef-fixed prose, which never does. `--rerun` keys
+its re-queue decision on exactly that split (ADR-0019).
+
 **`phase`** — on `scenario_started`/`scenario_finished`, optional. `"setup"` or
 `"teardown"` when the scenario belongs to a `[run]` lifecycle phase, absent for
 an ordinary suite scenario. Consumers should use it rather than inferring phase

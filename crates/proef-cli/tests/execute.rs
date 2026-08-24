@@ -809,6 +809,112 @@ fn an_empty_selection_still_emits_the_machine_body() {
     assert_eq!(body["exit_code"], 2, "{body}");
 }
 
+/// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
+/// parked visibly — counted in every total, reasoned in every sink — and an
+/// all-skipped suite exits 0 (deliberate, versioned, visible in review is
+/// nothing like a typo'd filter; ADR-0019).
+#[test]
+fn an_authored_skip_is_visible_in_every_sink_and_exits_zero() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @skip:migration-pending\n  Scenario: parked\n    When the suite probes health\n  Scenario: runs\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml", "--output", "json"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(body["passed"], 1, "{body}");
+    assert_eq!(body["skipped"], 1, "{body}");
+
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        junit.contains(r#"message="@skip:migration-pending""#),
+        "JUnit skipped carries the authored reason: {junit}"
+    );
+
+    let events = std::fs::read_to_string(body["events"].as_str().unwrap()).unwrap();
+    assert!(
+        events.contains(r#""reason":"@skip:migration-pending""#),
+        "the record says why: {events}"
+    );
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("∅ scenario parked — @skip:migration-pending"),
+        "console names the reason: {stderr}"
+    );
+}
+
+/// All-selected-scenarios skipped is exit 0 — visible everywhere, silent
+/// nowhere — while the empty *selection* stays the loud exit-2 refusal.
+#[test]
+fn an_all_skipped_suite_exits_zero() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @skip\n  Scenario: a\n    When the suite probes health\n  @skip\n  Scenario: b\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--output", "json"])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(body["skipped"], 2, "{body}");
+    assert_eq!(body["passed"], 0, "{body}");
+}
+
+/// A quarantined failure reaches JUnit as skipped-with-message, so the
+/// dashboard agrees with the exit code (RF-audit; Jenkins marked UNSTABLE on
+/// the old plain <failure> while proef exited 0).
+#[test]
+fn a_quarantined_failure_reaches_junit_as_skipped_with_message() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @quarantine\n  Scenario: flaky\n    When the probe expects absence\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  probe:\n    match: the probe expects absence\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 404\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--junit", "report.xml"])
+        .assert()
+        .code(0);
+    let junit = std::fs::read_to_string(cwd.path().join("report.xml")).unwrap();
+    assert!(
+        junit.contains("quarantined failure (non-gating)"),
+        "the XML says what the exit code says: {junit}"
+    );
+    assert!(
+        !junit.contains("<failure"),
+        "no plain failure for a non-gating verdict: {junit}"
+    );
+}
+
 /// The record carries what the console printed at run time: a failing
 /// step's redacted curl reaches `events.jsonl`, and `explain` — the
 /// post-mortem tool — prints it back (R18 wave-1: the hint existed on the
@@ -2204,6 +2310,7 @@ fn diff_scenario_finished() -> proef_core::event::Event {
         timestamp_ms: None,
         worker: None,
         phase: None,
+        reason: None,
     }
 }
 
@@ -3155,6 +3262,7 @@ fn a_truncated_record_counts_a_warned_scenario_as_passed() {
                 timestamp_ms: None,
                 worker: None,
                 phase: None,
+                reason: None,
             },
         ],
     );

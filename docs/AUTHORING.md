@@ -48,6 +48,29 @@ parentheses, with the `@` optional (e.g. `--tags "@api and not @slow"` or
 `--tags "(smoke or nightly) and not wip"`). A bare tag is a valid expression; a
 selection matching nothing is an error, not a silent green run.
 
+## Reserved tags
+
+Two tag names carry behavior; every other tag is yours (selection via
+`--tags`, grouping, traceability):
+
+- **`@quarantine`** — the scenario runs and reports, but a test-failure does
+  not gate the exit code, reaches JUnit as `<skipped
+  message="quarantined failure (non-gating): …">`, and maps to `# TODO` in
+  TAP. For flaky tests while they are being fixed — a User/System fault
+  still fails the run.
+- **`@skip`** / **`@skip:<reason-token>`** — the scenario is parked: never
+  prepared or run, counted as skipped, and the reason (the tag spelling
+  itself) appears in the console, JUnit, TAP, the record, the report,
+  `explain` and `flows`. `--tags "not @skip*"` unselects both spellings when
+  you want them gone from the totals too. All-skipped exits 0; `--dry-run`
+  still validates a skipped scenario (skip is not a validation waiver).
+  In `[run] setup`/`teardown` features, reserved tags have no effect.
+
+Conditional, data-dependent skipping is a *step* concern and stays in packs:
+`when:` guards a step, `optional:` soft-fails one, `retry:` bounds one.
+That split is deliberate and permanent — scenario prose stays declarative;
+there is no scenario-level IF/WHILE/TRY and none is planned (ADR-0019).
+
 ## Macros (`macros:` in a pack)
 
 ```yaml

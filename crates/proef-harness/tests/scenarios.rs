@@ -74,9 +74,13 @@ fn discover() -> Vec<Trial> {
             .unwrap_or_default();
         let trial_name = format!("{stem}::{name}");
         let (suite, file, scenario) = (suite.clone(), file.to_owned(), name.to_owned());
-        trials.push(Trial::test(trial_name, move || {
-            run_scenario(&suite, &file, &scenario)
-        }));
+        // An authored `@skip` maps to libtest's ignored flag — nextest
+        // and IDEs then show it natively instead of running it to skip.
+        let ignored = flow["skip"].is_string();
+        trials.push(
+            Trial::test(trial_name, move || run_scenario(&suite, &file, &scenario))
+                .with_ignored_flag(ignored),
+        );
     }
     if trials.is_empty() && !stdout.trim().is_empty() {
         // Flows succeeded and printed rows, yet none parsed into a trial —

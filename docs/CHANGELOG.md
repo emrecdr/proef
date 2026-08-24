@@ -8,6 +8,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Breaking
 
+- **A quarantined test-failure reaches JUnit as `<skipped>` with a message,
+  not `<failure>`** — Jenkins marked builds UNSTABLE while proef exited 0;
+  every dashboard now says what the exit code says (ADR-0019). Library:
+  `ScenarioSpec` gains `skip`, `ScenarioOutcome`/`ScenarioRun` gain
+  `reason`, `Event::ScenarioFinished` gains additive `reason`,
+  `write_junit` takes the non-gating list.
 - **`--shard` assignments re-deal: the hash gained a mixing finalizer.** Raw
   FNV-1a's low bit is the XOR-parity of the input bytes, so a scenario named
   after its feature file — the commonest Gherkin convention — collapsed to
@@ -31,6 +37,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`@skip` and `@skip:<reason>` park a scenario visibly** (ADR-0019, RF
+  wave 2): counted in every total, reasoned in the console, JUnit, TAP, the
+  record, the HTML report, `explain` and `flows --output json`; the harness
+  maps it to libtest's ignored flag. All-selected-skipped exits 0; the
+  empty-selection refusal stays exit 2. `--tags "not @skip*"` unselects both
+  spellings; an authored skip is never re-queued by `--rerun`, and `diff`
+  gives skip transitions their own bucket instead of reading them as fixed.
 - **`flows` shows the feature description.** The prose block under
   `Feature:` was parsed and then dropped — the one paragraph written for
   exactly the reader `flows` serves never reached them. Human output prints

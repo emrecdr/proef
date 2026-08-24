@@ -148,6 +148,14 @@ pub enum Event {
         /// read as "no phase", which is what they were.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         phase: Option<Arc<str>>,
+        /// Why the scenario is `Skipped` (R18 wave-2): an authored skip
+        /// carries the pasteable tag spelling (`@skip` / `@skip:reason`),
+        /// which always begins with `@`; a mechanical skip (cancellation)
+        /// carries proef-fixed prose, which never does — `--rerun` keys its
+        /// re-queue decision on exactly that split. Additive and absent for
+        /// every non-skipped scenario and every pre-field stream.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<Arc<str>>,
     },
     /// The run finished. Tail of every stream.
     RunFinished {
