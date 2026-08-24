@@ -31,6 +31,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`flows` shows the feature description.** The prose block under
+  `Feature:` was parsed and then dropped — the one paragraph written for
+  exactly the reader `flows` serves never reached them. Human output prints
+  it under the feature header; `--output json` rows gain
+  `featureDescription: string|null` (additive). Library: `FeatureFile` gains
+  `description`.
 - **README documents every flag the binary exposes, enforced.** v0.14.0
   shipped `--shard` and `--max-fail` with no README mention; the docs gate
   gains the flags direction (same vacuity guard as the command half), and the

@@ -806,6 +806,7 @@ pub fn proef_core::fake::generate(&str, usize, &str) -> core::option::Option<all
 pub fn proef_core::fake::is_known_generator(&str) -> bool
 pub mod proef_core::feature
 pub struct proef_core::feature::FeatureFile
+pub proef_core::feature::FeatureFile::description: core::option::Option<alloc::string::String>
 pub proef_core::feature::FeatureFile::name: alloc::string::String
 pub proef_core::feature::FeatureFile::path: alloc::string::String
 pub proef_core::feature::FeatureFile::scenarios: alloc::vec::Vec<proef_core::feature::ScenarioDef>
