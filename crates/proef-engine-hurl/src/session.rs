@@ -536,7 +536,7 @@ impl EngineSession for HurlSession {
                     let location = span.map_or_else(String::new, |[a, _]| {
                         format!(" (artifact {}.hurl:{a})", self.artifact.slug)
                     });
-                    Some(format!("{}{location}", errors.join("; ")))
+                    Some(format!("{}{location}", cap_detail(&errors.join("; "))))
                 } else if merged && !reached {
                     Some("not run (its request entry did not run)".to_owned())
                 } else if entries.is_empty() && !merged {
@@ -599,7 +599,7 @@ impl EngineSession for HurlSession {
                 // exactly those. Already redacted by `render_error`; JUnit
                 // surfaces them as <flakyFailure>.
                 let attempt_details = if status == Status::Passed && attempts > 1 {
-                    errors
+                    errors.iter().map(|e| cap_detail(e)).collect()
                 } else {
                     Vec::new()
                 };
@@ -730,6 +730,44 @@ fn line_in_entry(parsed_entry: &hurl_core::ast::Entry, result_line: usize) -> bo
     let start = parsed_entry.request.source_info.start.line;
     let end = parsed_entry.request.source_info.end.line;
     result_line >= start && result_line <= end
+}
+
+/// Bound a failure detail before it enters any sink (R18 wave-1). hurl's
+/// rendered assert error quotes the actual response, so a failed assert on a
+/// large body would otherwise ride full-size into the record, `JUnit`, the
+/// HTML report and the GitHub summary at once — every sink pays, and none
+/// can un-pay. Middle-cut like Robot Framework's 40-line rule: the head
+/// carries the assertion, the tail carries the closing context, the marker
+/// says what was elided and where the full truth lives (re-running the
+/// artifact). Cuts at char boundaries; short details pass through untouched.
+fn cap_detail(text: &str) -> String {
+    const MAX_LINES: usize = 40;
+    const MAX_BYTES: usize = 8 * 1024;
+    let over_lines = text.lines().count() > MAX_LINES;
+    if !over_lines && text.len() <= MAX_BYTES {
+        return text.to_owned();
+    }
+    let keep = MAX_BYTES / 2;
+    let head_end = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .take_while(|&i| i <= keep)
+        .last()
+        .unwrap_or(0);
+    let tail_start = text
+        .char_indices()
+        .map(|(i, _)| i)
+        .find(|&i| i >= text.len().saturating_sub(keep / 4))
+        .unwrap_or(text.len());
+    let head: String = text[..head_end]
+        .lines()
+        .take(MAX_LINES.saturating_sub(8))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let tail_lines: Vec<&str> = text[tail_start..].lines().collect();
+    let tail = tail_lines[tail_lines.len().saturating_sub(6)..].join("\n");
+    let elided = text.len().saturating_sub(head.len() + tail.len());
+    format!("{head}\n[… {elided} bytes elided — re-run the artifact for the full output]\n{tail}")
 }
 
 /// Detail attached to a step whose payload lowered to zero hurl entries.
@@ -1067,5 +1105,51 @@ mod budget_tests {
         assert_eq!(entry_retry(&plain).map(|(r, _)| r), Some(0));
         assert_eq!(entry_delay(&plain), Some(std::time::Duration::ZERO));
         assert_eq!(entry_repeat(&plain), Some(1));
+    }
+
+    /// Short details pass through byte-identical — the cap must never touch
+    /// the common case.
+    #[test]
+    fn a_short_detail_is_untouched() {
+        let s = "assert status == 200 failed (got 500)";
+        assert_eq!(super::cap_detail(s), s);
+    }
+
+    /// An oversized single-line detail (a quoted response body) is
+    /// middle-cut with the elision marker; head and tail both survive.
+    #[test]
+    fn an_oversized_detail_is_middle_cut() {
+        let body: String = "x".repeat(20 * 1024);
+        let s = format!("assert body == … failed; actual: {body}END");
+        let capped = super::cap_detail(&s);
+        assert!(capped.len() < 10 * 1024, "bounded: {}", capped.len());
+        assert!(capped.starts_with("assert body"), "head survives");
+        assert!(capped.ends_with("END"), "tail survives");
+        assert!(capped.contains("bytes elided"), "the marker names the cut");
+    }
+
+    /// A many-line detail is cut by lines even when small in bytes, and the
+    /// head and tail never overlap (head ≤ 32 lines, tail = last 6, trigger
+    /// ≥ 41 lines).
+    #[test]
+    fn a_many_line_detail_is_cut_by_lines() {
+        let s: String = (1..=60)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = super::cap_detail(&s);
+        assert!(capped.contains("line 1\n"), "head survives");
+        assert!(capped.ends_with("line 60"), "tail survives");
+        assert!(capped.contains("elided"), "marker present");
+        assert!(!capped.contains("line 40\nline 41"), "the middle is gone");
+    }
+
+    /// Cuts land on char boundaries — multibyte content at the cut point
+    /// must not panic.
+    #[test]
+    fn the_cut_respects_char_boundaries() {
+        let s = "é".repeat(10 * 1024);
+        let capped = super::cap_detail(&s);
+        assert!(capped.contains("elided"));
     }
 }

@@ -44,6 +44,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A failure detail is bounded before it reaches any sink.** hurl's rendered
+  assert error quotes the actual response, so a failed assert on a large body
+  rode full-size into the record, JUnit, the HTML report and the GitHub
+  summary at once. The engine now middle-cuts past 40 lines / 8 KiB with a
+  marker naming the elision; the artifact pointer survives outside the cut,
+  and the full output is one re-run away (Robot Framework's 40-line rule,
+  adopted at the boundary where all sinks are covered at once).
 - **The machine-body contract closes its last two paths**: an empty selection
   (`--scenario`/`--tags` matching nothing — loud exit 2 by design) and a
   corrupt global-state file both emitted zero stdout bytes under
