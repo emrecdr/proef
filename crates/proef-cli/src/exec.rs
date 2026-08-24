@@ -156,6 +156,7 @@ pub fn execute(
     rerun: bool,
     max_fail: Option<u32>,
     shard: Option<(u32, u32)>,
+    shuffle: bool,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -495,6 +496,18 @@ pub fn execute(
         let mut specs = specs;
         if let Some((index, count)) = shard {
             specs.retain(|spec| shard_bucket(&spec.file, &spec.name, count) == index - 1);
+        }
+        // `--shuffle` — after the shard filter, so each matrix job re-deals
+        // exactly what it runs (bucketing hashes identity and is
+        // order-independent, so membership is untouched). The permutation is
+        // seeded by the run id: one determinism knob for order and fakes
+        // alike (IMPROVEMENT-PLAN #14's rule — no parallel seed), so
+        // `--shuffle --run-id <id from the failing run>` reproduces an
+        // order-dependent failure exactly. Under `--watch`, each unpinned
+        // rerun gets a fresh id and therefore a fresh order — deliberate:
+        // the loop shakes order deps loose, each iteration reproducible.
+        if shuffle {
+            shuffle_specs(&mut specs, &front.run_id);
         }
         let selected = specs.len();
         if selected == 0 {
@@ -1306,6 +1319,31 @@ fn exclude_phase_features(
     });
 }
 
+/// Fisher–Yates over the selected specs, seeded from the run id (FNV-1a of
+/// its bytes into a `SplitMix64` stream — both hand-rolled like `shard_bucket`
+/// below: dependency-free, and stable across proef versions so a recorded
+/// run id replays its order forever). Core stays pure: the permutation
+/// happens here at the CLI edge, and the runner receives an already-ordered
+/// `Vec` exactly as it does without the flag.
+fn shuffle_specs(specs: &mut [runner::ScenarioSpec], run_id: &str) {
+    let mut seed = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in run_id.bytes() {
+        seed ^= u64::from(byte);
+        seed = seed.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let mut next = move || {
+        seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    };
+    for i in (1..specs.len()).rev() {
+        let j = usize::try_from(next() % (i as u64 + 1)).unwrap_or(0);
+        specs.swap(i, j);
+    }
+}
+
 /// Which shard a scenario belongs to: a stable hash of its run-wide identity,
 /// modulo the shard count.
 ///
@@ -1550,6 +1588,29 @@ mod tests {
     use super::{RunRecord, rotate_runs, runner};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
+
+    /// The permutation is a contract like the shard assignment below: seeded
+    /// only by the run id, stable across proef versions, so a recorded id
+    /// replays its order forever. Expected sequence computed independently.
+    #[test]
+    fn shuffle_is_seeded_by_the_run_id_alone() {
+        use proef_core::runner::ScenarioSpec;
+        let spec = |name: &str| ScenarioSpec {
+            file: "f.feature".into(),
+            name: name.into(),
+            line: 1,
+            file_root: None,
+            exclusive: false,
+            prepare: Box::new(|_| unreachable!("never prepared in this test")),
+        };
+        let mut specs: Vec<ScenarioSpec> = ["a", "b", "c", "d", "e", "f"]
+            .iter()
+            .map(|n| spec(n))
+            .collect();
+        super::shuffle_specs(&mut specs, "pinned-seed");
+        let order: Vec<&str> = specs.iter().map(|s| s.name.as_ref()).collect();
+        assert_eq!(order, ["c", "f", "a", "b", "d", "e"]);
+    }
 
     /// The shard assignment is a contract: these literals were computed once
     /// and frozen. If this test fails, the hash changed — which silently

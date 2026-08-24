@@ -139,6 +139,11 @@ enum Command {
         /// never re-buckets the others across a CI matrix
         #[arg(long, value_parser = parse_shard)]
         shard: Option<(u32, u32)>,
+        /// Re-deal the execution order. The permutation is seeded by the run
+        /// id — `--shuffle --run-id <id>` reproduces a failing order exactly,
+        /// one knob for order and fakes alike
+        #[arg(long)]
+        shuffle: bool,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
@@ -469,6 +474,7 @@ fn main() -> std::process::ExitCode {
             env,
             max_fail,
             shard,
+            shuffle,
         } => {
             // Captured before `prepare` consumes `path`: `dry_run`'s "next
             // command" nudge must echo the path the user actually typed, not
@@ -521,6 +527,7 @@ fn main() -> std::process::ExitCode {
                                         rerun,
                                         max_fail,
                                         shard,
+                                        shuffle,
                                         config,
                                         cancel, // None = execute installs its own Ctrl-C handler
                                     )
