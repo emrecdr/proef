@@ -219,7 +219,9 @@ secrets, so setup is for **seeding/provisioning**, not obtaining a runtime token
 
 Some scenarios cannot run beside anything: one asserting absolute positions
 (`items[0]`) needs a store no concurrent scenario writes to. `exclusive-tags`
-is a tag expression — the same language `--tags` takes — selecting those:
+is a tag expression — the same language `--tags` takes — selecting those.
+Atoms may glob (`*` any run, `?` one character, anchored — `@serial-*` is the
+whole family; case-sensitive, unlike Robot Framework):
 
 ```toml
 [run]

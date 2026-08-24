@@ -62,6 +62,14 @@ fn tags_filter_selects_by_boolean_expression() {
         selected("@breadth").contains("(4 selected by the filters)"),
         "leading @ is optional"
     );
+    assert!(
+        selected("@sync-*").contains("(3 selected by the filters)"),
+        "a glob atom selects the whole prefix family"
+    );
+    assert!(
+        selected("@sync-* and not @sync-note").contains("(2 selected by the filters)"),
+        "globs compose with the boolean operators"
+    );
     let and_not = selected("api and not breadth");
     assert!(and_not.contains("(8 selected by the filters)"), "{and_not}");
     let parens = selected("(api or search) and not breadth");
