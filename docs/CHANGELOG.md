@@ -17,6 +17,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   version (already true in practice). Round-18 finding, reproduced and
   mechanism-verified before fixing; the balance test gained the
   name-mirrors-file corpus it was structurally blind to.
+- **Tag atoms glob.** `*` and `?` in a `--tags` / `[run] exclusive-tags` atom
+  are now anchored wildcards (`@FRD-*` selects the family; `?` is one
+  character) — previously they were literal characters that silently matched
+  nothing, the trap this closes. Metacharacter-free atoms are bit-identical
+  to before, property-pinned. Case stays sensitive.
 - **JUnit test identity is `classname` + `name`.** `classname` carries the
   feature file, `name` the scenario alone; the old single `name` embedded
   `file:line`, so an edit above a scenario re-identified every test below it

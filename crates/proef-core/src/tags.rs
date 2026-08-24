@@ -33,11 +33,42 @@ impl TagExpr {
     /// selected by this expression.
     pub fn eval(&self, tags: &[String]) -> bool {
         match self {
-            TagExpr::Tag(want) => tags.iter().any(|tag| tag == want),
+            TagExpr::Tag(want) => tags.iter().any(|tag| atom_matches(want, tag)),
             TagExpr::Not(inner) => !inner.eval(tags),
             TagExpr::And(left, right) => left.eval(tags) && right.eval(tags),
             TagExpr::Or(left, right) => left.eval(tags) || right.eval(tags),
         }
+    }
+}
+
+/// Does one atom select one tag? An atom without `*`/`?` is literal equality
+/// — the pre-glob behavior, bit-identical. With metacharacters it is an
+/// anchored glob: `*` spans any run (including empty), `?` exactly one
+/// character. Full-anchored on purpose (`@FRD-*` must not select `@my-FRD-x`)
+/// and deliberately no character classes — `or` is the expression language's
+/// alternation, and half-a-glob that silently degrades to a literal is the
+/// silent-no-match class the correctness series existed to kill. Case stays
+/// sensitive, matching every other comparison in this grammar (Robot
+/// Framework folds case; the divergence is recorded in AUTHORING).
+fn atom_matches(pattern: &str, tag: &str) -> bool {
+    if !pattern.contains(['*', '?']) {
+        return pattern == tag;
+    }
+    let pattern: Vec<char> = pattern.chars().collect();
+    let tag: Vec<char> = tag.chars().collect();
+    glob_at(&pattern, &tag)
+}
+
+/// Anchored glob over chars (`?` is one *character*, never one byte) with
+/// backtracking on `*` only — linear for the single-`*` patterns real
+/// expressions use, and input length is bounded by tag length, so the worst
+/// case stays harmless.
+fn glob_at(pattern: &[char], text: &[char]) -> bool {
+    match pattern.split_first() {
+        None => text.is_empty(),
+        Some(('*', rest)) => (0..=text.len()).any(|skip| glob_at(rest, &text[skip..])),
+        Some(('?', rest)) => !text.is_empty() && glob_at(rest, &text[1..]),
+        Some((literal, rest)) => text.first() == Some(literal) && glob_at(rest, &text[1..]),
     }
 }
 
@@ -257,5 +288,48 @@ mod tests {
         let expr = parse(&atoms.join(" or ")).unwrap();
         assert!(expr.eval(&tags(&["t4999"])));
         assert!(!expr.eval(&tags(&["missing"])));
+    }
+
+    /// Glob atoms: anchored, `*` spans, `?` is one char, and a metachar-free
+    /// atom is exact equality (bit-identical pre-glob behavior).
+    #[test]
+    fn glob_atoms_match_anchored() {
+        let tags = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        let sel = |expr: &str, list: &[&str]| parse(expr).unwrap().eval(&tags(list));
+        assert!(sel("@FRD-*", &["FRD-3.1"]));
+        assert!(sel("@sync-*", &["sync-note"]));
+        assert!(
+            !sel("@FRD-*", &["my-FRD-3.1"]),
+            "anchored: no substring match"
+        );
+        assert!(
+            !sel("@FRD-*", &["FRD"]),
+            "the literal prefix is required in full"
+        );
+        assert!(sel("@FRD-*", &["FRD-"]), "star spans the empty run");
+        assert!(!sel("@FRD-*", &["frd-3.1"]), "case stays sensitive");
+        assert!(sel("@case-?", &["case-7"]));
+        assert!(!sel("@case-?", &["case-42"]), "? is exactly one char");
+        assert!(sel("@case-?", &["case-é"]), "? is one CHAR, not one byte");
+        assert!(sel("not @wip-*", &["api"]));
+        assert!(!sel("not @wip-*", &["wip-auth"]));
+        assert!(
+            sel("@*", &["anything"]),
+            "bare * means: has at least one tag"
+        );
+        assert!(!sel("@*", &[]), "bare * never selects the untagged");
+    }
+
+    proptest::proptest! {
+        /// A pattern with no metacharacters selects exactly what equality
+        /// selects — the glob extension cannot change any pre-glob result.
+        #[test]
+        fn a_metachar_free_atom_is_equality(
+            atom in "[a-zA-Z0-9_.-]{1,20}",
+            tag in "[a-zA-Z0-9_.-]{1,20}",
+        ) {
+            let expr = parse(&format!("@{atom}")).unwrap();
+            proptest::prop_assert_eq!(expr.eval(std::slice::from_ref(&tag)), atom == tag);
+        }
     }
 }

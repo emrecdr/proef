@@ -91,7 +91,9 @@ enum Command {
         dry_run: bool,
         /// Select scenarios by a boolean tag expression, e.g.
         /// `"@api and not @slow"` (operators `and`/`or`/`not`, parentheses; the
-        /// `@` is optional). Omitted, every scenario runs.
+        /// `@` is optional). Atoms may glob: `*` spans any run, `?` is one
+        /// character, anchored — `@FRD-*` selects the whole family. Omitted,
+        /// every scenario runs.
         #[arg(long)]
         tags: Option<String>,
         /// Parallel scenario workers (default: proef.toml or CPU count)
