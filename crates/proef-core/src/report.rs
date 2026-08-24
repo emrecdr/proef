@@ -116,12 +116,14 @@ impl Redactions {
                 timestamp_ms,
                 worker,
                 phase,
+                exclusive,
             } => Event::ScenarioStarted {
                 scenario: s(scenario),
                 file: s(file),
                 timestamp_ms: *timestamp_ms,
                 worker: *worker,
                 phase: phase.clone(),
+                exclusive: *exclusive,
             },
             Event::BatchStarted {
                 scenario,
@@ -143,43 +145,7 @@ impl Redactions {
                 entry: *entry,
                 retry: *retry,
             },
-            Event::StepFinished {
-                scenario,
-                engine,
-                step,
-                status,
-                attempts,
-                duration_ms,
-                captures,
-                fragment,
-                detail,
-                attempt_details,
-                reproduce_hint,
-            } => Event::StepFinished {
-                scenario: s(scenario),
-                engine: s(engine),
-                step: crate::step::StepRef {
-                    file: s(&step.file),
-                    line: step.line,
-                    text: s(&step.text),
-                },
-                status: *status,
-                attempts: *attempts,
-                duration_ms: *duration_ms,
-                captures: captures.iter().map(|name| self.apply(name)).collect(),
-                // Masked like `captures`, though both are authored identifiers
-                // rather than data: the masker's contract is that no secret
-                // substring survives anywhere in the stream, and a field
-                // exempted "because it can't contain one" is how that stops
-                // being true later.
-                fragment: fragment.as_deref().map(|text| self.apply(text)),
-                detail: detail.as_deref().map(|text| self.apply(text)),
-                attempt_details: attempt_details
-                    .iter()
-                    .map(|text| self.apply(text))
-                    .collect(),
-                reproduce_hint: reproduce_hint.as_deref().map(|text| self.apply(text)),
-            },
+            Event::StepFinished { .. } => self.apply_step_finished(event),
             Event::ScenarioFinished {
                 scenario,
                 file,
@@ -188,6 +154,7 @@ impl Redactions {
                 worker,
                 phase,
                 reason,
+                tags,
             } => Event::ScenarioFinished {
                 scenario: s(scenario),
                 file: s(file),
@@ -198,8 +165,59 @@ impl Redactions {
                 reason: reason
                     .as_deref()
                     .map(|text| Arc::from(self.apply(text).as_str())),
+                // Masked like `captures`: authored identifiers, but the
+                // masker's contract is that no secret substring survives
+                // anywhere in the stream.
+                tags: tags.iter().map(|tag| self.apply(tag)).collect(),
             },
             Event::RunFinished { .. } => event.clone(),
+        }
+    }
+
+    /// The `step_finished` half of [`Self::apply_event`], split out to keep
+    /// the match readable: every text-bearing field masked, none exempted.
+    fn apply_step_finished(&self, event: &Event) -> Event {
+        let s = |text: &Arc<str>| -> Arc<str> { Arc::from(self.apply(text).as_str()) };
+        let Event::StepFinished {
+            scenario,
+            engine,
+            step,
+            status,
+            attempts,
+            duration_ms,
+            captures,
+            fragment,
+            detail,
+            attempt_details,
+            reproduce_hint,
+        } = event
+        else {
+            unreachable!("caller matched StepFinished")
+        };
+        Event::StepFinished {
+            scenario: s(scenario),
+            engine: s(engine),
+            step: crate::step::StepRef {
+                file: s(&step.file),
+                line: step.line,
+                text: s(&step.text),
+            },
+            status: *status,
+            attempts: *attempts,
+            duration_ms: *duration_ms,
+            captures: captures.iter().map(|name| self.apply(name)).collect(),
+            // Masked like `captures`, though both are authored identifiers
+            // rather than data: the masker's contract is that no secret
+            // substring survives anywhere in the stream, and a field
+            // exempted "because it can't contain one" is how that stops
+            // being true later.
+            fragment: fragment.as_deref().map(|text| self.apply(text)),
+            detail: detail.as_deref().map(|text| self.apply(text)),
+            attempt_details: attempt_details
+                .iter()
+                .map(|text| self.apply(text))
+                .collect(),
+            reproduce_hint: reproduce_hint.as_deref().map(|text| self.apply(text)),
         }
     }
 }
@@ -531,6 +549,7 @@ mod tests {
                 timestamp_ms: None,
                 worker: None,
                 phase: None,
+                exclusive: false,
             },
             Event::StepFinished {
                 scenario: Arc::from("S"),
@@ -557,6 +576,7 @@ mod tests {
                 worker: None,
                 phase: None,
                 reason: None,
+                tags: Vec::new(),
             },
             Event::RunFinished {
                 passed: 1,
@@ -726,6 +746,7 @@ mod tests {
                     timestamp_ms: None,
                     worker: None,
                     phase: None,
+                    exclusive: false,
                 });
                 sink.emit(&Event::StepFinished {
                     scenario: Arc::from(format!("uses {secret}")),
@@ -770,6 +791,7 @@ mod tests {
                         timestamp_ms: None,
                         worker: None,
                         phase: None,
+                        exclusive: false,
                     });
                     console.on_event(&Event::StepFinished {
                         scenario: Arc::from("S"),
@@ -796,6 +818,7 @@ mod tests {
                         worker: None,
                         phase: None,
             reason: None,
+            tags: Vec::new(),
                     });
                 }
                 let text = String::from_utf8(out).unwrap();

@@ -66,6 +66,11 @@ struct ScenarioBlock {
     status: Option<Status>,
     /// Why `Skipped`, when the record says so.
     reason: Option<String>,
+    /// The scenario's tags, straight from `scenario_finished`.
+    tags: Vec<String>,
+    /// `[run]` phase label, when the record says so — the tag table
+    /// excludes phase scenarios exactly as every other total does.
+    phase: Option<String>,
     steps: Vec<StepRow>,
     /// Run-relative start/end ms and worker index — injected observability
     /// (ADR-0015), present only when the record carries timing. When present
@@ -114,11 +119,15 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
                 timestamp_ms,
                 worker,
                 reason,
+                tags,
+                phase,
                 ..
             } => {
                 let at = block_index(&mut blocks, &mut index, file, scenario);
                 blocks[at].status = Some(*status);
                 blocks[at].reason = reason.as_ref().map(ToString::to_string);
+                blocks[at].tags.clone_from(tags);
+                blocks[at].phase = phase.as_ref().map(ToString::to_string);
                 blocks[at].end_ms = *timestamp_ms;
                 if blocks[at].worker.is_none() {
                     blocks[at].worker = *worker;
@@ -166,6 +175,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
         "<span class=\"steps\">{total_steps} steps · {total_attempts} attempts</span></p>"
     );
 
+    render_tag_table(&mut html, &blocks);
     render_timeline(&mut html, &blocks);
     for block in &blocks {
         render_block(&mut html, block, artifacts_href, failed);
@@ -322,6 +332,51 @@ fn render_block(
 /// bar from its start to its finish, positioned on a shared run-relative axis so
 /// concurrency is visible at a glance. Rendered only when the record carries
 /// injected timing (`start`/`end` timestamps); absent, the report shows just the
+/// Per-tag verdicts — the rollup a fifty-scenario suite is read by (RF's
+/// "statistics by tag", the shape a requirement-tagged suite turns into a
+/// traceability matrix). Suite-only, exactly like every other total
+/// (ADR-0014: phase scenarios are excluded); Warned counts with passed,
+/// mirroring `RunSummary::passed`; time is the sum of the block's step
+/// durations, so it works on records without injected timing. Rendered only
+/// when a suite scenario carries a tag — a tagless suite gets no empty
+/// section, and pre-field records are unchanged.
+fn render_tag_table(html: &mut String, blocks: &[ScenarioBlock]) {
+    use std::collections::BTreeMap;
+    let mut rows: BTreeMap<&str, (usize, usize, usize, u64)> = BTreeMap::new();
+    for block in blocks {
+        if block.phase.is_some() {
+            continue;
+        }
+        let status = block.status.unwrap_or(Status::Skipped);
+        let time: u64 = block.steps.iter().map(|s| s.duration_ms).sum();
+        for tag in &block.tags {
+            let row = rows.entry(tag.as_str()).or_default();
+            match status {
+                Status::Passed | Status::Warned => row.0 += 1,
+                Status::Failed => row.1 += 1,
+                Status::Skipped => row.2 += 1,
+            }
+            row.3 += time;
+        }
+    }
+    if rows.is_empty() {
+        return;
+    }
+    html.push_str(
+        "<table class=\"tags\">\n<thead><tr><th>tag</th><th>passed</th>\
+         <th>failed</th><th>skipped</th><th>time</th></tr></thead>\n<tbody>\n",
+    );
+    for (tag, (passed, failed, skipped, ms)) in rows {
+        let _ = writeln!(
+            html,
+            "<tr><td>@{}</td><td>{passed}</td><td>{failed}</td><td>{skipped}</td>\
+             <td>{ms}ms</td></tr>",
+            esc(tag)
+        );
+    }
+    html.push_str("</tbody>\n</table>\n");
+}
+
 /// per-scenario waterfalls, so old records degrade cleanly.
 fn render_timeline(html: &mut String, blocks: &[ScenarioBlock]) {
     let timed: Vec<&ScenarioBlock> = blocks
@@ -450,6 +505,9 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .loc{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}\
 .artifact{margin-left:auto;font-size:.85rem;color:var(--muted)}\
 .phase-note{color:var(--muted);font-size:.78rem;font-style:italic}\
+     .tags{border-collapse:collapse;margin:.6rem 0 1rem;font-size:.85rem}\
+     .tags th,.tags td{border:1px solid var(--line);padding:.25rem .6rem;text-align:left}\
+     .tags th{color:var(--muted);font-weight:600}\
 .steps{margin:0;padding:.2rem .8rem .8rem 2rem;border-top:1px solid var(--line)}\
 .steps li{margin:.3rem 0}.steps .glyph{font-weight:700}\
 li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph{color:var(--skip)}li.warn .glyph{color:var(--warn)}\

@@ -228,6 +228,32 @@ fn summary_body(summary: &RunSummary, run_id: &str) -> String {
             outcome.steps.len()
         );
     }
+    // Per-tag rollup (RF's statistics-by-tag): the suite summary's outcomes
+    // are suite-only by construction (phases run their own), so the table
+    // needs no phase filter; Warned counts with passed like RunSummary does.
+    let mut tag_rows: std::collections::BTreeMap<&str, (usize, usize, usize)> =
+        std::collections::BTreeMap::new();
+    for outcome in &summary.outcomes {
+        for tag in outcome.tags.iter() {
+            let row = tag_rows.entry(tag.as_str()).or_default();
+            match outcome.status {
+                Status::Passed | Status::Warned => row.0 += 1,
+                Status::Failed => row.1 += 1,
+                Status::Skipped => row.2 += 1,
+            }
+        }
+    }
+    if !tag_rows.is_empty() {
+        body.push_str("\n### by tag\n\n| tag | passed | failed | skipped |\n|---|---|---|---|\n");
+        for (tag, (passed, failed, skipped)) in tag_rows {
+            let _ = writeln!(
+                body,
+                "| @{} | {passed} | {failed} | {skipped} |",
+                enc_cell(tag)
+            );
+        }
+    }
+
     let mut failures = String::new();
     for outcome in &summary.outcomes {
         for step in outcome.steps.iter().filter(|s| s.status == Status::Failed) {
@@ -366,6 +392,7 @@ mod provenance_tests {
                 line: 2,
                 status: Status::Failed,
                 reason: None,
+                tags: std::sync::Arc::from(Vec::new()),
                 steps: vec![StepOutcome {
                     step: StepRef {
                         file: Arc::from("tests/features/a.feature"),
@@ -422,6 +449,52 @@ mod provenance_tests {
             "an inline step has no fragment and must not render an empty one"
         );
     }
+    /// The by-tag rollup: one row per tag, Warned counts with passed,
+    /// rendered only when any outcome carries tags.
+    #[test]
+    fn the_summary_rolls_up_by_tag() {
+        let outcome = |name: &str, status: Status, tags: &[&str]| ScenarioOutcome {
+            file: "f.feature".into(),
+            name: name.into(),
+            line: 1,
+            status,
+            reason: None,
+            tags: Arc::from(tags.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>()),
+            steps: Vec::new(),
+            fault: None,
+            artifact_slug: None,
+        };
+        let summary = RunSummary {
+            outcomes: vec![
+                outcome("a", Status::Passed, &["smoke", "api"]),
+                outcome("b", Status::Failed, &["api"]),
+                outcome("c", Status::Warned, &["smoke"]),
+            ],
+            passed: 2,
+            failed: 1,
+            skipped: 0,
+            cancelled: false,
+        };
+        let body = summary_body(&summary, "run-1");
+        assert!(body.contains("### by tag"), "{body}");
+        assert!(body.contains("| @api | 1 | 1 | 0 |"), "{body}");
+        assert!(
+            body.contains("| @smoke | 2 | 0 | 0 |"),
+            "warned counts with passed: {body}"
+        );
+
+        let untagged = RunSummary {
+            outcomes: vec![outcome("a", Status::Passed, &[])],
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: false,
+        };
+        assert!(
+            !summary_body(&untagged, "run-1").contains("### by tag"),
+            "a tagless suite gets no empty section"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -447,6 +520,7 @@ mod escaping_tests {
                 line: 3,
                 status: Status::Failed,
                 reason: None,
+                tags: std::sync::Arc::from(Vec::new()),
                 steps: Vec::new(),
                 fault: Some(Fault::System("boom".to_owned())),
                 artifact_slug: None,

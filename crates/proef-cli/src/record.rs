@@ -433,6 +433,7 @@ mod tests {
             worker: None,
             phase: None,
             reason: None,
+            tags: Vec::new(),
         }
     }
 
@@ -551,6 +552,7 @@ mod tests {
             worker: None,
             phase: None,
             reason: reason.map(Arc::from),
+            tags: Vec::new(),
         };
         write_events(
             dir.path(),

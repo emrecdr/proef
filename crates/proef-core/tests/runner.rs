@@ -246,6 +246,7 @@ fn spec(name: &str, engines_by_batch: &[&'static str]) -> ScenarioSpec {
         file_root: None,
         exclusive: false,
         skip: None,
+        tags: std::sync::Arc::from(Vec::new()),
         prepare: Box::new(move |_world| {
             Ok(Prepared {
                 batches,
@@ -408,6 +409,7 @@ fn optional_batch_error_does_not_rereport_later_batches() {
         file_root: None,
         exclusive: false,
         skip: None,
+        tags: std::sync::Arc::from(Vec::new()),
         prepare: Box::new(move |_world| {
             Ok(Prepared {
                 batches,
@@ -710,6 +712,7 @@ fn overlap_watcher(name: &str, exclusive: bool, peak: Arc<Mutex<usize>>) -> Scen
         file_root: None,
         exclusive,
         skip: None,
+        tags: std::sync::Arc::from(Vec::new()),
         prepare: Box::new(move |_world| {
             LIVE.fetch_add(1, Ordering::SeqCst);
             for _ in 0..12 {
@@ -845,6 +848,7 @@ fn cancelling_during_an_exclusive_drain_still_completes_the_run() {
         file_root: None,
         exclusive: false,
         skip: None,
+        tags: std::sync::Arc::from(Vec::new()),
         prepare: Box::new(move |_world| {
             trigger.cancel();
             Ok(Prepared {
@@ -862,6 +866,7 @@ fn cancelling_during_an_exclusive_drain_still_completes_the_run() {
             file_root: None,
             exclusive,
             skip: None,
+            tags: std::sync::Arc::from(Vec::new()),
             prepare: Box::new(|_world| {
                 Ok(Prepared {
                     batches: Vec::new(),

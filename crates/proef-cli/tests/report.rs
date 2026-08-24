@@ -55,6 +55,14 @@ fn finished(scenario: &str, file: &str, status: Status) -> Event {
         worker: None,
         phase: None,
         reason: None,
+        // The snapshot pins the by-tag table: derive a stable tag from
+        // the file stem so each fixture scenario carries one.
+        tags: vec![
+            std::path::Path::new(file)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ],
     }
 }
 
@@ -119,6 +127,7 @@ fn timeline_renders_from_injected_timing() {
         timestamp_ms: Some(ts),
         worker: Some(worker),
         phase: None,
+        exclusive: false,
     };
     let done = |scenario: &str, file: &str, status: Status, ts: u64, worker: u64| {
         Event::ScenarioFinished {
@@ -129,6 +138,7 @@ fn timeline_renders_from_injected_timing() {
             worker: Some(worker),
             phase: None,
             reason: None,
+            tags: Vec::new(),
         }
     };
     let events = vec![

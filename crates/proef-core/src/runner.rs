@@ -39,6 +39,11 @@ pub struct ScenarioSpec {
     pub file_root: Option<std::path::PathBuf>,
     /// Lower + emit against the live World snapshot (pure; runs in-thread).
     pub prepare: PrepareFn,
+    /// The scenario's accumulated tags, shared (`Arc`) from the lowered
+    /// scenario — one derivation, threaded through outcome and event so
+    /// the record and every report see the same list. Core treats them
+    /// as opaque data (ADR-0014: recognition stays at the CLI edge).
+    pub tags: std::sync::Arc<[String]>,
     /// Authored skip: `Some(reason)` parks the scenario as `Skipped` without
     /// preparing or spawning it — visible in every sink, counted in totals.
     /// The reason is the pasteable tag spelling (`@skip` / `@skip:reason`),
@@ -137,6 +142,16 @@ impl RunSummary {
 }
 
 /// Prefer system errors over user errors over test failures.
+/// One scenario's identity as the dispatcher needs it after the spec is
+/// consumed: the watchdog sweep and the panic fallback both emit outcomes
+/// for scenarios whose spec has already moved into its worker thread.
+struct Identity {
+    file: Arc<str>,
+    name: Arc<str>,
+    line: usize,
+    tags: std::sync::Arc<[String]>,
+}
+
 fn pick_worse(a: ExitCode, b: ExitCode) -> ExitCode {
     let rank = |c: ExitCode| match c {
         ExitCode::SystemError => 3,
@@ -161,6 +176,8 @@ pub struct ScenarioOutcome {
     /// Why `Skipped`, when it is: the authored tag spelling (starts with
     /// `@`) or proef's fixed cancellation prose. `None` otherwise.
     pub reason: Option<Arc<str>>,
+    /// The scenario's tags, shared from the spec (see `ScenarioSpec::tags`).
+    pub tags: std::sync::Arc<[String]>,
     /// Step outcomes, in execution order.
     pub steps: Vec<StepOutcome>,
     /// Non-test fault, when one occurred.
@@ -322,9 +339,14 @@ pub fn run(
     let (tx, rx) = mpsc::channel::<Msg>();
     // Identities survive the specs' move into the queue, so an abandoned
     // scenario is reported as itself, never as a synthetic placeholder.
-    let identities: Vec<(Arc<str>, Arc<str>, usize)> = specs
+    let identities: Vec<Identity> = specs
         .iter()
-        .map(|spec| (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line))
+        .map(|spec| Identity {
+            file: Arc::clone(&spec.file),
+            name: Arc::clone(&spec.name),
+            line: spec.line,
+            tags: std::sync::Arc::clone(&spec.tags),
+        })
         .collect();
     let mut queue: std::collections::VecDeque<(usize, ScenarioSpec)> =
         specs.into_iter().enumerate().collect();
@@ -378,11 +400,13 @@ pub fn run(
                         worker: None,
                         phase: None,
                         reason: Some(Arc::clone(&reason)),
+                        tags: spec.tags.to_vec(),
                     },
                     &spec.file,
                     &spec.name,
                 );
                 outcomes.push(ScenarioOutcome {
+                    tags: std::sync::Arc::clone(&spec.tags),
                     file: spec.file,
                     name: spec.name,
                     line: spec.line,
@@ -411,11 +435,13 @@ pub fn run(
                         worker: None,
                         phase: None,
                         reason: Some(Arc::from("run cancelled")),
+                        tags: spec.tags.to_vec(),
                     },
                     &spec.file,
                     &spec.name,
                 );
                 outcomes.push(ScenarioOutcome {
+                    tags: std::sync::Arc::clone(&spec.tags),
                     file: spec.file,
                     name: spec.name,
                     line: spec.line,
@@ -474,6 +500,7 @@ pub fn run(
                             worker: None,
                             phase: None,
                             reason: outcome.reason.clone(),
+                            tags: outcome.tags.to_vec(),
                         },
                         &outcome.file,
                         &outcome.name,
@@ -534,7 +561,7 @@ fn sweep_expired(
     active: &mut BTreeMap<usize, (Instant, CancellationToken)>,
     outcomes: &mut Vec<ScenarioOutcome>,
     gate: &RecordGate,
-    identities: &[(Arc<str>, Arc<str>, usize)],
+    identities: &[Identity],
 ) {
     let now = Instant::now();
     let expired: Vec<usize> = active
@@ -548,13 +575,14 @@ fn sweep_expired(
         }
         // `active` keys are spec indices and `identities` is built 1:1 from
         // the same specs — the lookup cannot miss.
-        let (file, name, line) = &identities[index];
+        let identity = &identities[index];
         let outcome = ScenarioOutcome {
-            file: Arc::clone(file),
-            name: Arc::clone(name),
-            line: *line,
+            file: Arc::clone(&identity.file),
+            name: Arc::clone(&identity.name),
+            line: identity.line,
             status: Status::Failed,
             reason: None,
+            tags: std::sync::Arc::clone(&identity.tags),
             steps: Vec::new(),
             fault: Some(Fault::System(
                 "batch budget exceeded — scenario thread abandoned (ADR-0007)".to_owned(),
@@ -570,6 +598,7 @@ fn sweep_expired(
                 worker: None,
                 phase: None,
                 reason: None,
+                tags: outcome.tags.to_vec(),
             },
             &outcome.file,
             &outcome.name,
@@ -590,7 +619,12 @@ fn spawn_scenario(
     tx: mpsc::Sender<Msg>,
 ) {
     std::thread::spawn(move || {
-        let identity = (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line);
+        let identity = Identity {
+            file: Arc::clone(&spec.file),
+            name: Arc::clone(&spec.name),
+            line: spec.line,
+            tags: std::sync::Arc::clone(&spec.tags),
+        };
         let heartbeat_tx = tx.clone();
         // A panicking engine or prepare closure must never look like a hang:
         // contain it, report a System fault under the real identity, and let
@@ -618,11 +652,12 @@ fn spawn_scenario(
                 .or_else(|| panic.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "opaque panic payload".to_owned());
             ScenarioOutcome {
-                file: identity.0,
-                name: identity.1,
-                line: identity.2,
+                file: identity.file,
+                name: identity.name,
+                line: identity.line,
                 status: Status::Failed,
                 reason: None,
+                tags: identity.tags,
                 steps: Vec::new(),
                 fault: Some(Fault::System(format!(
                     "scenario thread panicked: {message}"
@@ -649,11 +684,13 @@ fn run_scenario(
     heartbeat: impl Fn(Duration),
 ) -> ScenarioOutcome {
     let (file, name, line) = (Arc::clone(&spec.file), Arc::clone(&spec.name), spec.line);
+    let tags = std::sync::Arc::clone(&spec.tags);
     let outcome = move |status, steps, fault, artifact_slug| ScenarioOutcome {
         file: Arc::clone(&file),
         name: Arc::clone(&name),
         line,
         status,
+        tags: std::sync::Arc::clone(&tags),
         // The only Skipped this closure ever builds is the in-flight
         // interrupt (no failed step, run cancelled) — the reason says so.
         reason: matches!(status, Status::Skipped).then(|| Arc::from("run cancelled")),
@@ -668,6 +705,9 @@ fn run_scenario(
         timestamp_ms: None,
         worker: None,
         phase: None,
+        // The bool the scheduler itself read — reported, never
+        // re-derived (R11-6).
+        exclusive: spec.exclusive,
     });
 
     // Prepare against a snapshot of the shared globals (lower-time reads).

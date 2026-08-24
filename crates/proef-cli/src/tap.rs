@@ -132,6 +132,7 @@ mod tests {
             line: 1,
             status,
             reason: None,
+            tags: std::sync::Arc::from(Vec::new()),
             steps,
             fault: None,
             artifact_slug: None,

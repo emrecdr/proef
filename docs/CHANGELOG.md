@@ -37,6 +37,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Per-tag verdicts in the HTML report and the GitHub summary** (RF wave
+  2): tags now reach the record — additive `tags` on `scenario_finished`
+  (finished-only: the cancel-skip path emits no start), additive
+  `exclusive` on `scenario_started` (closes R11-6, the scheduler's own
+  bool) — and both reports roll them up per tag (suite-only, Warned counts
+  with passed). Requirement-tagged suites (`@FRD-3.1`) get their
+  traceability matrix for free. Tags are deduped at the one accumulation
+  point (first occurrence wins); the quarantine list is now derived from
+  the outcomes' own tags — one owner, same behavior, pinned by the exit
+  suite. Library (Breaking): `ScenarioSpec`/`ScenarioOutcome` gain `tags`.
 - **`@skip` and `@skip:<reason>` park a scenario visibly** (ADR-0019, RF
   wave 2): counted in every total, reasoned in the console, JUnit, TAP, the
   record, the HTML report, `explain` and `flows --output json`; the harness

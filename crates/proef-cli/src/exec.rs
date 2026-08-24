@@ -656,23 +656,19 @@ pub fn execute(
 
         // `@quarantine` scenarios run and report, but their test-failures do not
         // gate the run (a System/User fault still does — quarantine is for flaky
-        // tests, not broken input or infra).
-        let non_gating: Vec<(String, String)> = front
-            .features
+        // tests, not broken input or infra). Read from the outcomes' own tags —
+        // the one derivation the record also carries — not re-derived from the
+        // front (R17 deep-audit's one-owner rule, closed by tags-in-outcomes).
+        let non_gating: Vec<(String, String)> = summary
+            .outcomes
             .iter()
-            .flat_map(|feature| {
-                feature
-                    .scenarios
+            .filter(|outcome| {
+                outcome
+                    .tags
                     .iter()
-                    .filter(|scenario| {
-                        scenario
-                            .lowered
-                            .tags
-                            .iter()
-                            .any(|tag| tag == crate::front::reserved::QUARANTINE)
-                    })
-                    .map(move |scenario| (feature.file.path.clone(), scenario.lowered.name.clone()))
+                    .any(|tag| tag == crate::front::reserved::QUARANTINE)
             })
+            .map(|outcome| (outcome.file.to_string(), outcome.name.to_string()))
             .collect();
 
         // Failure details (feature line + artifact span already inside details).
@@ -951,6 +947,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                 scenario,
                 file,
                 phase,
+                exclusive,
                 ..
             } => inner.emit(&Event::ScenarioStarted {
                 scenario: scenario.clone(),
@@ -958,6 +955,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                 timestamp_ms: Some(now_ms()),
                 worker: Some(acquire_slot(scenario, file)),
                 phase: phase.clone(),
+                exclusive: *exclusive,
             }),
             // `ScenarioFinished` is emitted from the main dispatcher thread, not
             // the worker that ran the scenario, so it carries only the end
@@ -973,6 +971,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                 status,
                 phase,
                 reason,
+                tags,
                 ..
             } => {
                 release_slot(scenario, file);
@@ -984,6 +983,7 @@ fn stamp_scenario_timing(inner: EventSink) -> EventSink {
                     worker: None,
                     phase: phase.clone(),
                     reason: reason.clone(),
+                    tags: tags.clone(),
                 });
             }
             other => inner.emit(other),
@@ -1023,6 +1023,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             file,
             timestamp_ms,
             worker,
+            exclusive,
             ..
         } => inner.emit(&Event::ScenarioStarted {
             scenario: scenario.clone(),
@@ -1030,6 +1031,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             timestamp_ms: *timestamp_ms,
             worker: *worker,
             phase: Some(Arc::clone(&label)),
+            exclusive: *exclusive,
         }),
         Event::ScenarioFinished {
             scenario,
@@ -1038,6 +1040,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             timestamp_ms,
             worker,
             reason,
+            tags,
             ..
         } => inner.emit(&Event::ScenarioFinished {
             scenario: scenario.clone(),
@@ -1047,6 +1050,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
             worker: *worker,
             phase: Some(Arc::clone(&label)),
             reason: reason.clone(),
+            tags: tags.clone(),
         }),
         other => inner.emit(other),
     })
@@ -1495,6 +1499,7 @@ fn build_specs(
                 name: Arc::from(scenario.lowered.name.as_str()),
                 line: scenario.lowered.line,
                 skip: crate::front::reserved::skip_reason(&scenario.lowered.tags).map(Arc::from),
+                tags: scenario.lowered.tags.clone().into(),
                 file_root: Some(crate::fsutil::parent_dir(Path::new(
                     feature.file.path.as_str(),
                 ))),
@@ -1628,6 +1633,7 @@ mod tests {
             file_root: None,
             exclusive: false,
             skip: None,
+            tags: std::sync::Arc::from(Vec::new()),
             prepare: Box::new(|_| unreachable!("never prepared in this test")),
         };
         let mut specs: Vec<ScenarioSpec> = ["a", "b", "c", "d", "e", "f"]
@@ -1938,6 +1944,7 @@ mod tests {
             line: 1,
             status: Status::Failed,
             reason: None,
+            tags: std::sync::Arc::from(Vec::new()),
             steps: Vec::new(),
             fault,
             artifact_slug: None,
