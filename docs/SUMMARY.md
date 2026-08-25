@@ -41,6 +41,8 @@
 - [ADR-0016 — OpenAPI suite generator](adr/ADR-0016-openapi-suite-generator.md)
 - [ADR-0017 — LSP language server](adr/ADR-0017-lsp-language-server.md)
 - [ADR-0018 — Named hurl fragments](adr/ADR-0018-named-hurl-fragments.md)
+- [ADR-0019 — Reserved tags and the authored skip](adr/ADR-0019-reserved-tags-and-the-authored-skip.md)
+- [ADR-0020 — Run metadata is explicit-injection-only](adr/ADR-0020-run-metadata-is-explicit-injection-only.md)
 
 # Project
 
