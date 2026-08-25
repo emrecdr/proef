@@ -112,6 +112,7 @@ impl Redactions {
                 env,
                 metadata,
                 shuffled,
+                rerun_of,
             } => Event::RunStarted {
                 schema: *schema,
                 run_id: s(run_id),
@@ -125,6 +126,9 @@ impl Redactions {
                     .map(|(key, value)| (self.apply(key), self.apply(value)))
                     .collect(),
                 shuffled: *shuffled,
+                rerun_of: rerun_of
+                    .as_deref()
+                    .map(|text| Arc::from(self.apply(text).as_str())),
             },
             Event::ScenarioStarted {
                 scenario,
@@ -561,6 +565,7 @@ mod tests {
                 env: None,
                 metadata: std::collections::BTreeMap::new(),
                 shuffled: false,
+                rerun_of: None,
             },
             Event::ScenarioStarted {
                 scenario: Arc::from("S"),

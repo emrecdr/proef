@@ -1179,6 +1179,14 @@ because a suite may still split invocations for reasons E1 does not address
 (different environments, different `--tags` in separate CI jobs), and nothing
 merges those.
 
+**Shipped (2026-08-25) — the rerun half:** `run_started.rerun_of` names the
+base; the rerun's JUnit carries the base's not-re-run scenarios
+(reconstructed from its record, exit code and totals untouched), and
+`report` overlays the base into a whole-suite page with a merged-view
+banner, degrading loudly when rotation ate the base. What remains of E2 is
+the original split-invocation case (different `--tags` in separate CI
+jobs), still open on its trigger.
+
 **Widened by the RF audit (2026-08-24):** the class includes `--rerun`'s own
 CI story, which this entry never named — a rerun writes a new record whose
 JUnit/report contain only the re-run subset, so "the one JUnit at the end"

@@ -46,6 +46,13 @@ pub enum Event {
         /// order exactly. Additive; absent = authored order.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         shuffled: bool,
+        /// The run this one re-ran failures from (`--rerun`): the base
+        /// record's `run_id`. Lets `report` overlay this run onto its
+        /// base for a whole-suite view (the E2 class: N invocations, one
+        /// picture), composition over records — the record file itself is
+        /// never merged (ADR-0008). Additive; absent = not a rerun.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rerun_of: Option<Arc<str>>,
     },
     /// A scenario began executing.
     ScenarioStarted {
@@ -254,6 +261,7 @@ mod tests {
             env: None,
             metadata: std::collections::BTreeMap::new(),
             shuffled: false,
+            rerun_of: None,
         };
         let json = serde_json::to_string(&event).unwrap_or_default();
         assert_eq!(

@@ -170,6 +170,8 @@ pub struct Record {
     pub env: Option<String>,
     /// User-supplied run metadata from the head (ADR-0020).
     pub metadata: BTreeMap<String, String>,
+    /// The base run this one re-ran failures from (`--rerun`), when any.
+    pub rerun_of: Option<String>,
     pub scenarios: BTreeMap<(String, String), ScenarioRun>,
     /// Whether the run reached its tail `RunFinished`.
     pub completion: RunCompletion,
@@ -199,17 +201,25 @@ pub struct Record {
 /// two reads of a live run's `events.jsonl` can otherwise race and disagree
 /// Fold the head's provenance (ADR-0020): first head wins — a legacy
 /// multi-pair record's later heads are phase heads, not the run's.
-fn fold_head(event: &Event, env: &mut Option<String>, metadata: &mut BTreeMap<String, String>) {
+fn fold_head(
+    event: &Event,
+    env: &mut Option<String>,
+    metadata: &mut BTreeMap<String, String>,
+    rerun_of: &mut Option<String>,
+) {
     if let Event::RunStarted {
         env: head_env,
         metadata: head_metadata,
+        rerun_of: head_rerun_of,
         ..
     } = event
         && env.is_none()
         && metadata.is_empty()
+        && rerun_of.is_none()
     {
         *env = head_env.as_ref().map(ToString::to_string);
         *metadata = head_metadata.clone();
+        *rerun_of = head_rerun_of.as_ref().map(ToString::to_string);
     }
 }
 
@@ -221,6 +231,7 @@ pub fn parse_record(events: &[Event]) -> Record {
     // pair record's later heads are phase heads, not the run's.
     let mut env: Option<String> = None;
     let mut metadata: BTreeMap<String, String> = BTreeMap::new();
+    let mut rerun_of: Option<String> = None;
     let mut pending: BTreeMap<(String, String), BTreeMap<(String, usize), StepRun>> =
         BTreeMap::new();
     // Occurrence ordinal per (file, scenario, step text), so identical-text
@@ -263,7 +274,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                         },
                     );
             }
-            Event::RunStarted { .. } => fold_head(event, &mut env, &mut metadata),
+            Event::RunStarted { .. } => fold_head(event, &mut env, &mut metadata, &mut rerun_of),
             Event::ScenarioFinished {
                 scenario,
                 file,
@@ -312,6 +323,7 @@ pub fn parse_record(events: &[Event]) -> Record {
         totals,
         env,
         metadata,
+        rerun_of,
     }
 }
 
@@ -327,7 +339,11 @@ pub fn parse_record(events: &[Event]) -> Record {
 /// artifacts is as much a record as a directory this checkout wrote — `diff`
 /// accepts both spellings, and the two must mean the same thing here rather
 /// than each caller re-deciding.
-pub fn read_record(record_dir: &Path) -> Result<Record, String> {
+/// Read a record directory's raw events — the shared IO for
+/// [`read_record`], the rerun overlay, and `report`'s composition; one
+/// tolerant line-by-line parse (a foreign line is skipped, ADR-0008's
+/// additive contract read from the consuming side).
+pub fn read_events(record_dir: &Path) -> Result<Vec<Event>, String> {
     let events_path = if record_dir.is_file() {
         record_dir.to_path_buf()
     } else {
@@ -335,11 +351,14 @@ pub fn read_record(record_dir: &Path) -> Result<Record, String> {
     };
     let text = std::fs::read_to_string(&events_path)
         .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
-    let events: Vec<Event> = text
+    Ok(text
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
-    Ok(parse_record(&events))
+        .collect())
+}
+
+pub fn read_record(record_dir: &Path) -> Result<Record, String> {
+    Ok(parse_record(&read_events(record_dir)?))
 }
 
 /// What `--rerun` should run from a prior record, and how much of it is
@@ -407,6 +426,82 @@ pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
         scenarios,
         never_ran,
     })
+}
+
+/// Reconstruct suite-scenario outcomes from a base record's events, skipping
+/// `exclude` (the identities the rerun re-ran) and phases. The rerun's `JUnit`
+/// carries these as ordinary testcases so "the one `JUnit` at the end" covers
+/// the whole suite, not the re-run subset (E2's rerun half; RF's
+/// `rebot --merge` shape, done as composition — the record file is never
+/// merged).
+pub fn carried_outcomes(
+    events: &[Event],
+    exclude: &std::collections::BTreeSet<(String, String)>,
+) -> Vec<proef_core::runner::ScenarioOutcome> {
+    use proef_core::runner::ScenarioOutcome;
+    use proef_core::step::StepOutcome;
+    let mut steps: BTreeMap<(String, String), Vec<StepOutcome>> = BTreeMap::new();
+    let mut outcomes: Vec<ScenarioOutcome> = Vec::new();
+    for event in events {
+        match event {
+            Event::StepFinished {
+                scenario,
+                step,
+                status,
+                attempts,
+                duration_ms,
+                detail,
+                attempt_details,
+                reproduce_hint,
+                fragment,
+                ..
+            } => {
+                steps
+                    .entry((step.file.to_string(), scenario.to_string()))
+                    .or_default()
+                    .push(StepOutcome {
+                        step: step.clone(),
+                        status: *status,
+                        attempts: *attempts,
+                        duration: std::time::Duration::from_millis(*duration_ms),
+                        detail: detail.clone(),
+                        attempt_details: attempt_details.clone(),
+                        reproduce_hint: reproduce_hint.clone(),
+                        fragment: fragment.clone(),
+                    });
+            }
+            Event::ScenarioFinished {
+                scenario,
+                file,
+                status,
+                phase: None,
+                reason,
+                tags,
+                ..
+            } => {
+                let key = (file.to_string(), scenario.to_string());
+                if exclude.contains(&key) {
+                    steps.remove(&key);
+                    continue;
+                }
+                outcomes.push(ScenarioOutcome {
+                    file: std::sync::Arc::from(file.as_ref()),
+                    name: std::sync::Arc::from(scenario.as_ref()),
+                    // The base record does not carry the header line; JUnit
+                    // does not read it, and 0 is honest about "unknown".
+                    line: 0,
+                    status: *status,
+                    reason: reason.clone(),
+                    tags: std::sync::Arc::from(tags.clone()),
+                    steps: steps.remove(&key).unwrap_or_default(),
+                    fault: None,
+                    artifact_slug: None,
+                });
+            }
+            _ => {}
+        }
+    }
+    outcomes
 }
 
 #[cfg(test)]
@@ -590,6 +685,7 @@ mod tests {
                     env: None,
                     metadata: std::collections::BTreeMap::new(),
                     shuffled: false,
+                    rerun_of: None,
                 },
                 finished("failed", Status::Failed, None),
                 finished("parked", Status::Skipped, Some("@skip:migration")),

@@ -340,6 +340,7 @@ pub fn run(
         env: None,
         metadata: std::collections::BTreeMap::new(),
         shuffled: false,
+        rerun_of: None,
     });
 
     let (tx, rx) = mpsc::channel::<Msg>();

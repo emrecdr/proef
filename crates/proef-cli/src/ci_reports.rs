@@ -16,6 +16,7 @@ use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, T
 pub fn write_junit(
     summary: &RunSummary,
     teardown: Option<&RunSummary>,
+    carried: &[ScenarioOutcome],
     non_gating: &[(String, String)],
     run_id: &str,
     path: &Path,
@@ -33,6 +34,7 @@ pub fn write_junit(
         summary
             .outcomes
             .iter()
+            .chain(carried.iter())
             .chain(teardown.into_iter().flat_map(|t| t.outcomes.iter()))
     };
     let mut files: Vec<&str> = outcomes().map(|o| o.file.as_ref()).collect();

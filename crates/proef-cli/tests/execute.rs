@@ -921,6 +921,87 @@ fn meta_reaches_the_record_body_and_explain() {
         .code(2);
 }
 
+/// E2's rerun half (RF's `rebot --merge`, done as composition): a `--rerun`
+/// names its base in the head, its JUnit carries the base's not-re-run
+/// scenarios as ordinary testcases, and `proef report` overlays the base for
+/// a whole-suite page — while exit code and totals stay the rerun's own.
+#[test]
+fn a_rerun_carries_the_bases_scenarios_into_junit_and_the_report() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: green-one\n    When the suite probes health\n  Scenario: green-two\n    When the suite probes health\n  Scenario: red\n    When the probe expects absence\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        format!(
+            "{PROBE_PACK}  absence:\n    match: the probe expects absence\n    steps:\n      \
+         - hurl: |\n          GET ${{url:base}}/health\n          HTTP 404\n"
+        ),
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--rerun",
+            "--junit",
+            "rerun.xml",
+            "--output",
+            "json",
+        ])
+        .assert()
+        .code(1);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(body["failed"], 1, "the rerun's own totals: {body}");
+    assert_eq!(
+        body["passed"], 0,
+        "carried scenarios never enter totals: {body}"
+    );
+
+    let events = std::fs::read_to_string(body["events"].as_str().unwrap()).unwrap();
+    let head: serde_json::Value = serde_json::from_str(events.lines().next().unwrap()).unwrap();
+    assert!(
+        head["rerun_of"].is_string(),
+        "the head names its base: {head}"
+    );
+
+    let junit = std::fs::read_to_string(cwd.path().join("rerun.xml")).unwrap();
+    for name in ["green-one", "green-two", "red"] {
+        assert!(
+            junit.contains(name),
+            "the one JUnit covers the suite ({name}): {junit}"
+        );
+    }
+
+    proef_in(cwd.path(), &fixture)
+        .args(["report", "-o", "merged.html"])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(cwd.path().join("merged.html")).unwrap();
+    for name in ["green-one", "green-two", "red"] {
+        assert!(
+            html.contains(name),
+            "the page shows the whole suite ({name})"
+        );
+    }
+    assert!(
+        html.contains("merged view: 2 scenario(s) carried"),
+        "the banner says what was composed: {}",
+        &html[..400]
+    );
+}
+
 /// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
 /// parked visibly — counted in every total, reasoned in every sink — and an
 /// all-skipped suite exits 0 (deliberate, versioned, visible in review is
@@ -2393,6 +2474,7 @@ fn diff_run_started(run_id: &str) -> proef_core::event::Event {
         env: None,
         metadata: std::collections::BTreeMap::new(),
         shuffled: false,
+        rerun_of: None,
     }
 }
 
