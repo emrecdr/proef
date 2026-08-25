@@ -718,17 +718,12 @@ fn run_scenario(
     });
 
     // Prepare against a snapshot of the shared globals (lower-time reads).
-    let snapshot = match store.lock() {
-        Ok(guard) => guard.clone(),
-        Err(_) => {
-            return outcome(
-                Status::Failed,
-                Vec::new(),
-                Some(Fault::System("global store lock poisoned".to_owned())),
-                None,
-            );
-        }
-    };
+    // A poisoned lock is recovered, not failed: the store is plain map writes
+    // with no cross-key invariant a panicked holder could have torn (the
+    // event-sink gate makes the same argument for its own lock), and failing
+    // *this* scenario punished it for another thread's panic — one crashed
+    // worker cascaded into System faults across the rest of the pool.
+    let snapshot = store.lock().unwrap_or_else(PoisonError::into_inner).clone();
     let mut world = World::new(snapshot);
     let prepared = match (spec.prepare)(&world) {
         Ok(prepared) => prepared,

@@ -85,8 +85,16 @@ fn discover(path: &Path) -> Vec<PathBuf> {
     }
     // Same location rule as pack loading (front::pack_files) — fmt must
     // format exactly what a run would load; a plain directory of yaml files
-    // (no packs/ layout) still formats as itself.
-    let found = crate::front::pack_files(path).unwrap_or_default();
+    // (no packs/ layout) still formats as itself. A failed walk degrades to
+    // the flat fallback *with a warning* — silently, `fmt` reported success
+    // over a tree it never read, and `--check` certified packs it never saw.
+    let found = match crate::front::pack_files(path) {
+        Ok(found) => found,
+        Err(err) => {
+            crate::render::errln!("warning: cannot scan {}: {err}", path.display());
+            Vec::new()
+        }
+    };
     if !found.is_empty() {
         return found;
     }
@@ -151,7 +159,24 @@ fn normalize_pack(text: &str) -> String {
         out.push((line.to_owned(), term));
         let trimmed = line.trim_start();
         let key = trimmed.strip_prefix("- ").unwrap_or(trimmed);
-        if !(key.starts_with("hurl:") && key.trim_end().ends_with('|')) {
+        // Any literal block scalar counts: `|` bare, with chomping (`|-`,
+        // `|+`), an indent indicator (`|2`), or a trailing comment — the
+        // loader accepts them all, and requiring the line to *end* with `|`
+        // silently skipped every other spelling while `--check` reported the
+        // file canonical. Folded scalars (`>`) stay out deliberately: YAML
+        // folding rewrites the body's line structure, so there is no
+        // line-preserved block to normalize.
+        let is_literal_block = key.strip_prefix("hurl:").is_some_and(|rest| {
+            let rest = rest.trim_start();
+            rest.strip_prefix('|').is_some_and(|indicators| {
+                let after = indicators
+                    .trim_start_matches(['-', '+'])
+                    .trim_start_matches(|c: char| c.is_ascii_digit());
+                let after = after.trim_start();
+                after.is_empty() || after.starts_with('#')
+            })
+        });
+        if !is_literal_block {
             continue;
         }
         // Collect the block body: lines more indented than the key.

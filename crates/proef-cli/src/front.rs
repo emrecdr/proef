@@ -167,11 +167,25 @@ pub fn run(
     let kind_to_engine = registry::kind_to_engine();
 
     // Injected values — the core reads no environment, clock, or randomness.
-    // `vars_os`: a foreign non-UTF-8 variable in the environment must not
-    // abort the run; it can never match a UTF-8 `${env:…}` reference anyway.
+    // `vars_os`: a foreign non-UTF-8 *key* can never match a UTF-8 `${env:…}`
+    // reference, so it skips silently. A readable key with a non-UTF-8
+    // *value* is different — dropping it quietly made `${env:TOKEN}` report
+    // "not set" (the wrong cause: it IS set) and `${env:TOKEN:-fallback}`
+    // silently take the fallback. It still reads as unset (core values are
+    // `String`s), but the operator is told why up front.
     let env: Arc<BTreeMap<String, String>> = Arc::new(
         std::env::vars_os()
-            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+            .filter_map(|(key, value)| {
+                let key = key.into_string().ok()?;
+                let Ok(value) = value.into_string() else {
+                    crate::render::errln!(
+                        "warning: environment variable `{key}` has a non-UTF-8 value — \
+                         `${{env:{key}}}` will read it as unset"
+                    );
+                    return None;
+                };
+                Some((key, value))
+            })
             .collect(),
     );
     let run_id: Arc<str> = Arc::from(
@@ -460,10 +474,18 @@ fn walk_dir_inner(
     // under it — one `Permission denied` deep in a tree used to abort the whole
     // walk, and the LSP then swallowed that error into an empty analysis, so a
     // single unreadable subdirectory silently emptied the suite. Skip it and
-    // keep going, the way `find` and ripgrep do.
+    // keep going, the way `find` and ripgrep do — and like them, *say so*:
+    // a silently smaller suite reports "N scenarios, 0 failed" with full
+    // confidence about tests that never ran.
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(_) if depth > 0 => return Ok(()),
+        Err(err) if depth > 0 => {
+            crate::render::errln!(
+                "warning: skipping unreadable directory {}: {err}",
+                dir.display()
+            );
+            return Ok(());
+        }
         Err(err) => {
             return Err(FrontError::Core(CoreError::system_with(
                 format!("cannot read directory {}", dir.display()),
@@ -471,7 +493,17 @@ fn walk_dir_inner(
             )));
         }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) => {
+                crate::render::errln!(
+                    "warning: skipping unreadable entry under {}: {err}",
+                    dir.display()
+                );
+                continue;
+            }
+        };
         let entry_path = entry.path();
         if entry_path.is_dir() {
             // Tested on the child, never the root: a suite may legitimately be

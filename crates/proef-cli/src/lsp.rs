@@ -36,13 +36,26 @@ fn load_config(
     explicit: Option<&std::path::Path>,
     client_root: Option<&std::path::Path>,
 ) -> ProjectConfig {
-    if let Some(path) = explicit {
-        return ProjectConfig::load_at(path).unwrap_or_default();
-    }
-    match client_root {
-        Some(root) => ProjectConfig::load_from(root).unwrap_or_default(),
-        None => ProjectConfig::load().unwrap_or_default(),
-    }
+    let loaded = if let Some(path) = explicit {
+        ProjectConfig::load_at(path)
+    } else if let Some(root) = client_root {
+        ProjectConfig::load_from(root)
+    } else {
+        ProjectConfig::load()
+    };
+    loaded.unwrap_or_else(|err| {
+        // Discovery finding *nothing* is `Ok(default)` upstream, so this
+        // branch is a config that exists and cannot be used (or an explicit
+        // `--config` that cannot be read). Booting on defaults keeps the
+        // server up — but doing it *silently* dropped `[run] suite`,
+        // `[run] fragments` and the `${url:}`/`${vars:}` scope for a file
+        // the user is actively editing, making every diagnostic disagree
+        // with the runner: the exact divergence this module's header calls
+        // worse than no diagnostics. The note lands on stderr, which
+        // editors surface in their LSP log panel.
+        crate::render::errln!("warning: proef lsp analysing with default config: {err}");
+        ProjectConfig::default()
+    })
 }
 
 pub fn run(explicit_config: Option<std::path::PathBuf>) -> ExitCode {
