@@ -52,7 +52,18 @@ impl RunsDirs {
     /// while the run is still going, so a directory registered afterwards has
     /// already fed the queue.
     pub(crate) fn record(&self, dir: &Path) {
-        let Some(name) = dir.file_name() else { return };
+        let Some(name) = dir.file_name() else {
+            // A runs dir whose path ends without a component (`.`, `/`, a
+            // trailing `..`) cannot be excluded by name. Saying so beats the
+            // silent return, which reopened the self-feeding rerun loop the
+            // 0.12.0 series closed — undiagnosably.
+            crate::render::errln!(
+                "warning: runs dir `{}` has no directory name — its writes cannot be \
+                 excluded from the watch",
+                dir.display()
+            );
+            return;
+        };
         if let Ok(mut seen) = self.0.lock() {
             seen.insert(name.to_string_lossy().into_owned());
         }
@@ -133,6 +144,77 @@ fn same_file(path: &Path, config: &Path) -> bool {
 /// `/private/var` aliasing, and would silently stop matching when it did not.
 /// [`RunsDirs`] covers a `[run] runs-dir` that is not a dot-directory and so is
 /// not already skipped.
+/// Install the watch loop's two-stage interrupt (ADR-0007): the first Ctrl-C
+/// cancels whichever run is current and ends the watch after it; the second
+/// hard-exits.
+fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationToken>>) {
+    let stop = Arc::clone(stop);
+    let current = Arc::clone(current);
+    let pressed = AtomicBool::new(false);
+    let handler = ctrlc::set_handler(move || {
+        if pressed.swap(true, Ordering::SeqCst) {
+            crate::render::errln!("\nsecond interrupt — hard exit");
+            std::process::exit(crate::INTERRUPT_EXIT_CODE);
+        }
+        crate::render::errln!(
+            "\n[watch] interrupt — cancelling the current run, leaving watch (Ctrl-C again to force)"
+        );
+        stop.store(true, Ordering::SeqCst);
+        if let Ok(token) = current.lock() {
+            token.cancel();
+        }
+    });
+    if let Err(err) = handler {
+        // Without the handler, the two-stage interrupt does not exist for
+        // this session: the first Ctrl-C takes the process default and
+        // truncates the run record. Rare, but a session without working
+        // cancellation must say so once.
+        crate::render::errln!(
+            "warning: Ctrl-C handling unavailable ({err}) — an interrupt will kill the \
+             run mid-write"
+        );
+    }
+}
+
+/// The watcher callback: decide whether one filesystem event warrants a
+/// rerun. Runs on notify's own thread; the only side effects are a channel
+/// send and a stderr line.
+fn on_fs_event(
+    event: Result<notify::Event, notify::Error>,
+    tx: &mpsc::Sender<()>,
+    watched_exts: &[&str],
+    config_path: Option<&Path>,
+    runs: &RunsDirs,
+) {
+    let Ok(event) = event else {
+        // A *delivered* error means the backend lost events; the only safe
+        // reading is "something may have changed". Dropping it left the
+        // watch running and permanently deaf.
+        crate::render::errln!("[watch] the file watcher reported an error — rerunning");
+        let _ = tx.send(());
+        return;
+    };
+    if event.need_rescan() {
+        // The backend's kernel queue overflowed (a branch switch, a big
+        // `git checkout`) and events were dropped — notify says so via the
+        // rescan flag on an `Other` event, which the kind filter below
+        // would discard. Treat it as an unconditional retrigger.
+        crate::render::errln!("[watch] change burst overflowed the watcher — rerunning");
+        let _ = tx.send(());
+        return;
+    }
+    if !(event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove()) {
+        return;
+    }
+    let authored = event
+        .paths
+        .iter()
+        .any(|p| is_authored(p, watched_exts, config_path, runs));
+    if authored {
+        let _ = tx.send(());
+    }
+}
+
 fn is_authored(
     path: &Path,
     watched_exts: &[&str],
@@ -188,19 +270,13 @@ pub fn watch_loop(
     let watched_runs = runs.clone();
     let (tx, rx) = mpsc::channel::<()>();
     let mut watcher = match notify::recommended_watcher(move |event| {
-        if let Ok(event) = event {
-            let event: notify::Event = event;
-            if !(event.kind.is_modify() || event.kind.is_create() || event.kind.is_remove()) {
-                return;
-            }
-            let authored = event
-                .paths
-                .iter()
-                .any(|p| is_authored(p, &watched_exts, watched_config.as_deref(), &watched_runs));
-            if authored {
-                let _ = tx.send(());
-            }
-        }
+        on_fs_event(
+            event,
+            &tx,
+            &watched_exts,
+            watched_config.as_deref(),
+            &watched_runs,
+        );
     }) {
         Ok(watcher) => watcher,
         Err(err) => {
@@ -239,31 +315,24 @@ pub fn watch_loop(
     // One handler for the whole loop; it cancels whichever run is current.
     let stop = Arc::new(AtomicBool::new(false));
     let current: Arc<Mutex<CancellationToken>> = Arc::new(Mutex::new(CancellationToken::new()));
-    {
-        let stop = Arc::clone(&stop);
-        let current = Arc::clone(&current);
-        let pressed = AtomicBool::new(false);
-        let _ = ctrlc::set_handler(move || {
-            if pressed.swap(true, Ordering::SeqCst) {
-                crate::render::errln!("\nsecond interrupt — hard exit");
-                std::process::exit(crate::INTERRUPT_EXIT_CODE);
-            }
-            crate::render::errln!(
-                "\n[watch] interrupt — cancelling the current run, leaving watch (Ctrl-C again to force)"
-            );
-            stop.store(true, Ordering::SeqCst);
-            if let Ok(token) = current.lock() {
-                token.cancel();
-            }
-        });
-    }
+    install_interrupt(&stop, &current);
 
+    let mut last_code = proef_core::error::ExitCode::Success;
     loop {
         let token = CancellationToken::new();
         if let Ok(mut guard) = current.lock() {
             *guard = token.clone();
         }
+        // The handler may have fired between the previous run finishing and
+        // this token being stored — it cancelled the *previous* token and set
+        // `stop`, and without this check the fresh token would carry a full
+        // suite run the user just declined. Checked after the store, so a
+        // Ctrl-C from here on cancels the token `once` actually runs under.
+        if stop.load(Ordering::SeqCst) {
+            return last_code;
+        }
         let code = once(token, &runs);
+        last_code = code;
         if stop.load(Ordering::SeqCst) {
             return code;
         }
@@ -284,7 +353,16 @@ pub fn watch_loop(
                 Err(mpsc::RecvTimeoutError::Disconnected) => return code,
             }
         }
-        while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
+        // The drain is unbounded while files keep changing (a formatter or
+        // `cargo build` keeps the channel hot for seconds), so it checks the
+        // interrupt too — the wait loop above polls `stop` every 200 ms, and
+        // an escape hatch that goes deaf exactly while events are flowing
+        // would be the one window a Ctrl-C is most likely to land in.
+        while rx.recv_timeout(Duration::from_millis(300)).is_ok() {
+            if stop.load(Ordering::SeqCst) {
+                return code;
+            }
+        }
         crate::render::errln!("[watch] change detected — rerunning\n");
     }
 }
