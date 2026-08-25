@@ -6,6 +6,32 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pack diagnostics point at the defect, not the macro's name.** Every
+  pattern-family and `defaults:` error anchored on the macro-*name* span —
+  thirteen of the nineteen seeded pack snapshots underlined `login:` while
+  the broken `{rol}` sat on a line outside the excerpt (one excerpted the
+  *previous* macro). The `match:`-line span was computed since the pass was
+  written and never reached a diagnostic; it does now, with the name span
+  as fallback. `locate::macro_span` also stopped matching pack-root
+  `bind:` entries (a macro sharing a name with a bind key anchored every
+  diagnostic on the config line).
+- **Parser errors speak hurl's and gherkin's prose, not Rust's.** A pack
+  author was shown `ResponseSectionName { name: "Wrong" }` and
+  `Method { name: "" }` — `{:?}` of internal enums from crates they never
+  heard of. All three engine sites now render through hurl's own
+  `DisplaySourceError` ("the section is not valid. Valid values are
+  Captures or Asserts"), and gherkin's expectation-set tail is
+  sort-normalized: it renders from a `HashSet`, so the same broken file
+  printed two different messages across processes (observed live) —
+  breaking snapshot determinism and the duplicate-collapse alike. Pinned.
+- **A `resolve::*` error names the pack it lives in.** The span is the
+  feature step (the invocation), but `${nope}` is written in a pack YAML
+  the message never named — the reader was sent to a healthy `.feature`
+  line while the sick file stayed anonymous. Every resolve error now
+  carries `(pack <file>)`.
+
 ### Added
 
 - **The HTML report is triageable, linkable, and filterable.** Every
