@@ -23,8 +23,14 @@ located diagnostics, no network). Every diagnostic code is indexed in
 |---|---|---|
 | `✓` | passed | ran, all asserts held |
 | `✗` | failed | ran, an assert failed (details + `reproduce:` line at the end) |
-| `∅` | skipped | not run: `when:` guard, an earlier failure, or cancellation |
+| `∅` | skipped | not run: `when:` guard, an earlier failure, cancellation, or an authored `@skip` on the scenario (the tag spelling prints as the reason) |
 | `⚠` | warned | an `optional:` step failed, or a `saveAs: global` promotion was refused — the reason prints on the `↳` line |
+
+Under `--console dotted` the tree collapses to one glyph per *scenario* —
+`.` passed, `F` failed, `s` skipped, `w` warned (lowercase = non-gating) —
+and failures still print in full after the pool; `--console quiet` keeps only
+the run line and the summary. The record and the exit code are identical in
+every mode.
 
 ## Frequent situations
 
