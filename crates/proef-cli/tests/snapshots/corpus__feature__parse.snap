@@ -10,5 +10,7 @@ proef::feature::parse (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
    ·              ─
  2 │ Scenario: S
    ╰────
+  help: a feature file opens with `Feature:` and holds `Scenario:` blocks of Given/When/Then prose — the docs' Writing scenarios page walks the shape; an unterminated `"""` docstring is the most
+        common way a file stops parsing
 
 1 error(s)

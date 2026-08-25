@@ -125,6 +125,11 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
                     normalized_parse_error(&err)
                 ),
             )
+            .with_help(
+                "a feature file opens with `Feature:` and holds `Scenario:` blocks of \
+                 Given/When/Then prose — the docs' Writing scenarios page walks the shape; \
+                 an unterminated `\"\"\"` docstring is the most common way a file stops parsing",
+            )
             .with_source(path.to_owned(), Arc::clone(&source));
             if let Some(span) = parse_error_span(&err.to_string(), &source) {
                 diag = diag.with_span(span);

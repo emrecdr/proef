@@ -11,5 +11,6 @@ proef::bind::table_conflict (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
    ·     ──────────────────────
  4 │       | term | Globex |
    ╰────
+  help: one source per param: drop the table row, or remove the `{capture}` from the `match:` sentence
 
 1 error(s)

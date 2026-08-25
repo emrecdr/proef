@@ -59,6 +59,25 @@ fn unknown_machine_format_is_a_user_error() {
         .stderr(contains("json"));
 }
 
+/// A broken `proef.toml` gets the treatment `pack::yaml` always had for the
+/// structurally identical failure: a stable code, the file as source, and
+/// toml's own span under the caret — not a bare sentence outside the
+/// diagnostic system.
+#[test]
+fn a_broken_config_renders_as_a_located_diagnostic() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("proef.toml");
+    std::fs::write(&config, "[run\nsuite = \"tests\"\n").unwrap();
+    proef()
+        .args(["flows", "--config"])
+        .arg(&config)
+        .assert()
+        .code(2)
+        .stderr(contains("proef::config::toml"))
+        .stderr(contains("proef.toml is invalid"))
+        .stderr(contains("[run"));
+}
+
 #[test]
 fn no_arguments_shows_help_as_a_user_error() {
     proef().assert().code(2).stderr(contains("Usage"));

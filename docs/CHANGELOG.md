@@ -8,6 +8,24 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A broken `proef.toml` is a located diagnostic, not a bare sentence.**
+  The file is edited as often as any pack, and it was the one authored
+  input whose errors carried no code, no source excerpt and no caret —
+  while `pack::yaml` had all three for the structurally identical failure.
+  New codes `proef::config::toml` (with toml's own error span under the
+  caret) and `proef::config::unreadable`, in the catalogue (73 → 75) and
+  pinned by an integration test; `proef lsp`'s boot warning and `doctor`'s
+  config row carry the same message.
+- **Five help-less refusals gained their missing action.**
+  `feature::parse` (the shape of a feature file, and the most common way
+  one stops parsing), `bind::ambiguous_step` (make one pattern more
+  specific or retire the duplicate), `bind::table_conflict` (one source
+  per param), `pack::use_cycle` (pull shared steps into a third macro),
+  and the raw `retry: -1` message now says *why* infinite retries are
+  refused (hurl cannot be interrupted mid-call) and what to write instead
+  — it used to cite "ADR-0007", an internal document id with no in-band
+  route to it.
+
 - **A miss below the did-you-mean threshold names the valid set instead of
   going silent.** All eleven suggestion sites ended
   `closest(…).unwrap_or_default()` — when nothing was near, the tail

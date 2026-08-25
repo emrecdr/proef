@@ -406,8 +406,10 @@ fn load_config(
         Some(path) => config::ProjectConfig::load_at(path),
         None => config::ProjectConfig::load(),
     }
-    .map_err(|message| {
-        crate::render::errln!("error: {message}");
+    .map_err(|err| {
+        // The full treatment, not a bare sentence: code, caret on toml's own
+        // span, catalogue URL — what every other authored input already got.
+        crate::render::print_all(&[*err.0]);
         proef_core::error::ExitCode::UserError
     })
 }
@@ -434,7 +436,7 @@ fn load_config_lenient(
         Some(path) => load_config(Some(path)).map(|config| (config, None)),
         None => Ok(match config::ProjectConfig::load() {
             Ok(config) => (config, None),
-            Err(message) => (config::ProjectConfig::default(), Some(message)),
+            Err(err) => (config::ProjectConfig::default(), Some(err.to_string())),
         }),
     }
 }

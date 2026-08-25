@@ -10,5 +10,6 @@ proef::bind::ambiguous_step (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
  3 │     When I do the thing
    ·     ───────────────────
    ╰────
+  help: make one pattern more specific (add a literal word) or retire the duplicate — every sentence must bind to exactly one macro
 
 1 error(s)
