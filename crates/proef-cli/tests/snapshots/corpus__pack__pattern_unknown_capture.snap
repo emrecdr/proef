@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::pattern_unknown_capture
+proef::pack::pattern_unknown_capture (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `login`: capture `{rol}` is not a declared param (did you mean `role`?)
    ╭─[tests/errors/pack__pattern_unknown_capture/packs/broken.yaml:4:5]

@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::bind::table_conflict
+proef::bind::table_conflict (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × `term` is set both by a `{capture}` and the data table
    ╭─[tests/errors/bind__table_conflict/case.feature:3:5]

@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::feature::parse
+proef::feature::parse (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × the feature file does not parse: Error at 1:14: {"success"}
    ╭─[tests/errors/feature__parse/case.feature:1:14]

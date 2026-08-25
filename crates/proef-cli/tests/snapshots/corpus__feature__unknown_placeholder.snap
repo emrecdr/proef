@@ -2,9 +2,9 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::feature::unknown_placeholder
+proef::feature::unknown_placeholder (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
-  × a step references `<wrong>`, which is not an Examples column
+  × a step references `<wrong>`, which is not an Examples column (known: term)
    ╭─[tests/errors/feature__unknown_placeholder/case.feature:3:5]
  2 │   Scenario Outline: S
  3 │     When I search for <wrong>

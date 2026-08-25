@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::bind::unbound_step
+proef::bind::unbound_step (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × no macro matches `I serch for Jansen` — did you mean `I search for {term}`?
    ╭─[tests/errors/bind__unbound_step/case.feature:3:5]

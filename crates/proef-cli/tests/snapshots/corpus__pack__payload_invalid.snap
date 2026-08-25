@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::payload_invalid
+proef::pack::payload_invalid (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `broken` step 0: `hurl:` payload is invalid — Parsing method: the HTTP method <> is not valid. Valid values are GET, HEAD, POST, PUT, DELETE, CONNECT, OPTIONS, TRACE, PATCH
    ╭─[tests/errors/pack__payload_invalid/packs/p.yaml:4:3]

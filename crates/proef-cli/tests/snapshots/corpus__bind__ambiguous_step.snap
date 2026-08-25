@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::bind::ambiguous_step
+proef::bind::ambiguous_step (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × `I do the thing` matches 2 macros: `one` (I do the thing), `two` (I do the thing)
    ╭─[tests/errors/bind__ambiguous_step/case.feature:3:5]

@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::bind_without_ref
+proef::pack::bind_without_ref (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `boundNothing` step 0: `bind:` supplies a fragment's `{{…}}` variables, so it needs a `ref:` — an inline `hurl:` block takes `${…}` instead
    ╭─[tests/errors/pack__bind_without_ref/packs/broken.yaml:2:3]

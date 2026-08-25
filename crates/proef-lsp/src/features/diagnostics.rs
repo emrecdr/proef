@@ -24,6 +24,12 @@ fn to_lsp(diag: &Diag, index: &LineIndex) -> Diagnostic {
             Severity::Warning => DiagnosticSeverity::WARNING,
         }),
         code: Some(lsp_types::NumberOrString::String(diag.code.to_owned())),
+        // The published catalogue: editors render this as a clickable link
+        // on the code — the one in-band route from an error to its docs.
+        code_description: "https://emrecdr.github.io/proef/DIAGNOSTICS.html"
+            .parse()
+            .ok()
+            .map(|href| lsp_types::CodeDescription { href }),
         source: Some("proef".to_owned()),
         message: diag.help.as_ref().map_or_else(
             || diag.message.clone(),

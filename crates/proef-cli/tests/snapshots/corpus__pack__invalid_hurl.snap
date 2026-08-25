@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::invalid_hurl
+proef::pack::invalid_hurl (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `broken` step 0: payload does not parse: Parsing response section name: the section is not valid. Valid values are Captures or Asserts (payload line 3, column 2)
    ╭─[tests/errors/pack__invalid_hurl/packs/broken.yaml:8:11]

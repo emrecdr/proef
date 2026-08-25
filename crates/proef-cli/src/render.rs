@@ -58,12 +58,17 @@ pub(crate) use errln;
 pub fn install() {
     let _ = miette::set_hook(Box::new(|_| {
         use std::io::IsTerminal as _;
-        let theme = if std::env::var_os("NO_COLOR").is_some() || !std::io::stderr().is_terminal() {
-            miette::GraphicalTheme::unicode_nocolor()
-        } else {
+        let interactive = std::env::var_os("NO_COLOR").is_none() && std::io::stderr().is_terminal();
+        let theme = if interactive {
             miette::GraphicalTheme::unicode()
+        } else {
+            miette::GraphicalTheme::unicode_nocolor()
         };
-        Box::new(miette::GraphicalReportHandler::new_themed(theme))
+        // Links ride the same gate as color: on a terminal the code becomes
+        // an OSC-8 hyperlink into the published catalogue (`Rendered::url`);
+        // into a pipe, a file, or a snapshot it stays the plain code — an
+        // escape sequence a non-terminal sink must never see.
+        Box::new(miette::GraphicalReportHandler::new_themed(theme).with_links(interactive))
     }));
 }
 
@@ -169,9 +174,19 @@ impl std::fmt::Display for Rendered {
 
 impl std::error::Error for Rendered {}
 
+/// Where the diagnostic catalogue is published — every rendered error links
+/// here, making the stable codes *lead* somewhere: the catalogue was linked
+/// from every doc and reachable from no error, which is the wrong direction
+/// exactly (the LSP's `code_description` carries the same URL).
+pub(crate) const DIAGNOSTICS_URL: &str = "https://emrecdr.github.io/proef/DIAGNOSTICS.html";
+
 impl Diagnostic for Rendered {
     fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
         Some(Box::new(self.code))
+    }
+
+    fn url<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(DIAGNOSTICS_URL))
     }
 
     fn severity(&self) -> Option<Severity> {

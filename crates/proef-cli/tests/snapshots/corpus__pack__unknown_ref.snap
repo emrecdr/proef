@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::unknown_ref
+proef::pack::unknown_ref (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `searchRecords` step 0: `ref: admin.search` names no loaded fragment
    ╭─[tests/errors/pack__unknown_ref/packs/broken.yaml:2:3]

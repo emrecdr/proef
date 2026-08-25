@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::pattern_no_anchor
+proef::pack::pattern_no_anchor (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `bare`: pattern has no literal text to match on — a bare capture matches every step
    ╭─[tests/errors/pack__pattern_no_anchor/packs/broken.yaml:4:5]

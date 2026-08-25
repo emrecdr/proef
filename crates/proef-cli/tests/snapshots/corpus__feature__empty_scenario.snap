@@ -1,9 +1,8 @@
 ---
 source: crates/proef-cli/tests/corpus.rs
-assertion_line: 405
 expression: stderr
 ---
-proef::feature::empty_scenario
+proef::feature::empty_scenario (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × scenario `todo later` has no steps
    ╭─[tests/errors/feature__empty_scenario/case.feature:2:3]
