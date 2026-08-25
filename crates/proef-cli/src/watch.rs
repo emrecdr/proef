@@ -318,6 +318,7 @@ pub fn watch_loop(
     install_interrupt(&stop, &current);
 
     let mut last_code = proef_core::error::ExitCode::Success;
+    let mut reruns = 0usize;
     loop {
         let token = CancellationToken::new();
         if let Ok(mut guard) = current.lock() {
@@ -336,9 +337,17 @@ pub fn watch_loop(
         if stop.load(Ordering::SeqCst) {
             return code;
         }
+        // The verdict in words, not a number to decode: `--watch` is the
+        // inner loop, and "exit 1" made the user translate the contract
+        // table mid-edit.
+        let verdict = match code {
+            proef_core::error::ExitCode::Success => "passed",
+            proef_core::error::ExitCode::TestFailure => "failures — details above",
+            proef_core::error::ExitCode::UserError => "user error — details above",
+            proef_core::error::ExitCode::SystemError => "system error — details above",
+        };
         crate::render::errln!(
-            "\n[watch] run finished (exit {}) — watching {} for changes (Ctrl-C to stop)",
-            code.code(),
+            "\n[watch] run finished ({verdict}) — watching {} for changes (Ctrl-C to stop)",
             path.display()
         );
         // Wait for a change (polling so an interrupt can end the wait), then
@@ -363,7 +372,14 @@ pub fn watch_loop(
                 return code;
             }
         }
-        crate::render::errln!("[watch] change detected — rerunning\n");
+        reruns += 1;
+        // A visual rule between iterations: twenty edits used to stack
+        // twenty full trees with nothing marking where the current one
+        // begins, and the counter gives "which run am I looking at" an
+        // answer that survives scrollback.
+        crate::render::errln!(
+            "\n[watch] ── change detected — rerun #{reruns} ─────────────────────────\n"
+        );
     }
 }
 
