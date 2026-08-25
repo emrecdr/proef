@@ -78,7 +78,7 @@ fn result(diag: &Diag, sources: &BTreeMap<&str, Option<String>>) -> serde_json::
     if let (Some(name), Some(span)) = (&diag.source_name, &diag.span) {
         let mut region = serde_json::json!({
             "byteOffset": span.start,
-            "byteLength": span.end - span.start,
+            "byteLength": span.end.saturating_sub(span.start),
         });
         // Line numbers only when the source could actually be read — a guessed
         // line is worse than none, since the annotation would land on innocent

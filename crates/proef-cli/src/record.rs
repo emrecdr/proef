@@ -86,6 +86,10 @@ pub fn locate(root: &Path, arg: &str) -> Result<PathBuf, String> {
 /// ADR-0008 added `file` for.
 pub type Key = (String, String);
 
+/// A scenario's buffered steps while its close is still streaming in, keyed
+/// `(authored text, occurrence ordinal)` like [`ScenarioRun::steps`].
+type StepBuffer = BTreeMap<(String, usize), StepRun>;
+
 /// The one display spelling of a [`Key`]: `file :: scenario`. `diff` and
 /// `flaky` both list record identities; two spellings of the same identity in
 /// two listings is exactly the drift a shared formatter exists to prevent.
@@ -190,6 +194,73 @@ pub struct Record {
     pub legacy_multi_pair: bool,
 }
 
+/// Detach a closing scenario's buffered steps, adopting the steps' file when
+/// the close keys under the serde default `""`.
+///
+/// A record predating the `file` field closes its scenarios under `""` while
+/// the buffered steps carry the real path (`StepRef.file` has no default) —
+/// the direct remove always missed, every scenario read as step-less, and
+/// `flaky`'s retry/duration signals plus `diff`'s regression gate went
+/// silently blind. The adoption requires exactly one pending scenario of
+/// that name; ambiguity keeps them apart rather than guessing.
+fn take_pending_steps(
+    pending: &mut BTreeMap<Key, StepBuffer>,
+    key: &mut (String, String),
+) -> StepBuffer {
+    match pending.remove(key) {
+        Some(steps) => steps,
+        None if key.0.is_empty() => {
+            let mut named: Vec<(String, String)> = pending
+                .keys()
+                .filter(|(_, s)| *s == key.1)
+                .cloned()
+                .collect();
+            if named.len() == 1 {
+                let found = named.remove(0);
+                key.0.clone_from(&found.0);
+                pending.remove(&found).unwrap_or_default()
+            } else {
+                BTreeMap::new()
+            }
+        }
+        None => BTreeMap::new(),
+    }
+}
+
+/// The head's provenance (ADR-0020), folded first-head-wins — a legacy
+/// multi-pair record's later heads are phase heads, not the run's.
+///
+/// "First" is tracked by `seen`, not by whether anything was captured: a
+/// plain run's head carries no `env`, no `metadata` and no `rerun_of` (all
+/// three are skip-serialized), so an emptiness test stayed true after folding
+/// it — and the *next* head in a concatenated or legacy record overwrote the
+/// run's provenance wholesale.
+#[derive(Default)]
+struct Head {
+    seen: bool,
+    env: Option<String>,
+    metadata: BTreeMap<String, String>,
+    rerun_of: Option<String>,
+}
+
+impl Head {
+    fn fold(&mut self, event: &Event) {
+        if let Event::RunStarted {
+            env,
+            metadata,
+            rerun_of,
+            ..
+        } = event
+            && !self.seen
+        {
+            self.seen = true;
+            self.env = env.as_ref().map(ToString::to_string);
+            self.metadata = metadata.clone();
+            self.rerun_of = rerun_of.as_ref().map(ToString::to_string);
+        }
+    }
+}
+
 /// Fold already-parsed events into a full run record: the `(file, scenario)
 /// -> ScenarioRun` map plus completion. The `(file, scenario)` key is the
 /// run-wide identity ADR-0008 added `file` for; records that predate the
@@ -199,41 +270,14 @@ pub struct Record {
 /// events for something else (`report`'s `render_html`) can read and parse
 /// the file exactly once and derive both from the same in-memory events —
 /// two reads of a live run's `events.jsonl` can otherwise race and disagree
-/// Fold the head's provenance (ADR-0020): first head wins — a legacy
-/// multi-pair record's later heads are phase heads, not the run's.
-fn fold_head(
-    event: &Event,
-    env: &mut Option<String>,
-    metadata: &mut BTreeMap<String, String>,
-    rerun_of: &mut Option<String>,
-) {
-    if let Event::RunStarted {
-        env: head_env,
-        metadata: head_metadata,
-        rerun_of: head_rerun_of,
-        ..
-    } = event
-        && env.is_none()
-        && metadata.is_empty()
-        && rerun_of.is_none()
-    {
-        *env = head_env.as_ref().map(ToString::to_string);
-        *metadata = head_metadata.clone();
-        *rerun_of = head_rerun_of.as_ref().map(ToString::to_string);
-    }
-}
-
 /// on whether the tail `RunFinished` had landed yet.
 pub fn parse_record(events: &[Event]) -> Record {
     // Steps stream in before their `ScenarioFinished`; buffer them by
     // `(step.file, scenario)` and attach to each scenario as it closes.
     // The head's provenance (ADR-0020): first head wins — a legacy multi-
     // pair record's later heads are phase heads, not the run's.
-    let mut env: Option<String> = None;
-    let mut metadata: BTreeMap<String, String> = BTreeMap::new();
-    let mut rerun_of: Option<String> = None;
-    let mut pending: BTreeMap<(String, String), BTreeMap<(String, usize), StepRun>> =
-        BTreeMap::new();
+    let mut head = Head::default();
+    let mut pending: BTreeMap<Key, StepBuffer> = BTreeMap::new();
     // Occurrence ordinal per (file, scenario, step text), so identical-text
     // steps get distinct keys instead of overwriting each other.
     let mut seen: BTreeMap<(String, String, String), usize> = BTreeMap::new();
@@ -274,7 +318,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                         },
                     );
             }
-            Event::RunStarted { .. } => fold_head(event, &mut env, &mut metadata, &mut rerun_of),
+            Event::RunStarted { .. } => head.fold(event),
             Event::ScenarioFinished {
                 scenario,
                 file,
@@ -283,8 +327,8 @@ pub fn parse_record(events: &[Event]) -> Record {
                 reason,
                 ..
             } => {
-                let key = (file.to_string(), scenario.to_string());
-                let steps = pending.remove(&key).unwrap_or_default();
+                let mut key = (file.to_string(), scenario.to_string());
+                let steps = take_pending_steps(&mut pending, &mut key);
                 record.insert(
                     key,
                     ScenarioRun {
@@ -321,9 +365,9 @@ pub fn parse_record(events: &[Event]) -> Record {
         completion,
         legacy_multi_pair,
         totals,
-        env,
-        metadata,
-        rerun_of,
+        env: head.env,
+        metadata: head.metadata,
+        rerun_of: head.rerun_of,
     }
 }
 
@@ -339,6 +383,11 @@ pub fn parse_record(events: &[Event]) -> Record {
 /// artifacts is as much a record as a directory this checkout wrote — `diff`
 /// accepts both spellings, and the two must mean the same thing here rather
 /// than each caller re-deciding.
+/// The record-read ceiling: generous — far past any real suite's record —
+/// but a bound, because records travel (`diff` reads a downloaded baseline)
+/// and this read was the one input loaded with no limit.
+const MAX_RECORD_BYTES: u64 = 256 * 1024 * 1024;
+
 /// Read a record directory's raw events — the shared IO for
 /// [`read_record`], the rerun overlay, and `report`'s composition; one
 /// tolerant line-by-line parse (a foreign line is skipped, ADR-0008's
@@ -349,6 +398,22 @@ pub fn read_events(record_dir: &Path) -> Result<Vec<Event>, String> {
     } else {
         record_dir.join("events.jsonl")
     };
+    // Records travel (`diff` reads a downloaded baseline; `flaky` reads every
+    // retained run), and this was the one input read with no ceiling: the
+    // read, the line split, and the parsed `Vec<Event>` are all resident at
+    // once, so a corrupt or hostile multi-gigabyte file was an OOM, not an
+    // error. The bound is generous — far past any real suite's record — and
+    // refusing over it names the file instead of dying.
+    let size = std::fs::metadata(&events_path)
+        .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?
+        .len();
+    if size > MAX_RECORD_BYTES {
+        return Err(format!(
+            "{} is {size} bytes — past the {} MiB record ceiling; not a proef record?",
+            events_path.display(),
+            MAX_RECORD_BYTES / (1024 * 1024)
+        ));
+    }
     let text = std::fs::read_to_string(&events_path)
         .map_err(|err| format!("cannot read {}: {err}", events_path.display()))?;
     Ok(text
@@ -479,7 +544,17 @@ pub fn carried_outcomes(
                 tags,
                 ..
             } => {
-                let key = (file.to_string(), scenario.to_string());
+                let mut key = (file.to_string(), scenario.to_string());
+                // Same empty-`file` normalization as `parse_record`: a base
+                // record predating the field would otherwise carry every
+                // scenario into the rerun's JUnit with no steps attached.
+                if key.0.is_empty() && !steps.contains_key(&key) {
+                    let named: Vec<(String, String)> =
+                        steps.keys().filter(|(_, s)| *s == key.1).cloned().collect();
+                    if let [only] = named.as_slice() {
+                        key.0.clone_from(&only.0);
+                    }
+                }
                 if exclude.contains(&key) {
                     steps.remove(&key);
                     continue;
@@ -557,6 +632,62 @@ mod tests {
             reason: None,
             tags: Vec::new(),
         }
+    }
+
+    /// A record predating `scenario_finished.file` closes under the serde
+    /// default `""` while its steps carry the real path — the buffered steps
+    /// must attach anyway (keyed under the steps' file), or `flaky` computes
+    /// `retried: false`/`duration 0` for every scenario and `diff` certifies
+    /// green over an empty step map.
+    #[test]
+    fn a_pre_field_close_adopts_its_steps_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        // `scenario_finished` deserialized from a line with no `file` key —
+        // exactly what an old record holds; hand-building the variant with
+        // `""` would test our own constructor instead.
+        let closed: Event = serde_json::from_str(
+            r#"{"event":"scenario_finished","scenario":"S","status":"passed"}"#,
+        )
+        .unwrap();
+        write_events(
+            tmp.path(),
+            &[
+                step_finished("S", step("a.feature", "GET /x"), 2, 40),
+                closed,
+            ],
+        );
+        let record = read_record(tmp.path()).unwrap();
+        let run = record
+            .scenarios
+            .get(&("a.feature".to_string(), "S".to_string()))
+            .expect("the scenario keys under its steps' file, not \"\"");
+        assert_eq!(run.steps.len(), 1, "the buffered step attaches");
+        assert_eq!(
+            run.steps.get(&("GET /x".to_string(), 0)).unwrap().attempts,
+            2
+        );
+    }
+
+    /// First head wins by *position*, not by emptiness: a plain run's head
+    /// carries no `env`/`metadata`/`rerun_of`, so an emptiness test stayed
+    /// true after folding it and a second head (a concatenated or legacy
+    /// record) overwrote the run's provenance.
+    #[test]
+    fn a_second_head_never_overwrites_the_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plain: Event =
+            serde_json::from_str(r#"{"event":"run_started","schema":1,"run_id":"r1"}"#).unwrap();
+        let phase: Event = serde_json::from_str(
+            r#"{"event":"run_started","schema":1,"run_id":"r2","env":"prod","rerun_of":"../evil"}"#,
+        )
+        .unwrap();
+        write_events(tmp.path(), &[plain, phase]);
+        let record = read_record(tmp.path()).unwrap();
+        assert_eq!(record.env, None, "the first head's (absent) env stands");
+        assert_eq!(
+            record.rerun_of, None,
+            "a later head cannot inject a base id"
+        );
     }
 
     #[test]

@@ -259,13 +259,26 @@ fn summary_body(
         for (tag, (passed, failed, skipped)) in tag_rows {
             // `[tag-links]`: a matching glob turns the cell into a tracker
             // link — same mechanism as the HTML table, markdown spelling.
+            // The substituted tag is percent-encoded: it is free prose, and a
+            // `)` or `|` in it closed the markdown link (or split the table
+            // row) exactly the way `enc_cell` was introduced to prevent for
+            // the label. Non-http(s) templates render as plain text — a
+            // template is config, but the *tag* riding into a `javascript:`
+            // href is not a link this summary should mint.
             let cell = tag_links
                 .iter()
                 .find(|(pattern, _)| proef_core::tags::atom_matches_public(pattern, tag))
+                .filter(|(_, template)| {
+                    template.starts_with("https://") || template.starts_with("http://")
+                })
                 .map_or_else(
                     || format!("@{}", enc_cell(tag)),
                     |(_, template)| {
-                        format!("[@{}]({})", enc_cell(tag), template.replace("{tag}", tag))
+                        format!(
+                            "[@{}]({})",
+                            enc_cell(tag),
+                            template.replace("{tag}", &enc_url_component(tag))
+                        )
                     },
                 );
             let _ = writeln!(body, "| {cell} | {passed} | {failed} | {skipped} |");
@@ -376,6 +389,25 @@ fn enc_cell(s: &str) -> String {
 
 fn enc_prop(s: &str) -> String {
     enc_msg(s).replace(':', "%3A").replace(',', "%2C")
+}
+
+/// Percent-encode a tag for the `{tag}` slot of a `[tag-links]` URL template.
+/// RFC 3986 unreserved characters pass through; everything else — including
+/// the `)` that closes a markdown link and the `|` that splits a table row —
+/// is encoded, so no tag spelling can escape the URL position.
+fn enc_url_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => {
+                let _ = std::fmt::Write::write_fmt(&mut out, format_args!("%{byte:02X}"));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

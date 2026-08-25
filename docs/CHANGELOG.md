@@ -8,6 +8,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A record that travels can no longer lie, crash, or steer.** Reading a
+  record predating `scenario_finished.file` (or any foreign baseline whose
+  closes key under the serde default `""`), the step buffer never attached:
+  every scenario read as step-less, `flaky` could never see a retry or a
+  duration, and `diff --fail-on-regression` certified green over empty step
+  maps — the close now adopts its steps' file when exactly one pending
+  scenario matches by name (pinned by test). The head fold's "first head
+  wins" guard tested emptiness rather than position, so a second
+  `run_started` in a concatenated or legacy record overwrote the run's
+  `env`/`metadata`/`rerun_of` wholesale (pinned by test). `rerun_of` — a
+  string read out of the record — was joined onto the runs root
+  unvalidated, so a crafted `"../../elsewhere"` spliced a foreign file's
+  events into the rendered report; it must now be a single path component,
+  and `--run-id` gets the same rule at the CLI edge (a typed clap error on
+  separators or `..`, on all four commands that accept one). Record reads
+  gained a generous 256 MiB ceiling — the one input loaded with no bound —
+  and every duration sum over record-supplied `u64`s (HTML report, tag
+  table, `flaky`) is now saturating instead of a debug-build panic on a
+  corrupt file.
+- **A `[tag-links]` template can no longer be subverted by a tag's
+  spelling.** The GitHub-summary sink substituted the tag into the URL raw,
+  so `@JIRA-1)[x](y` closed the markdown link early and injected content
+  into the job summary; the tag is now percent-encoded in the URL slot.
+  Both sinks (HTML report and summary) also render non-`http(s)` templates
+  as plain text rather than minting `javascript:`-class links.
+- **An inverted `Span` degrades instead of exploding**: `Span::len` and the
+  SARIF `byteLength` are saturating — B1's shipped class, closed in the
+  type rather than at one construction site.
+
 - **Eleven sites that swallowed an error and reported success now speak.**
   The class the v0.6.0–v0.8.0 series was named for, still present at the
   edges: a poisoned store lock silently skipped persisting the World (every

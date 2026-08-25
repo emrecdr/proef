@@ -31,9 +31,12 @@ impl Span {
         }
     }
 
-    /// Length in bytes.
+    /// Length in bytes. Saturating: the fields are public, so an inverted
+    /// span is constructible without [`Span::clamped`] — B1's shipped class —
+    /// and a raw subtraction turned that authoring slip into a panic (debug)
+    /// or a near-`usize::MAX` length fed to miette (release).
     pub fn len(&self) -> usize {
-        self.end - self.start
+        self.end.saturating_sub(self.start)
     }
 
     /// Whether the span is empty.

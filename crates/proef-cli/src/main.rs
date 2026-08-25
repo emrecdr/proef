@@ -118,7 +118,7 @@ enum Command {
         #[arg(long)]
         watch: bool,
         /// Pin the injected run id: reproducible fake data and a stable run record
-        #[arg(long)]
+        #[arg(long, value_parser = parse_run_id)]
         run_id: Option<String>,
         /// Write validation diagnostics as a SARIF 2.1.0 log (requires --dry-run)
         #[arg(long, requires = "dry_run")]
@@ -205,7 +205,7 @@ enum Command {
         #[arg(short, long)]
         output: PathBuf,
         /// Override the injected run id (deterministic artifacts for CI)
-        #[arg(long)]
+        #[arg(long, value_parser = parse_run_id)]
         run_id: Option<String>,
         /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
         #[arg(long)]
@@ -232,6 +232,7 @@ enum Command {
     /// Summarize a run from its event record
     Explain {
         /// Run id (default: the latest run)
+        #[arg(value_parser = parse_run_id)]
         run_id: Option<String>,
     },
     /// Flakiness verdicts over the retained run history: flapping,
@@ -256,6 +257,7 @@ enum Command {
     /// Write a self-contained HTML report for a run from its event record
     Report {
         /// Run id (default: the latest run)
+        #[arg(value_parser = parse_run_id)]
         run_id: Option<String>,
         /// Output file (default: `report.html` inside the run dir)
         #[arg(short, long)]
@@ -335,6 +337,21 @@ fn parse_meta_flags(
         }
     }
     Ok(parsed)
+}
+
+/// A run id names one directory under the runs root — on the write side
+/// (`test`, `artifacts`) it is handed to `create_dir_all`, on the read side
+/// (`explain`, `report`) it is joined and read — so a separator or a `..`
+/// in it escapes the root. One component, validated at the CLI edge like
+/// every other typed argument.
+fn parse_run_id(value: &str) -> Result<String, String> {
+    if !value.is_empty()
+        && std::path::Path::new(value).file_name() == Some(std::ffi::OsStr::new(value))
+    {
+        Ok(value.to_owned())
+    } else {
+        Err("a run id is a plain directory name (no path separators, not `..`)".to_owned())
+    }
 }
 
 /// halves at least 1, index within count.
