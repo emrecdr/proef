@@ -118,7 +118,15 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                         .and_then(|s| s.detail.clone())
                 })
             {
-                status.set_message(redactions.apply(&reason));
+                let reason = redactions.apply(&reason);
+                // Attribute *and* text node, here and on every non-success
+                // below: Azure reads `message=` as the error-message field
+                // and the element text as the stack trace; GitLab parses
+                // only the text. Either alone loses half the platforms —
+                // an authored `@skip:reason` rode the attribute only, so
+                // GitLab showed a bare skip with the reason nowhere.
+                status.set_message(reason.clone());
+                status.set_description(reason);
             }
             status
         }
@@ -137,9 +145,9 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                 .filter_map(|s| s.detail.as_deref())
                 .collect::<Vec<_>>()
                 .join("; ");
-            status.set_message(
-                redactions.apply(&format!("quarantined failure (non-gating): {detail}")),
-            );
+            let text = redactions.apply(&format!("quarantined failure (non-gating): {detail}"));
+            status.set_message(text.clone());
+            status.set_description(text);
             status
         }
         (Status::Failed, fault) => {
@@ -163,7 +171,19 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                 ),
             };
             let mut status = TestCaseStatus::non_success(kind);
-            status.set_message(redactions.apply(&message));
+            let message = redactions.apply(&message);
+            status.set_message(message.clone());
+            // The text node carries the message plus each failing step's
+            // reproduce hint — the content channel has room the one-line
+            // attribute does not, and the hint is the artifact the reader
+            // actually wants from a CI results page.
+            let mut description = message;
+            for step in outcome.steps.iter().filter(|s| s.status == Status::Failed) {
+                if let Some(hint) = &step.reproduce_hint {
+                    let _ = write!(description, "\nreproduce: {}", redactions.apply(hint));
+                }
+            }
+            status.set_description(description);
             status
         }
     };
@@ -211,8 +231,10 @@ pub fn write_github_summary(
         .open(path)
     {
         use std::io::Write as _;
-        // One pass over the final body covers names and details alike.
-        let _ = writeln!(file, "{}", redactions.apply(&body));
+        // One pass over the final body covers names and details alike; the
+        // cap runs after redaction so the budget is measured on the bytes
+        // actually written.
+        let _ = writeln!(file, "{}", capped_summary(redactions.apply(&body)));
     }
 }
 
@@ -334,39 +356,104 @@ fn summary_body(
 /// this only under Actions AND when the human report — not `--output json` —
 /// owns stdout.
 pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> String {
+    // GitHub keeps at most ten error annotations per step and *silently
+    // drops* the rest — an uncapped list made a forty-failure run look like
+    // exactly ten failures, indistinguishable from a real ten. Budgeting one
+    // annotation per failing *scenario* (its first failing step with detail,
+    // else its fault) spreads the ten across ten scenarios instead of
+    // spending them all on one scenario's step list, and the closing
+    // `::notice` says what the ten are out of.
+    const MAX_ERROR_ANNOTATIONS: usize = 10;
     let mut out = String::new();
+    let mut failing = 0usize;
     for outcome in &summary.outcomes {
-        let mut anchored_a_step = false;
-        for step in outcome.steps.iter().filter(|s| s.status == Status::Failed) {
-            if let Some(detail) = &step.detail {
-                anchored_a_step = true;
-                let _ = writeln!(
-                    out,
+        let annotation = outcome
+            .steps
+            .iter()
+            .find(|step| step.status == Status::Failed && step.detail.is_some())
+            .map(|step| {
+                let detail = step.detail.as_deref().unwrap_or_default();
+                format!(
                     "::error file={},line={},title={}::{}",
                     enc_prop(&step.step.file),
                     step.step.line,
-                    enc_prop(&format!("{}: {}", outcome.name, step.step.text)),
+                    // GitHub caps `title` at 255 characters; scenario names
+                    // and step text are free prose, so clip before encoding
+                    // (encoding expands, never shrinks).
+                    enc_prop(&clip_chars(
+                        &format!("{}: {}", outcome.name, step.step.text),
+                        200
+                    )),
                     enc_msg(
                         &redactions.apply(&format!("{detail}{}", via(step.fragment.as_deref())))
                     ),
-                );
+                )
+            })
+            .or_else(|| {
+                // Scenario-level faults (user/system) have no failing step to
+                // anchor — annotate the scenario header line instead.
+                let (Fault::System(message) | Fault::User(message)) = outcome.fault.as_ref()?;
+                Some(format!(
+                    "::error file={},line={},title={}::{}",
+                    enc_prop(&outcome.file),
+                    outcome.line,
+                    enc_prop(&clip_chars(&outcome.name, 200)),
+                    enc_msg(&redactions.apply(message)),
+                ))
+            });
+        if let Some(annotation) = annotation {
+            failing += 1;
+            if failing <= MAX_ERROR_ANNOTATIONS {
+                let _ = writeln!(out, "{annotation}");
             }
         }
-        // Scenario-level faults (user/system) have no failing step to anchor —
-        // annotate the scenario header line instead.
-        if !anchored_a_step
-            && let Some(Fault::System(message) | Fault::User(message)) = &outcome.fault
-        {
-            let _ = writeln!(
-                out,
-                "::error file={},line={},title={}::{}",
-                enc_prop(&outcome.file),
-                outcome.line,
-                enc_prop(&outcome.name),
-                enc_msg(&redactions.apply(message)),
-            );
-        }
     }
+    if failing > MAX_ERROR_ANNOTATIONS {
+        let _ = writeln!(
+            out,
+            "::notice title=proef::showing {MAX_ERROR_ANNOTATIONS} of {failing} failing \
+             scenarios — the full list is in the job summary"
+        );
+    }
+    out
+}
+
+/// The job-summary byte budget, safely under GitHub's 1 MiB-per-step cap.
+/// The failure mode *at* the cap is documented-silent — the summary simply
+/// never appears, and near it an oversized write has aborted jobs in shipped
+/// first-party actions — so a summary that names its own truncation beats a
+/// complete one nobody sees. A failing rerun-overlay suite with per-tag
+/// tables crosses 1 MiB more easily than it looks.
+const SUMMARY_BUDGET_BYTES: usize = 900 * 1024;
+
+/// `body`, truncated at a line boundary under [`SUMMARY_BUDGET_BYTES`] with a
+/// trailer saying how much was cut and where the full detail lives.
+fn capped_summary(body: String) -> String {
+    if body.len() <= SUMMARY_BUDGET_BYTES {
+        return body;
+    }
+    let mut end = SUMMARY_BUDGET_BYTES;
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = body[..end].rfind('\n').unwrap_or(0);
+    let omitted = body[cut..].lines().count();
+    format!(
+        "{}\n\n…truncated: {omitted} more line(s) omitted to stay under GitHub's 1 MiB \
+         summary cap — the full detail is in the run record (`proef explain`) and the \
+         HTML report\n",
+        &body[..cut]
+    )
+}
+
+/// The first `max` characters of `s` (char-counted, so no mid-codepoint cut),
+/// with an ellipsis when anything was dropped.
+fn clip_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_owned();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
     out
 }
 
@@ -611,5 +698,300 @@ mod escaping_tests {
         assert_eq!(enc_cell("plain"), "plain");
         // A newline ends the row outright.
         assert_eq!(enc_cell("two\nlines"), "two lines");
+    }
+}
+
+#[cfg(test)]
+mod junit_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::write_junit;
+    use proef_core::report::Redactions;
+    use proef_core::runner::{RunSummary, ScenarioOutcome};
+    use proef_core::step::{Status, StepOutcome, StepRef};
+    use std::sync::Arc;
+
+    fn outcome(file: &str, name: &str, status: Status, detail: Option<&str>) -> ScenarioOutcome {
+        ScenarioOutcome {
+            file: file.into(),
+            name: name.into(),
+            line: 2,
+            status,
+            reason: None,
+            tags: Arc::from(Vec::new()),
+            steps: vec![StepOutcome {
+                step: StepRef {
+                    file: Arc::from(file),
+                    line: 3,
+                    text: Arc::from("the operator acts"),
+                },
+                status,
+                attempts: 1,
+                duration: std::time::Duration::from_millis(1234),
+                detail: detail.map(ToOwned::to_owned),
+                attempt_details: Vec::new(),
+                reproduce_hint: (status == Status::Failed)
+                    .then(|| "curl -X GET http://x".to_owned()),
+                fragment: None,
+            }],
+            fault: None,
+            artifact_slug: None,
+        }
+    }
+
+    fn summary(outcomes: Vec<ScenarioOutcome>) -> RunSummary {
+        let failed = outcomes
+            .iter()
+            .filter(|o| o.status == Status::Failed)
+            .count();
+        let passed = outcomes.len() - failed;
+        RunSummary {
+            outcomes,
+            passed,
+            failed,
+            skipped: 0,
+            cancelled: false,
+        }
+    }
+
+    fn serialize(
+        run: &RunSummary,
+        teardown: Option<&RunSummary>,
+        carried: &[ScenarioOutcome],
+    ) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.junit.xml");
+        write_junit(
+            run,
+            teardown,
+            carried,
+            &[],
+            "run-1",
+            &path,
+            &Redactions::default(),
+        )
+        .unwrap();
+        std::fs::read_to_string(&path).unwrap()
+    }
+
+    /// Failure detail must reach the element *text node*, not only the
+    /// `message` attribute: GitLab parses only the content, Azure maps the
+    /// content to its stack-trace field — either alone loses half the
+    /// platforms. The reproduce hint rides the content channel, where a
+    /// one-line attribute has no room.
+    #[test]
+    fn failure_detail_reaches_attribute_and_text_node_alike() {
+        let xml = serialize(
+            &summary(vec![outcome(
+                "a.feature",
+                "S",
+                Status::Failed,
+                Some("Assert status code"),
+            )]),
+            None,
+            &[],
+        );
+        assert!(
+            xml.contains(r#"message="Assert status code""#),
+            "attribute: {xml}"
+        );
+        assert!(
+            xml.contains(">Assert status code\nreproduce: curl -X GET http://x<"),
+            "text node with the reproduce hint: {xml}"
+        );
+    }
+
+    /// quick-junit's `XmlString` strips ANSI escapes and XML-1.0-illegal
+    /// control characters on every setter — the one protection that keeps a
+    /// binary response byte from invalidating the whole report on
+    /// Jenkins/GitLab (their parsers reject the file outright, not the one
+    /// test). Pinned here so a quick-junit bump cannot shed it silently.
+    #[test]
+    fn illegal_bytes_and_ansi_never_reach_the_xml() {
+        let xml = serialize(
+            &summary(vec![outcome(
+                "a.feature",
+                "S",
+                Status::Failed,
+                Some("\u{1b}[31mred\u{0}null\u{1b}[0m plain"),
+            )]),
+            None,
+            &[],
+        );
+        assert!(!xml.contains('\u{1b}'), "no ESC byte survives: {xml}");
+        assert!(!xml.contains('\u{0}'), "no NUL byte survives: {xml}");
+        assert!(
+            xml.contains("rednull plain"),
+            "the text itself stays: {xml}"
+        );
+    }
+
+    /// `time` is seconds with exactly three decimals, never exponent
+    /// notation — the strictest reference schema pattern, and the format
+    /// Azure sums into the run duration. Library-provided today; pinned so
+    /// it stays that way.
+    #[test]
+    fn times_are_three_decimal_seconds() {
+        let xml = serialize(
+            &summary(vec![outcome("a.feature", "S", Status::Passed, None)]),
+            None,
+            &[],
+        );
+        let times: Vec<&str> = xml
+            .split("time=\"")
+            .skip(1)
+            .map(|rest| rest.split('"').next().unwrap())
+            .collect();
+        assert!(!times.is_empty());
+        for time in times {
+            assert!(
+                time.chars().all(|c| c.is_ascii_digit() || c == '.')
+                    && time.split('.').nth(1).map(str::len) == Some(3),
+                "not a 3-decimal plain number: {time}"
+            );
+        }
+    }
+
+    /// `classname`+`name` is the identity every consumer keys history on,
+    /// and GitLab *silently drops* duplicates — so the composed report
+    /// (suite + rerun-carried + teardown) must yield each identity exactly
+    /// once. Pinned over the real composition path.
+    #[test]
+    fn composed_identities_form_a_set() {
+        let run = summary(vec![
+            outcome("a.feature", "S1", Status::Failed, Some("boom")),
+            outcome("a.feature", "S2", Status::Passed, None),
+        ]);
+        let teardown = summary(vec![outcome(
+            "teardown.feature",
+            "cleanup",
+            Status::Failed,
+            Some("boom"),
+        )]);
+        let carried = vec![outcome("b.feature", "S1", Status::Passed, None)];
+        let xml = serialize(&run, Some(&teardown), &carried);
+        let mut identities: Vec<(String, String)> = Vec::new();
+        for case in xml.split("<testcase ").skip(1) {
+            let attr = |key: &str| {
+                case.split(&format!("{key}=\""))
+                    .nth(1)
+                    .unwrap()
+                    .split('"')
+                    .next()
+                    .unwrap()
+                    .to_owned()
+            };
+            identities.push((attr("classname"), attr("name")));
+        }
+        assert_eq!(identities.len(), 4, "{xml}");
+        let unique: std::collections::BTreeSet<_> = identities.iter().collect();
+        assert_eq!(
+            unique.len(),
+            identities.len(),
+            "duplicate identity: {identities:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{SUMMARY_BUDGET_BYTES, capped_summary, clip_chars, github_annotations};
+    use proef_core::report::Redactions;
+    use proef_core::runner::{RunSummary, ScenarioOutcome};
+    use proef_core::step::{Status, StepOutcome, StepRef};
+    use std::sync::Arc;
+
+    fn failing(name: &str, steps: usize) -> ScenarioOutcome {
+        ScenarioOutcome {
+            file: "a.feature".into(),
+            name: name.into(),
+            line: 2,
+            status: Status::Failed,
+            reason: None,
+            tags: Arc::from(Vec::new()),
+            steps: (0..steps)
+                .map(|i| StepOutcome {
+                    step: StepRef {
+                        file: Arc::from("a.feature"),
+                        line: 3 + i,
+                        text: Arc::from("a step"),
+                    },
+                    status: Status::Failed,
+                    attempts: 1,
+                    duration: std::time::Duration::from_millis(1),
+                    detail: Some("boom".to_owned()),
+                    attempt_details: Vec::new(),
+                    reproduce_hint: None,
+                    fragment: None,
+                })
+                .collect(),
+            fault: None,
+            artifact_slug: None,
+        }
+    }
+
+    /// GitHub silently drops error annotations past ten per step: emitting
+    /// eleven made a forty-failure run *look like* exactly ten. The budget
+    /// is one annotation per failing scenario, and the closing notice names
+    /// what the ten are out of.
+    #[test]
+    fn annotations_cap_at_ten_with_an_honest_notice() {
+        let run = RunSummary {
+            outcomes: (0..12).map(|i| failing(&format!("S{i}"), 3)).collect(),
+            passed: 0,
+            failed: 12,
+            skipped: 0,
+            cancelled: false,
+        };
+        let out = github_annotations(&run, &Redactions::default());
+        assert_eq!(out.matches("::error ").count(), 10, "{out}");
+        assert!(out.contains("showing 10 of 12"), "{out}");
+        // One annotation per failing *scenario* — a three-failing-step
+        // scenario must not spend three of the ten slots.
+        let one = github_annotations(
+            &RunSummary {
+                outcomes: vec![failing("S", 3)],
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+                cancelled: false,
+            },
+            &Redactions::default(),
+        );
+        assert_eq!(one.matches("::error ").count(), 1, "{one}");
+        assert!(!one.contains("::notice"), "no notice under the cap: {one}");
+    }
+
+    /// The 1 MiB failure mode is silent disappearance, so the cap truncates
+    /// deterministically at a line boundary and says what was cut.
+    #[test]
+    fn an_oversized_summary_truncates_and_says_so() {
+        let line = "x".repeat(99);
+        let big = (0..(SUMMARY_BUDGET_BYTES / 100 + 100))
+            .map(|_| line.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let capped = capped_summary(big.clone());
+        assert!(
+            capped.len() < SUMMARY_BUDGET_BYTES + 300,
+            "{}",
+            capped.len()
+        );
+        assert!(capped.contains("…truncated:"), "names its own truncation");
+        assert!(capped.contains("more line(s) omitted"));
+        let small = "fine".to_owned();
+        assert_eq!(
+            capped_summary(small.clone()),
+            small,
+            "under budget: unchanged"
+        );
+    }
+
+    #[test]
+    fn clip_is_char_counted() {
+        assert_eq!(clip_chars("abc", 5), "abc");
+        assert_eq!(clip_chars("ééééé", 3), "ééé…");
     }
 }
