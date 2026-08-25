@@ -329,7 +329,7 @@ pub fn execute(
         }
     };
     let redactions = Redactions::new(secrets.values().cloned());
-    // A machine format (`--output json`/`tap`) owns stdout exclusively — json
+    // A machine format (`--format json`/`tap`) owns stdout exclusively — json
     // must be pipeable into jq, tap into `prove` — so the human report moves to
     // stderr in that mode.
     let machine_stdout = output.is_some();
@@ -396,7 +396,7 @@ pub fn execute(
     // much as an empty shard, an empty selection, a setup abort or a store
     // failure, returns THROUGH this closure to the one `emit_machine_body`
     // below. Four audit rounds each found another terminating path emitting
-    // prose or zero stdout bytes under `--output json`; a single exit is what
+    // prose or zero stdout bytes under `--format json`; a single exit is what
     // makes a fifth impossible to forget. Paths that end before the pool
     // report zeroed totals (ADR-0014) with their exit code.
     let run = || -> (ExitCode, runner::RunSummary, Vec<(String, String)>) {
@@ -453,7 +453,7 @@ pub fn execute(
                     // setup's own outcome still drives the exit code below, and its
                     // scenarios are still visible as events in the record, but it is
                     // never folded into `passed`/`failed`/`skipped` — those must match
-                    // what JUnit/`--output json`/TAP/the SLA gate/the exit code report.
+                    // what JUnit/`--format json`/TAP/the SLA gate/the exit code report.
                     if let Some(code) = phase_failed(&summary, ExitCode::UserError) {
                         crate::render::errln!(
                             "error: setup failed — aborting before the suite runs"
@@ -874,7 +874,7 @@ pub fn execute(
 
         // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
         // It used to be applied as a `return` after the machine-readable body had
-        // already been printed, so `--output json` reported an `exit_code` the
+        // already been printed, so `--format json` reported an `exit_code` the
         // process then exited past — a body that disagrees with its own program is
         // worse than no body, because a consumer has no way to notice.
         let exit = if junit_failed {
@@ -933,7 +933,7 @@ fn empty_run_summary() -> runner::RunSummary {
 /// funnel at the end of `execute`, which every terminating path returns
 /// through. R17-2.3/2.4 and follow-ups: this used to be called site-by-site,
 /// and four audit rounds each found another path printing prose (which broke
-/// `jq` mid-pipeline) or nothing at all (a `--output json` consumer read zero
+/// `jq` mid-pipeline) or nothing at all (a `--format json` consumer read zero
 /// bytes on a failed setup); the single call site is what ended that class.
 /// Totals are the suite-only verdict (ADR-0014) — a path that never reached
 /// the pool reports zeros with its exit code, and the record path is always
@@ -1177,7 +1177,7 @@ fn phase_sink(label: &str, inner: EventSink) -> EventSink {
 /// are the **main-suite verdict only** (ADR-0014): `add` is called once, for
 /// the suite's own `RunSummary`, never for `[run] setup`/`teardown` — so
 /// `run_finished`'s `passed`/`failed`/`skipped` agree with the console
-/// `summary:` line, `explain`, `--output json`, `JUnit`, TAP, the SLA gate, and
+/// `summary:` line, `explain`, `--format json`, `JUnit`, TAP, the SLA gate, and
 /// the exit code, all of which already read the suite alone. Phase outcomes
 /// stay fully visible as their own `scenario_started`/`scenario_finished`
 /// events, and phase failures still drive the exit code through
@@ -1435,7 +1435,7 @@ fn write_ci_reports(
     crate::ci_reports::write_github_summary(verdict.summary, verdict.tag_links, run_id, redactions);
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
-    // human report (not `--output json`) owns stdout.
+    // human report (not `--format json`) owns stdout.
     if !machine_stdout && std::env::var_os("GITHUB_ACTIONS").is_some() {
         let annotations = crate::ci_reports::github_annotations(verdict.summary, redactions);
         if !annotations.is_empty() {

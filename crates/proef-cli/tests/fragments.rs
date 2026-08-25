@@ -93,7 +93,7 @@ fn one_fragment_file_runs_under_proef_and_under_stock_hurl() {
 
     // 1. proef executes it through the pack that names it.
     proef_in(dir.path(), &fixture)
-        .args(["test", "--output", "json"])
+        .args(["test", "--format", "json"])
         .assert()
         .code(0);
 

@@ -152,7 +152,7 @@ pub enum RunCompletion {
 
 /// The main-suite scenario totals carried by the tail `RunFinished` event
 /// (ADR-0014: setup/teardown are excluded, so this is the run's own verdict —
-/// the same numbers the console `summary:` line, `JUnit`, `--output json`, TAP,
+/// the same numbers the console `summary:` line, `JUnit`, `--format json`, TAP,
 /// the SLA gate, and the exit code all report).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RunTotals {

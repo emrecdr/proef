@@ -1,5 +1,5 @@
 //! One libtest-mimic `Trial` per proef scenario (US-12). See the crate docs
-//! for configuration. Listing uses `proef flows --output json`; execution
+//! for configuration. Listing uses `proef flows --format json`; execution
 //! uses `proef test --scenario <name> --scenario-file <file>` — file-scoped so
 //! duplicate scenario names across features keep the Trial↔scenario bijection
 //! — and the nextest contract (`--list --format terse`, `--exact
@@ -42,7 +42,7 @@ fn discover() -> Vec<Trial> {
         Err(message) => return vec![failing_trial("proef::config", message)],
     };
     let output = match Command::new(&bin)
-        .args(["flows", &suite, "--output", "json"])
+        .args(["flows", &suite, "--format", "json"])
         .output()
     {
         Ok(output) if output.status.success() => output,
@@ -84,7 +84,7 @@ fn discover() -> Vec<Trial> {
     }
     if trials.is_empty() && !stdout.trim().is_empty() {
         // Flows succeeded and printed rows, yet none parsed into a trial —
-        // contract drift between `proef flows --output json` and this harness
+        // contract drift between `proef flows --format json` and this harness
         // must fail CI loudly, never run zero tests green.
         return vec![failing_trial(
             "proef::flows-contract",

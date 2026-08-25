@@ -70,7 +70,7 @@ pub fn install() {
 /// Should the human console carry ANSI color? `NO_COLOR` (any value) wins,
 /// a dumb terminal declines, and otherwise the decision belongs to the
 /// stream the console actually writes to — stdout normally, stderr when
-/// `--output json`/`tap` owns stdout. The probe lives here at the CLI edge:
+/// `--format json`/`tap` owns stdout. The probe lives here at the CLI edge:
 /// the sans-IO core takes the answer as a plain bool.
 pub fn console_color(on_stderr: bool) -> bool {
     use std::io::IsTerminal as _;

@@ -120,7 +120,7 @@ discuss as *proposals* are listed explicitly in `tests/docs.rs`, so adding one i
 decision rather than the check going quietly soft.
 
 **CLI (assert_cmd):** exit codes 0/1/2/3 pinned per command and failure class;
-`--output json` schema-checked; `--junit` well-formed (quick-junit round-parse).
+`--format json` schema-checked; `--junit` well-formed (quick-junit round-parse).
 
 **Canary (M4):** scheduled + on-release job builds against the *next* hurl version and
 replays the integration suite; red = issue with behavior diff, pins never auto-move

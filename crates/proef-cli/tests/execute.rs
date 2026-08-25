@@ -118,7 +118,7 @@ fn reference_corpus_runs_green_with_same_bytes_artifacts() {
             &corpus.display().to_string(),
             "--jobs",
             "4",
-            "--output",
+            "--format",
             "json",
         ])
         .assert()
@@ -203,7 +203,7 @@ fn reference_corpus_runs_green_with_same_bytes_artifacts() {
     assert_eq!(compared, 12, "all executed artifacts compared");
 }
 
-/// `--output tap` emits a TAP v13 stream to stdout — one test point per
+/// `--format tap` emits a TAP v13 stream to stdout — one test point per
 /// scenario, derived from the run's outcomes — while the human report moves to
 /// stderr. The green corpus is a `1..12` plan of twelve passing points.
 #[test]
@@ -218,7 +218,7 @@ fn output_tap_emits_a_tap_stream_for_the_run() {
             &corpus.display().to_string(),
             "--jobs",
             "4",
-            "--output",
+            "--format",
             "tap",
         ])
         .assert()
@@ -375,7 +375,7 @@ fn pinned_run_id_is_honored() {
             "breadth",
             "--run-id",
             "pinned-seed-001",
-            "--output",
+            "--format",
             "json",
         ])
         .assert()
@@ -414,7 +414,7 @@ fn rerun_reruns_only_the_prior_failures() {
         .code(1);
     // --rerun: only the prior failure runs (the passing scenario is not re-run).
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--rerun", "--output", "json"])
+        .args(["test", "suite", "--rerun", "--format", "json"])
         .assert()
         .code(1);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -800,7 +800,7 @@ fn an_empty_selection_still_emits_the_machine_body() {
     std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json", "--scenario", "nope"])
+        .args(["test", "suite", "--format", "json", "--scenario", "nope"])
         .assert()
         .code(2);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -837,7 +837,7 @@ fn tags_survive_the_stamped_pipeline_and_phases_keep_both() {
     std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json"])
+        .args(["test", "suite", "--format", "json"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -890,7 +890,7 @@ fn meta_reaches_the_record_body_and_explain() {
         .args([
             "test",
             "suite",
-            "--output",
+            "--format",
             "json",
             "--meta",
             "commit=abc123",
@@ -956,7 +956,7 @@ fn a_rerun_carries_the_bases_scenarios_into_junit_and_the_report() {
             "--rerun",
             "--junit",
             "rerun.xml",
-            "--output",
+            "--format",
             "json",
         ])
         .assert()
@@ -1063,7 +1063,7 @@ fn an_authored_skip_is_visible_in_every_sink_and_exits_zero() {
     std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--junit", "report.xml", "--output", "json"])
+        .args(["test", "suite", "--junit", "report.xml", "--format", "json"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -1106,7 +1106,7 @@ fn an_all_skipped_suite_exits_zero() {
     std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json"])
+        .args(["test", "suite", "--format", "json"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -1175,7 +1175,7 @@ fn a_failing_steps_reproduce_hint_reaches_the_record_and_explain() {
     .unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json"])
+        .args(["test", "suite", "--format", "json"])
         .assert()
         .code(1);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -1200,7 +1200,7 @@ fn a_failing_steps_reproduce_hint_reaches_the_record_and_explain() {
 /// The machine-body contract has no exceptions: a setup that fails to even
 /// LOAD (here: the configured file does not exist) is still a terminating
 /// path, and this arm was the last one returning zero stdout bytes under
-/// `--output json`.
+/// `--format json`.
 #[test]
 fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
     let fixture = Fixture::start().unwrap();
@@ -1219,7 +1219,7 @@ fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
     std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json"])
+        .args(["test", "suite", "--format", "json"])
         .assert()
         .code(2);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -1229,7 +1229,7 @@ fn a_setup_that_fails_to_load_still_emits_the_machine_body() {
 }
 
 /// R17-2.4: the setup abort writes the CI files (#78) **and** the machine
-/// body — `--output json` used to read zero bytes on this path, so four sinks
+/// body — `--format json` used to read zero bytes on this path, so four sinks
 /// told three stories. Totals are suite-only zeros (ADR-0014); the exit code
 /// carries the verdict.
 #[test]
@@ -1262,7 +1262,7 @@ fn a_failed_setup_still_emits_the_machine_body() {
     .unwrap();
 
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json"])
+        .args(["test", "suite", "--format", "json"])
         .assert()
         .code(2);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -1474,7 +1474,7 @@ fn bare_filename_setup_at_project_root_resolves_packs() {
 /// pins a console/JUnit disagreement that once existed here: with teardown's
 /// failing scenario folded into `RunRecord`'s totals, the console `summary:`
 /// line read "2 passed · 1 failed" (setup-less here, so suite (1 passed) +
-/// teardown (1 failed)) while JUnit/`--output json`/TAP — which read the
+/// teardown (1 failed)) while JUnit/`--format json`/TAP — which read the
 /// suite's own `RunSummary` directly — said "1 passed, 0 failed". Suite-only
 /// totals make the console line agree with those surfaces again.
 /// A green suite (one passing scenario) with a `[run] teardown` that fails —
@@ -2887,7 +2887,7 @@ fn console_prints_the_run_header_once_per_run() {
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     // `ConsoleReporter::on_event`'s `Event::RunStarted` arm writes `"proef run
     // {run_id}"` to `self.out` (report.rs:217-218) — the per-run header, once
-    // per `RunStarted`. `self.out` is stdout here (no `--output json`/`tap`,
+    // per `RunStarted`. `self.out` is stdout here (no `--format json`/`tap`,
     // so `machine_stdout` is false and `console_out` is `std::io::stdout()`,
     // exec.rs:154-158) — the same stream `out` reads.
     assert_eq!(
@@ -3470,7 +3470,7 @@ fn a_filter_typo_names_the_nearest_spelling() {
         ));
 }
 
-/// `--output json`'s `exit_code` must be the code the process actually exits
+/// `--format json`'s `exit_code` must be the code the process actually exits
 /// with. A failed JUnit write escalates to 3, and that escalation used to be
 /// applied by a `return` *after* the body had already been printed — so a
 /// machine consumer read a verdict the program then exited past, with no way
@@ -3505,7 +3505,7 @@ fn the_json_body_reports_the_exit_code_the_process_uses() {
     std::fs::write(cwd.path().join("blocker"), "not a directory").unwrap();
     let unwritable = cwd.path().join("blocker").join("report.junit.xml");
     let assert = proef_in(cwd.path(), &fixture)
-        .args(["test", "suite", "--output", "json", "--junit"])
+        .args(["test", "suite", "--format", "json", "--junit"])
         .arg(&unwritable)
         .assert()
         .code(3);

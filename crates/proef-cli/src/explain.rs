@@ -35,7 +35,7 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
     // A complete/cancelled record's tail `RunFinished` carries the run's own
     // verdict — main-suite scenarios only, `[run] setup`/`teardown` excluded
     // (ADR-0014) — so reading it here is what keeps this headline agreeing
-    // with the console `summary:` line, JUnit, `--output json`, TAP, the SLA
+    // with the console `summary:` line, JUnit, `--format json`, TAP, the SLA
     // gate, and the exit code. A *truncated* record has no `RunFinished` to
     // read (`rec.totals` is `None`), so fall back to counting the scenarios
     // the record actually holds — the only totals a dead run can offer.

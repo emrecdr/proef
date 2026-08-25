@@ -352,16 +352,16 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 proef [--config PATH] <command>       # global: names the proef.toml to read
 proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
-                      [--output json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
+                      [--format json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
                       [--run-id ID] [--rerun] [--sarif PATH (with --dry-run)] [--max-fail N] [--shard I/N] [--shuffle] [--meta KEY=VALUE]... [--console MODE]
-proef flows [file|dir] [--env NAME] [--output json]
-proef macros [file|dir] [--env NAME] [--output json]
-proef fragments [file|dir] [--env NAME] [--output json] [--check [--require-annotated]]
+proef flows [file|dir] [--env NAME] [--format json]
+proef macros [file|dir] [--env NAME] [--format json]
+proef fragments [file|dir] [--env NAME] [--format json] [--check [--require-annotated]]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id]         proef doctor
 proef diff [base] [new] [--fail-on-regression]   # each side: run id, record dir, or events .jsonl
-proef flaky [--output json]                      # verdicts over the retained run history
+proef flaky [--format json]                      # verdicts over the retained run history
 proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]
 proef lsp

@@ -237,7 +237,7 @@ fn an_empty_shard_is_a_note_and_an_empty_selection_stays_loud() {
 }
 
 /// R17-2.3: an empty shard is a run like any other to a machine consumer —
-/// exactly one `--output json`/TAP body on stdout, the note on stderr. It
+/// exactly one `--format json`/TAP body on stdout, the note on stderr. It
 /// used to print the prose note *as* the body, so `jq` failed on the very
 /// path a sharded matrix guarantees one job will take.
 #[test]
@@ -249,7 +249,7 @@ fn an_empty_shard_still_emits_the_machine_body() {
     let mut idle = 0;
     for shard in ["1/2", "2/2"] {
         let assert = proef_in(cwd.path(), &fixture)
-            .args(["test", "suite", "--shard", shard, "--output", "json"])
+            .args(["test", "suite", "--shard", shard, "--format", "json"])
             .assert()
             .code(0);
         let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -266,7 +266,7 @@ fn an_empty_shard_still_emits_the_machine_body() {
             assert!(stderr.contains("scenario(s) — nothing to run"), "{stderr}");
         }
         let tap = proef_in(cwd.path(), &fixture)
-            .args(["test", "suite", "--shard", shard, "--output", "tap"])
+            .args(["test", "suite", "--shard", shard, "--format", "tap"])
             .assert()
             .code(0);
         let tap_out = String::from_utf8_lossy(&tap.get_output().stdout).into_owned();

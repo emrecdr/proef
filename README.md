@@ -238,15 +238,15 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | Command | Purpose |
 |---|---|
 | `proef init [dir]` | scaffold a minimal working suite — `proef.toml`, one feature, one pack, schema wired up; never overwrites an existing file |
-| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--run-id`, `--rerun`, `--sarif`, `--output json|tap`, `--watch`, `--shard I/N`, `--max-fail N`, `--shuffle`, `--meta KEY=VALUE`, `--console full|dotted|quiet`); path optional — defaults to `[run] suite`, then `tests/` |
-| `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--output json` feeds the nextest harness) |
-| `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--output json`) |
-| `proef fragments [path]` | list the `[run] fragments` corpus with how many scenarios actually run each entry — naming both ways a fragment dies (no macro refs it; only a macro nothing binds does) and the entries carrying no `# @proef` at all (`--check`, `--require-annotated`, `--output json`) |
-| `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`--env`) |
+| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--run-id`, `--rerun`, `--sarif`, `--format json|tap`, `--watch`, `--shard I/N`, `--max-fail N`, `--shuffle`, `--meta KEY=VALUE`, `--console full|dotted|quiet`); path optional — defaults to `[run] suite`, then `tests/` |
+| `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--format json` feeds the nextest harness) |
+| `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--format json`) |
+| `proef fragments [path]` | list the `[run] fragments` corpus with how many scenarios actually run each entry — naming both ways a fragment dies (no macro refs it; only a macro nothing binds does) and the entries carrying no `# @proef` at all (`--check`, `--require-annotated`, `--format json`) |
+| `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`-o`/`--output` names the directory; `--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
-| `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing (`--output json`) |
-| `proef report [run-id]` | write a self-contained HTML report for a run (`-o FILE`) |
+| `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing (`--format json`) |
+| `proef report [run-id]` | write a self-contained HTML report for a run (`-o`/`--output` FILE) |
 | `proef schema` | print/install the pack JSON Schema, `--add-to` wiring it into an editor config (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
 | `proef fmt <path>` | canonicalize raw hurl blocks inside packs (`--check` for CI) |

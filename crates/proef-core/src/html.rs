@@ -199,7 +199,7 @@ pub fn render_html(
 }
 
 /// The headline `(passed, failed, skipped)` — mirrors every other surface
-/// that reads `RunFinished` (console `summary:`, `explain`, `--output json`,
+/// that reads `RunFinished` (console `summary:`, `explain`, `--format json`,
 /// `JUnit`, TAP, the SLA gate, the exit code): main-suite scenarios only,
 /// `[run] setup`/`teardown` excluded (ADR-0014). A truncated record has no
 /// `RunFinished` to read, so fall back to counting every rendered block — the

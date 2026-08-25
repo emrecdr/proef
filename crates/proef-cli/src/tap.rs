@@ -1,7 +1,7 @@
 //! TAP (Test Anything Protocol) v13 output — one test point per scenario,
 //! derived from the run's own outcomes (`RunSummary`), never from hurl.
 //!
-//! `proef test --output tap` prints this to stdout for `prove`/`tappy` while the
+//! `proef test --format tap` prints this to stdout for `prove`/`tappy` while the
 //! human report moves to stderr. A scenario that runs but does not gate the exit
 //! code (`@quarantine`) maps to the TAP `# TODO` directive when it fails; a
 //! `Skipped` scenario to `# SKIP`. Failure detail rides in a YAML diagnostic

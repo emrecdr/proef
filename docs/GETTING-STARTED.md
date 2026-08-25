@@ -252,7 +252,7 @@ of a run (scenario tree, timings, and deep-links to the executed artifacts).
 - [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — exit codes, the glyph legend,
   and the frequent failures; [`DIAGNOSTICS.md`](DIAGNOSTICS.md) indexes every
   error code you might hit.
-- `proef flows suite` lists every scenario with tags; `--output json` feeds
+- `proef flows suite` lists every scenario with tags; `--format json` feeds
   the nextest harness (one IDE test per scenario).
 - `proef test suite --watch` reruns on every file change.
 - Tag a scenario `@skip` / `@skip:reason` to park it — still counted, its
