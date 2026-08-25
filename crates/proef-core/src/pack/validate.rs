@@ -978,7 +978,11 @@ fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViol
             Some(RawOptionValue::Count) => match value.trim().parse::<i64>() {
                 Ok(-1) => push(
                     "proef::pack::retry_not_finite",
-                    format!("`{key}: -1` is infinite — budgets require a finite count (ADR-0007)"),
+                    format!(
+                        "`{key}: -1` is infinite — hurl cannot be interrupted mid-call, so an \
+                         unbounded retry is a hang the watchdog must abandon; give it a finite \
+                         count (`{key}: 5`, with `retry-interval:` for pacing)"
+                    ),
                 ),
                 Ok(n) if n > MAX_COUNT => push(
                     "proef::pack::retry_not_finite",
@@ -1367,6 +1371,10 @@ fn report_use_cycle(path: &[&Macro], next: &Macro, diags: &mut Vec<Diag>) {
         Diag::error(
             "proef::pack::use_cycle",
             format!("`use:` cycle: `{}` → `{}`", names.join("` → `"), names[0]),
+        )
+        .with_help(
+            "`use:` composition must be a tree: pull the shared steps into a \
+             third macro both sides `use:`, instead of pointing at each other",
         )
         .with_source(closer.pack.clone(), Arc::clone(&closer.source))
         .maybe_span(closer.span),

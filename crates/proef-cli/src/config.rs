@@ -196,18 +196,31 @@ pub struct EnvProfile {
     pub sla: SlaTable,
 }
 
+/// A `proef.toml` that exists and cannot be used — carried as a rendered
+/// diagnostic, not a bare sentence. `Display` gives the message alone (the
+/// warning paths); [`crate::render::print_all`] gives the full treatment
+/// `pack::yaml` always had for the structurally identical failure: the code,
+/// the file as source, toml's own span under the caret, the catalogue URL.
+pub struct ConfigError(pub Box<proef_core::diag::Diag>);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0.message)
+    }
+}
+
 impl ProjectConfig {
     /// Load the nearest `proef.toml`, searching up from the working directory
     /// (like cargo/git) so config is found from any subdirectory. Absent file =
     /// defaults; a malformed file is a user error worth failing loudly on.
-    pub fn load() -> Result<Self, String> {
+    pub fn load() -> Result<Self, ConfigError> {
         Self::from_nearest(find_config())
     }
 
     /// Like [`load`](Self::load), but searching from `dir` instead of the
     /// process working directory — what `proef lsp` needs once the client has
     /// told it where the workspace actually is.
-    pub fn load_from(dir: &Path) -> Result<Self, String> {
+    pub fn load_from(dir: &Path) -> Result<Self, ConfigError> {
         Self::from_nearest(find_config_from(dir))
     }
 
@@ -238,27 +251,59 @@ impl ProjectConfig {
     /// user chose into one they never typed. Whether two paths *are the same
     /// file* is a different question, asked and answered where it matters
     /// ([`crate::watch`]).
-    pub fn load_at(path: &Path) -> Result<Self, String> {
+    pub fn load_at(path: &Path) -> Result<Self, ConfigError> {
         if !path.is_file() {
-            return Err(format!(
-                "--config {} is not a file — name the proef.toml to read, \
-                 or omit the flag to search up from the working directory",
-                path.display()
-            ));
+            return Err(ConfigError(Box::new(proef_core::diag::Diag::error(
+                "proef::config::unreadable",
+                format!(
+                    "--config {} is not a file — name the proef.toml to read, \
+                     or omit the flag to search up from the working directory",
+                    path.display()
+                ),
+            ))));
         }
-        let absolute = std::path::absolute(path)
-            .map_err(|err| format!("--config {} cannot be resolved: {err}", path.display()))?;
+        let absolute = std::path::absolute(path).map_err(|err| {
+            ConfigError(Box::new(proef_core::diag::Diag::error(
+                "proef::config::unreadable",
+                format!("--config {} cannot be resolved: {err}", path.display()),
+            )))
+        })?;
         Self::from_nearest(Some(absolute))
     }
 
-    fn from_nearest(found: Option<PathBuf>) -> Result<Self, String> {
+    fn from_nearest(found: Option<PathBuf>) -> Result<Self, ConfigError> {
         let Some(path) = found else {
             return Ok(Self::default());
         };
-        let text = std::fs::read_to_string(&path)
-            .map_err(|err| format!("cannot read {}: {err}", path.display()))?;
-        let mut config: Self =
-            toml::from_str(&text).map_err(|err| format!("{} is invalid: {err}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|err| {
+            ConfigError(Box::new(proef_core::diag::Diag::error(
+                "proef::config::unreadable",
+                format!("cannot read {}: {err}", path.display()),
+            )))
+        })?;
+        let mut config: Self = toml::from_str(&text).map_err(|err| {
+            // The same treatment `pack::yaml` always had for the structurally
+            // identical failure: a code, the file as source, and toml's own
+            // span under the caret — `proef.toml` is edited as often as any
+            // pack, and its errors were the one authored-input class carrying
+            // a bare sentence.
+            let mut diag = proef_core::diag::Diag::error(
+                "proef::config::toml",
+                format!("{} is invalid: {}", path.display(), err.message()),
+            )
+            .with_source(
+                path.display().to_string(),
+                std::sync::Arc::from(text.as_str()),
+            );
+            if let Some(span) = err.span() {
+                diag = diag.with_span(proef_core::diag::Span::clamped(
+                    span.start,
+                    span.end,
+                    text.len(),
+                ));
+            }
+            ConfigError(Box::new(diag))
+        })?;
         config.path = Some(path);
         Ok(config)
     }

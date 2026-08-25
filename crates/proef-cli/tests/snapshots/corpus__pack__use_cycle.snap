@@ -11,5 +11,6 @@ proef::pack::use_cycle (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
    ·   ────
  7 │     steps:
    ╰────
+  help: `use:` composition must be a tree: pull the shared steps into a third macro both sides `use:`, instead of pointing at each other
 
 1 error(s)

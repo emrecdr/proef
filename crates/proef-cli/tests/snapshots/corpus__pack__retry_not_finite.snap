@@ -4,7 +4,8 @@ expression: stderr
 ---
 proef::pack::retry_not_finite (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
-  × macro `forever` step 0: `retry: -1` is infinite — budgets require a finite count (ADR-0007)
+  × macro `forever` step 0: `retry: -1` is infinite — hurl cannot be interrupted mid-call, so an unbounded retry is a hang the watchdog must abandon; give it a finite count (`retry: 5`, with `retry-
+  │ interval:` for pacing)
    ╭─[tests/errors/pack__retry_not_finite/packs/broken.yaml:8:11]
  7 │           [Options]
  8 │           retry: -1

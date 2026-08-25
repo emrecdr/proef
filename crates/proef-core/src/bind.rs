@@ -109,14 +109,20 @@ fn bind_scenario(
                     .map(|(pattern, macro_name, _)| format!("`{macro_name}` ({pattern})"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                diags.push(at(Diag::error(
-                    "proef::bind::ambiguous_step",
-                    format!(
-                        "`{}` matches {} macros: {listing}",
-                        step.text,
-                        candidates.len()
+                diags.push(
+                    at(Diag::error(
+                        "proef::bind::ambiguous_step",
+                        format!(
+                            "`{}` matches {} macros: {listing}",
+                            step.text,
+                            candidates.len()
+                        ),
+                    ))
+                    .with_help(
+                        "make one pattern more specific (add a literal word) or retire the \
+                         duplicate — every sentence must bind to exactly one macro",
                     ),
-                )));
+                );
                 continue;
             }
         }
@@ -140,10 +146,16 @@ fn bind_scenario(
                     continue;
                 };
                 if args.contains_key(key) {
-                    diags.push(at(Diag::error(
-                        "proef::bind::table_conflict",
-                        format!("`{key}` is set both by a `{{capture}}` and the data table"),
-                    )));
+                    diags.push(
+                        at(Diag::error(
+                            "proef::bind::table_conflict",
+                            format!("`{key}` is set both by a `{{capture}}` and the data table"),
+                        ))
+                        .with_help(
+                            "one source per param: drop the table row, or remove the \
+                         `{capture}` from the `match:` sentence",
+                        ),
+                    );
                     continue;
                 }
                 if !macro_.params.contains(key) {
