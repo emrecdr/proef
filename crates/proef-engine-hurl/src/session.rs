@@ -79,8 +79,9 @@ impl HurlSession {
             // ADR-0010: this is byte-for-byte the artifact text.
             let file = hurl_core::parser::parse_hurl_file(&self.artifact.text).map_err(|err| {
                 EngineError::setup(format!(
-                    "emitted artifact does not parse (line {}): {:?}",
-                    err.pos.line, err.kind
+                    "emitted artifact does not parse (line {}): {}",
+                    err.pos.line,
+                    crate::parse_error_prose(&err, &self.artifact.text)
                 ))
             })?;
             self.parsed = Some(file);

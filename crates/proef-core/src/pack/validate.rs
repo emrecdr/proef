@@ -64,24 +64,36 @@ pub(crate) fn normalize_macro(
         diag.with_source(source.name.clone(), Arc::clone(&source.text))
             .maybe_span(span)
     };
+    // Pattern and defaults problems live on the `match:` line, and the caret
+    // should too. `match_span` was computed here since the pass was written
+    // and never reached a diagnostic — thirteen of the nineteen seeded pack
+    // snapshots underlined the macro *name* while the defect sat on a line
+    // outside the excerpt (one excerpted the *previous* macro). miette's
+    // source rendering is this tool's main authoring surface; aim it.
+    let at_match = |diag: Diag| {
+        diag.with_source(source.name.clone(), Arc::clone(&source.text))
+            .maybe_span(match_span.or(span))
+    };
 
     // Pass 1: match guard rails.
     if let Some(pattern) = &raw.match_ {
         for problem in matcher::pattern_problems(pattern, &raw.params) {
-            diags.push(at(Diag::error(
+            diags.push(at_match(Diag::error(
                 problem.code(),
                 format!("macro `{name}`: {problem}"),
             )));
         }
     }
 
-    // Pass 2: defaults must name declared params.
+    // Pass 2: defaults must name declared params. The caret sits on the
+    // `match:` line too — the params it declares are what a default must
+    // name, and the macro-name span said nothing about either.
     for default_key in raw.defaults.keys() {
         if !raw.params.contains(default_key) {
             let suggestion = matcher::closest(default_key, raw.params.iter().map(String::as_str))
                 .map(|p| format!(" — did you mean `{p}`?"))
                 .unwrap_or_default();
-            diags.push(at(Diag::error(
+            diags.push(at_match(Diag::error(
                 "proef::pack::default_not_param",
                 format!(
                     "macro `{name}`: default `{default_key}` is not a declared param{suggestion}"

@@ -180,9 +180,13 @@ fn resolve_in_macro_scope(
             Some(resolution.text)
         }
         Err(err) => {
+            // The span is the feature step (the invocation), but the value
+            // that failed lives in a pack — which this message used to leave
+            // unnamed, sending the reader to a healthy `.feature` line while
+            // the sick YAML stayed anonymous.
             sinks.errors.push(at(Diag::error(
                 err.code(),
-                format!("in macro `{}`: {err}", macro_.name),
+                format!("in macro `{}` (pack {}): {err}", macro_.name, macro_.pack),
             )));
             None
         }

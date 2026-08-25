@@ -12,7 +12,13 @@ pub(crate) fn macro_span(text: &str, name: &str) -> Option<Span> {
     for (offset, line) in lines_with_offsets(text) {
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
+        // `macro_region`'s header discipline, not a bare prefix: a pack root
+        // holds `bind:` at the same indent, and its entries are `name: value`
+        // lines too — a macro sharing a name with a bind key anchored every
+        // macro diagnostic on the config line. A *header* ends at its colon.
+        let is_header = trimmed.ends_with(':') && !trimmed.starts_with('#');
         if indent == 2
+            && is_header
             && (trimmed.starts_with(&format!("{name}:"))
                 || trimmed.starts_with(&format!("\"{name}\":")))
         {

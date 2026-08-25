@@ -5,11 +5,11 @@ expression: stderr
 proef::pack::pattern_no_anchor
 
   × macro `bare`: pattern has no literal text to match on — a bare capture matches every step
-   ╭─[tests/errors/pack__pattern_no_anchor/packs/broken.yaml:2:3]
- 1 │ macros:
- 2 │   bare:
-   ·   ────
+   ╭─[tests/errors/pack__pattern_no_anchor/packs/broken.yaml:4:5]
  3 │     params: [a]
+ 4 │     match: "{a}"
+   ·     ────────────
+ 5 │     steps:
    ╰────
 
 1 error(s)

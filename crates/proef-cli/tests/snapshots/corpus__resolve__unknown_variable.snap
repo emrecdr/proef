@@ -4,7 +4,7 @@ expression: stderr
 ---
 proef::resolve::unknown_variable
 
-  × in macro `fetch`: unknown variable `${nope}`
+  × in macro `fetch` (pack tests/errors/resolve__unknown_variable/packs/broken.yaml): unknown variable `${nope}`
    ╭─[tests/errors/resolve__unknown_variable/case.feature:3:5]
  2 │   Scenario: S
  3 │     When I fetch the page

@@ -5,11 +5,11 @@ expression: stderr
 proef::pack::pattern_unknown_capture
 
   × macro `login`: capture `{rol}` is not a declared param (did you mean `role`?)
-   ╭─[tests/errors/pack__pattern_unknown_capture/packs/broken.yaml:2:3]
- 1 │ macros:
- 2 │   login:
-   ·   ─────
+   ╭─[tests/errors/pack__pattern_unknown_capture/packs/broken.yaml:4:5]
  3 │     params: [role]
+ 4 │     match: "I log in as {rol}"
+   ·     ──────────────────────────
+ 5 │     steps:
    ╰────
 
 1 error(s)

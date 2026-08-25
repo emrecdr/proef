@@ -5,11 +5,11 @@ expression: stderr
 proef::pack::default_not_param
 
   × macro `search`: default `index` is not a declared param
-   ╭─[tests/errors/pack__default_not_param/packs/broken.yaml:2:3]
- 1 │ macros:
- 2 │   search:
-   ·   ──────
- 3 │     params: [term]
+   ╭─[tests/errors/pack__default_not_param/packs/broken.yaml:5:5]
+ 4 │     defaults: { index: records }
+ 5 │     match: "I search for {term}"
+   ·     ────────────────────────────
+ 6 │     steps:
    ╰────
 
 1 error(s)

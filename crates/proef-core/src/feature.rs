@@ -70,6 +70,31 @@ pub struct StepDefn {
     pub span: Span,
 }
 
+/// gherkin's parse error renders its expectation set from a `HashSet`,
+/// whose iteration order changes per process — the same broken file printed
+/// two different messages across runs (observed live: `{"…", "_"}` vs
+/// `{"_", "…"}`), which breaks snapshot determinism and `print_all`'s
+/// `(code, message)` collapse alike. Sorting the `{…}` tail's elements makes
+/// the message a function of the input again; a message with no braces
+/// passes through untouched.
+fn normalized_parse_error(err: &impl std::fmt::Display) -> String {
+    let text = err.to_string();
+    let (Some(open), Some(close)) = (text.find('{'), text.rfind('}')) else {
+        return text;
+    };
+    if close <= open {
+        return text;
+    }
+    let mut items: Vec<&str> = text[open + 1..close].split(", ").collect();
+    items.sort_unstable();
+    format!(
+        "{}{{{}}}{}",
+        &text[..open],
+        items.join(", "),
+        &text[close + 1..]
+    )
+}
+
 /// Parse one feature file into concrete scenarios. All diagnostics carry the
 /// normalized source and byte spans.
 pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
@@ -95,7 +120,10 @@ pub fn parse(path: &str, text: &str) -> Result<FeatureFile, Vec<Diag>> {
         Err(err) => {
             let mut diag = Diag::error(
                 "proef::feature::parse",
-                format!("the feature file does not parse: {err}"),
+                format!(
+                    "the feature file does not parse: {}",
+                    normalized_parse_error(&err)
+                ),
             )
             .with_source(path.to_owned(), Arc::clone(&source));
             if let Some(span) = parse_error_span(&err.to_string(), &source) {
@@ -536,6 +564,21 @@ mod tests {
     use super::*;
 
     const FEATURE: &str = "@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a record\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
+
+    /// The normalizer is what makes `feature::parse` deterministic: gherkin
+    /// renders its expectation set from a `HashSet`, so the same broken file
+    /// printed two orderings across processes (observed live).
+    #[test]
+    fn parse_error_expectation_sets_are_sorted() {
+        assert_eq!(
+            super::normalized_parse_error(&"Error at 6:1: {\"b\", \"a\"}"),
+            "Error at 6:1: {\"a\", \"b\"}"
+        );
+        assert_eq!(
+            super::normalized_parse_error(&"no braces here"),
+            "no braces here"
+        );
+    }
 
     #[test]
     fn tags_background_and_outline_expand() {
