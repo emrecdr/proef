@@ -1002,6 +1002,49 @@ fn a_rerun_carries_the_bases_scenarios_into_junit_and_the_report() {
     );
 }
 
+/// `--console dotted` prints one glyph per scenario and `--console quiet`
+/// only the frame — presentation only: exit codes and the record are
+/// identical (the failure detail still prints after the pool in every mode).
+#[test]
+fn console_modes_are_presentation_only() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n  @skip\n  Scenario: parked\n    When the suite probes health\n  Scenario: two\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let dotted = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--jobs", "1", "--console", "dotted"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&dotted.get_output().stdout).into_owned();
+    assert!(
+        out.contains(".s.") || out.contains("s..") || out.contains("..s"),
+        "three scenarios, one skipped, exactly three glyphs: {out}"
+    );
+    assert!(
+        !out.contains("Scenario: one"),
+        "no BDD tree in dotted: {out}"
+    );
+    assert!(out.contains("summary: 2 passed"), "{out}");
+
+    let quiet = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--console", "quiet"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&quiet.get_output().stdout).into_owned();
+    assert!(
+        !out.contains("Scenario:"),
+        "no per-scenario lines in quiet: {out}"
+    );
+    assert!(out.contains("summary: 2 passed"), "{out}");
+}
+
 /// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
 /// parked visibly — counted in every total, reasoned in every sink — and an
 /// all-skipped suite exits 0 (deliberate, versioned, visible in review is

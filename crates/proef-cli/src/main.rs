@@ -150,6 +150,13 @@ enum Command {
         /// harvests metadata itself (no git, no hostname)
         #[arg(long = "meta", value_name = "KEY=VALUE")]
         meta: Vec<String>,
+        /// Console verbosity: `full` (the BDD tree, default), `dotted`
+        /// (one glyph per scenario: `.` pass, `F` fail, `s` skip, `w`
+        /// warn; failures still print in full after the run), or `quiet`
+        /// (run line and summary only). Purely presentation — record,
+        /// reports and exit code are identical in every mode
+        #[arg(long, value_enum, default_value_t = ConsoleArg::Full)]
+        console: ConsoleArg,
     },
     /// List every scenario (flow) with its anchor and tags
     Flows {
@@ -292,6 +299,25 @@ enum SecretAction {
 /// Playwright's spelling, and the same validation everyone applies: both
 /// Parse repeated `--meta KEY=VALUE` flags: first `=` splits, empty keys and
 /// flag-level duplicates are refused (config-vs-flag overrides are the
+/// `--console` at the clap boundary; converts into the core's
+/// [`proef_core::report::ConsoleMode`] so core stays clap-free.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ConsoleArg {
+    Full,
+    Dotted,
+    Quiet,
+}
+
+impl From<ConsoleArg> for proef_core::report::ConsoleMode {
+    fn from(arg: ConsoleArg) -> Self {
+        match arg {
+            ConsoleArg::Full => Self::Full,
+            ConsoleArg::Dotted => Self::Dotted,
+            ConsoleArg::Quiet => Self::Quiet,
+        }
+    }
+}
+
 /// designed use; flag-vs-flag duplicates are a typo).
 fn parse_meta_flags(
     pairs: &[String],
@@ -503,6 +529,7 @@ fn main() -> std::process::ExitCode {
             shard,
             shuffle,
             meta,
+            console,
         } => {
             // Captured before `prepare` consumes `path`: `dry_run`'s "next
             // command" nudge must echo the path the user actually typed, not
@@ -565,6 +592,7 @@ fn main() -> std::process::ExitCode {
                                             shard,
                                             shuffle,
                                             &config.metadata(active_env.as_deref(), pairs),
+                                            console.into(),
                                             config,
                                             cancel, // None = execute installs its own Ctrl-C handler
                                         ),
