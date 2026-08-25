@@ -139,9 +139,26 @@ fn validate_payload(text: &str) -> Result<(), PayloadProbeError> {
         Err(err) => Err(PayloadProbeError {
             line: err.pos.line,
             column: err.pos.column,
-            message: format!("{:?}", err.kind),
+            message: parse_error_prose(&err, text),
         }),
     }
+}
+
+/// A hurl parse error in prose, through hurl's own `DisplaySourceError`
+/// vocabulary (`description` + `fixme`) instead of `{:?}` on the kind: a
+/// pack author was shown `ResponseSectionName { name: "Wrong" }` — a Rust
+/// struct literal from a crate they never heard of — where hurl itself says
+/// "expecting a valid response section name". Both halves are pinned-8.0.1
+/// API surface, on the canary's watch list like every other seam fact.
+pub(crate) fn parse_error_prose(err: &hurl_core::parser::ParseError, text: &str) -> String {
+    use hurl_core::error::DisplaySourceError as _;
+    let lines: Vec<&str> = text.lines().collect();
+    let fixme = err.fixme(&lines).to_string(hurl_core::text::Format::Plain);
+    // `fixme` decorates for hurl's own two-line source display — a column of
+    // spaces and a caret before the prose. In a one-line message that is
+    // noise, not location (the line/column ride the error separately).
+    let fixme = fixme.trim_start().trim_start_matches('^').trim_start();
+    format!("{}: {}", err.description(), fixme)
 }
 
 /// Report the libcurl this binary is linked against (mirrors `curl --version`) —

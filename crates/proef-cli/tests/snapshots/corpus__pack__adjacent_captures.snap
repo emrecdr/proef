@@ -5,11 +5,11 @@ expression: stderr
 proef::pack::adjacent_captures
 
   × macro `glued`: adjacent captures `{a}{b}` are ambiguous — put literal text between them
-   ╭─[tests/errors/pack__adjacent_captures/packs/broken.yaml:2:3]
- 1 │ macros:
- 2 │   glued:
-   ·   ─────
+   ╭─[tests/errors/pack__adjacent_captures/packs/broken.yaml:4:5]
  3 │     params: [a, b]
+ 4 │     match: "do {a}{b} now"
+   ·     ──────────────────────
+ 5 │     steps:
    ╰────
 
 1 error(s)

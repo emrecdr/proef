@@ -43,7 +43,7 @@ pub(crate) fn scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
         hurl_core::parser::parse_hurl_file(&normalized).map_err(|err| FragmentScanError {
             line: err.pos.line,
             column: err.pos.column,
-            message: format!("{:?}", err.kind),
+            message: crate::parse_error_prose(&err, &normalized),
         })?;
 
     // An annotation among the file's *trailing* terminators follows no entry —
