@@ -336,7 +336,7 @@ fn merge_back_is_write_set_only() {
         Arc::new(move |scenario, _, world, _| {
             barrier.wait();
             if scenario == "promotes-x" {
-                world.set_global("x", Value::Int(2));
+                assert!(world.set_global("x", Value::Int(2)));
             } else {
                 // Wait for A's merge-back to land before finishing B.
                 let deadline = Instant::now() + Duration::from_secs(10);
@@ -344,7 +344,7 @@ fn merge_back_is_write_set_only() {
                     assert!(Instant::now() < deadline, "A's promotion never landed");
                     std::thread::yield_now();
                 }
-                world.set_global("y", Value::Int(3));
+                assert!(world.set_global("y", Value::Int(3)));
             }
         })
     };

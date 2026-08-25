@@ -93,6 +93,14 @@ impl Redactions {
         self.0.is_empty()
     }
 
+    /// Does `text` carry any guarded value — raw, or in a derived encoded
+    /// form? The probe half of [`Self::apply`]: a scan, no allocation. What
+    /// the World's `saveAs: global` gate asks before persisting a capture
+    /// (ADR-0005) — one needle set for redaction and refusal, never two.
+    pub fn taints(&self, text: &str) -> bool {
+        self.0.iter().any(|needle| text.contains(needle.as_str()))
+    }
+
     /// The event with every string field redacted. The match is exhaustive on
     /// purpose: adding an event variant forces a redaction decision here, so
     /// the invariant (ADR-0005: secrets reach **no** sink) cannot silently

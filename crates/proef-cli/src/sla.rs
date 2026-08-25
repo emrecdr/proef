@@ -57,13 +57,26 @@ pub(crate) fn percentile(sorted_ms: &[u64], p: usize) -> Option<u64> {
 /// `Skipped` steps never reach the network, so they are excluded rather than
 /// skewing the percentile toward zero. Step file/line are authored feature
 /// prose, never secret values, so the report needs no redaction.
-pub fn check(summary: &RunSummary, thresholds: SlaThresholds) -> Option<String> {
+pub fn check(
+    summary: &RunSummary,
+    thresholds: SlaThresholds,
+    non_gating: &[(String, String)],
+) -> Option<String> {
     if !thresholds.is_set() {
         return None;
     }
     let steps: Vec<(u64, &str, usize)> = summary
         .outcomes
         .iter()
+        // `@quarantine` excludes a scenario from the exit code; a latency
+        // gate that still counted it turned a green run red on exactly the
+        // slow, timing-marginal scenario quarantine exists for. One
+        // non-gating rule, applied by both verdicts.
+        .filter(|outcome| {
+            !non_gating.iter().any(|(file, name)| {
+                file.as_str() == outcome.file.as_ref() && name.as_str() == outcome.name.as_ref()
+            })
+        })
         .flat_map(|outcome| &outcome.steps)
         .filter(|step| step.status != Status::Skipped)
         .map(|step| {
