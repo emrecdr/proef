@@ -368,17 +368,19 @@ impl EngineSession for HurlSession {
                         })
                         .map(|(index, step, _)| (*index, *step));
                     world.set(capture.name.clone(), value.clone());
+                    // The World owns the promotion gate (ADR-0005): it
+                    // refuses a value carrying any secret raw *or encoded* —
+                    // the engine-side check this replaces matched whole-value
+                    // equality only, so a composite (`Bearer <token>`) or a
+                    // base64 reflection persisted to disk in plaintext.
                     if let Some((step_index, step)) = target_step
                         && step.save_as.contains_key(&capture.name)
+                        && !world.set_global(capture.name.clone(), value)
                     {
-                        if is_secret_value(&value, &self.secrets) {
-                            refused_promotions
-                                .entry(step_index)
-                                .or_default()
-                                .push(capture.name.clone());
-                        } else {
-                            world.set_global(capture.name.clone(), value);
-                        }
+                        refused_promotions
+                            .entry(step_index)
+                            .or_default()
+                            .push(capture.name.clone());
                     }
                 }
             }
@@ -778,15 +780,6 @@ fn cap_detail(text: &str) -> String {
 
 /// Detail attached to a step whose payload lowered to zero hurl entries.
 const NO_ENTRIES_DETAIL: &str = "no hurl entries to execute (comment-only payload?)";
-
-/// Would persisting this capture write a secret to disk? Secrets are
-/// strings; only a non-empty string capture can equal one.
-fn is_secret_value(value: &WorldValue, secrets: &BTreeMap<String, String>) -> bool {
-    match value {
-        WorldValue::String(s) => !s.is_empty() && secrets.values().any(|secret| secret == s),
-        _ => false,
-    }
-}
 
 fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
     StepOutcome {

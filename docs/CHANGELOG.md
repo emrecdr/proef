@@ -6,7 +6,32 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Library:** `World::set_global` returns `bool` (`#[must_use]`) — `false`
+  is a refused promotion — and `World` gains `guard_secrets`;
+  `Redactions` gains the `taints` probe. The hurl engine's private
+  equality-only gate is deleted in favor of the World's.
+
 ### Fixed
+
+- **`saveAs: global` refuses a secret it can *find*, not just a secret it
+  can *equal*.** The gate lived in the hurl engine and matched whole-value
+  equality against raw secret values — a capture merely containing one
+  (`Bearer <token>`) or carrying an encoded reflection (base64/hex/percent/
+  JSON-escape) promoted to `.proef-state.json` in plaintext. The refusal
+  now lives on the store's owner (`World::set_global`), armed once per
+  scenario by the runner with the same derived-needle set redaction uses
+  (ADR-0005) — one needle list for both invariants, and every engine a
+  scenario dispatches to is covered. The invariant is now genuinely
+  property-tested (any composite carrying a guarded secret never enters
+  the store), as CLAUDE.md had claimed of the single example test.
+- **The SLA gate honors `@quarantine`.** `sla::check` measured every
+  scenario while the exit code excluded quarantined ones — so a
+  quarantined, timing-marginal scenario (exactly what gets quarantined)
+  could not fail the run on its assertions but still turned it red on
+  latency. The latency population now applies the same non-gating list as
+  the exit code.
 
 - **A record that travels can no longer lie, crash, or steer.** Reading a
   record predating `scenario_finished.file` (or any foreign baseline whose

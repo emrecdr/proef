@@ -725,6 +725,11 @@ fn run_scenario(
     // worker cascaded into System faults across the rest of the pool.
     let snapshot = store.lock().unwrap_or_else(PoisonError::into_inner).clone();
     let mut world = World::new(snapshot);
+    // Arm the promotion gate (ADR-0005): `saveAs: global` refuses a capture
+    // carrying any secret, raw or encoded. The World owns the store, so the
+    // World owns the refusal — armed here, once, for every engine the
+    // scenario dispatches to.
+    world.guard_secrets(config.secrets.values().cloned());
     let prepared = match (spec.prepare)(&world) {
         Ok(prepared) => prepared,
         Err(diags) => {

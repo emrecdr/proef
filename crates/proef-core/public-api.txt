@@ -1265,6 +1265,7 @@ pub fn proef_core::report::Redactions::apply(&self, &str) -> alloc::string::Stri
 pub fn proef_core::report::Redactions::apply_event(&self, &proef_core::event::Event) -> proef_core::event::Event
 pub fn proef_core::report::Redactions::is_empty(&self) -> bool
 pub fn proef_core::report::Redactions::new(impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
+pub fn proef_core::report::Redactions::taints(&self, &str) -> bool
 impl core::clone::Clone for proef_core::report::Redactions
 pub fn proef_core::report::Redactions::clone(&self) -> proef_core::report::Redactions
 impl core::default::Default for proef_core::report::Redactions
@@ -1807,11 +1808,12 @@ pub struct proef_core::world::World
 impl proef_core::world::World
 pub fn proef_core::world::World::get(&self, &str) -> core::option::Option<&proef_core::world::Value>
 pub fn proef_core::world::World::global(&self) -> &proef_core::world::GlobalStore
+pub fn proef_core::world::World::guard_secrets(&mut self, impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>)
 pub fn proef_core::world::World::merged(&self) -> alloc::collections::btree::map::BTreeMap<&str, &proef_core::world::Value>
 pub fn proef_core::world::World::new(proef_core::world::GlobalStore) -> Self
 pub fn proef_core::world::World::promotions(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&str, &proef_core::world::Value)>
 pub fn proef_core::world::World::set(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value)
-pub fn proef_core::world::World::set_global(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value)
+pub fn proef_core::world::World::set_global(&mut self, impl core::convert::Into<alloc::string::String>, proef_core::world::Value) -> bool
 impl core::default::Default for proef_core::world::World
 pub fn proef_core::world::World::default() -> proef_core::world::World
 impl core::fmt::Debug for proef_core::world::World

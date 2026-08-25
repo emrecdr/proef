@@ -249,6 +249,9 @@ pub struct World {
     /// *write set* merged back into the shared store. Merging the whole store
     /// would write the stale snapshot over concurrent scenarios' promotions.
     promoted: std::collections::BTreeSet<String>,
+    /// The promotion gate's needle set (see [`World::guard_secrets`]). Empty
+    /// by default — a World that was never armed refuses nothing.
+    secret_guard: crate::report::Redactions,
 }
 
 impl World {
@@ -258,7 +261,16 @@ impl World {
             scenario: BTreeMap::new(),
             global,
             promoted: std::collections::BTreeSet::new(),
+            secret_guard: crate::report::Redactions::default(),
         }
+    }
+
+    /// Arm the `saveAs: global` gate with these secret values: a promotion
+    /// whose string carries any of them — raw, or in a derived encoded form —
+    /// is refused (ADR-0005). The same needle set redaction uses, so the two
+    /// invariants cannot drift apart.
+    pub fn guard_secrets(&mut self, values: impl IntoIterator<Item = String>) {
+        self.secret_guard = crate::report::Redactions::new(values);
     }
 
     /// Read a variable: the scenario scope shadows the global store.
@@ -273,10 +285,24 @@ impl World {
 
     /// Promote a value into the persistent global store (`saveAs: global`).
     /// The key joins the scenario's write set (see [`World::promotions`]).
-    pub fn set_global(&mut self, name: impl Into<String>, value: Value) {
+    ///
+    /// Returns `false` — the promotion refused, nothing written — when the
+    /// value is a string carrying a guarded secret (raw or any derived
+    /// encoded form; [`World::guard_secrets`]). The refusal lives here, on
+    /// the store's owner: the old gate sat in the hurl engine and matched
+    /// whole-value *equality* only, so `Bearer <token>` — or a base64
+    /// reflection — persisted to `.proef-state.json` in plaintext.
+    #[must_use = "a refused promotion (a secret-tainted value) writes nothing"]
+    pub fn set_global(&mut self, name: impl Into<String>, value: Value) -> bool {
+        if let Value::String(text) = &value
+            && self.secret_guard.taints(text)
+        {
+            return false;
+        }
         let name = name.into();
         self.promoted.insert(name.clone());
         self.global.insert(name, value);
+        true
     }
 
     /// The underlying global store.
@@ -333,13 +359,70 @@ mod tests {
         assert_eq!(merged["b"], &Value::Int(20));
     }
 
+    /// The promotion gate refuses a string carrying a guarded secret anywhere
+    /// in it — the engine-side gate this replaced matched whole-value
+    /// equality only, so `Bearer <token>` persisted to disk in plaintext.
+    #[test]
+    fn a_composite_carrying_a_secret_never_promotes() {
+        let mut world = World::new(GlobalStore::default());
+        world.guard_secrets(["hunter2".to_owned()]);
+        assert!(!world.set_global("auth", Value::String("Bearer hunter2".into())));
+        assert!(world.global().get("auth").is_none(), "nothing written");
+        assert!(
+            world.promotions().next().is_none(),
+            "a refused promotion never joins the write set"
+        );
+        assert!(
+            world.set_global("plain", Value::String("Bearer other".into())),
+            "an untainted value still promotes"
+        );
+    }
+
+    /// Encoded reflections are refused too — the gate shares redaction's
+    /// derived-needle set (base64/hex/percent/JSON escapes, ADR-0005), so a
+    /// server echoing the secret base64-wrapped cannot slip it into the
+    /// persistent store.
+    #[test]
+    fn an_encoded_reflection_never_promotes() {
+        let mut world = World::new(GlobalStore::default());
+        world.guard_secrets(["secret".to_owned()]);
+        // base64("secret") and hex("secret").
+        assert!(!world.set_global("b64", Value::String("token: c2VjcmV0".into())));
+        assert!(!world.set_global("hex", Value::String("736563726574".into())));
+        assert!(world.global().get("b64").is_none());
+        assert!(world.global().get("hex").is_none());
+    }
+
+    proptest::proptest! {
+        /// For any secret and any surrounding text, a composite carrying the
+        /// raw secret never reaches the global store — and a string that
+        /// does not contain it always does. The CLAUDE.md invariant, held by
+        /// property rather than by one example.
+        #[test]
+        fn no_guarded_secret_ever_enters_the_global_store(
+            secret in "[a-zA-Z0-9]{6,20}",
+            prefix in "[a-zA-Z ]{0,10}",
+            suffix in "[a-zA-Z ]{0,10}",
+        ) {
+            let mut world = World::new(GlobalStore::default());
+            world.guard_secrets([secret.clone()]);
+            let tainted = format!("{prefix}{secret}{suffix}");
+            proptest::prop_assert!(!world.set_global("k", Value::String(tainted)));
+            proptest::prop_assert!(world.global().get("k").is_none());
+            let clean = format!("{prefix}-{suffix}");
+            if !clean.contains(&secret) {
+                proptest::prop_assert!(world.set_global("c", Value::String(clean)));
+            }
+        }
+    }
+
     #[test]
     fn promotions_are_the_write_set_only() {
         let mut store = GlobalStore::new();
         store.insert("seed", Value::Int(1));
         let mut world = World::new(store);
         world.set("scenario-only", Value::Bool(true));
-        world.set_global("promoted", Value::Int(2));
+        assert!(world.set_global("promoted", Value::Int(2)));
 
         let promotions: Vec<_> = world.promotions().collect();
         assert_eq!(promotions, vec![("promoted", &Value::Int(2))]);

@@ -823,7 +823,7 @@ pub fn execute(
         // run is otherwise clean, so it never downgrades a `User`/`System` fault.
         // With no `[sla]` table configured this is inert (exit unchanged).
         let base_exit = summary.exit_code_excluding(&non_gating);
-        let exit = match crate::sla::check(&summary, sla_thresholds) {
+        let exit = match crate::sla::check(&summary, sla_thresholds, &non_gating) {
             Some(report) if base_exit == ExitCode::Success => {
                 crate::render::errln!("{report}");
                 ExitCode::TestFailure
