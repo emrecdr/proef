@@ -186,11 +186,14 @@ pub fn render_html(
         (passed, failed, skipped, warned),
         (total_steps, total_attempts),
     );
+    render_failure_jump(&mut html, &blocks);
+    render_filter_bar(&mut html);
     render_tag_table(&mut html, &blocks, tag_links);
     render_timeline(&mut html, &blocks);
     for block in &blocks {
         render_block(&mut html, block, artifacts_href, failed);
     }
+    html.push_str(FILTER_SCRIPT);
     html.push_str("</body>\n</html>\n");
     html
 }
@@ -238,6 +241,72 @@ fn block_index(
         })
 }
 
+/// The status filter, appended before `</body>`. Vanilla and tiny: it only
+/// toggles a class the stylesheet hides, over the status classes every block
+/// already carries — no state, no framework, still one self-contained file.
+const FILTER_SCRIPT: &str = r"<script>
+for (const b of document.querySelectorAll('.filter button')) {
+  b.addEventListener('click', () => {
+    for (const o of document.querySelectorAll('.filter button')) o.classList.remove('on');
+    b.classList.add('on');
+    const f = b.dataset.f;
+    for (const d of document.querySelectorAll('details.scenario'))
+      d.classList.toggle('gone', f !== 'all' && !d.classList.contains(f));
+  });
+}
+</script>
+";
+
+/// One slug per scenario block, shared by its `id=` anchor and its artifact
+/// link — the same `stem--name` spelling the emitter uses for the `.hurl`
+/// file, so the two can never disagree.
+fn block_slug(block: &ScenarioBlock) -> String {
+    let stem = Path::new(&block.file).file_stem().map_or_else(
+        || "feature".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    format!("{}--{}", slugify(&stem), slugify(&block.name))
+}
+
+/// The status filter's buttons. Progressive enhancement over classes the
+/// blocks already carry: with scripting unavailable they do nothing and the
+/// page stays the complete, ordered document it always was.
+fn render_filter_bar(html: &mut String) {
+    html.push_str(
+        "<div class=\"filter\">show: <button class=\"on\" data-f=\"all\">all</button>\
+         <button data-f=\"fail\">failed</button>\
+         <button data-f=\"skip\">skipped</button>\
+         <button data-f=\"warn\">warned</button></div>\n",
+    );
+}
+
+/// The triage rail: every failing scenario, linked to its block. Blocks keep
+/// first-seen order (completion order carries information), so the rail is
+/// how a reader skips the green between failures — and how a failure gets a
+/// shareable `#s-…` URL handed to a colleague.
+fn render_failure_jump(html: &mut String, blocks: &[ScenarioBlock]) {
+    let failing: Vec<&ScenarioBlock> = blocks
+        .iter()
+        .filter(|block| block.status == Some(Status::Failed))
+        .collect();
+    if failing.is_empty() {
+        return;
+    }
+    html.push_str("<nav class=\"jump\">failed: ");
+    for (i, block) in failing.iter().enumerate() {
+        if i > 0 {
+            html.push_str(" · ");
+        }
+        let _ = write!(
+            html,
+            "<a href=\"#s-{}\">{}</a>",
+            block_slug(block),
+            esc(&block.name)
+        );
+    }
+    html.push_str("</nav>\n");
+}
+
 /// One `<details>` per scenario — failures open by default so the report leads
 /// with what broke. `headline_failed` is the aligned failed count in the
 /// summary bar above (`RunFinished`'s, suite-only per ADR-0014, or the
@@ -258,12 +327,16 @@ fn render_block(
     } else {
         ""
     };
+    // The id is what makes a failure *shareable*: triage is a handoff, and
+    // a page whose blocks cannot be linked ends every handoff with "scroll
+    // until you find it". `slugify` output only — no escaping context.
     let _ = write!(
         html,
-        "<details class=\"scenario {cls}\"{open}>\n<summary>\
+        "<details class=\"scenario {cls}\" id=\"s-{slug}\"{open}>\n<summary>\
          <span class=\"pill {cls}\">{word}</span> \
          <span class=\"loc\">{file}</span> {name}",
         cls = status_class(status),
+        slug = block_slug(block),
         word = status_word(status),
         file = esc(&block.file),
         name = esc(&block.name),
@@ -279,15 +352,11 @@ fn render_block(
     // Link the artifact only when the scenario actually ran hurl steps (else
     // no `.hurl` was emitted for it).
     if !block.steps.is_empty() {
-        let stem = Path::new(&block.file).file_stem().map_or_else(
-            || "feature".to_owned(),
-            |stem| stem.to_string_lossy().into_owned(),
-        );
-        let slug = format!("{}--{}", slugify(&stem), slugify(&block.name));
         let _ = write!(
             html,
             " <a class=\"artifact\" href=\"{href}/{slug}.hurl\">artifact</a>",
             href = esc(artifacts_href),
+            slug = block_slug(block),
         );
     }
     html.push_str("</summary>\n<ol class=\"steps\">\n");
@@ -579,6 +648,11 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .scenario{border:1px solid var(--line);border-radius:8px;margin:.5rem 0;background:var(--card)}\
 .scenario summary{cursor:pointer;padding:.6rem .8rem;list-style:none;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}\
 .scenario summary::-webkit-details-marker{display:none}\
+.jump{margin:.4rem 0;font-size:.85rem}\
+.filter{margin:.4rem 0 .8rem;font-size:.85rem}\
+.filter button{border:1px solid var(--line,#ccc);background:transparent;color:inherit;border-radius:4px;padding:.1rem .6rem;margin-right:.3rem;cursor:pointer;font:inherit}\
+.filter button.on{font-weight:700;border-color:currentColor}\
+.scenario.gone{display:none}\
 .pill{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.1rem .5rem;border-radius:4px;color:#fff}\
 .pill.pass{background:var(--pass)}.pill.fail{background:var(--fail)}.pill.skip{background:var(--skip)}.pill.warn{background:var(--warn)}\
 .loc{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}\
