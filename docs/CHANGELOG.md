@@ -6,6 +6,39 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **JUnit failure and skip detail reaches every platform.** The detail —
+  assert diff, fragment provenance, `@skip:reason`, the quarantine notice —
+  lived only in the `message` *attribute*; GitLab parses only the element
+  *text*, and Azure maps the text to its stack-trace field, so half the
+  platforms showed a bare failure (or a reasonless skip). Every non-success
+  now carries both, and a failure's text node additionally carries each
+  failing step's redacted reproduce hint — the content channel has the room
+  the one-line attribute does not. Pinned alongside two library guarantees
+  that were verified rather than assumed: quick-junit strips ANSI escapes
+  and XML-1.0-illegal control characters on every setter (one binary
+  response byte used to be the classic whole-report killer on
+  Jenkins/GitLab), and `time` is plain three-decimal seconds; both now have
+  tests so a dependency bump cannot shed them silently. A third pin:
+  composed reports (suite + rerun-carried + teardown) yield each
+  `classname`+`name` identity exactly once — GitLab silently drops
+  duplicates.
+- **The GitHub job summary can no longer vanish at the 1 MiB cap.** The
+  documented failure mode at GitHub's limit is *silent disappearance* (and
+  oversized writes have aborted jobs in shipped first-party actions); a
+  failing rerun-overlay suite with per-tag tables crosses it more easily
+  than it looks. The summary now truncates deterministically at a line
+  boundary under a 900 KB budget, saying how many lines were cut and where
+  the full detail lives.
+- **`::error` annotations budget for GitHub's real limit.** GitHub keeps
+  ten error annotations per step and silently drops the rest — an uncapped
+  emission made a forty-failure run *look like* exactly ten. The budget is
+  now one annotation per failing scenario (its first failing step with
+  detail, else its fault) capped at ten, with a closing `::notice` naming
+  what the ten are out of; `title=` is clipped under GitHub's 255-character
+  cap before encoding.
+
 ### Breaking
 
 - **Library:** `World::set_global` returns `bool` (`#[must_use]`) — `false`
