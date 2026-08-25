@@ -37,6 +37,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`[tag-links]` turns tag cells into tracker links** (RF's
+  `--tagstatlink`, reduced to one mechanism): tag glob → URL template with
+  `{tag}` substituted, honored by the HTML report's by-tag table and the
+  GitHub summary; the pattern language is the same anchored glob `--tags`
+  uses. Library (Breaking): `render_html` takes the link map;
+  `tags::atom_matches_public` exposes the one matcher.
 - **`--console dotted|quiet`** (RF wave 3): one glyph per scenario (`.`
   pass, `F` fail, `s` skip, `w` warn — lowercase is non-gating, the
   pytest/RF convention, flushed per glyph, wrapped at 80) or just the frame.

@@ -241,6 +241,20 @@ The active `--env` profile *name* is recorded automatically as its own
 field: it is user-chosen input, and without it two records of one suite
 against different `[env.<name>]` merges read as regressions in `diff`.
 
+## Tag links (`[tag-links]`)
+
+Tag glob → URL template; a matching tag becomes a link in the HTML report's
+by-tag table and the GitHub summary (`{tag}` is substituted). The pattern
+language is the same anchored glob `--tags` atoms use — one matcher for
+selection, exclusivity and links:
+
+```toml
+[tag-links]
+"JIRA-*" = "https://jira.example/browse/{tag}"
+```
+
+Everything else ignores the table; a tag matching no pattern stays plain.
+
 ## Scenarios that cannot share the pool (`[run] exclusive-tags`)
 
 Some scenarios cannot run beside anything: one asserting absolute positions

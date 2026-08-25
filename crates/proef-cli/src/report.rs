@@ -11,7 +11,12 @@ use crate::record::RunCompletion;
 
 /// Render the named run (or the latest) to a standalone HTML file. Defaults to
 /// `report.html` inside the run dir so the `artifacts/` deep-links resolve.
-pub fn report(runs_root: &Path, run_id: Option<&str>, output: Option<&Path>) -> ExitCode {
+pub fn report(
+    runs_root: &Path,
+    run_id: Option<&str>,
+    output: Option<&Path>,
+    tag_links: &std::collections::BTreeMap<String, String>,
+) -> ExitCode {
     let Some(record_dir) = crate::record::resolve_dir(runs_root, run_id) else {
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
@@ -62,7 +67,7 @@ pub fn report(runs_root: &Path, run_id: Option<&str>, output: Option<&Path>) -> 
     }
     let out_path = output.map_or_else(|| record_dir.join("report.html"), Path::to_path_buf);
     let href = artifacts_href(&record_dir, &out_path);
-    let mut html = proef_core::html::render_html(&events, &href);
+    let mut html = proef_core::html::render_html(&events, &href, tag_links);
     if let Some(count) = carried_note {
         html = banner_carried(&html, count, rec.rerun_of.as_deref().unwrap_or("?"));
     }

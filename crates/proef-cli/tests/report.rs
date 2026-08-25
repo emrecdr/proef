@@ -117,7 +117,18 @@ fn html_report_is_snapshot_locked() {
         },
     ];
 
-    insta::assert_snapshot!("html_report", render_html(&events, "artifacts"));
+    insta::assert_snapshot!(
+        "html_report",
+        render_html(
+            &events,
+            "artifacts",
+            &[(
+                "501_*".to_owned(),
+                "https://tracker.example/{tag}".to_owned()
+            )]
+            .into(),
+        )
+    );
 }
 
 /// When the record carries injected timing (ADR-0015), the report adds a
@@ -165,7 +176,7 @@ fn timeline_renders_from_injected_timing() {
             cancelled: false,
         },
     ];
-    let html = render_html(&events, "artifacts");
+    let html = render_html(&events, "artifacts", &std::collections::BTreeMap::new());
     assert!(html.contains("class=\"timeline\""), "{html}");
     assert!(
         html.contains("worker 0") && html.contains("worker 1"),
@@ -212,7 +223,7 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         with_fragment,
         finished("S", "tests/features/a.feature", Status::Failed),
     ];
-    let html = render_html(&events, "artifacts");
+    let html = render_html(&events, "artifacts", &std::collections::BTreeMap::new());
     assert!(
         html.contains("<p class=\"via\">via tests/hurl/admin.hurl#admin.search</p>"),
         "the fragment must render under the step: {html}"
@@ -241,7 +252,8 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         finished("S", "tests/features/a.feature", Status::Failed),
     ];
     assert!(
-        !render_html(&inline, "artifacts").contains("class=\"via\""),
+        !render_html(&inline, "artifacts", &std::collections::BTreeMap::new())
+            .contains("class=\"via\""),
         "an inline step has no fragment to name"
     );
 }

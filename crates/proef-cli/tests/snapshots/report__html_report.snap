@@ -1,6 +1,6 @@
 ---
 source: crates/proef-cli/tests/report.rs
-expression: "render_html(&events, \"artifacts\")"
+expression: "render_html(&events, \"artifacts\",\n&[(\"501_*\".to_owned(), \"https://tracker.example/{tag}\".to_owned())].into(),)"
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -16,7 +16,7 @@ expression: "render_html(&events, \"artifacts\")"
 <table class="tags">
 <thead><tr><th>tag</th><th>passed</th><th>failed</th><th>skipped</th><th>time</th></tr></thead>
 <tbody>
-<tr><td>@501_search</td><td>1</td><td>0</td><td>0</td><td>40ms</td></tr>
+<tr><td><a href="https://tracker.example/501_search">@501_search</a></td><td>1</td><td>0</td><td>0</td><td>40ms</td></tr>
 <tr><td>@502_login</td><td>0</td><td>1</td><td>0</td><td>120ms</td></tr>
 </tbody>
 </table>

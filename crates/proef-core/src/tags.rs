@@ -50,7 +50,13 @@ impl TagExpr {
 /// silent-no-match class the correctness series existed to kill. Case stays
 /// sensitive, matching every other comparison in this grammar (Robot
 /// Framework folds case; the divergence is recorded in AUTHORING).
-fn atom_matches(pattern: &str, tag: &str) -> bool {
+/// Does `pattern` (an atom, `*`/`?` globs allowed) select `tag`? The one
+/// matcher `--tags`, `[run] exclusive-tags` and `[tag-links]` all share.
+pub fn atom_matches_public(pattern: &str, tag: &str) -> bool {
+    atom_matches(pattern, tag)
+}
+
+pub(crate) fn atom_matches(pattern: &str, tag: &str) -> bool {
     if !pattern.contains(['*', '?']) {
         return pattern == tag;
     }

@@ -466,6 +466,7 @@ pub fn execute(
                                 teardown: None,
                                 non_gating: &[],
                                 carried: &[],
+                                tag_links: &config.tag_links,
                             },
                             &front.run_id,
                             junit,
@@ -496,6 +497,7 @@ pub fn execute(
                                 teardown: None,
                                 non_gating: &[],
                                 carried: &[],
+                                tag_links: &config.tag_links,
                             },
                             &front.run_id,
                             junit,
@@ -784,6 +786,7 @@ pub fn execute(
                 teardown: teardown_summary.as_ref(),
                 non_gating: &non_gating,
                 carried: &carried,
+                tag_links: &config.tag_links,
             },
             &front.run_id,
             junit,
@@ -1346,6 +1349,8 @@ struct Verdict<'a> {
     /// re-run — the `JUnit` covers the whole suite, while the exit code
     /// and totals stay this run's own (ADR-0014).
     carried: &'a [runner::ScenarioOutcome],
+    /// `[tag-links]` — the GitHub summary links matching tags.
+    tag_links: &'a std::collections::BTreeMap<String, String>,
 }
 
 fn write_ci_reports(
@@ -1382,7 +1387,7 @@ fn write_ci_reports(
             }
         }
     }
-    crate::ci_reports::write_github_summary(verdict.summary, run_id, redactions);
+    crate::ci_reports::write_github_summary(verdict.summary, verdict.tag_links, run_id, redactions);
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--output json`) owns stdout.
