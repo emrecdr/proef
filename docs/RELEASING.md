@@ -272,6 +272,14 @@ one resolvable.
   CI-baseline flow, the bundled libcurl gets a CVE floor no advisory scanner
   would catch, and a hung test is a five-minute failure instead of a five-day
   zombie
+- `v0.15.0` — validation rounds 17–18 + the Robot Framework capability audit:
+  `@skip`/`@skip:reason` and `@quarantine` visible in every sink (ADR-0019),
+  tag globs + per-tag report verdicts + `[tag-links]`, explicit run metadata
+  (`--meta`/`[meta]`, ADR-0020), the rerun overlay (one JUnit and one report
+  covering the whole suite), `--console dotted|quiet`, `--shuffle` seeded by
+  the run id, `reproduce_hint` into the record — breaking: quarantined
+  failures reach JUnit as skipped-with-message, `--shard` re-deals (the hash
+  gained fmix64), tag atoms glob, JUnit identity is `classname`+`name`
 - `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
   never-run tail records as skipped, the record is a cancelled run `diff`
   refuses to certify), `--rerun` continues a cancelled run instead of a false

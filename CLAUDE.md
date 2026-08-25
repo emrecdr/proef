@@ -267,8 +267,8 @@ build requirement).
       scale — `--shard I/N` (frozen-hash bucketing), `--max-fail N`, `--rerun`
       continues a cancelled run instead of reporting a false green,
       `proef flaky` verdicts over run history, and the rendered docs site
-- [x] validation rounds 17–18 + the Robot Framework capability audit (unreleased,
-      slated 0.15.0) — two external review rounds validated claim-by-claim (the
+- [x] validation rounds 17–18 + the Robot Framework capability audit
+      (0.15.0) — two external review rounds validated claim-by-claim (the
       shard hash gained fmix64 after round 18 *proved* the parity collapse the
       round-17 refutation was blind to; every matrix re-deals), then a deliberate
       RF 7.x mining shipped in three waves: detail caps at the engine boundary,
