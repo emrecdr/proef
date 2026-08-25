@@ -60,3 +60,5 @@ only because the cancel-skip path emits no start); `scenario_started` gained
 `exclusive` (the scheduler's own bool, R11-6); `step_finished` gained
 `reproduce_hint` (the failing request's redacted curl). All
 serialized only when present; `EVENT_SCHEMA_VERSION` stays 1.
+`run_started` further gained `env`/`metadata`/`shuffled` (ADR-0020) and
+`rerun_of` (the E2 rerun overlay) — same additive discipline.

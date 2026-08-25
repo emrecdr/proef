@@ -75,6 +75,7 @@ fn html_report_is_snapshot_locked() {
             env: None,
             metadata: std::collections::BTreeMap::new(),
             shuffled: false,
+            rerun_of: None,
         },
         step(
             "tests/features/501_search.feature",
@@ -151,6 +152,7 @@ fn timeline_renders_from_injected_timing() {
             env: None,
             metadata: std::collections::BTreeMap::new(),
             shuffled: false,
+            rerun_of: None,
         },
         started("A", "a.feature", 0, 0),
         started("B", "b.feature", 5, 1),
@@ -205,6 +207,7 @@ fn the_html_report_names_the_fragment_a_step_ran() {
             env: None,
             metadata: std::collections::BTreeMap::new(),
             shuffled: false,
+            rerun_of: None,
         },
         with_fragment,
         finished("S", "tests/features/a.feature", Status::Failed),
@@ -223,6 +226,7 @@ fn the_html_report_names_the_fragment_a_step_ran() {
             env: None,
             metadata: std::collections::BTreeMap::new(),
             shuffled: false,
+            rerun_of: None,
         },
         step(
             "tests/features/a.feature",

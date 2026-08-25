@@ -255,11 +255,24 @@ pub fn execute(
     // `--rerun`: read the prior run's failures BEFORE this run's dir exists, so
     // `latest_run` sees the previous run, not this one. No prior record is a
     // user error; a clean prior run has nothing to rerun (exit 0).
+    let mut rerun_base: Option<(String, Vec<Event>)> = None;
     let rerun_set = if rerun {
         let Some(dir) = crate::record::resolve_dir(&runs_root, None) else {
             crate::render::errln!("error: --rerun found no prior run record to rerun from");
             return ExitCode::UserError;
         };
+        // The base is what the overlay needs later: its id names this
+        // run's head (`rerun_of`), and its events carry the outcomes the
+        // JUnit merge reconstructs for scenarios not re-run (E2's rerun
+        // half — the one JUnit at the end covers the whole suite).
+        rerun_base = crate::record::read_events(&dir).ok().map(|events| {
+            (
+                dir.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                events,
+            )
+        });
         match crate::record::rerun_candidates(&dir) {
             Ok(candidates) if candidates.scenarios.is_empty() => {
                 crate::render::outln!("nothing to rerun — the last run has no failed scenarios");
@@ -378,8 +391,15 @@ pub fn execute(
     // makes a fifth impossible to forget. Paths that end before the pool
     // report zeroed totals (ADR-0014) with their exit code.
     let run = || -> (ExitCode, runner::RunSummary, Vec<(String, String)>) {
-        let mut record =
-            RunRecord::open(&sink, &cancel, &front.run_id, active_env, metadata, shuffle);
+        let mut record = RunRecord::open(
+            &sink,
+            &cancel,
+            &front.run_id,
+            active_env,
+            metadata,
+            shuffle,
+            rerun_base.as_ref().map(|(id, _)| id.as_str()),
+        );
 
         // Shared global store (scenario merge-back through the lock, §12).
         let store = match GlobalStore::load(&state_file) {
@@ -439,6 +459,7 @@ pub fn execute(
                                 summary: &summary,
                                 teardown: None,
                                 non_gating: &[],
+                                carried: &[],
                             },
                             &front.run_id,
                             junit,
@@ -468,6 +489,7 @@ pub fn execute(
                                 summary: &summary,
                                 teardown: None,
                                 non_gating: &[],
+                                carried: &[],
                             },
                             &front.run_id,
                             junit,
@@ -728,12 +750,34 @@ pub fn execute(
             }
         }
 
+        // Carried outcomes: the rerun base's suite scenarios this run did
+        // not re-run, reconstructed from its record so the JUnit is whole
+        // (E2's rerun half). Exit code and totals stay this run's own.
+        let carried = rerun_base
+            .as_ref()
+            .map(|(_, events)| {
+                let ran: std::collections::BTreeSet<(String, String)> = summary
+                    .outcomes
+                    .iter()
+                    .map(|o| (o.file.to_string(), o.name.to_string()))
+                    .collect();
+                crate::record::carried_outcomes(events, &ran)
+            })
+            .unwrap_or_default();
+        if !carried.is_empty() {
+            crate::render::errln!(
+                "note: {} scenario(s) carried from run {} into the reports",
+                carried.len(),
+                rerun_base.as_ref().map_or("?", |(id, _)| id.as_str())
+            );
+        }
         // CI reports (US-8): JUnit XML + GitHub job summary.
         let junit_failed = write_ci_reports(
             &Verdict {
                 summary: &summary,
                 teardown: teardown_summary.as_ref(),
                 non_gating: &non_gating,
+                carried: &carried,
             },
             &front.run_id,
             junit,
@@ -1105,6 +1149,7 @@ impl<'a> RunRecord<'a> {
         env: Option<&str>,
         metadata: &std::collections::BTreeMap<String, String>,
         shuffled: bool,
+        rerun_of: Option<&str>,
     ) -> Self {
         sink.emit(&Event::RunStarted {
             schema: proef_core::event::EVENT_SCHEMA_VERSION,
@@ -1112,6 +1157,7 @@ impl<'a> RunRecord<'a> {
             env: env.map(Arc::from),
             metadata: metadata.clone(),
             shuffled,
+            rerun_of: rerun_of.map(Arc::from),
         });
         Self {
             sink,
@@ -1290,6 +1336,10 @@ struct Verdict<'a> {
     summary: &'a runner::RunSummary,
     teardown: Option<&'a runner::RunSummary>,
     non_gating: &'a [(String, String)],
+    /// Outcomes carried over from a `--rerun` base for scenarios NOT
+    /// re-run — the `JUnit` covers the whole suite, while the exit code
+    /// and totals stay this run's own (ADR-0014).
+    carried: &'a [runner::ScenarioOutcome],
 }
 
 fn write_ci_reports(
@@ -1312,6 +1362,7 @@ fn write_ci_reports(
         match crate::ci_reports::write_junit(
             verdict.summary,
             verdict.teardown,
+            verdict.carried,
             verdict.non_gating,
             run_id,
             &junit_path,
@@ -1914,6 +1965,7 @@ mod tests {
                 None,
                 &std::collections::BTreeMap::new(),
                 false,
+                None,
             );
             panic!("simulated mid-run crash");
         }));

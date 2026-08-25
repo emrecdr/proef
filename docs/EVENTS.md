@@ -75,6 +75,13 @@ sniffing; ADR-0020); `shuffled` says the order was re-dealt (the permutation
 is seeded by `run_id`, so the pair reproduces it). Keys and values pass the
 sink-boundary mask like every text field.
 
+**`rerun_of`** — on `run_started`, optional (additive; absent = not a
+rerun). The base record's `run_id` a `--rerun` re-ran failures from. The
+rerun's JUnit carries the base's not-re-run suite scenarios as ordinary
+testcases, and `report` overlays the base for a whole-suite page —
+composition over records, the record files themselves never merge
+(ADR-0008). Totals and the exit code stay the rerun's own (ADR-0014).
+
 **`tags`** — on `scenario_finished`, optional (additive; absent when the
 scenario carries none and in every pre-field stream). The accumulated tags
 (feature → rule → scenario → examples, deduped, authored order, `@`

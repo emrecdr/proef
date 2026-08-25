@@ -37,6 +37,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **A `--rerun` now produces the one JUnit and the one report that cover
+  the whole suite** (E2's rerun half; Robot Framework's `rebot --merge`
+  shape, done as composition): the run head records `rerun_of`, the JUnit
+  carries the base's not-re-run scenarios as ordinary testcases, and
+  `proef report` overlays the base into a merged page (banner named, base
+  timestamps stripped so timelines never mix, rotated-away base degrades
+  loudly). Exit code and totals stay the rerun's own.
 - **`--meta key=value` and `[meta]`/`[env.<name>.meta]` record explicit run
   metadata** (ADR-0020, RF wave 2): commit, build URL, team — recorded in
   the run head, shown by the HTML report, GitHub summary, `explain`,
