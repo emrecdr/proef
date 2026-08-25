@@ -39,30 +39,31 @@ use clap::{Parser, Subcommand, ValueEnum};
 /// amendment) — not a graceful outcome, so it bypasses the enum entirely.
 pub(crate) const INTERRUPT_EXIT_CODE: i32 = 130;
 
-/// Machine output formats (`--output`). A typed enum so an unknown value is a
-/// clap usage error — exit 2 (ADR-0009) — never a silent fall-back to the
-/// human report.
+/// `proef test --format`. A typed enum so an unknown value is a clap usage
+/// error — exit 2 (ADR-0009) — never a silent fall-back to the human report.
+///
+/// `--format` chooses a *format*; `-o/--output` names a *path* (`artifacts`,
+/// `report`). One flag per meaning: the old overload made `--output`
+/// advertise `tap` in four commands' help while their runtime rejected it,
+/// and made `-o` change category between siblings.
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum OutputFormat {
-    /// One JSON summary object (`test`) / one object per scenario (`flows`)
+    /// One JSON summary object to stdout; the human report moves to stderr
     Json,
-    /// TAP version 13 to stdout, one test point per scenario (`test` only) —
-    /// pipe into `prove`/`tappy`. The human report moves to stderr.
+    /// TAP version 13 to stdout, one test point per scenario — pipe into
+    /// `prove`/`tappy`. The human report moves to stderr.
     Tap,
 }
 
-/// Coerce `--output` for a command that only understands `json` (everything
-/// except `test`): `tap` is `test`-only, so it is a user error here rather than
-/// a silent fall-back to the human report.
-fn json_only(output: Option<OutputFormat>) -> Result<bool, proef_core::error::ExitCode> {
-    match output {
-        None => Ok(false),
-        Some(OutputFormat::Json) => Ok(true),
-        Some(OutputFormat::Tap) => {
-            crate::render::errln!("error: --output tap is only supported by `proef test`");
-            Err(proef_core::error::ExitCode::UserError)
-        }
-    }
+/// `--format` for the listing commands (`flows`, `macros`, `fragments`,
+/// `flaky`): `json` is the only machine format they speak, and a
+/// single-variant enum lets clap say exactly that — the shared enum
+/// advertised `tap` in their help while `json_only` rejected it at runtime,
+/// help text lying about a quarter of the command surface.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ListFormat {
+    /// One JSON object per row to stdout
+    Json,
 }
 
 #[derive(Parser)]
@@ -108,7 +109,7 @@ enum Command {
         /// Machine output to stdout: `json` (a summary object) or `tap` (a TAP
         /// v13 stream, one point per scenario); the human report moves to stderr
         #[arg(long, value_enum)]
-        output: Option<OutputFormat>,
+        format: Option<OutputFormat>,
         /// `JUnit` XML: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`)
         #[arg(long)]
         junit: Option<String>,
@@ -165,25 +166,25 @@ enum Command {
     Flows {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
         path: Option<PathBuf>,
-        /// Machine output: `json` prints one object per scenario
+        /// Machine format: `json` prints one object per scenario
         #[arg(long, value_enum)]
-        output: Option<OutputFormat>,
+        format: Option<ListFormat>,
     },
     /// List every macro with the sentence it binds and its call count, flagging pattern macros nothing binds
     Macros {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
         path: Option<PathBuf>,
-        /// Machine output: `json` prints one object per macro
+        /// Machine format: `json` prints one object per macro
         #[arg(long, value_enum)]
-        output: Option<OutputFormat>,
+        format: Option<ListFormat>,
     },
     /// List the .hurl fragment corpus with how many scenarios run each entry, flagging ones nothing reaches
     Fragments {
         /// A .feature file or directory (default: `[run] suite`, else `tests/`)
         path: Option<PathBuf>,
-        /// Machine output: `json` prints one object per entry
+        /// Machine format: `json` prints one object per entry
         #[arg(long, value_enum)]
-        output: Option<OutputFormat>,
+        format: Option<ListFormat>,
         /// Exit 1 when a fragment exists that no scenario runs
         #[arg(long)]
         check: bool,
@@ -239,9 +240,9 @@ enum Command {
     /// Flakiness verdicts over the retained run history: flapping,
     /// passes-only-on-retry, always-failing
     Flaky {
-        /// Machine output: `json` prints one object per scenario
+        /// Machine format: `json` prints one object per scenario
         #[arg(long, value_enum)]
-        output: Option<OutputFormat>,
+        format: Option<ListFormat>,
     },
     /// Compare two run records: regressions, fixes, flakiness, perf deltas
     Diff {
@@ -535,7 +536,7 @@ fn main() -> std::process::ExitCode {
             dry_run,
             tags,
             jobs,
-            output,
+            format,
             junit,
             scenario,
             scenario_file,
@@ -599,7 +600,7 @@ fn main() -> std::process::ExitCode {
                                             path,
                                             tag_filter.as_ref(),
                                             jobs,
-                                            output,
+                                            format,
                                             junit.as_deref(),
                                             scenario.as_deref(),
                                             scenario_file.as_deref(),
@@ -678,23 +679,23 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Command::Flows { path, output } => match json_only(output) {
-            Err(code) => code,
-            Ok(output_json) => match prepare(path, env, config_path) {
+        Command::Flows { path, format } => {
+            let output_json = format.is_some();
+            match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => {
                     commands::flows(&path, output_json, active_env.as_deref(), &config)
                 }
-            },
-        },
+            }
+        }
         Command::Fragments {
             path,
-            output,
+            format,
             check,
             require_annotated,
-        } => match json_only(output) {
-            Err(code) => code,
-            Ok(output_json) => match prepare(path, env, config_path) {
+        } => {
+            let output_json = format.is_some();
+            match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => commands::fragments(
                     &path,
@@ -704,17 +705,17 @@ fn main() -> std::process::ExitCode {
                     active_env.as_deref(),
                     &config,
                 ),
-            },
-        },
-        Command::Macros { path, output } => match json_only(output) {
-            Err(code) => code,
-            Ok(output_json) => match prepare(path, env, config_path) {
+            }
+        }
+        Command::Macros { path, format } => {
+            let output_json = format.is_some();
+            match prepare(path, env, config_path) {
                 Err(code) => code,
                 Ok((config, path, active_env)) => {
                     commands::macros(&path, output_json, active_env.as_deref(), &config)
                 }
-            },
-        },
+            }
+        }
         Command::Artifacts {
             path,
             output,
@@ -820,13 +821,13 @@ fn main() -> std::process::ExitCode {
             Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref()),
             Err(code) => code,
         },
-        Command::Flaky { output } => match json_only(output) {
-            Err(code) => code,
-            Ok(output_json) => match load_config(config_path) {
+        Command::Flaky { format } => {
+            let output_json = format.is_some();
+            match load_config(config_path) {
                 Ok(config) => flaky::flaky(&config.runs_dir(), output_json),
                 Err(code) => code,
-            },
-        },
+            }
+        }
         Command::Diff {
             base,
             new,

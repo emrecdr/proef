@@ -102,6 +102,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Breaking
 
+- **`--output` split by meaning: `--format` chooses a format, `-o/--output`
+  names a path.** `test` takes `--format json|tap`; the listing commands
+  (`flows`, `macros`, `fragments`, `flaky`) take `--format json` — each
+  through its own enum, so clap's help can no longer advertise `tap` on
+  four commands whose runtime rejected it (the old shared enum lied about
+  a quarter of the surface, and `-o` changed category between siblings:
+  format on five commands, directory on `artifacts`, file on `report`).
+  `--output json`/`--output tap` no longer parse on those five commands —
+  clean break, no alias; `artifacts`/`report` keep `-o/--output` for their
+  paths, unchanged. The runtime `json_only` check is deleted: the type
+  system does its job now.
 - **Library:** `World::set_global` returns `bool` (`#[must_use]`) — `false`
   is a refused promotion — and `World` gains `guard_secrets`;
   `Redactions` gains the `taints` probe. The hurl engine's private

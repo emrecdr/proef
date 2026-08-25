@@ -26,7 +26,7 @@ they cannot know. Consumers should do the same rather than inferring zero.
 `run_finished`'s `passed`/`failed`/`skipped` counted *every* phase before
 0.6.0; from 0.6.0 they are the **main-suite verdict** and exclude
 `[run] setup`/`teardown` (ADR-0014), so those totals agree with the exit code,
-`--output json`/TAP, and the summary line. One deliberate divergence: a
+`--format json`/TAP, and the summary line. One deliberate divergence: a
 *failed* phase additionally appears in JUnit as its own suite (a gated
 pipeline must see the failure), so JUnit's per-case counts can exceed these
 totals on a run whose setup or teardown broke. A pre-0.6.0 record read by a
@@ -118,7 +118,7 @@ verdict**: scenario counts for the primary suite only (ADR-0014). `[run]
 setup`/`teardown` scenarios still appear as their own `scenario_started`/
 `scenario_finished` events earlier in the stream, but are excluded from these
 totals, so they agree with the console `summary:` line, `proef explain`,
-`proef report`'s HTML headline, `--output json`, TAP, the SLA gate, and the
+`proef report`'s HTML headline, `--format json`, TAP, the SLA gate, and the
 exit code — JUnit agrees too except that a *failed* phase rides in as its own
 suite (see above) · `cancelled` (bool, **only present when true**).
 

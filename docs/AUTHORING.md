@@ -104,7 +104,7 @@ macros:
   builtins are listed but not flagged. It also flags **near-duplicate** pattern
   macros — two that differ only in their `{capture}` names (the same literal
   skeleton), which are confusable to authors. Both are advisory only: they never
-  change the exit code, and `--output json` carries `pattern`, `unused` and
+  change the exit code, and `--format json` carries `pattern`, `unused` and
   `nearDuplicateOf` fields for a CI hygiene gate.
 - When a step does not bind, `macros` still lists the vocabulary (that is when
   you most need it) and keeps exit 2. Counts are **withheld**, not zeroed:
@@ -497,7 +497,7 @@ The header's `# replay:` line is a complete stock-hurl command, including
   line (scenario/step lifecycle, per-attempt progress, failure `detail`);
   `proef explain` summarizes it; `--junit` and the GitHub Actions summary
   derive from the same run.
-- `--output json` prints one machine-readable summary object on stdout (the
+- `--format json` prints one machine-readable summary object on stdout (the
   human report moves to stderr); `--jobs N` controls parallelism;
   `proef.toml` holds project defaults (`[run] jobs`, `[http] timeout-ms`).
 - `proef fmt suite --check` keeps hurl blocks canonically formatted;
@@ -507,7 +507,7 @@ The header's `# replay:` line is a complete stock-hurl command, including
 
 The harness crate bridges proef into any nextest/libtest UI (rust-analyzer,
 RustRover, `cargo nextest run`): it lists scenarios via
-`proef flows --output json` and runs each as its own test via
+`proef flows --format json` and runs each as its own test via
 `proef test --scenario <name>`.
 
 ```bash

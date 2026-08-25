@@ -100,7 +100,7 @@ fn the_four_verdict_classes_are_told_apart() {
     assert!(out.contains("@quarantine"), "{out}");
 }
 
-/// `--output json` emits one machine-readable object per scenario, with the
+/// `--format json` emits one machine-readable object per scenario, with the
 /// counts the table derives its verdicts from.
 #[test]
 fn json_output_carries_the_counts_behind_the_verdict() {
@@ -108,7 +108,7 @@ fn json_output_carries_the_counts_behind_the_verdict() {
     seeded_history(cwd.path());
 
     let assert = proef(cwd.path())
-        .args(["flaky", "--output", "json"])
+        .args(["flaky", "--format", "json"])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -162,7 +162,7 @@ fn a_skipped_row_is_not_stability_evidence() {
     );
 
     let assert = proef(cwd.path())
-        .args(["flaky", "--output", "json"])
+        .args(["flaky", "--format", "json"])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();

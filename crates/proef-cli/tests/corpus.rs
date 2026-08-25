@@ -129,7 +129,7 @@ fn flows_carries_the_feature_description() {
 
     let json = proef()
         .current_dir(cwd.path())
-        .args(["flows", "suite", "--output", "json"])
+        .args(["flows", "suite", "--format", "json"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&json.get_output().stdout).into_owned();
@@ -140,7 +140,7 @@ fn flows_carries_the_feature_description() {
     );
 }
 
-/// `flows --output json` computes the authored-skip reason with the same
+/// `flows --format json` computes the authored-skip reason with the same
 /// recognizer the runner uses — the harness maps it to libtest's ignored
 /// flag, so the two must never disagree.
 #[test]
@@ -159,7 +159,7 @@ fn flows_reports_the_skip_reason() {
     .unwrap();
     let assert = proef()
         .current_dir(cwd.path())
-        .args(["flows", "suite", "--output", "json"])
+        .args(["flows", "suite", "--format", "json"])
         .assert()
         .code(0);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -298,7 +298,7 @@ fn macros_json_reports_null_counts_when_the_suite_does_not_bind() {
         .unwrap()
         .current_dir(cwd.path())
         .env("NO_COLOR", "1")
-        .args(["macros", "suite", "--output", "json"])
+        .args(["macros", "suite", "--format", "json"])
         .assert()
         .code(2);
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();

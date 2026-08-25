@@ -597,7 +597,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
 }
 
 /// Run totals derived from the event stream — the `Summarize` leg of the
-/// decorator stack (ADR-0008): leaves (GitHub summary, `--output json`, …)
+/// decorator stack (ADR-0008): leaves (GitHub summary, `--format json`, …)
 /// consume the totals at `RunFinished` instead of re-deriving them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RunTotals {

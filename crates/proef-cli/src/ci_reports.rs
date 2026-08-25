@@ -353,7 +353,7 @@ fn summary_body(
 /// Emit GitHub Actions `::error` annotations to stdout for failures, so each one
 /// renders in the PR "Files changed" gutter. Distinct sink from the job summary
 /// (a file append): these are stdout workflow commands, so the caller invokes
-/// this only under Actions AND when the human report — not `--output json` —
+/// this only under Actions AND when the human report — not `--format json` —
 /// owns stdout.
 pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> String {
     // GitHub keeps at most ten error annotations per step and *silently

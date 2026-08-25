@@ -41,11 +41,19 @@ fn unknown_flag_is_a_user_error() {
 }
 
 #[test]
-fn unknown_output_format_is_a_user_error() {
-    // `--output` is a typed enum: a typo must exit 2, never silently degrade
+fn unknown_machine_format_is_a_user_error() {
+    // `--format` is a typed enum: a typo must exit 2, never silently degrade
     // to the human report.
     proef()
-        .args(["test", "tests/features", "--output", "jsonl"])
+        .args(["test", "tests/features", "--format", "jsonl"])
+        .assert()
+        .code(2)
+        .stderr(contains("json"));
+    // The listing commands speak `json` alone, and their enum says so —
+    // `tap` in their help while the runtime rejected it was the old shared
+    // enum lying about a quarter of the surface.
+    proef()
+        .args(["flows", "tests/features", "--format", "tap"])
         .assert()
         .code(2)
         .stderr(contains("json"));
