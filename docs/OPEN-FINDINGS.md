@@ -104,6 +104,166 @@ compile gate.
 
 ---
 
+## Ingested — the deep improvement report (2026-08-25), validated claim-by-claim
+
+A twelve-stream self-audit plus competitive/ecosystem research (five code
+audits, three UX audits, four research streams; ~125 findings), every
+load-bearing claim re-verified against the tree before acceptance and three
+proved empirically (measured stack-overflow abort and exponential
+backtracking in the tag glob; observed nondeterministic gherkin error
+ordering). The full report is the session artifact "proef — deep improvement
+report"; this section records the verdicts and what remains open.
+
+### Wave 1 — shipped (#112–#116)
+
+- **#112** — a comment on a section header no longer blinds any scan
+  (`[Options] # tuning` + `retry: -1` dry-ran clean — ADR-0007's named hole;
+  `[Captures] # ids` dropped sidecar rows; `[Asserts] # note` doubled a
+  section); the delay cap learned hurl's `h` unit (`delay: 5h` validated
+  clean at 5× the cap); pack-scope `bind:` resolves arg-free instead of in
+  whichever macro ran first; the tag glob is the two-pointer match
+  (oracle-property-tested — the metachar branch previously had zero
+  generated coverage); `multiline_bind` refuses `\r`/controls; the
+  `expect:` merge shares the emitter's hardened response-line check.
+- **#113** — a Ctrl-C in `--watch`'s debounce window no longer launches one
+  more full run; a delivered watcher error or rescan burst (queue overflow)
+  retriggers instead of leaving the watch permanently deaf. Punctured and
+  re-closed 0.12.0's "staleness class closed for good" claim.
+- **#114** — eleven silent-failure sites gained voices (store-poison save,
+  suite walker, doctor/fmt over unreadable trees, non-UTF-8 env values,
+  `.map.json`, LSP config, `flaky` degrade, `docs-check` vacuous pass,
+  `Sinks` severity filter); `fmt` recognizes every literal-block spelling.
+- **#115** — a travelling record can no longer lie (`scenario_finished.file
+  = ""` key mismatch silently emptied every step map — `flaky`'s `Latent`
+  verdict was unreachable and `diff --fail-on-regression` certified green),
+  crash (256 MiB read ceiling; saturating sums; saturating `Span::len`),
+  or steer (`rerun_of`/`--run-id` single-component validation; `[tag-links]`
+  URL percent-encoding + http(s)-only in both sinks).
+- **#116** — `saveAs: global` refuses a secret it can *find* (needle set,
+  in core's `World`, every engine covered) rather than one it can *equal*
+  (engine-side, raw values only); the invariant is now property-tested as
+  CLAUDE.md had claimed. The SLA gate applies the same `@quarantine`
+  non-gating list as the exit code.
+
+### Open — the remaining waves (detail in the report artifact)
+
+- **Wave 2, CI-sink conformance:** JUnit failure/skip detail into element
+  *content* as well as the `message` attribute (GitLab reads only content;
+  Azure maps it to stack-trace); an XML-1.0 control-char + ANSI strip as a
+  property-tested boundary (one bad response byte invalidates a whole
+  report on Jenkins/GitLab); a ~900 KB cap with deterministic truncation on
+  the GitHub summary (the 1 MiB failure mode is *silent disappearance*);
+  `::error` annotations capped at 10 with a "showing N of M" notice; a
+  pinned test that shard/rerun JUnit identities form a set (GitLab drops
+  duplicates silently); a `time`-format property; testcase `system-out`
+  `[[ATTACHMENT|path]]` for report/sidecar links (`<properties>` is a trap).
+- **Wave 3, UX:** console color (`is_terminal` exists, used once, for
+  miette only); verdict printed last; the duplicated fault/step failure
+  line; total duration + run-id echo in the summary; shell completions and
+  a man page (nothing generates either); `doctor` project checks (suite
+  resolution, `[url] base` reachability, `hurl` on PATH); selector-typo
+  did-you-mean (the correct treatment sits 40 lines away); watch separator
+  + named-failure status; HTML report anchors, failures-first, a ~30-line
+  status filter; the `--format`/`-o` split (breaking, 0.16.0 — `--output`
+  advertises `tap` on four commands that reject it).
+- **Wave 4, diagnostics:** span anchoring (`match_span` computed and
+  unused — 13 of 19 pack snapshots caret the macro name, one excerpts the
+  *previous* macro; `locate::macro_span` also matches root `bind:` keys);
+  `resolve::*` blaming the healthy feature file while never naming the
+  pack; hurl/gherkin parser errors rendered as Rust `Debug` (and gherkin's
+  `{expected:?}` tail needs sort-normalization — it is nondeterministic);
+  a suggest-or-enumerate helper for the eleven `closest().unwrap_or_default()`
+  sites; `proef.toml` errors into the diagnostic system; `Diagnostic::url()`
+  + LSP `code_description` (the catalogue is unreachable from both error
+  surfaces); help-by-default enforced by a source-scan test;
+  `unknown_placeholder` once per outline, not per Examples row.
+- **Wave 5, docs & distribution:** fixture `/search`+`/version` routes (the
+  scaffold's fastest path ends 1 pass / 2 fail; fixture-in-binary stays
+  declined); a site INSTALL page (install currently unreachable from the
+  published site) and a visitor landing; a CI recipe page (zero `runs-on`
+  in all docs; `--junit auto` documented only in design docs);
+  login-then-token and polling recipes (zero hits for either); the
+  §3.5/§3.6 duplicate-`[run]`-table paste-trap; `ref:` demonstrated in the
+  reference corpus (0 `ref:` today); README example-first + a vs-Karate
+  section (the run-under-stock-hurl property is the differentiator Karate
+  cannot match); `.sha256` sidecars (attestations + cargo-auditable already
+  ship — the research's premise was corrected); crates.io Trusted
+  Publishing; a `cargo binstall` dry-run check then documentation;
+  crates.io keywords incl. `hurl`; a ghcr image; `mise use github:` doc; an
+  MSRV statement; `llms-full.txt` as a paste-able manual (the SEO case is
+  empirically dead).
+- **Wave 6, LSP:** `lsp-types` 0.97 → `gen-lsp-types` (frozen since
+  2024-06; rust-analyzer and tower-lsp-server both moved; it is what drags
+  `bitflags 1.x` in); the analysis cache (Q2's "no invalidation hook"
+  premise is stale — `fragments_dirty` is the hook); quick-fix code
+  actions from existing did-you-means; document symbols; hover; a panic
+  hook with `window/showMessage` (ruff's server pattern independently
+  validates the `outln!` ban); a documented Helix snippet; if a VS Code
+  extension is built, a path-based `documentSelector` (the ecosystem is
+  split on the `.feature` language id); defer Zed (tree-sitter grammar
+  prerequisite).
+- **Wave 7, features:** `@quarantine` owner/expiry as authored tag data +
+  `flaky` staleness lints + the broken-vs-flaky discrimination (a 100%-
+  failing quarantined scenario is disabled, not flaky); `retry_if`
+  early-exit and `Retry-After`-aware backoff (ADR-0007 refinements);
+  derived-secret tracking (a hashed secret defeats needle scanning by
+  construction — pairs with #116); a published JSON Schema for
+  `proef.toml`; per-`[meta]` flaky contexts; a whitespace-only-diff note in
+  assertion failures.
+- **Performance (recorded, unscheduled):** pack validation is quadratic
+  and measured (24.9 s at 3200 macros, profiler-attributed to the
+  per-macro `locate` rescans); `captures_before` O(steps²); redaction runs
+  inside the reporter mutex; `bake_entry_options` triple-materializes;
+  `levenshtein` lacks the length prune; tag-expression `eval`/`Drop`
+  recurse on long chains.
+- **Architecture & test debt (recorded):** ~290 lines of hurl grammar in
+  `proef-core` vs the seam story — amend ADR-0002's "diff-empty" claim or
+  route through `StepKindSpec`; three JSONL read loops / six event folds
+  (the truncated-totals fallback exists twice and disagrees between
+  `explain` and the HTML report); the exclusive-tags scheduler and
+  `RecordGate` have no direct tests; `feature.rs` is the one user-input
+  parser with no fuzz target; `bake_entry_options` deserves a proptest;
+  fragment bodies swallow the next entry's leading prose comments.
+
+### Needs a named decision (ADR question, not a patch)
+
+GitHub-summary permalinks to failing lines (reading `GITHUB_SHA` sink-
+locally vs ADR-0020's harvested-vs-handed-over boundary) · a Chrome-trace
+export of the scheduling timeline (a second rendering of what the HTML
+timeline already shows — one-way test) · an only-failed console extension
+(must extend `--console`, never a parallel flag) · templated report output
+paths (vs the one-path rule).
+
+### Declined — do not re-raise
+
+- **In-run scenario `@retry`** (cucumber-rs's headline feature, ranked
+  first by one research stream): the CI-standards stream independently
+  established retry-until-green as the anti-pattern (a 25%-failure bug
+  passes 99.6% of the time under three retries) and proef's
+  detect-then-quarantine shape as the consensus architecture; per-step
+  `retry:` already covers polling. Document the stance in
+  TESTING-STRATEGY instead — it reads as a gap until stated.
+- **CTRF** — the deferred trigger was checked and has **not** fired: no CI
+  platform ingests it natively (GitLab/CircleCI are JUnit-only, GitHub has
+  no format at all, Buildkite has its own JSON). If a consumer ever
+  materializes, Buildkite JSON is the higher-yield target (its span model
+  maps 1:1 onto step outcomes) — same trigger discipline.
+- TAP 14 (unratified branch, zero declared consumers) · Bruno-style
+  granular exit codes (ADR-0009 is a contract) · an OS-keychain secret
+  backend (second storage mechanism) · a user-level personal config file
+  (proef.toml is the one channel; `NO_COLOR` covers terminal taste) ·
+  Karate `match within` sugar (hurl predicates cover it).
+
+### Environment note (machine-side, not repo-side)
+
+Homebrew's Rust (1.98.0) shadows rustup on this machine's PATH
+(`/opt/homebrew/bin/cargo` first), which breaks `cargo +nightly` and the
+public-api gate and silently un-pins builds; Wave 1 gates were re-run
+under the pinned 1.97.1 explicitly. Owner action: `brew uninstall rust`
+or reorder PATH.
+
+---
+
 ## Ingested — Robot Framework capability audit (2026-08-24)
 
 A deliberate mining of Robot Framework 7.x for transferable ideas, run as
