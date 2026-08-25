@@ -3428,6 +3428,48 @@ fn rerun_after_a_phase_only_failure_says_there_is_nothing_to_rerun() {
         .stderr(predicate::str::contains("no scenarios matched the filters").not());
 }
 
+/// A typo'd filter names the nearest real spelling: every scenario name and
+/// tag is in hand at the refusal, and "check --tags/--scenario" alone left
+/// the operator to diff by eye — the treatment `[run] exclusive-tags`
+/// always had, now shared.
+#[test]
+fn a_filter_typo_names_the_nearest_spelling() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "@smoke\nFeature: F\n  Scenario: the record is found\n    When it runs\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/api.yaml"),
+        "macros:\n  m:\n    match: it runs\n    steps:\n      - hurl: |\n          GET http://127.0.0.1:1/x\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--dry-run", "--tags", "@smoek"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("did you mean `@smoke`?"))
+        .stderr(predicate::str::contains("`proef flows`"));
+
+    proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--dry-run",
+            "--scenario",
+            "the record is fond",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "did you mean `the record is found`?",
+        ));
+}
+
 /// `--output json`'s `exit_code` must be the code the process actually exits
 /// with. A failed JUnit write escalates to 3, and that escalation used to be
 /// applied by a `return` *after* the body had already been printed — so a

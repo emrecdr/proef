@@ -731,10 +731,59 @@ fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, 
 }
 
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
-/// must never produce a silent green run.
-pub fn no_scenarios_matched() -> proef_core::error::ExitCode {
+/// must never produce a silent green run — and since every scenario name and
+/// tag is in hand at this exact moment, the refusal names the nearest
+/// spelling instead of leaving the operator to diff by eye (the treatment
+/// `[run] exclusive-tags` always had, a few lines below).
+pub fn no_scenarios_matched(
+    front: &FrontEnd,
+    tags: Option<&proef_core::tags::TagExpr>,
+    scenario_filter: Option<&str>,
+) -> proef_core::error::ExitCode {
     crate::render::errln!("error: no scenarios matched the filters (check --tags/--scenario)");
+    let scenarios = || front.features.iter().flat_map(|f| f.scenarios.iter());
+    if let Some(wanted) = scenario_filter {
+        let mut names: Vec<&str> = scenarios().map(|s| s.lowered.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        if !names.contains(&wanted)
+            && let Some(close) = proef_core::matcher::closest(wanted, names.iter().copied())
+        {
+            crate::render::errln!("  no scenario named `{wanted}` — did you mean `{close}`?");
+        }
+    }
+    if let Some(expr) = tags {
+        let universe: std::collections::BTreeSet<&str> = scenarios()
+            .flat_map(|s| s.lowered.tags.iter())
+            .map(String::as_str)
+            .collect();
+        for atom in tag_atoms(expr) {
+            // A glob atom selecting nothing is a fact about the suite, not a
+            // typo to second-guess; suggestions are for literal spellings.
+            if atom.contains(['*', '?']) || universe.contains(atom) {
+                continue;
+            }
+            if let Some(close) = proef_core::matcher::closest(atom, universe.iter().copied()) {
+                crate::render::errln!("  no scenario carries `@{atom}` — did you mean `@{close}`?");
+            }
+        }
+    }
+    crate::render::errln!("  `proef flows` prints every scenario with its tags");
     proef_core::error::ExitCode::UserError
+}
+
+/// Every literal atom a `--tags` expression mentions, in authored order.
+fn tag_atoms(expr: &proef_core::tags::TagExpr) -> Vec<&str> {
+    use proef_core::tags::TagExpr;
+    match expr {
+        TagExpr::Tag(atom) => vec![atom.as_str()],
+        TagExpr::Not(inner) => tag_atoms(inner),
+        TagExpr::And(a, b) | TagExpr::Or(a, b) => {
+            let mut atoms = tag_atoms(a);
+            atoms.extend(tag_atoms(b));
+            atoms
+        }
+    }
 }
 
 /// Does a scenario pass the `--tags` filter? No expression (the flag was
