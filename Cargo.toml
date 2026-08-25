@@ -55,6 +55,8 @@ thiserror = "2"
 tokio-util = { version = "0.7", default-features = false }
 
 # cli
+clap_complete = "4.6"
+clap_mangen = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
 miette = { version = "7", features = ["fancy"] }
 uuid = { version = "1", features = ["v7"] }

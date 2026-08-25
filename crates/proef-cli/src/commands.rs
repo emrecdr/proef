@@ -166,6 +166,7 @@ pub fn doctor(
     suite: Option<&Path>,
     fragments: Option<&Path>,
     secrets: &Path,
+    runs_dir: &Path,
     config_error: Option<&str>,
     naming: &front::SourceNaming,
 ) -> ExitCode {
@@ -194,15 +195,58 @@ pub fn doctor(
         }
     }
 
-    // Conditional, like the fragments row below: an absent `proef.toml` is not
-    // a finding — `doctor` must run outside a project — but one that is present
-    // and unparseable is, and every check under it ran against defaults the
-    // project never asked for. A row rather than a bare print so it reaches
-    // `worst` and the exit code, which is what a CI script reads.
+    // The project half `doctor` never had: it checked the *engine* in depth
+    // and nothing the run actually starts with — the #1 first-run failure
+    // (an unresolvable suite) was invisible to the one command whose job is
+    // diagnosis. An absent `proef.toml` stays a non-finding (`doctor` must
+    // run anywhere); one that is present and unparseable is a Fail so every
+    // row below is understood to have run against defaults.
+    crate::render::outln!("\nproject:");
     if let Some(error) = config_error {
-        crate::render::outln!("\nproject:");
         row(&mut worst, "proef.toml", DoctorStatus::Fail, error);
     }
+    match suite {
+        None => row(
+            &mut worst,
+            "suite",
+            DoctorStatus::Pass,
+            "no suite configured",
+        ),
+        Some(path) => match front::discover_features(path) {
+            Ok(features) => row(
+                &mut worst,
+                "suite",
+                DoctorStatus::Pass,
+                &format!(
+                    "{} feature file(s) under {}",
+                    features.len(),
+                    path.display()
+                ),
+            ),
+            Err(err) => row(&mut worst, "suite", DoctorStatus::Fail, &format!("{err}")),
+        },
+    }
+    // Warn, never Fail: the engine is embedded, so a run needs no `hurl`
+    // binary — but ADR-0018's replay promise ("the same bytes run under
+    // stock hurl") and the emitted `# replay:` hints do.
+    let (status, detail) = match std::process::Command::new("hurl")
+        .arg("--version")
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let version = String::from_utf8_lossy(&out.stdout);
+            let first = version.lines().next().unwrap_or("hurl").to_owned();
+            (DoctorStatus::Pass, first)
+        }
+        _ => (
+            DoctorStatus::Warn,
+            "not on PATH — artifacts and `ref:` fragments replay under stock hurl              only when it is installed"
+                .to_owned(),
+        ),
+    };
+    row(&mut worst, "hurl on PATH", status, &detail);
+    let (status, detail) = probe_runs_dir(runs_dir);
+    row(&mut worst, "runs dir", status, &detail);
 
     // CLI-owned checks: neither the pack schema nor the secret machinery is
     // engine-contributed, but both gate authoring and runs just the same.
@@ -232,6 +276,38 @@ pub fn doctor(
             ExitCode::SystemError
         }
     }
+}
+
+/// Can the run record actually be written? A doctor that never touches the
+/// runs dir passes cleanly in exactly the environment where the first run
+/// dies at `create_dir_all`. The probe cleans up after itself: a directory it
+/// created is removed again, so a diagnostic leaves no artifact behind.
+fn probe_runs_dir(runs_dir: &Path) -> (DoctorStatus, String) {
+    let existed = runs_dir.is_dir();
+    if !existed && let Err(err) = std::fs::create_dir_all(runs_dir) {
+        return (
+            DoctorStatus::Fail,
+            format!("cannot create {}: {err}", runs_dir.display()),
+        );
+    }
+    let probe = runs_dir.join(format!(".doctor.{}.probe", std::process::id()));
+    let verdict = match std::fs::write(&probe, b"proef doctor write probe\n") {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&probe);
+            (
+                DoctorStatus::Pass,
+                format!("{} is writable", runs_dir.display()),
+            )
+        }
+        Err(err) => (
+            DoctorStatus::Fail,
+            format!("cannot write under {}: {err}", runs_dir.display()),
+        ),
+    };
+    if !existed {
+        let _ = std::fs::remove_dir(runs_dir);
+    }
+    verdict
 }
 
 /// Validate `[run] setup` / `[run] teardown` and return how many scenarios they
@@ -442,7 +518,7 @@ pub fn dry_run(
 
     render::print_all(&front.warnings);
     if (tags.is_some() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
-        return front::no_scenarios_matched();
+        return front::no_scenarios_matched(&front, tags, scenario);
     }
 
     let phase_note = match validate_phase_features(config, &config_vars, &fragments) {
@@ -769,6 +845,17 @@ pub fn fragments(
     active_env: Option<&str>,
     config: &ProjectConfig,
 ) -> ExitCode {
+    // An unconfigured corpus printed the same `0 entries · 0 annotated …`
+    // zeros a configured-but-empty root prints — indistinguishable, and the
+    // reader's next move (write `[run] fragments` vs. write a fragment) is
+    // different in each. `--check` already draws this distinction; the
+    // listing says it up front.
+    if config.fragments().is_none() && !output_json {
+        render::errln!(
+            "note: no `[run] fragments` root is configured — the listing below is \
+             empty by construction (CONFIG.md documents the key)"
+        );
+    }
     let corpus = match corpus(config) {
         Ok(corpus) => corpus,
         Err(code) => return code,

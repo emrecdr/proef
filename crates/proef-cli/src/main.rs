@@ -76,6 +76,12 @@ struct Cli {
     /// Read this proef.toml instead of searching up from the working directory
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
+    /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
+    // Global like `--config`: five commands read the profile, and
+    // `proef --env staging test` erroring while `proef test --env staging`
+    // worked taught a spelling lesson nobody needed.
+    #[arg(long, global = true)]
+    env: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -127,9 +133,6 @@ enum Command {
         /// (`--max-fail`, Ctrl-C), the scenarios it never reached
         #[arg(long)]
         rerun: bool,
-        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
-        #[arg(long)]
-        env: Option<String>,
         /// Stop after N scenario failures: in-flight scenarios finish, the
         /// rest record as skipped, teardown still runs (`1` = fail fast)
         #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
@@ -165,9 +168,6 @@ enum Command {
         /// Machine output: `json` prints one object per scenario
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
-        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
-        #[arg(long)]
-        env: Option<String>,
     },
     /// List every macro with the sentence it binds and its call count, flagging pattern macros nothing binds
     Macros {
@@ -176,9 +176,6 @@ enum Command {
         /// Machine output: `json` prints one object per macro
         #[arg(long, value_enum)]
         output: Option<OutputFormat>,
-        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
-        #[arg(long)]
-        env: Option<String>,
     },
     /// List the .hurl fragment corpus with how many scenarios run each entry, flagging ones nothing reaches
     Fragments {
@@ -193,9 +190,6 @@ enum Command {
         /// With `--check`, also fail on entries carrying no `# @proef` annotation
         #[arg(long, requires = "check")]
         require_annotated: bool,
-        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
-        #[arg(long)]
-        env: Option<String>,
     },
     /// Emit canonical .hurl artifacts + sidecars for a stable hand-off
     Artifacts {
@@ -207,9 +201,6 @@ enum Command {
         /// Override the injected run id (deterministic artifacts for CI)
         #[arg(long, value_parser = parse_run_id)]
         run_id: Option<String>,
-        /// Select a `[env.<name>]` profile from `proef.toml` (or set `PROEF_ENV`)
-        #[arg(long)]
-        env: Option<String>,
     },
     /// Print the pack JSON Schema (or install it next to pack files)
     Schema {
@@ -224,6 +215,16 @@ enum Command {
     },
     /// Check native libraries and environment prerequisites for all registered engines
     Doctor,
+    /// Shell completion script to stdout: `proef completions zsh >
+    /// "${fpath[1]}/_proef"` (hidden from help; documented in INSTALL)
+    #[command(hide = true)]
+    Completions {
+        /// bash | zsh | fish | powershell | elvish
+        shell: clap_complete::Shell,
+    },
+    /// The proef.1 man page (roff) to stdout (hidden from help)
+    #[command(hide = true)]
+    Man,
     /// Manage the encrypted secret store (values never appear in artifacts)
     Secret {
         #[command(subcommand)]
@@ -524,6 +525,7 @@ fn main() -> std::process::ExitCode {
     // user-error contract (ADR-0009); the mapping is pinned by tests/cli.rs.
     let Cli {
         config: config_path,
+        env,
         command,
     } = Cli::parse();
     let config_path = config_path.as_deref();
@@ -541,7 +543,6 @@ fn main() -> std::process::ExitCode {
             run_id,
             sarif,
             rerun,
-            env,
             max_fail,
             shard,
             shuffle,
@@ -677,7 +678,7 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Command::Flows { path, output, env } => match json_only(output) {
+        Command::Flows { path, output } => match json_only(output) {
             Err(code) => code,
             Ok(output_json) => match prepare(path, env, config_path) {
                 Err(code) => code,
@@ -691,7 +692,6 @@ fn main() -> std::process::ExitCode {
             output,
             check,
             require_annotated,
-            env,
         } => match json_only(output) {
             Err(code) => code,
             Ok(output_json) => match prepare(path, env, config_path) {
@@ -706,7 +706,7 @@ fn main() -> std::process::ExitCode {
                 ),
             },
         },
-        Command::Macros { path, output, env } => match json_only(output) {
+        Command::Macros { path, output } => match json_only(output) {
             Err(code) => code,
             Ok(output_json) => match prepare(path, env, config_path) {
                 Err(code) => code,
@@ -719,7 +719,6 @@ fn main() -> std::process::ExitCode {
             path,
             output,
             run_id,
-            env,
         } => match prepare(path, env, config_path) {
             Err(code) => code,
             Ok((config, path, active_env)) => {
@@ -734,6 +733,34 @@ fn main() -> std::process::ExitCode {
             Err(code) => code,
             Ok(()) => init::init(&dir.unwrap_or_else(|| PathBuf::from("."))),
         },
+        Command::Completions { shell } => {
+            // Generated into a buffer first: clap_complete writes straight
+            // into the sink and treats a write failure as fatal, which a
+            // closed pipe (`proef completions bash | head`) would turn into
+            // a panic outside the exit contract. `outln!` owns the latch.
+            let mut buf: Vec<u8> = Vec::new();
+            clap_complete::generate(
+                shell,
+                &mut <Cli as clap::CommandFactory>::command(),
+                "proef",
+                &mut buf,
+            );
+            render::outln!("{}", String::from_utf8_lossy(&buf).trim_end());
+            proef_core::error::ExitCode::Success
+        }
+        Command::Man => {
+            let mut buf: Vec<u8> = Vec::new();
+            match clap_mangen::Man::new(<Cli as clap::CommandFactory>::command()).render(&mut buf) {
+                Ok(()) => {
+                    render::outln!("{}", String::from_utf8_lossy(&buf).trim_end());
+                    proef_core::error::ExitCode::Success
+                }
+                Err(err) => {
+                    render::errln!("error: cannot render the man page: {err}");
+                    proef_core::error::ExitCode::SystemError
+                }
+            }
+        }
         Command::Doctor => {
             // Lenient about *discovery*, like `proef lsp`: `doctor` reports on
             // the environment and must run anywhere, including outside a
@@ -747,6 +774,7 @@ fn main() -> std::process::ExitCode {
                     config.default_suite_path().as_deref(),
                     config.fragments().as_deref(),
                     &config.secrets_file(),
+                    &config.runs_dir(),
                     config_error.as_deref(),
                     &commands::naming(&config),
                 ),

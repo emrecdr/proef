@@ -181,6 +181,11 @@ libcurl/libxml2 DLLs the binary needs; Linux binaries expect the distro's
 `libcurl4` and `libxml2` (present on virtually every system, or
 `apt install libcurl4 libxml2`).
 
+Shell completions and a man page travel in every archive (`completions/`,
+`proef.1`) — or generate them from any installed binary:
+`proef completions zsh > "${fpath[1]}/_proef"` (also `bash`, `fish`,
+`powershell`, `elvish`) and `proef man > /usr/local/share/man/man1/proef.1`.
+
 Building from source needs the native headers — Linux:
 `apt install build-essential pkg-config libssl-dev libcurl4-openssl-dev libxml2-dev libclang-dev`;
 macOS: Xcode Command Line Tools; Windows: vcpkg (see

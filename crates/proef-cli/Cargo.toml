@@ -33,6 +33,8 @@ proef-core = { workspace = true }
 proef-lsp = { workspace = true }
 proef-engine-hurl = { workspace = true, optional = true }
 clap = { workspace = true }
+clap_complete = { workspace = true }
+clap_mangen = { workspace = true }
 miette = { workspace = true }
 uuid = { workspace = true }
 ctrlc = { workspace = true }

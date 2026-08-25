@@ -569,7 +569,7 @@ pub fn execute(
             // Loud exit 2 by design; the refusal's own return value is the one
             // source of the code, so the body can never disagree with the exit.
             return (
-                front::no_scenarios_matched(),
+                front::no_scenarios_matched(&front, tags, scenario_filter),
                 empty_run_summary(),
                 Vec::new(),
             );
