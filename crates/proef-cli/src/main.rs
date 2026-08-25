@@ -796,7 +796,12 @@ fn main() -> std::process::ExitCode {
             Err(code) => code,
         },
         Command::Report { run_id, output } => match load_config(config_path) {
-            Ok(config) => report::report(&config.runs_dir(), run_id.as_deref(), output.as_deref()),
+            Ok(config) => report::report(
+                &config.runs_dir(),
+                run_id.as_deref(),
+                output.as_deref(),
+                &config.tag_links,
+            ),
             Err(code) => code,
         },
         Command::Fmt { path, check } => match check_config_flag(config_path) {

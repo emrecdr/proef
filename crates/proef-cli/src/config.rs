@@ -65,6 +65,13 @@ pub struct ProjectConfig {
     /// (ADR-0020). Values proef records verbatim and never interprets.
     #[serde(default)]
     pub meta: BTreeMap<String, String>,
+    /// `[tag-links]` table — tag glob → URL template (`{tag}` substituted),
+    /// e.g. `"JIRA-*" = "https://jira.example/browse/{tag}"`. The HTML tag
+    /// table and the GitHub summary link matching tags; everything else
+    /// ignores it. Base config only — a link is a project fact, not an
+    /// environment one.
+    #[serde(default, rename = "tag-links")]
+    pub tag_links: BTreeMap<String, String>,
     /// `[sla]` table — the opt-in run-level latency budget.
     #[serde(default)]
     pub sla: SlaTable,

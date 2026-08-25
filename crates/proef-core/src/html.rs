@@ -85,7 +85,11 @@ struct ScenarioBlock {
 /// prefix for each scenario's `.hurl` artifact (e.g. `"artifacts"`, resolved
 /// relative to wherever the caller writes the file); the artifact filename is
 /// derived with the same slug the emitter uses, so the links match on disk.
-pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
+pub fn render_html(
+    events: &[Event],
+    artifacts_href: &str,
+    tag_links: &std::collections::BTreeMap<String, String>,
+) -> String {
     let mut run_id = String::new();
     let mut blocks: Vec<ScenarioBlock> = Vec::new();
     let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -182,7 +186,7 @@ pub fn render_html(events: &[Event], artifacts_href: &str) -> String {
         (passed, failed, skipped, warned),
         (total_steps, total_attempts),
     );
-    render_tag_table(&mut html, &blocks);
+    render_tag_table(&mut html, &blocks, tag_links);
     render_timeline(&mut html, &blocks);
     for block in &blocks {
         render_block(&mut html, block, artifacts_href, failed);
@@ -386,7 +390,11 @@ fn render_provenance_and_summary(
 }
 
 /// section, and pre-field records are unchanged.
-fn render_tag_table(html: &mut String, blocks: &[ScenarioBlock]) {
+fn render_tag_table(
+    html: &mut String,
+    blocks: &[ScenarioBlock],
+    tag_links: &std::collections::BTreeMap<String, String>,
+) {
     use std::collections::BTreeMap;
     let mut rows: BTreeMap<&str, (usize, usize, usize, u64)> = BTreeMap::new();
     for block in blocks {
@@ -413,11 +421,23 @@ fn render_tag_table(html: &mut String, blocks: &[ScenarioBlock]) {
          <th>failed</th><th>skipped</th><th>time</th></tr></thead>\n<tbody>\n",
     );
     for (tag, (passed, failed, skipped, ms)) in rows {
+        // A `[tag-links]` glob turns the tag cell into a tracker link —
+        // `@JIRA-123` clicks through to the issue (RF's --tagstatlink,
+        // reduced to one mechanism: the existing tag glob + `{tag}`).
+        let cell = tag_links
+            .iter()
+            .find(|(pattern, _)| crate::tags::atom_matches(pattern, tag))
+            .map_or_else(
+                || format!("@{}", esc(tag)),
+                |(_, template)| {
+                    let url = template.replace("{tag}", tag);
+                    format!("<a href=\"{}\">@{}</a>", esc(&url), esc(tag))
+                },
+            );
         let _ = writeln!(
             html,
-            "<tr><td>@{}</td><td>{passed}</td><td>{failed}</td><td>{skipped}</td>\
-             <td>{ms}ms</td></tr>",
-            esc(tag)
+            "<tr><td>{cell}</td><td>{passed}</td><td>{failed}</td><td>{skipped}</td>\
+             <td>{ms}ms</td></tr>"
         );
     }
     html.push_str("</tbody>\n</table>\n");

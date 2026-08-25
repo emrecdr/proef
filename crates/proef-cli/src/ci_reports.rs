@@ -195,11 +195,16 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
 
 /// Append the run summary to `$GITHUB_STEP_SUMMARY` when running in Actions
 /// (US-8/G7). Failures list their feature anchor and detail.
-pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Redactions) {
+pub fn write_github_summary(
+    summary: &RunSummary,
+    tag_links: &std::collections::BTreeMap<String, String>,
+    run_id: &str,
+    redactions: &Redactions,
+) {
     let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
         return;
     };
-    let body = summary_body(summary, run_id);
+    let body = summary_body(summary, tag_links, run_id);
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
@@ -214,7 +219,11 @@ pub fn write_github_summary(summary: &RunSummary, run_id: &str, redactions: &Red
 /// The summary's markdown, separated from the file append so it can be asserted
 /// without an env var — `std::env::set_var` is `unsafe` in edition 2024, and a
 /// sink that can only be tested by mutating process state tends not to be.
-fn summary_body(summary: &RunSummary, run_id: &str) -> String {
+fn summary_body(
+    summary: &RunSummary,
+    tag_links: &std::collections::BTreeMap<String, String>,
+    run_id: &str,
+) -> String {
     let mut body = format!(
         "## proef run `{run_id}`\n\n**{} passed · {} failed · {} skipped**\n\n| scenario | status | steps |\n|---|---|---|\n",
         summary.passed, summary.failed, summary.skipped
@@ -248,11 +257,18 @@ fn summary_body(summary: &RunSummary, run_id: &str) -> String {
     if !tag_rows.is_empty() {
         body.push_str("\n### by tag\n\n| tag | passed | failed | skipped |\n|---|---|---|---|\n");
         for (tag, (passed, failed, skipped)) in tag_rows {
-            let _ = writeln!(
-                body,
-                "| @{} | {passed} | {failed} | {skipped} |",
-                enc_cell(tag)
-            );
+            // `[tag-links]`: a matching glob turns the cell into a tracker
+            // link — same mechanism as the HTML table, markdown spelling.
+            let cell = tag_links
+                .iter()
+                .find(|(pattern, _)| proef_core::tags::atom_matches_public(pattern, tag))
+                .map_or_else(
+                    || format!("@{}", enc_cell(tag)),
+                    |(_, template)| {
+                        format!("[@{}]({})", enc_cell(tag), template.replace("{tag}", tag))
+                    },
+                );
+            let _ = writeln!(body, "| {cell} | {passed} | {failed} | {skipped} |");
         }
     }
 
@@ -435,7 +451,7 @@ mod provenance_tests {
             annotations.contains("(via tests/hurl/admin.hurl#admin.search)"),
             "the annotation must carry it: {annotations}"
         );
-        let summary_md = summary_body(&summary, "run-1");
+        let summary_md = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
         assert!(
             summary_md.contains("(via tests/hurl/admin.hurl#admin.search)"),
             "the job summary must carry it: {summary_md}"
@@ -447,7 +463,7 @@ mod provenance_tests {
             "an inline step has no fragment and must not render an empty one"
         );
         assert!(
-            !summary_body(&inline, "run-1").contains("via "),
+            !summary_body(&inline, &std::collections::BTreeMap::new(), "run-1").contains("via "),
             "an inline step has no fragment and must not render an empty one"
         );
     }
@@ -477,9 +493,23 @@ mod provenance_tests {
             skipped: 0,
             cancelled: false,
         };
-        let body = summary_body(&summary, "run-1");
+        let body = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
         assert!(body.contains("### by tag"), "{body}");
         assert!(body.contains("| @api | 1 | 1 | 0 |"), "{body}");
+
+        // `[tag-links]`: a matching glob linkifies the cell; non-matching
+        // tags stay plain.
+        let links: std::collections::BTreeMap<String, String> =
+            [("smoke".to_owned(), "https://ci.example/t/{tag}".to_owned())].into();
+        let linked = summary_body(&summary, &links, "run-1");
+        assert!(
+            linked.contains("| [@smoke](https://ci.example/t/smoke) | 2 | 0 | 0 |"),
+            "{linked}"
+        );
+        assert!(
+            linked.contains("| @api | 1 | 1 | 0 |"),
+            "unmatched stays plain: {linked}"
+        );
         assert!(
             body.contains("| @smoke | 2 | 0 | 0 |"),
             "warned counts with passed: {body}"
@@ -493,7 +523,8 @@ mod provenance_tests {
             cancelled: false,
         };
         assert!(
-            !summary_body(&untagged, "run-1").contains("### by tag"),
+            !summary_body(&untagged, &std::collections::BTreeMap::new(), "run-1")
+                .contains("### by tag"),
             "a tagless suite gets no empty section"
         );
     }
