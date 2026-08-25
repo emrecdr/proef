@@ -6,6 +6,8 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-08-25 (the Robot Framework audit: visible skips, tag verdicts, explicit metadata)
+
 ### Breaking
 
 - **A quarantined test-failure reaches JUnit as `<skipped>` with a message,
