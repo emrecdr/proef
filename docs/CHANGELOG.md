@@ -8,6 +8,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **Eleven sites that swallowed an error and reported success now speak.**
+  The class the v0.6.0–v0.8.0 series was named for, still present at the
+  edges: a poisoned store lock silently skipped persisting the World (every
+  `saveAs: global` promotion of the run lost — now recovered, matching the
+  runner's own policy, which also stops failing an innocent scenario for
+  another thread's panic); an unreadable subdirectory silently shrank the
+  suite to a confident "0 failed" (now warned, per entry too); `doctor`
+  reported a clean "no packs" over a tree it could not read (now a Fail
+  row) and `fmt` formatted nothing while reporting success (now warned); a
+  non-UTF-8 environment *value* read as "not set" — the wrong cause — for
+  `${env:…}` (now named up front); a `.map.json` serialization failure was
+  the one silent write in the run record (now warned); `proef lsp` booted
+  with defaults over a `proef.toml` that exists but does not parse,
+  silently diverging from the runner (now says so on stderr); one
+  unreadable run aborted all of `proef flaky` (now skipped and counted,
+  with the two-run floor re-applied over what was readable); `xtask
+  docs-check` printed "aligned" when it could not read the directories it
+  checks (now a failure); and a mis-severitied diagnostic pushed into the
+  lowering error sink vanished entirely (any error-sink entry now fails the
+  scenario).
+- **`fmt` normalizes every literal-block spelling.** The scan required the
+  key line to *end* with `|`, so `hurl: |-`, `|+`, an indent indicator, or
+  a trailing comment — all loadable — were silently skipped and `--check`
+  certified them canonical. Folded scalars (`>`) stay out deliberately:
+  YAML folding rewrites the line structure there is nothing line-preserved
+  to normalize.
+
 - **A Ctrl-C landing in `--watch`'s debounce window no longer launches one
   more full suite run.** The ≥300 ms drain between "change detected" and the
   rerun never checked the interrupt, and the rerun then minted a fresh

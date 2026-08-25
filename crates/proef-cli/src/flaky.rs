@@ -152,12 +152,19 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
     }
 
     let mut histories: BTreeMap<(String, String), History> = BTreeMap::new();
+    let mut unreadable = 0usize;
     for dir in &runs {
         let rec = match record::read_record(dir) {
             Ok(rec) => rec,
             Err(err) => {
-                crate::render::errln!("error: {err}");
-                return ExitCode::UserError;
+                // A fold over history degrades, it does not abort: a single
+                // half-written dir (a concurrent `proef test` between
+                // `create_dir` and its first write, a rotation race, a
+                // partial download) used to discard every readable record
+                // beside it and tell the user nothing about the rest.
+                crate::render::errln!("warning: skipping unreadable run: {err}");
+                unreadable += 1;
+                continue;
             }
         };
         for (key, run) in rec.scenarios {
@@ -172,6 +179,26 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
                 duration_ms: run.steps.values().map(|s| s.duration_ms).sum(),
             });
         }
+    }
+
+    // The two-run floor re-applies over what was actually *readable* — with
+    // enough unreadable dirs the survivors can dip below it, and a verdict
+    // over one run is the noise the floor exists to refuse.
+    let readable = runs.len() - unreadable;
+    if readable < 2 {
+        crate::render::errln!(
+            "error: need at least two readable runs for a flakiness verdict; \
+             {readable} readable of {} under {}",
+            runs.len(),
+            runs_root.display()
+        );
+        return ExitCode::UserError;
+    }
+    if unreadable > 0 {
+        crate::render::errln!(
+            "note: verdicts cover {readable} of {} runs ({unreadable} unreadable, listed above)",
+            runs.len()
+        );
     }
 
     let mut rows: Vec<(Key, History)> = histories.into_iter().collect();

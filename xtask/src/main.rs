@@ -502,37 +502,47 @@ fn docs_check() -> ExitCode {
     let claude = std::fs::read_to_string("CLAUDE.md").unwrap_or_default();
     let index = std::fs::read_to_string("docs/README.md").unwrap_or_default();
 
-    if let Ok(entries) = std::fs::read_dir("crates") {
-        for entry in entries.flatten() {
-            if !entry.path().is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if !tech_spec.contains(&name) {
-                failures.push(format!("crate `{name}` missing from docs/TECH-SPEC.md §2"));
-            }
-            if !claude.contains(&name) {
-                failures.push(format!("crate `{name}` missing from CLAUDE.md"));
+    // A failed `read_dir` is a failed *check*, not an empty one: silently
+    // skipping the loop printed "docs-check: aligned" from the wrong working
+    // directory, having verified nothing. (The doc reads above are safe by
+    // contrast — an empty string makes every `contains` below fail loudly.)
+    match std::fs::read_dir("crates") {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if !tech_spec.contains(&name) {
+                    failures.push(format!("crate `{name}` missing from docs/TECH-SPEC.md §2"));
+                }
+                if !claude.contains(&name) {
+                    failures.push(format!("crate `{name}` missing from CLAUDE.md"));
+                }
             }
         }
+        Err(err) => failures.push(format!("cannot read crates/: {err}")),
     }
-    if let Ok(entries) = std::fs::read_dir("docs/adr") {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            // `.md` only: an editor backup or scratch file beside an ADR is not a
-            // decision, and reporting it as a missing index entry sends the
-            // reader looking for a document that does not exist.
-            let is_markdown = entry
-                .path()
-                .extension()
-                .and_then(|x| x.to_str())
-                .is_some_and(|x| x.eq_ignore_ascii_case("md"));
-            if name.starts_with("ADR-") && is_markdown && !index.contains(&name) {
-                failures.push(format!(
-                    "`{name}` missing from the docs/README.md decision log"
-                ));
+    match std::fs::read_dir("docs/adr") {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                // `.md` only: an editor backup or scratch file beside an ADR is not a
+                // decision, and reporting it as a missing index entry sends the
+                // reader looking for a document that does not exist.
+                let is_markdown = entry
+                    .path()
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| x.eq_ignore_ascii_case("md"));
+                if name.starts_with("ADR-") && is_markdown && !index.contains(&name) {
+                    failures.push(format!(
+                        "`{name}` missing from the docs/README.md decision log"
+                    ));
+                }
             }
         }
+        Err(err) => failures.push(format!("cannot read docs/adr/: {err}")),
     }
     check_diagnostics_index(&mut failures);
     let docs = living_docs();

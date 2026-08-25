@@ -116,7 +116,18 @@ fn schema_check(suite: Option<&Path>) -> (DoctorStatus, String) {
     let Some(suite) = suite else {
         return (DoctorStatus::Pass, "no suite configured".to_owned());
     };
-    let packs = crate::front::pack_files(suite).unwrap_or_default();
+    // A failed walk is a finding, not an empty answer: collapsing it to "no
+    // packs" made `doctor` — whose whole job is diagnosis — report a clean
+    // bill about a tree it could not read.
+    let packs = match crate::front::pack_files(suite) {
+        Ok(packs) => packs,
+        Err(err) => {
+            return (
+                DoctorStatus::Fail,
+                format!("cannot scan {}: {err}", suite.display()),
+            );
+        }
+    };
     if packs.is_empty() {
         return (
             DoctorStatus::Pass,

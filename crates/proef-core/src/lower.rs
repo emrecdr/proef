@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::bind::BoundScenario;
-use crate::diag::{Diag, Severity};
+use crate::diag::Diag;
 use crate::feature::FeatureFile;
 use crate::pack::{Macro, MacroBody, MacroStep, MacroStepKind, PackSet, PayloadForm};
 use crate::resolve::{self, ResolveCtx, ResolveMode};
@@ -441,7 +441,12 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
         }
     }
 
-    if sinks.errors.iter().any(|d| d.severity == Severity::Error) {
+    // Any entry in the error sink fails the scenario, whatever severity its
+    // `Diag` happens to carry. Filtering on severity here silently *dropped*
+    // a mis-severitied diagnostic — neither returned as the error nor carried
+    // into `warnings` — which is the exact vanishing the `Sinks` field names
+    // exist to prevent.
+    if !sinks.errors.is_empty() {
         return Err(sinks.errors);
     }
 

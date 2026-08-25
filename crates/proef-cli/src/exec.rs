@@ -679,12 +679,19 @@ pub fn execute(
         // accumulated so far — never zero-but-silently-missing.
         drop(record);
 
-        // Persist the World (atomic temp+rename, 0600 — ADR-0005).
-        if let Ok(guard) = store.lock()
-            && let Err(err) = guard.save(&state_file)
-        {
+        // Persist the World (atomic temp+rename, 0600 — ADR-0005). A poisoned
+        // lock is recovered, matching the runner's own policy for this store
+        // (plain map writes, no cross-key invariant a panicked holder could
+        // tear) — skipping the save on poison silently discarded every
+        // `saveAs: global` promotion of the run while the exit code reported
+        // the run's normal verdict.
+        let guard = store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Err(err) = guard.save(&state_file) {
             crate::render::errln!("warning: cannot persist global state: {err}");
         }
+        drop(guard);
 
         // `@quarantine` scenarios run and report, but their test-failures do not
         // gate the run (a System/User fault still does — quarantine is for flaky
@@ -1623,11 +1630,17 @@ fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path)
         &artifacts_dir.join(format!("{}.hurl", artifact.slug)),
         &artifact.hurl_text,
     );
-    if let Ok(map_json) = serde_json::to_string_pretty(&artifact.map) {
-        write_or_warn(
+    // The one write here that used to fail silently — and the sidecar with
+    // two shipped defects to its name is the last file that should.
+    match serde_json::to_string_pretty(&artifact.map) {
+        Ok(map_json) => write_or_warn(
             &artifacts_dir.join(format!("{}.map.json", artifact.slug)),
             format!("{map_json}\n"),
-        );
+        ),
+        Err(err) => crate::render::errln!(
+            "warning: cannot serialize {}.map.json: {err}",
+            artifact.slug
+        ),
     }
     if let Some(vars) = &artifact.vars {
         write_or_warn(&artifacts_dir.join(format!("{}.vars", artifact.slug)), vars);
