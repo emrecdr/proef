@@ -6,6 +6,50 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A comment on a section header no longer blinds the scans that gate on
+  it.** hurl's own `section_name` parser leaves the rest of the header line
+  to the ordinary comment terminator, so `[Options] # tuning` is a real
+  section — but proef's scans required whole-line equality. Behind a
+  commented header, validation pass 6 was off entirely: `retry: -1`
+  dry-ran clean (the abandoned-thread hole ADR-0007 exists to refuse), the
+  delay cap and the double-declaration check with it, in inline blocks and
+  fragments alike. The same equality bug made `[Captures] # ids` drop every
+  capture under it from `.map.json`, and `[Asserts] # note` open a second
+  section under an `expect:` merge. One `is_section_header` recogniser now
+  serves every section scan.
+- **`delay: 5h` is refused like `delay: 90m` always was.** The duration
+  table knew `ms`/`s`/`m` but not hurl's `h`, so an hour-spelled delay five
+  times over the 1-hour cap fell through the suffix parse and validated
+  clean. The table now mirrors `hurl_core`'s `DurationUnit` in full.
+- **A pack-scope `bind:` value resolves in the pack's scope, not in whichever
+  macro reached it first.** The table resolved through the first ref-using
+  macro's argument scope and was then cached for the scenario — a bare
+  `${param}` silently took that macro's value everywhere (or vanished, blaming
+  an innocent macro). The pack table now resolves arg-free and default-free:
+  namespaced references (`${url:…}`, `${vars:…}`, `${secret:…}`, `${fake:…}`,
+  `${env:…}`) are its vocabulary, and a bare `${name}` is a deterministic
+  error attributed to the pack's own `bind:` in every macro order.
+- **A star-heavy tag atom can no longer hang selection or abort the
+  process.** The glob matcher was naive recursion: backtracking was
+  exponential in the `*` count (a 19-character atom took seconds per tag per
+  scenario) and recursion depth grew with pattern length (a long enough
+  atom in `--tags`, `[run] exclusive-tags` or `[tag-links]` overflowed the
+  stack — SIGABRT, outside the exit contract). Rewritten as the standard
+  two-pointer match: linear-ish, iterative, oracle-property-tested against
+  the old semantics.
+- **A bound value carrying a lone `\r` is refused at lower time.**
+  `lower::multiline_bind` tested `\n` alone, so a carriage return (a value
+  read off a CRLF file) sailed into the emitted `[Options] variable:` line
+  and died one stage later as `emit::invalid_artifact` — blaming generated
+  text the author never wrote. The guard now refuses any control character
+  except tab.
+- **An `HTTP2-Settings:` request header no longer mis-slots an `expect:`
+  merge.** The last-entry scan recognised a response line by the bare
+  prefix `HTTP`, which the emitter's own recogniser was already hardened
+  against; both now share one `is_response_line` (`HTTP ` / `HTTP/`).
+
 ## [0.15.0] - 2026-08-25 (the Robot Framework audit: visible skips, tag verdicts, explicit metadata)
 
 ### Breaking

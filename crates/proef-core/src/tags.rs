@@ -65,17 +65,46 @@ pub(crate) fn atom_matches(pattern: &str, tag: &str) -> bool {
     glob_at(&pattern, &tag)
 }
 
-/// Anchored glob over chars (`?` is one *character*, never one byte) with
-/// backtracking on `*` only — linear for the single-`*` patterns real
-/// expressions use, and input length is bounded by tag length, so the worst
-/// case stays harmless.
+/// Anchored glob over chars (`?` is one *character*, never one byte).
+///
+/// The standard two-pointer wildcard match: greedy advance, one remembered
+/// backtrack point per `*`, O(pattern × text) worst case, no recursion. The
+/// previous recursive form backtracked combinatorially — a 19-character
+/// star-heavy `--tags` atom took seconds *per tag per scenario* — and its
+/// recursion depth grew with pattern length, so a long enough atom (which
+/// `[tag-links]` and `[run] exclusive-tags` carry in a repo file) aborted the
+/// whole process outside the typed exit contract.
 fn glob_at(pattern: &[char], text: &[char]) -> bool {
-    match pattern.split_first() {
-        None => text.is_empty(),
-        Some(('*', rest)) => (0..=text.len()).any(|skip| glob_at(rest, &text[skip..])),
-        Some(('?', rest)) => !text.is_empty() && glob_at(rest, &text[1..]),
-        Some((literal, rest)) => text.first() == Some(literal) && glob_at(rest, &text[1..]),
+    let (mut p, mut t) = (0usize, 0usize);
+    // After failing past a `*`, resume at (pattern index after it, one text
+    // char further than last time). Only the most recent `*` ever needs
+    // revisiting — an earlier one's other splits are subsumed by this one.
+    let mut retry: Option<(usize, usize)> = None;
+    while t < text.len() {
+        match pattern.get(p) {
+            Some('*') => {
+                retry = Some((p + 1, t));
+                p += 1;
+            }
+            Some('?') => {
+                p += 1;
+                t += 1;
+            }
+            Some(literal) if *literal == text[t] => {
+                p += 1;
+                t += 1;
+            }
+            _ => match retry {
+                Some((after_star, consumed)) => {
+                    p = after_star;
+                    t = consumed + 1;
+                    retry = Some((after_star, consumed + 1));
+                }
+                None => return false,
+            },
+        }
     }
+    pattern[p..].iter().all(|c| *c == '*')
 }
 
 /// Parse a `--tags` expression. The `Err` is a user-facing message (exit 2); an
@@ -326,6 +355,34 @@ mod tests {
         assert!(!sel("@*", &[]), "bare * never selects the untagged");
     }
 
+    /// The pathological shapes the recursive matcher could not survive: a
+    /// star-heavy pattern that forced combinatorial backtracking (seconds per
+    /// call at 8 stars, unbounded beyond), and a pattern long enough that
+    /// recursion depth alone overflowed the stack. The two-pointer form
+    /// answers both instantly; if either regresses, this test hangs or
+    /// aborts rather than merely failing.
+    #[test]
+    fn glob_pathological_patterns_terminate() {
+        let text: String = "a".repeat(60);
+        let stars = format!("@{}b", "a*".repeat(25));
+        assert!(!parse(&stars).unwrap().eval(std::slice::from_ref(&text)));
+        let deep = format!("@{}", "*".repeat(500_000));
+        assert!(parse(&deep).unwrap().eval(&[text]));
+    }
+
+    /// Reference matcher for the oracle property below: the textbook
+    /// exponential recursion, correct by inspection, safe only at the small
+    /// sizes proptest feeds it.
+    #[cfg(test)]
+    fn glob_reference(pattern: &[char], text: &[char]) -> bool {
+        match pattern.split_first() {
+            None => text.is_empty(),
+            Some(('*', rest)) => (0..=text.len()).any(|skip| glob_reference(rest, &text[skip..])),
+            Some(('?', rest)) => !text.is_empty() && glob_reference(rest, &text[1..]),
+            Some((lit, rest)) => text.first() == Some(lit) && glob_reference(rest, &text[1..]),
+        }
+    }
+
     proptest::proptest! {
         /// A pattern with no metacharacters selects exactly what equality
         /// selects — the glob extension cannot change any pre-glob result.
@@ -336,6 +393,19 @@ mod tests {
         ) {
             let expr = parse(&format!("@{atom}")).unwrap();
             proptest::prop_assert_eq!(expr.eval(std::slice::from_ref(&tag)), atom == tag);
+        }
+
+        /// The two-pointer matcher agrees with the exponential reference on
+        /// every small input — the metachar branch the equality property
+        /// above never enters. Sizes are capped so the reference stays fast.
+        #[test]
+        fn glob_matches_the_reference_oracle(
+            pattern in "[ab*?]{0,10}",
+            text in "[ab]{0,10}",
+        ) {
+            let p: Vec<char> = pattern.chars().collect();
+            let t: Vec<char> = text.chars().collect();
+            proptest::prop_assert_eq!(glob_at(&p, &t), glob_reference(&p, &t));
         }
     }
 }
