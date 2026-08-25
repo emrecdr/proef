@@ -1237,7 +1237,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::report::ConsoleMode
 impl core::panic::unwind_safe::UnwindSafe for proef_core::report::ConsoleMode
 pub struct proef_core::report::ConsoleReporter<W: core::io::write::Write + core::marker::Send>
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::ConsoleReporter<W>
-pub fn proef_core::report::ConsoleReporter<W>::new(W, proef_core::report::Redactions, proef_core::report::ConsoleMode) -> Self
+pub fn proef_core::report::ConsoleReporter<W>::new(W, proef_core::report::Redactions, proef_core::report::ConsoleMode, bool) -> Self
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::ConsoleReporter<W>
 pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
 impl<W> core::marker::Freeze for proef_core::report::ConsoleReporter<W> where W: core::marker::Freeze

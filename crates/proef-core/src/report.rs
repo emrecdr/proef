@@ -387,20 +387,41 @@ pub struct ConsoleReporter<W: Write + Send> {
     out: W,
     redactions: Redactions,
     mode: ConsoleMode,
+    color: bool,
     dotted_col: usize,
     buffers: Vec<(ScenarioKey, Vec<String>)>,
 }
 
 impl<W: Write + Send> ConsoleReporter<W> {
-    /// A console reporter writing to `out` in `mode`.
-    pub fn new(out: W, redactions: Redactions, mode: ConsoleMode) -> Self {
+    /// A console reporter writing to `out` in `mode`, painting the status
+    /// vocabulary with ANSI color when `color` is set. The TTY/`NO_COLOR`
+    /// probe is the CLI edge's call — that read is IO, which stays out of
+    /// the sans-IO core — and color is paint on identical bytes, never
+    /// information: the record, the log mirror (which strips it) and the
+    /// exit code cannot depend on it.
+    pub fn new(out: W, redactions: Redactions, mode: ConsoleMode, color: bool) -> Self {
         Self {
             out,
             redactions,
             mode,
+            color,
             dotted_col: 0,
             buffers: Vec::new(),
         }
+    }
+
+    /// `text` painted in the status's color when color is on.
+    fn painted(&self, status: Status, text: &str) -> String {
+        if !self.color {
+            return text.to_owned();
+        }
+        let code = match status {
+            Status::Passed => "32",
+            Status::Failed => "31",
+            Status::Warned => "33",
+            Status::Skipped => "2",
+        };
+        format!("\x1b[{code}m{text}\x1b[0m")
     }
 
     fn buffer_for(&mut self, file: &Arc<str>, scenario: &Arc<str>) -> &mut Vec<String> {
@@ -438,7 +459,7 @@ impl<W: Write + Send> ConsoleReporter<W> {
                     Status::Skipped => 's',
                     Status::Warned => 'w',
                 };
-                let _ = write!(self.out, "{glyph}");
+                let _ = write!(self.out, "{}", self.painted(status, &glyph.to_string()));
                 self.dotted_col += 1;
                 if self.dotted_col >= 80 {
                     let _ = writeln!(self.out);
@@ -460,7 +481,11 @@ impl<W: Write + Send> ConsoleReporter<W> {
                 let why = reason
                     .map(|reason| format!(" — {reason}"))
                     .unwrap_or_default();
-                let _ = writeln!(self.out, "    {} scenario {scenario}{why}", glyph(status));
+                let _ = writeln!(
+                    self.out,
+                    "    {} scenario {scenario}{why}",
+                    self.painted(status, glyph(status))
+                );
             }
         }
     }
@@ -509,7 +534,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 };
                 let line = format!(
                     "    {} {}:{} — {} ({duration_ms}ms{attempts_note})",
-                    glyph(*status),
+                    self.painted(*status, glyph(*status)),
                     step.file,
                     step.line,
                     step.text
@@ -547,9 +572,23 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                     self.dotted_col = 0;
                 }
                 let note = if *cancelled { " · cancelled" } else { "" };
+                // Paint the half of the verdict that matters: the failure
+                // count in red when anything failed, the pass count in green
+                // on a clean run — never both, one signal for the eye.
+                let (passed_text, failed_text) = if *failed > 0 {
+                    (
+                        format!("{passed} passed"),
+                        self.painted(Status::Failed, &format!("{failed} failed")),
+                    )
+                } else {
+                    (
+                        self.painted(Status::Passed, &format!("{passed} passed")),
+                        format!("{failed} failed"),
+                    )
+                };
                 let _ = writeln!(
                     self.out,
-                    "\nsummary: {passed} passed · {failed} failed · {skipped} skipped{note}"
+                    "\nsummary: {passed_text} · {failed_text} · {skipped} skipped{note}"
                 );
                 let _ = self.out.flush();
             }
@@ -682,12 +721,48 @@ mod tests {
         ]
     }
 
+    /// Color is paint on identical content: with color on, the status
+    /// vocabulary wraps in ANSI; with color off, not one escape byte is
+    /// emitted — the form the record, the log mirror and every text
+    /// assertion in this suite rely on.
+    #[test]
+    fn color_wraps_the_status_vocabulary_and_off_means_no_escapes() {
+        let render = |color: bool| {
+            let mut out: Vec<u8> = Vec::new();
+            let mut console =
+                ConsoleReporter::new(&mut out, Redactions::default(), ConsoleMode::Full, color);
+            console.on_event(&Event::ScenarioFinished {
+                scenario: Arc::from("S"),
+                file: Arc::from("a.feature"),
+                status: Status::Failed,
+                timestamp_ms: None,
+                worker: None,
+                phase: None,
+                reason: None,
+                tags: Vec::new(),
+            });
+            console.on_event(&Event::RunFinished {
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+                cancelled: false,
+            });
+            String::from_utf8(out).unwrap()
+        };
+        let painted = render(true);
+        assert!(painted.contains("\x1b[31m✗\x1b[0m"), "{painted}");
+        assert!(painted.contains("\x1b[31m1 failed\x1b[0m"), "{painted}");
+        let plain = render(false);
+        assert!(!plain.contains('\x1b'), "{plain}");
+        assert!(plain.contains("summary: 0 passed · 1 failed"), "{plain}");
+    }
+
     #[test]
     fn console_buffers_per_scenario_and_prints_on_finish() {
         let mut out = Vec::new();
         {
             let mut console =
-                ConsoleReporter::new(&mut out, Redactions::default(), ConsoleMode::Full);
+                ConsoleReporter::new(&mut out, Redactions::default(), ConsoleMode::Full, false);
             for event in sample_events() {
                 console.on_event(&event);
             }
@@ -881,6 +956,7 @@ mod tests {
                         &mut out,
                         Redactions::new([secret.clone()]),
                         ConsoleMode::Full,
+                        false,
                     );
                     console.on_event(&Event::ScenarioStarted {
                         scenario: Arc::from("S"),
