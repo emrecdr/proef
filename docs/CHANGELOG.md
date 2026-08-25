@@ -8,6 +8,24 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A Ctrl-C landing in `--watch`'s debounce window no longer launches one
+  more full suite run.** The ≥300 ms drain between "change detected" and the
+  rerun never checked the interrupt, and the rerun then minted a fresh
+  cancellation token — so the handler cancelled the *finished* run's token,
+  printed "leaving watch", and a whole suite executed anyway. The interrupt
+  is now checked inside the drain and again after the new token is stored,
+  so a Ctrl-C from any point forward cancels the token the run actually
+  carries.
+- **`--watch` can no longer go silently deaf.** A delivered watcher error
+  and notify's rescan signal (the kernel-queue-overflow event a `git
+  checkout` burst produces) were both discarded by the event filter — the
+  watch kept printing "watching … for changes" while missing every change.
+  Both now retrigger a run, saying why. Two adjacent silent paths gained
+  voices too: a runs dir whose path has no final component now warns that
+  its writes cannot be excluded from the watch (the self-feeding-loop
+  shape), and a failed Ctrl-C handler registration now says the two-stage
+  interrupt is unavailable instead of silently dropping the contract.
+
 - **A comment on a section header no longer blinds the scans that gate on
   it.** hurl's own `section_name` parser leaves the rest of the header line
   to the ordinary comment terminator, so `[Options] # tuning` is a real
