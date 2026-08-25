@@ -2,9 +2,9 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::default_not_param
+proef::pack::default_not_param (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
-  × macro `search`: default `index` is not a declared param
+  × macro `search`: default `index` is not a declared param (known: term)
    ╭─[tests/errors/pack__default_not_param/packs/broken.yaml:5:5]
  4 │     defaults: { index: records }
  5 │     match: "I search for {term}"

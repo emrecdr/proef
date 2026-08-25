@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::body_form_conflict
+proef::pack::body_form_conflict (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `bothWays` step 0: a step is either `ref:` or a payload, not both
    ╭─[tests/errors/pack__body_form_conflict/packs/broken.yaml:2:3]

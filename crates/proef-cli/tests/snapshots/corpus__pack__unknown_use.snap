@@ -2,9 +2,9 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::unknown_use
+proef::pack::unknown_use (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
-  × macro `outer` step 0: `use: doesNotExist` names no loaded macro
+  × macro `outer` step 0: `use: doesNotExist` names no loaded macro (9 known — `proef macros` lists them)
    ╭─[tests/errors/pack__unknown_use/packs/broken.yaml:2:3]
  1 │ macros:
  2 │   outer:

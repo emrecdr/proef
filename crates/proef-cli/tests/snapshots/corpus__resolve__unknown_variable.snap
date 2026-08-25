@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::resolve::unknown_variable
+proef::resolve::unknown_variable (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × in macro `fetch` (pack tests/errors/resolve__unknown_variable/packs/broken.yaml): unknown variable `${nope}`
    ╭─[tests/errors/resolve__unknown_variable/case.feature:3:5]

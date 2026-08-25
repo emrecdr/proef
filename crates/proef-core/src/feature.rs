@@ -318,6 +318,8 @@ fn expand_scenario(
         }
         let mut example_tags = tags.clone();
         example_tags.extend(examples.tags.iter().cloned());
+        // One dedupe set per outline: see `concrete_scenario`'s check.
+        let mut seen_unknown = std::collections::BTreeSet::new();
         for (row_index, row) in rows.iter().enumerate() {
             if row.len() != header.len() {
                 diags.push(
@@ -345,7 +347,10 @@ fn expand_scenario(
                 scenario,
                 &example_tags,
                 &base_steps,
-                Some(&substitutions),
+                Some(Substitutions {
+                    map: &substitutions,
+                    seen_unknown: &mut seen_unknown,
+                }),
                 path,
                 source,
                 diags,
@@ -391,26 +396,49 @@ fn dedup_names(scenarios: &mut [ScenarioDef]) {
 }
 
 /// Build one concrete scenario, substituting outline placeholders when given.
+/// The outline half of [`concrete_scenario`]'s input: the row's column map
+/// plus the per-outline dedupe set its diagnostics share.
+struct Substitutions<'a, 'row> {
+    map: &'a BTreeMap<&'row str, &'row str>,
+    seen_unknown: &'a mut std::collections::BTreeSet<(usize, String)>,
+}
+
 fn concrete_scenario(
     scenario: &gherkin::Scenario,
     tags: &[String],
     steps: &[&gherkin::Step],
-    substitutions: Option<&BTreeMap<&str, &str>>,
+    substitutions: Option<Substitutions<'_, '_>>,
     path: &str,
     source: &Arc<str>,
     diags: &mut Vec<Diag>,
 ) -> ScenarioDef {
+    let mut substitutions = substitutions;
     let mut check = |text: &str, span: gherkin::Span, what: &str| -> String {
-        match substitutions {
+        match substitutions.as_mut() {
             None => text.to_owned(),
-            Some(map) => {
+            Some(subs) => {
+                let map = subs.map;
+                let seen_unknown = &mut *subs.seen_unknown;
                 let (result, unknown) = substitute_placeholders(text, map);
-                if let Some(name) = unknown {
+                // One diagnostic per authored defect, not per Examples row:
+                // this closure runs once per row, and a 500-row outline with
+                // one typo'd `<column>` pushed 500 byte-identical
+                // diagnostics at one span. The console collapses those;
+                // SARIF deliberately does not (one result per *site* — and
+                // these are one site expanded 500 times). `empty_scenario`
+                // was hoisted above the row loop for exactly this; the
+                // dedupe set is this check's version of that hoist. The
+                // header names are in hand, so the tail names them too.
+                if let Some(name) = unknown
+                    && seen_unknown.insert((span.start, name.clone()))
+                {
+                    let tail =
+                        crate::matcher::suggest_or_enumerate(&name, map.keys().copied(), None);
                     diags.push(
                         Diag::error(
                             "proef::feature::unknown_placeholder",
                             format!(
-                                "{what} references `<{name}>`, which is not an Examples column"
+                                "{what} references `<{name}>`, which is not an Examples column{tail}"
                             ),
                         )
                         .with_source(path.to_owned(), Arc::clone(source))

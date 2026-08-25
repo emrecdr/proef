@@ -1,9 +1,8 @@
 ---
 source: crates/proef-cli/tests/corpus.rs
-assertion_line: 405
 expression: stderr
 ---
-proef::pack::empty_expect
+proef::pack::empty_expect (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `empty` expect item 0 asserts nothing — give it `status:` and/or `hurl:` assert lines
     ╭─[tests/errors/pack__empty_expect/packs/broken.yaml:11:9]

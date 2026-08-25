@@ -74,7 +74,7 @@ pub struct Resolution {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResolveError {
     /// A plain `${name}` found in no scope.
-    #[error("unknown variable `${{{name}}}`{}", suggestion.as_ref().map(|s| format!(" — did you mean `{s}`?")).unwrap_or_default())]
+    #[error("unknown variable `${{{name}}}`{}", suggestion.as_deref().unwrap_or_default())]
     UnknownVariable {
         /// The unresolved name.
         name: String,
@@ -99,7 +99,7 @@ pub enum ResolveError {
     /// base `proef.toml` table nor the active `[env.<name>]` profile.
     #[error(
         "{namespace} variable `{key}` is not set — define `[{namespace}]` `{key}` in proef.toml (or in the active `[env.<name>.{namespace}]`){}",
-        suggestion.as_ref().map(|s| format!(" — did you mean `{s}`?")).unwrap_or_default()
+        suggestion.as_deref().unwrap_or_default()
     )]
     MissingConfigVar {
         /// The namespace as written (`url` or `vars`).
@@ -124,11 +124,12 @@ pub enum ResolveError {
         field: String,
     },
     /// `${fake:…}` names no known generator (statically rejected).
-    #[error("unknown fake generator `{kind}`{}", suggestion.as_ref().map(|s| format!(" — did you mean `{s}`?")).unwrap_or_default())]
+    #[error("unknown fake generator `{kind}`{}", suggestion.as_deref().unwrap_or_default())]
     FakeUnknown {
         /// The requested generator kind.
         kind: String,
-        /// Closest known generator, when one is near.
+        /// Rendered suggest-or-enumerate tail (`— did you mean …` when a
+        /// spelling is near, else the known set), `None` when empty.
         suggestion: Option<String>,
     },
     /// An empty reference `${}`.
@@ -316,13 +317,14 @@ fn lookup(
                 // Unknown generators are statically wrong — they error in every
                 // mode (incl. Probe: the pack lint catches typos at load).
                 if !crate::fake::is_known_generator(arg) {
+                    let tail = crate::matcher::suggest_or_enumerate(
+                        arg,
+                        crate::fake::GENERATORS.iter().copied(),
+                        None,
+                    );
                     return Err(ResolveError::FakeUnknown {
                         kind: arg.to_owned(),
-                        suggestion: crate::matcher::closest(
-                            arg,
-                            crate::fake::GENERATORS.iter().copied(),
-                        )
-                        .map(ToOwned::to_owned),
+                        suggestion: (!tail.is_empty()).then_some(tail),
                     });
                 }
                 let occurrence = *fakes;
@@ -351,8 +353,11 @@ fn lookup(
     probe_or(
         ResolveError::UnknownVariable {
             name: name.to_owned(),
-            suggestion: crate::matcher::closest(name, known.map(String::as_str))
-                .map(ToOwned::to_owned),
+            suggestion: {
+                let tail =
+                    crate::matcher::suggest_or_enumerate(name, known.map(String::as_str), None);
+                (!tail.is_empty()).then_some(tail)
+            },
         },
         ctx.mode,
     )
@@ -375,18 +380,18 @@ fn resolve_config_var(
     // Candidates are scoped to the same namespace, so a `url:` typo can never
     // suggest a `vars:` key. Keys are stored as `namespace:key`.
     let prefix = format!("{namespace}:");
-    let suggestion = crate::matcher::closest(
+    let tail = crate::matcher::suggest_or_enumerate(
         arg,
         ctx.config_vars
             .keys()
             .filter_map(|k| k.strip_prefix(&prefix)),
-    )
-    .map(str::to_owned);
+        None,
+    );
     probe_or(
         ResolveError::MissingConfigVar {
             namespace: namespace.to_owned(),
             key: arg.to_owned(),
-            suggestion,
+            suggestion: (!tail.is_empty()).then_some(tail),
         },
         ctx.mode,
     )
@@ -605,7 +610,7 @@ mod tests {
         let ResolveError::UnknownVariable { suggestion, .. } = &err else {
             panic!("wrong variant: {err:?}");
         };
-        assert_eq!(suggestion.as_deref(), Some("recordRef"));
+        assert_eq!(suggestion.as_deref(), Some(" — did you mean `recordRef`?"));
     }
 
     #[test]

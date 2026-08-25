@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::missing_use_param
+proef::pack::missing_use_param (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `outer` step 0: `use: inner` needs `with: { q: … }` (no default exists)
    ╭─[tests/errors/pack__missing_use_param/packs/broken.yaml:7:3]

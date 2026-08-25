@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::pattern_duplicate_capture
+proef::pack::pattern_duplicate_capture (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `move`: capture `{x}` appears more than once — a later match would silently overwrite the earlier value
    ╭─[tests/errors/pack__pattern_duplicate_capture/packs/broken.yaml:4:5]

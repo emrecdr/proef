@@ -147,10 +147,11 @@ fn bind_scenario(
                     continue;
                 }
                 if !macro_.params.contains(key) {
-                    let suggestion =
-                        matcher::closest(key, macro_.params.iter().map(String::as_str))
-                            .map(|p| format!(" — did you mean `{p}`?"))
-                            .unwrap_or_default();
+                    let suggestion = matcher::suggest_or_enumerate(
+                        key,
+                        macro_.params.iter().map(String::as_str),
+                        None,
+                    );
                     diags.push(at(Diag::error(
                         "proef::bind::unknown_table_key",
                         format!(

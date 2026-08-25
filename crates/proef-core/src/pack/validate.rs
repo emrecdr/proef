@@ -90,9 +90,11 @@ pub(crate) fn normalize_macro(
     // name, and the macro-name span said nothing about either.
     for default_key in raw.defaults.keys() {
         if !raw.params.contains(default_key) {
-            let suggestion = matcher::closest(default_key, raw.params.iter().map(String::as_str))
-                .map(|p| format!(" — did you mean `{p}`?"))
-                .unwrap_or_default();
+            let suggestion = matcher::suggest_or_enumerate(
+                default_key,
+                raw.params.iter().map(String::as_str),
+                None,
+            );
             diags.push(at_match(Diag::error(
                 "proef::pack::default_not_param",
                 format!(
@@ -512,12 +514,11 @@ fn ref_target_passes(
         return;
     };
     let Some(fragment) = set.find_fragment(target) else {
-        let suggestion = matcher::closest(
+        let suggestion = matcher::suggest_or_enumerate(
             target.rsplit('#').next().unwrap_or(target),
             set.fragments.keys().map(String::as_str),
-        )
-        .map(|f| format!(" — did you mean `{f}`?"))
-        .unwrap_or_default();
+            Some("`proef fragments` lists them"),
+        );
         diags.push(
             at(Diag::error(
                 "proef::pack::unknown_ref",
@@ -644,9 +645,7 @@ fn unread_bind_pass<'a>(
         if readable.contains(key.as_str()) {
             continue;
         }
-        let suggestion = matcher::closest(key, readable.iter().copied())
-            .map(|near| format!(" — did you mean `{near}`?"))
-            .unwrap_or_default();
+        let suggestion = matcher::suggest_or_enumerate(key, readable.iter().copied(), None);
         diags.push(
             at(Diag::error(
                 "proef::pack::unread_bind_key",
@@ -698,12 +697,11 @@ fn use_target_passes(
     diags: &mut Vec<Diag>,
 ) {
     let Some(target_macro) = set.find_use_target(target) else {
-        let suggestion = matcher::closest(
+        let suggestion = matcher::suggest_or_enumerate(
             target.rsplit('#').next().unwrap_or(target),
             set.macros.keys().map(String::as_str),
-        )
-        .map(|m| format!(" — did you mean `{m}`?"))
-        .unwrap_or_default();
+            Some("`proef macros` lists them"),
+        );
         diags.push(at(Diag::error(
             "proef::pack::unknown_use",
             format!(
@@ -716,9 +714,11 @@ fn use_target_passes(
 
     for key in with.keys() {
         if !target_macro.params.contains(key) {
-            let suggestion = matcher::closest(key, target_macro.params.iter().map(String::as_str))
-                .map(|p| format!(" — did you mean `{p}`?"))
-                .unwrap_or_default();
+            let suggestion = matcher::suggest_or_enumerate(
+                key,
+                target_macro.params.iter().map(String::as_str),
+                None,
+            );
             diags.push(at(Diag::error(
                 "proef::pack::unknown_with_key",
                 format!(
@@ -757,9 +757,10 @@ fn payload_passes(
 ) {
     // Pass 8: the kind must be claimed by a registered engine.
     let Some(spec) = kinds.iter().find(|s| s.prefix == kind) else {
-        let suggestion = matcher::closest(kind, kinds.iter().map(|s| s.prefix))
-            .map(|p| format!(" — did you mean `{p}:`?"))
-            .unwrap_or_default();
+        // The valid set has exactly one member today (`hurl`), and the old
+        // silent-below-threshold tail never named it — the message said "not
+        // claimed by any registered engine" about a registry of one.
+        let suggestion = matcher::suggest_or_enumerate(kind, kinds.iter().map(|s| s.prefix), None);
         diags.push(at(Diag::error(
             "proef::pack::unknown_step_kind",
             format!(

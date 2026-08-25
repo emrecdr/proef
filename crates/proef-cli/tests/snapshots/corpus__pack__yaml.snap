@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::yaml
+proef::pack::yaml (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × pack is not valid YAML for the pack schema: unknown field `bogus`, expected `macros` or `bind` at line 2 column 1
    ╭─[tests/errors/pack__yaml/packs/broken.yaml:2:1]

@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::adjacent_captures
+proef::pack::adjacent_captures (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `glued`: adjacent captures `{a}{b}` are ambiguous — put literal text between them
    ╭─[tests/errors/pack__adjacent_captures/packs/broken.yaml:4:5]

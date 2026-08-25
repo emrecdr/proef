@@ -324,6 +324,36 @@ pub fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Op
 /// Maximum edit distance for a "did you mean" suggestion.
 const SUGGESTION_DISTANCE: usize = 3;
 
+/// The tail every "unknown name" diagnostic shares: the nearest spelling
+/// when one is near, else the valid set itself — small sets verbatim, large
+/// ones counted, with `listing` naming the command that prints them in full.
+///
+/// Every call site used to end `closest(…).map(…).unwrap_or_default()`:
+/// below the threshold the tail went silent, and for `unknown_step_kind`
+/// that meant a valid set of size **one** stayed unnamed while the message
+/// said "not claimed by any registered engine". An empty candidate set
+/// yields an empty tail — there is nothing to say.
+pub fn suggest_or_enumerate<'a>(
+    input: &str,
+    candidates: impl Iterator<Item = &'a str> + Clone,
+    listing: Option<&str>,
+) -> String {
+    if let Some(close) = closest(input, candidates.clone()) {
+        return format!(" — did you mean `{close}`?");
+    }
+    let mut known: Vec<&str> = candidates.collect();
+    known.sort_unstable();
+    known.dedup();
+    match known.len() {
+        0 => String::new(),
+        1..=6 => format!(" (known: {})", known.join(", ")),
+        n => match listing {
+            Some(listing) => format!(" ({n} known — {listing})"),
+            None => format!(" ({n} known)"),
+        },
+    }
+}
+
 /// Levenshtein edit distance over chars (small inputs; O(a·b) rolling row).
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();

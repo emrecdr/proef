@@ -2,7 +2,7 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: stderr
 ---
-proef::pack::duplicate_macro
+proef::pack::duplicate_macro (https://emrecdr.github.io/proef/DIAGNOSTICS.html)
 
   × macro `ping` is defined in both `tests/errors/pack__duplicate_macro/packs/broken.yaml` and `tests/errors/pack__duplicate_macro/packs/other.yaml`
    ╭─[tests/errors/pack__duplicate_macro/packs/other.yaml:2:3]

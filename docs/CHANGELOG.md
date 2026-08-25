@@ -8,6 +8,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A miss below the did-you-mean threshold names the valid set instead of
+  going silent.** All eleven suggestion sites ended
+  `closest(…).unwrap_or_default()` — when nothing was near, the tail
+  vanished, and `unknown_step_kind` said "not claimed by any registered
+  engine" about a registry with exactly **one** member it never named. One
+  `matcher::suggest_or_enumerate` now serves every site: the nearest
+  spelling when one is near, else the set verbatim (small), else a count
+  with the command that lists it (`(9 known — `proef macros` lists
+  them)`). `unknown_fake`, `unknown_variable` and `missing_config_var`
+  carry the same rendered tail through their typed errors.
+- **`unknown_placeholder` fires once per authored defect, not once per
+  Examples row** — a 500-row outline with one typo'd `<column>` pushed 500
+  byte-identical diagnostics at one span (the console collapsed them;
+  SARIF, one-result-per-site by design, did not). It also now names the
+  header's columns.
+- **Every rendered error links the diagnostics catalogue.** The stable
+  codes were greppable and led nowhere — the catalogue was linked from
+  every doc and reachable from no error. `Rendered` implements
+  `Diagnostic::url()` and the LSP sets `code_description`, so editors show
+  a clickable link on the code; on a terminal miette renders an OSC-8
+  hyperlink, and into a pipe or snapshot the URL prints as plain text
+  beside the code (links ride the same TTY/`NO_COLOR` gate as color — an
+  escape sequence a non-terminal sink must never see).
 - **Pack diagnostics point at the defect, not the macro's name.** Every
   pattern-family and `defaults:` error anchored on the macro-*name* span —
   thirteen of the nineteen seeded pack snapshots underlined `login:` while
