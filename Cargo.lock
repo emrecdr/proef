@@ -1733,6 +1733,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "strip-ansi-escapes",
  "tempfile",
  "toml 1.1.4+spec-1.1.0",
  "uuid",

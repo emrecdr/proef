@@ -29,8 +29,12 @@ located diagnostics, no network). Every diagnostic code is indexed in
 Under `--console dotted` the tree collapses to one glyph per *scenario* —
 `.` passed, `F` failed, `s` skipped, `w` warned (lowercase = non-gating) —
 and failures still print in full after the pool; `--console quiet` keeps only
-the run line and the summary. The record and the exit code are identical in
-every mode.
+the run line and the summary. On a terminal the status vocabulary is
+colored; `NO_COLOR` (or a non-terminal stream) turns it off, and `run.log`
+never carries the paint either way. The record and the exit code are
+identical in every mode. Every run's last line names its run id and
+wall-clock — the id is the reproduction key `--shard`, `--shuffle` and
+`${fake:…}` all hang off.
 
 ## Frequent situations
 

@@ -46,6 +46,7 @@ hurl_core = "=8.0.1"
 # core
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+strip-ansi-escapes = "0.2.1"
 serde_norway = "0.9"
 gherkin = "0.16"
 schemars = "1"

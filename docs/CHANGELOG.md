@@ -6,7 +6,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The console speaks in color, and every run ends on its identity.** The
+  status vocabulary (`✓`/`✗`/`∅`/`⚠`, the dotted glyphs, the summary's
+  verdict half) is ANSI-colored on a terminal — `NO_COLOR`, a dumb TERM, or
+  a non-terminal stream turns it off, and the `run.log` mirror strips the
+  paint either way (content verbatim, paint never). Color is paint on
+  identical bytes: the record, the exit code and every text assertion see
+  the same output. Each run's final stderr line is now
+  `run <id> · <seconds>s` — the run id is the reproduction key `--shard`,
+  `--shuffle` and `${fake:…}` all hang off, and it previously printed only
+  at the top of the scrollback; a red run's trailer adds the
+  `proef explain` pointer. Wall-clock stays console-only, never entering
+  the record.
+
 ### Fixed
+
+- **A failure no longer prints its detail twice.** An engine fault quotes
+  the failing step's own detail, and the located step line just below
+  printed the same ~200 characters again; when the fault message contains a
+  failing step's detail, the fault line now keeps the scenario identity and
+  the step line carries the detail once.
 
 - **JUnit failure and skip detail reaches every platform.** The detail —
   assert diff, fragment provenance, `@skip:reason`, the quarantine notice —
@@ -45,6 +66,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   is a refused promotion — and `World` gains `guard_secrets`;
   `Redactions` gains the `taints` probe. The hurl engine's private
   equality-only gate is deleted in favor of the World's.
+- **Library:** `ConsoleReporter::new` takes a fourth `color: bool` — the
+  TTY/`NO_COLOR` probe stays at the CLI edge; the sans-IO core takes the
+  answer as a plain value.
 
 ### Fixed
 

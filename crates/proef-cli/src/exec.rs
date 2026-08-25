@@ -158,6 +158,7 @@ pub fn execute(
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
+    let started = std::time::Instant::now();
     // Resolve the active environment once. All three calls consult `env_profile`,
     // so any of them surfaces an unknown `--env` (user error); the match below
     // reports the first such error.
@@ -344,8 +345,10 @@ pub fn execute(
             // run.log mirrors the console verbatim, dots included: the
             // record (events.jsonl) is the full truth (ADR-0008), and a
             // second full-mode reporter for a derived view is machinery
-            // the contract does not need.
+            // the contract does not need. (Color is paint, not content —
+            // the Tee strips it from the mirror.)
             console_mode,
+            crate::render::console_color(machine_stdout),
         )),
         Box::new(JsonlReporter::new(events_file)),
     ];
@@ -719,13 +722,34 @@ pub fn execute(
                     runner::Fault::User(message) => ("user error", message),
                     runner::Fault::System(message) => ("system error", message),
                 };
-                crate::render::errln!(
-                    "{kind}: {}:{} {} — {}",
-                    outcome.file,
-                    outcome.line,
-                    outcome.name,
-                    redactions.apply(message)
-                );
+                let message = redactions.apply(message);
+                // An engine fault quotes the failing step's own detail, and
+                // the located step line just below prints that detail again
+                // — ~200 duplicated characters per failure, twice per
+                // screen. When a failing step's detail is contained in the
+                // fault message, the fault line keeps the scenario identity
+                // and the step line carries the detail once.
+                let duplicated = outcome.steps.iter().any(|s| {
+                    s.status == proef_core::step::Status::Failed
+                        && s.detail
+                            .as_deref()
+                            .is_some_and(|d| message.contains(&redactions.apply(d)))
+                });
+                if duplicated {
+                    crate::render::errln!(
+                        "{kind}: {}:{} {}",
+                        outcome.file,
+                        outcome.line,
+                        outcome.name
+                    );
+                } else {
+                    crate::render::errln!(
+                        "{kind}: {}:{} {} — {message}",
+                        outcome.file,
+                        outcome.line,
+                        outcome.name
+                    );
+                }
             }
             for step in &outcome.steps {
                 if step.status == proef_core::step::Status::Failed
@@ -863,6 +887,20 @@ pub fn execute(
     };
 
     let (exit, summary, non_gating) = run();
+    // The eye lands on the last line: the run's identity — the reproduction
+    // key `--shard`/`--shuffle`/`${fake:…}` all hang off — the wall-clock,
+    // and, on a red run, where the detail lives. Stderr like the failure
+    // block (the machine body owns stdout when `--output` is set); the
+    // wall-clock stays console-only and never enters the record.
+    let elapsed = started.elapsed().as_secs_f64();
+    if exit == ExitCode::Success {
+        crate::render::errln!("run {} · {elapsed:.1}s", front.run_id);
+    } else {
+        crate::render::errln!(
+            "run {} · {elapsed:.1}s — `proef explain` replays the failure detail",
+            front.run_id
+        );
+    }
     emit_machine_body(
         output,
         &RunHead {
@@ -1705,7 +1743,12 @@ impl Write for Tee {
         // short write cannot duplicate the tail into `run.log`.
         let written = self.0.write(buf)?;
         if let Some(file) = &mut self.1 {
-            let _ = file.write_all(&buf[..written]);
+            // The mirror stays verbatim in *content*, not in paint: the
+            // console may carry ANSI color for a terminal, and a log file
+            // full of escape bytes is the classic grep/less pollution. The
+            // strip is byte-safe on partial writes — codes the reporter
+            // emits arrive whole within one `writeln!`.
+            let _ = file.write_all(&strip_ansi_escapes::strip(&buf[..written]));
         }
         Ok(written)
     }
@@ -1730,6 +1773,21 @@ mod tests {
     use super::{RunRecord, rotate_runs, runner};
     use proef_core::cancel::CancellationToken;
     use proef_core::event::{Event, EventSink};
+
+    /// run.log mirrors the console's *content*, never its paint: ANSI
+    /// color aimed at a terminal must not survive into the file a reader
+    /// greps and lesses.
+    #[test]
+    fn tee_mirror_strips_ansi_paint() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run.log");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut tee = super::Tee(Box::new(std::io::sink()), Some(file));
+        tee.write_all(b"\x1b[31m2 failed\x1b[0m plain\n").unwrap();
+        tee.flush().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "2 failed plain\n");
+    }
 
     /// The permutation is a contract like the shard assignment below: seeded
     /// only by the run id, stable across proef versions, so a recorded id
