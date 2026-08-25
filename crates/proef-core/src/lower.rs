@@ -148,17 +148,111 @@ pub(crate) fn macro_has_ref(macro_: &Macro) -> bool {
     }
 }
 
+/// Resolve one value in a macro invocation's own scope: the invocation's
+/// args plus the macro's defaults, errors and warnings named as the macro's.
+fn resolve_in_macro_scope(
+    text: &str,
+    macro_: &Macro,
+    args: &BTreeMap<String, String>,
+    ctx: &LowerCtx<'_>,
+    refs: &mut Refs,
+    sinks: &mut Sinks,
+    at: &impl Fn(Diag) -> Diag,
+) -> Option<String> {
+    let resolve_ctx = ResolveCtx {
+        args,
+        defaults: &macro_.defaults,
+        env: ctx.env,
+        config_vars: ctx.config_vars,
+        run_id: ctx.run_id,
+        world: ctx.world,
+        mode: ctx.mode,
+    };
+    match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
+        Ok(resolution) => {
+            // Inline `${secret:X}` lowers to the literal `{{X}}`, so the
+            // hurl variable and the secret share a name; only a fragment
+            // binding can make them differ.
+            refs.secrets
+                .extend(resolution.secrets.into_iter().map(|s| (s.clone(), s)));
+            refs.globals.extend(resolution.globals);
+            push_warnings(sinks, &resolution.warnings, ctx, &macro_.name);
+            Some(resolution.text)
+        }
+        Err(err) => {
+            sinks.errors.push(at(Diag::error(
+                err.code(),
+                format!("in macro `{}`: {err}", macro_.name),
+            )));
+            None
+        }
+    }
+}
+
+/// Resolve one pack-scope `bind:` value. The scope has no macro args and no
+/// defaults: the table belongs to the pack, not to whichever ref-using macro
+/// the scenario happens to reach first. Under the shared invocation-scope
+/// closure, a pack-scope `${param}` silently took the *first* macro's
+/// argument value and the per-scenario cache then served that accident to
+/// every later macro — or, when the first macro lacked the param, dropped the
+/// key and blamed an innocent macro. Namespaced references (`${url:…}`,
+/// `${vars:…}`, `${secret:…}`, `${fake:…}`, `${env:…}`) are the pack scope's
+/// vocabulary; a bare `${name}` fails the same way in every macro order,
+/// attributed to the pack's own table.
+fn resolve_in_pack_scope(
+    text: &str,
+    pack: &str,
+    ctx: &LowerCtx<'_>,
+    refs: &mut Refs,
+    sinks: &mut Sinks,
+    at: &impl Fn(Diag) -> Diag,
+) -> Option<String> {
+    let no_args = BTreeMap::new();
+    let no_defaults = BTreeMap::new();
+    let resolve_ctx = ResolveCtx {
+        args: &no_args,
+        defaults: &no_defaults,
+        env: ctx.env,
+        config_vars: ctx.config_vars,
+        run_id: ctx.run_id,
+        world: ctx.world,
+        mode: ctx.mode,
+    };
+    let origin = format!("in pack `{pack}` `bind:`");
+    match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
+        Ok(resolution) => {
+            refs.secrets
+                .extend(resolution.secrets.into_iter().map(|s| (s.clone(), s)));
+            refs.globals.extend(resolution.globals);
+            push_warnings(sinks, &resolution.warnings, ctx, &origin);
+            Some(resolution.text)
+        }
+        Err(err) => {
+            sinks
+                .errors
+                .push(at(Diag::error(err.code(), format!("{origin}: {err}"))));
+            None
+        }
+    }
+}
+
 /// The bindings a macro's `ref:` steps see before their own: pack scope,
 /// resolved once per scenario and cached, then macro scope, resolved once per
 /// invocation — which is what makes "one binding, one value" mean something
 /// different at each level (ADR-0018). Empty for a macro with no `ref:` step,
 /// so an unused table never advances the `${fake:…}` counter.
+///
+/// The pack table resolves through `resolve_pack_scope` — an arg-free,
+/// default-free scope (see [`resolve_in_pack_scope`]) — so the cached result
+/// is identical whichever macro reaches it first; the macro table resolves
+/// through `resolve_in`, the invocation's own scope.
 fn scope_bindings(
     macro_: &Macro,
     ctx: &LowerCtx<'_>,
     refs: &mut Refs,
     sinks: &mut Sinks,
     resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    resolve_pack_scope: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
     at: &impl Fn(Diag) -> Diag,
 ) -> Bindings {
     let mut scoped = Bindings::new();
@@ -167,7 +261,7 @@ fn scope_bindings(
     }
     if let Some(table) = ctx.packs.bind.get(&macro_.pack) {
         if !refs.pack_bindings.contains_key(&macro_.pack) {
-            let resolved = resolve_bindings(table, refs, sinks, resolve_in, at);
+            let resolved = resolve_bindings(table, refs, sinks, resolve_pack_scope, at);
             refs.pack_bindings.insert(macro_.pack.clone(), resolved);
         }
         if let Some(cached) = refs.pack_bindings.get(&macro_.pack) {
@@ -209,20 +303,25 @@ fn resolve_bindings(
         }
         if let Some(resolved) = resolve_in(value, refs, sinks) {
             // A hurl `[Options] variable:` value is a single-line scalar
-            // (`VariableValue` is Null/Bool/Number/String), so a newline here
-            // cannot survive into the entry. Refused by name rather than left to
-            // the emitter, which caught it one stage later as
+            // (`VariableValue` is Null/Bool/Number/String), so a line break
+            // here cannot survive into the entry. Refused by name rather than
+            // left to the emitter, which caught it one stage later as
             // `emit::invalid_artifact` — blaming the artifact for what the
             // binding did, and pointing at generated text the author never
             // wrote. This is the documented splicing-versus-binding boundary
-            // (ADR-0018), enforced where it can be explained.
-            if resolved.contains('\n') {
+            // (ADR-0018), enforced where it can be explained. Any control
+            // character, not `\n` alone: `quote_option` escapes only `\`/`"`,
+            // so a lone `\r` (a value read off a CRLF file) passed both gates
+            // and produced exactly the late, mis-blamed failure this check
+            // exists to prevent.
+            if resolved.chars().any(|c| c.is_control() && c != '\t') {
                 sinks.errors.push(
                     at(Diag::error(
                         "proef::lower::multiline_bind",
                         format!(
-                            "binding `{name}` resolves to a multi-line value, which a hurl \
-                             `[Options] variable:` cannot carry — it is a single-line scalar"
+                            "binding `{name}` resolves to a value with a line break or \
+                             control character, which a hurl `[Options] variable:` cannot \
+                             carry — it is a single-line scalar"
                         ),
                     ))
                     .with_help(
@@ -382,40 +481,25 @@ fn expand_macro(
     }
 
     let resolve_in = |text: &str, refs: &mut Refs, sinks: &mut Sinks| -> Option<String> {
-        let resolve_ctx = ResolveCtx {
-            args,
-            defaults: &macro_.defaults,
-            env: ctx.env,
-            config_vars: ctx.config_vars,
-            run_id: ctx.run_id,
-            world: ctx.world,
-            mode: ctx.mode,
-        };
-        match resolve::resolve(text, &resolve_ctx, &mut refs.fakes) {
-            Ok(resolution) => {
-                // Inline `${secret:X}` lowers to the literal `{{X}}`, so the
-                // hurl variable and the secret share a name; only a fragment
-                // binding can make them differ.
-                refs.secrets
-                    .extend(resolution.secrets.into_iter().map(|s| (s.clone(), s)));
-                refs.globals.extend(resolution.globals);
-                push_warnings(sinks, &resolution.warnings, ctx, &macro_.name);
-                Some(resolution.text)
-            }
-            Err(err) => {
-                sinks.errors.push(at(Diag::error(
-                    err.code(),
-                    format!("in macro `{}`: {err}", macro_.name),
-                )));
-                None
-            }
-        }
+        resolve_in_macro_scope(text, macro_, args, ctx, refs, sinks, at)
+    };
+
+    let resolve_pack_scope = |text: &str, refs: &mut Refs, sinks: &mut Sinks| -> Option<String> {
+        resolve_in_pack_scope(text, &macro_.pack, ctx, refs, sinks, at)
     };
 
     // Bindings in scope for this macro's `ref:` steps: pack scope (resolved
     // once per scenario, cached) then macro scope (once per invocation, which
     // is here). Step scope is applied per step in `expand_step`.
-    let scoped = scope_bindings(macro_, ctx, refs, sinks, &resolve_in, at);
+    let scoped = scope_bindings(
+        macro_,
+        ctx,
+        refs,
+        sinks,
+        &resolve_in,
+        &resolve_pack_scope,
+        at,
+    );
 
     match &macro_.body {
         MacroBody::Expect(items) => {
@@ -1007,7 +1091,7 @@ fn author_options_by_entry(text: &str) -> Vec<bool> {
         }
         if is_method_line(trimmed) {
             author_options.push(false);
-        } else if trimmed == "[Options]"
+        } else if is_section_header(trimmed, "Options")
             && let Some(last) = author_options.last_mut()
         {
             *last = true;
@@ -1100,7 +1184,7 @@ fn bake_entry_options(
             out.push(line.to_owned());
             continue;
         }
-        if trimmed == "[Options]" {
+        if is_section_header(trimmed, "Options") {
             // Extend the author's own section (once — a second author section
             // is the pack's own parse error, not ours to widen) — at its
             // END, not its head. hurl evaluates `variable:` lines in order,
@@ -1221,6 +1305,31 @@ fn is_header_line(trimmed: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c))
 }
 
+/// Does this trimmed line open the named hurl section? hurl's own
+/// `section_name` parser reads `[`, the name, `]` and leaves the rest of the
+/// line to the ordinary whitespace/comment terminator — `[Options] # tuning`
+/// is a real section header to hurl. Whole-line equality misread it as body
+/// text, which silently disabled every check gated on the section (the
+/// finite-retry refusal included). One recogniser for every section scan.
+pub(crate) fn is_section_header(trimmed: &str, name: &str) -> bool {
+    trimmed
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_prefix(name))
+        .and_then(|rest| rest.strip_prefix(']'))
+        .is_some_and(|rest| {
+            let rest = rest.trim_start();
+            rest.is_empty() || rest.starts_with('#')
+        })
+}
+
+/// Does this trimmed line open a response (`HTTP 200`, `HTTP/1.1 200`,
+/// `HTTP *`)? The delimiter is required — a header or capture merely *named*
+/// starting with `HTTP` (`HTTP2-Settings: …`) is not a response line, and
+/// reading it as one mis-slots an `expect:` merge into the request half.
+pub(crate) fn is_response_line(trimmed: &str) -> bool {
+    trimmed.starts_with("HTTP ") || trimmed.starts_with("HTTP/")
+}
+
 /// Is this trimmed line an entry-opening method line (`GET http://…`)? Custom
 /// methods are any ≥ 3-char run of ASCII uppercase / `-` — except `HTTP`,
 /// which opens a response.
@@ -1255,8 +1364,8 @@ fn last_entry_scan(text: &str) -> (bool, bool) {
             (has_http, has_asserts) = (false, false);
             continue;
         }
-        has_http = has_http || trimmed.starts_with("HTTP");
-        has_asserts = has_asserts || trimmed == "[Asserts]";
+        has_http = has_http || is_response_line(trimmed);
+        has_asserts = has_asserts || is_section_header(trimmed, "Asserts");
     }
     (has_http, has_asserts)
 }
@@ -2344,6 +2453,74 @@ mod tests {
             "the placeholder survives into the entry untouched: {texts:?}"
         );
         assert!(lowered.warnings.is_empty(), "{:?}", lowered.warnings);
+    }
+
+    /// A pack-scope `bind:` table resolves in the *pack's* scope — no macro
+    /// args, no defaults — so its cached value cannot depend on which
+    /// ref-using macro the scenario reaches first. A bare `${param}` in the
+    /// table used to take the first macro's argument value (cached, then
+    /// served to every later macro in the scenario); it is now a
+    /// deterministic resolve error attributed to the pack's own table.
+    #[test]
+    fn a_pack_scope_bind_never_reads_a_macros_args() {
+        let pack = concat!(
+            "bind:\n",
+            "  tenant: \"${role}\"\n",
+            "macros:\n",
+            "  act:\n",
+            "    params: [role]\n",
+            "    match: I act as {role}\n",
+            "    steps:\n",
+            "      - ref: f\n",
+        );
+        let packs = pack::load(
+            &[PackSource {
+                name: "p.yaml".into(),
+                text: Arc::from(pack),
+            }],
+            &pack::FragmentCorpus::new(
+                vec![PackSource {
+                    name: "api.frag".into(),
+                    text: Arc::from("@f\n?tenant\n"),
+                }],
+                FRAG_KINDS,
+            ),
+            FRAG_KINDS,
+        )
+        .unwrap_or_else(|err| panic!("pack should load: {err:?}"));
+        let feature = crate::feature::parse(
+            "t.feature",
+            "Feature: F\n  Scenario: S\n    When I act as alpha\n",
+        )
+        .unwrap();
+        let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+        let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+        let env = BTreeMap::new();
+        let config_vars = BTreeMap::new();
+        let world = World::new(crate::world::GlobalStore::default());
+        let ctx = ctx(
+            &feature,
+            &packs,
+            &kind_to_engine,
+            &env,
+            &config_vars,
+            &world,
+        );
+        let diags = lower(&scenario, &ctx).expect_err("a bare param in pack scope is refused");
+        let diag = diags
+            .iter()
+            .find(|d| d.code == "proef::resolve::unknown_variable")
+            .unwrap_or_else(|| panic!("expected unknown_variable in {diags:?}"));
+        assert!(
+            diag.message.contains("in pack") && diag.message.contains("`bind:`"),
+            "the error names the pack table, not a macro: {}",
+            diag.message
+        );
+        assert!(
+            !diag.message.contains("in macro"),
+            "no macro is to blame for a pack-table value: {}",
+            diag.message
+        );
     }
 
     /// R9-5: a `{{x}}` inside a bind value that nothing supplies used to pass

@@ -404,12 +404,17 @@ const MAX_DELAY_MS: u64 = 3_600_000;
 /// `None` — the runtime budget still bounds those.
 fn raw_duration_ms(value: &str) -> Option<u64> {
     let value = value.trim();
+    // The suffix table mirrors `hurl_core::types::DurationUnit` exactly
+    // (ms/s/m/h). Falling behind hurl's grammar is how `delay: 5h` — five
+    // times the cap — validated clean while `delay: 90m` was refused.
     let (number, unit_ms) = if let Some(n) = value.strip_suffix("ms") {
         (n, 1)
     } else if let Some(n) = value.strip_suffix('s') {
         (n, 1000)
     } else if let Some(n) = value.strip_suffix('m') {
         (n, 60_000)
+    } else if let Some(n) = value.strip_suffix('h') {
+        (n, 3_600_000)
     } else {
         (value, 1)
     };
@@ -904,8 +909,12 @@ fn option_lines(text: &str, recognise: OptionRecogniser) -> Vec<OptionLine<'_>> 
             continue; // fenced body data — a literal `retry: -1` is payload, not an option
         }
         // A section runs until the next section header or the next entry.
+        // `is_section_header`, not whole-line equality: hurl permits a
+        // trailing comment on the header line, and `[Options] # tuning`
+        // followed by `retry: -1` validated clean under the equality test —
+        // the exact infinite-retry hole this pass exists to refuse.
         if trimmed.starts_with('[') {
-            in_options = trimmed == "[Options]";
+            in_options = crate::lower::is_section_header(trimmed, "Options");
         } else if crate::lower::is_method_line(trimmed) {
             in_options = false;
         }
@@ -1607,6 +1616,73 @@ mod tests {
                 .count(),
             1,
             "one report per option family, however many entries repeat it"
+        );
+    }
+
+    /// hurl's `section_name` parser leaves the rest of the header line to the
+    /// ordinary comment terminator, so `[Options] # tuning` is a real section
+    /// to hurl — and under whole-line equality it was *not* one to this scan,
+    /// which turned every pass-6 check off behind a comment: a `retry: -1`
+    /// dry-ran clean, reopening exactly the abandoned-thread hole ADR-0007
+    /// exists to refuse.
+    #[test]
+    fn a_commented_options_header_still_opens_the_section() {
+        let src = source(
+            "commented.yaml",
+            concat!(
+                "macros:\n",
+                "  tuned:\n",
+                "    match: the header carries a comment\n",
+                "    steps:\n",
+                "      - alt: |\n",
+                "          GET http://x\n",
+                "          [Options] # tuning\n",
+                "          retry: -1\n",
+                "          HTTP 200\n",
+            ),
+        );
+        let FrontError::Diagnostics(diags) =
+            pack::load(&[src], &crate::pack::FragmentCorpus::empty(), RAW).unwrap_err()
+        else {
+            panic!("diagnostics expected");
+        };
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "proef::pack::retry_not_finite"),
+            "the commented header must not disable the finite-retry refusal: {diags:?}"
+        );
+    }
+
+    /// The duration table mirrors hurl's `DurationUnit` (ms/s/m/h) in full.
+    /// With `h` missing, `delay: 90m` was refused while the strictly larger
+    /// `delay: 5h` fell through the suffix parse and validated clean.
+    #[test]
+    fn an_hour_suffixed_delay_is_capped_like_the_minute_spelling() {
+        let src = source(
+            "hours.yaml",
+            concat!(
+                "macros:\n",
+                "  patient:\n",
+                "    match: the delay is written in hours\n",
+                "    steps:\n",
+                "      - alt: |\n",
+                "          GET http://x\n",
+                "          [Options]\n",
+                "          delay: 5h\n",
+                "          HTTP 200\n",
+            ),
+        );
+        let FrontError::Diagnostics(diags) =
+            pack::load(&[src], &crate::pack::FragmentCorpus::empty(), RAW).unwrap_err()
+        else {
+            panic!("diagnostics expected");
+        };
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == "proef::pack::delay_unbounded"),
+            "an hour-suffixed delay over the cap must be refused: {diags:?}"
         );
     }
 

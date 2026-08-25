@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
-use crate::lower::{LoweredScenario, is_method_line};
+use crate::lower::{LoweredScenario, is_method_line, is_response_line, is_section_header};
 use crate::step::{StepPayload, StepRef};
 use crate::world::World;
 
@@ -281,7 +281,7 @@ pub(crate) fn capture_names(body: &[&str]) -> Vec<String> {
         if in_fence {
             continue;
         }
-        if trimmed == "[Captures]" {
+        if is_section_header(trimmed, "Captures") {
             in_captures = true;
             continue;
         }
@@ -343,7 +343,7 @@ fn capture_name(trimmed: &str) -> Option<&str> {
 /// two-letter method — legal hurl, unwritten in practice — opens an entry
 /// this scan does not see, and `#` no longer covers for it.)
 fn starts_entry_line(trimmed: &str) -> bool {
-    trimmed.starts_with("HTTP ") || trimmed.starts_with("HTTP/") || is_method_line(trimmed)
+    is_response_line(trimmed) || is_method_line(trimmed)
 }
 
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
@@ -497,6 +497,21 @@ mod tests {
             globals: BTreeSet::from(["envName".to_owned()]),
             warnings: Vec::new(),
         }
+    }
+
+    /// hurl's `section_name` parser tolerates a trailing comment on the
+    /// header line, so `[Captures] # ids` is a real section — under
+    /// whole-line equality the scan never opened the run and every capture
+    /// beneath the comment silently vanished from `.map.json`.
+    #[test]
+    fn a_commented_captures_header_still_opens_the_run() {
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures] # ids",
+            "id: jsonpath \"$.id\"",
+        ];
+        assert_eq!(capture_names(&body), vec!["id"]);
     }
 
     #[test]
