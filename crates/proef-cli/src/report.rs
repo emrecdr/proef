@@ -50,18 +50,32 @@ pub fn report(
     let mut events = events;
     let mut carried_note: Option<usize> = None;
     if let Some(base_id) = &rec.rerun_of {
-        match crate::record::read_events(&runs_root.join(base_id)) {
-            Ok(base_events) => {
-                let carried = carried_scenario_events(&base_events, &rec);
-                if !carried.is_empty() {
-                    carried_note = Some(count_carried(&carried));
-                    events.splice(1..1, carried);
+        // `rerun_of` is a string read out of a record file, and records
+        // travel — joined unvalidated, a crafted `"../../elsewhere"` steered
+        // this read outside the runs root and spliced a foreign file's events
+        // into the rendered page. A run id is a single path component,
+        // whatever its spelling (uuid or a user-chosen `--run-id`).
+        let escapes_runs_root = std::path::Path::new(base_id).file_name()
+            != Some(std::ffi::OsStr::new(base_id.as_str()));
+        if escapes_runs_root {
+            crate::render::errln!(
+                "note: base run id `{base_id}` in the record is not a directory name — \
+                 rendering the re-run subset only"
+            );
+        } else {
+            match crate::record::read_events(&runs_root.join(base_id)) {
+                Ok(base_events) => {
+                    let carried = carried_scenario_events(&base_events, &rec);
+                    if !carried.is_empty() {
+                        carried_note = Some(count_carried(&carried));
+                        events.splice(1..1, carried);
+                    }
                 }
-            }
-            Err(_) => {
-                crate::render::errln!(
-                    "note: base run {base_id} is no longer on disk — rendering the re-run subset only"
-                );
+                Err(_) => {
+                    crate::render::errln!(
+                        "note: base run {base_id} is no longer on disk — rendering the re-run subset only"
+                    );
+                }
             }
         }
     }

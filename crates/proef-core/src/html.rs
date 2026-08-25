@@ -296,7 +296,10 @@ fn render_block(
     // scenario total. Purely derived from `duration_ms` (no timestamps), so it
     // shows the *sequential* cascade within one scenario — not cross-worker
     // occupancy, which would need an injected clock the sans-IO core never reads.
-    let total_ms: u64 = block.steps.iter().map(|step| step.duration_ms).sum();
+    let total_ms: u64 = block
+        .steps
+        .iter()
+        .fold(0u64, |acc, step| acc.saturating_add(step.duration_ms));
     let mut elapsed_ms: u64 = 0;
     for step in &block.steps {
         let _ = write!(
@@ -320,7 +323,7 @@ fn render_block(
                 width = pct(step.duration_ms, total_ms),
             );
         }
-        elapsed_ms += step.duration_ms;
+        elapsed_ms = elapsed_ms.saturating_add(step.duration_ms);
         if let Some(detail) = &step.detail {
             let _ = write!(html, "<pre class=\"detail\">{}</pre>", esc(detail));
         }
@@ -402,7 +405,10 @@ fn render_tag_table(
             continue;
         }
         let status = block.status.unwrap_or(Status::Skipped);
-        let time: u64 = block.steps.iter().map(|s| s.duration_ms).sum();
+        let time: u64 = block
+            .steps
+            .iter()
+            .fold(0u64, |acc, s| acc.saturating_add(s.duration_ms));
         for tag in &block.tags {
             let row = rows.entry(tag.as_str()).or_default();
             match status {
@@ -410,7 +416,7 @@ fn render_tag_table(
                 Status::Failed => row.1 += 1,
                 Status::Skipped => row.2 += 1,
             }
-            row.3 += time;
+            row.3 = row.3.saturating_add(time);
         }
     }
     if rows.is_empty() {
@@ -424,9 +430,16 @@ fn render_tag_table(
         // A `[tag-links]` glob turns the tag cell into a tracker link —
         // `@JIRA-123` clicks through to the issue (RF's --tagstatlink,
         // reduced to one mechanism: the existing tag glob + `{tag}`).
+        // Non-http(s) templates render as plain text: `esc` keeps the href
+        // *well-formed*, but a `javascript:` template (or a bare `{tag}`
+        // template letting the tag become the whole scheme) would still be a
+        // live link — the GitHub-summary sink applies the same rule.
         let cell = tag_links
             .iter()
             .find(|(pattern, _)| crate::tags::atom_matches(pattern, tag))
+            .filter(|(_, template)| {
+                template.starts_with("https://") || template.starts_with("http://")
+            })
             .map_or_else(
                 || format!("@{}", esc(tag)),
                 |(_, template)| {

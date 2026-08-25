@@ -176,7 +176,10 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
             histories.entry(key).or_default().0.push(Observation {
                 failed: run.status == Status::Failed,
                 retried: run.steps.values().any(|s| s.attempts > 1),
-                duration_ms: run.steps.values().map(|s| s.duration_ms).sum(),
+                duration_ms: run
+                    .steps
+                    .values()
+                    .fold(0u64, |acc, s| acc.saturating_add(s.duration_ms)),
             });
         }
     }
