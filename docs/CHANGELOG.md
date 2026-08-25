@@ -37,6 +37,13 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`--console dotted|quiet`** (RF wave 3): one glyph per scenario (`.`
+  pass, `F` fail, `s` skip, `w` warn — lowercase is non-gating, the
+  pytest/RF convention, flushed per glyph, wrapped at 80) or just the frame.
+  Purely presentation: the record, every report, the post-pool failure
+  details and the exit code are identical in every mode; `run.log` mirrors
+  the console verbatim, dots included — `events.jsonl` is the full truth.
+  Library (Breaking): `ConsoleReporter::new` takes a `ConsoleMode`.
 - **A `--rerun` now produces the one JUnit and the one report that cover
   the whole suite** (E2's rerun half; Robot Framework's `rebot --merge`
   shape, done as composition): the run head records `rerun_of`, the JUnit

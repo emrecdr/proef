@@ -353,21 +353,44 @@ pub fn sink(reporters: Vec<Box<dyn Reporter>>, redactions: Redactions) -> EventS
 /// identity (names are unique only within one file).
 type ScenarioKey = (Arc<str>, Arc<str>);
 
+/// How much the console says per scenario (`--console`). Pure
+/// presentation — the record, the exit code, and the post-pool failure
+/// details are identical in every mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConsoleMode {
+    /// The buffered BDD tree — every step of every scenario (today's
+    /// output, the default).
+    #[default]
+    Full,
+    /// One glyph per scenario (`.` passed, `F` failed, `s` skipped, `w`
+    /// warned — pytest/RF case convention: lowercase is non-gating),
+    /// wrapped at 80, flushed per glyph. Failures still print in full
+    /// after the pool.
+    Dotted,
+    /// The run line and the summary only.
+    Quiet,
+}
+
 /// Console BDD tree, buffered per scenario — keyed by `(file, scenario)`
 /// (the run-wide identity), since two same-named scenarios under `--jobs > 1`
-/// must never share a buffer.
+/// must never share a buffer. The sink mutex serializes `on_event`, so a
+/// dotted glyph can never interleave mid-line.
 pub struct ConsoleReporter<W: Write + Send> {
     out: W,
     redactions: Redactions,
+    mode: ConsoleMode,
+    dotted_col: usize,
     buffers: Vec<(ScenarioKey, Vec<String>)>,
 }
 
 impl<W: Write + Send> ConsoleReporter<W> {
-    /// A console reporter writing to `out`.
-    pub fn new(out: W, redactions: Redactions) -> Self {
+    /// A console reporter writing to `out` in `mode`.
+    pub fn new(out: W, redactions: Redactions, mode: ConsoleMode) -> Self {
         Self {
             out,
             redactions,
+            mode,
+            dotted_col: 0,
             buffers: Vec::new(),
         }
     }
@@ -389,6 +412,50 @@ impl<W: Write + Send> ConsoleReporter<W> {
                 .1
         }
     }
+    /// The `scenario_finished` half of the console: glyph, tree flush, or
+    /// nothing, by mode.
+    fn finish_scenario_line(
+        &mut self,
+        scenario: &Arc<str>,
+        file: &Arc<str>,
+        status: Status,
+        reason: Option<&str>,
+    ) {
+        match self.mode {
+            ConsoleMode::Quiet => {}
+            ConsoleMode::Dotted => {
+                let glyph = match status {
+                    Status::Passed => '.',
+                    Status::Failed => 'F',
+                    Status::Skipped => 's',
+                    Status::Warned => 'w',
+                };
+                let _ = write!(self.out, "{glyph}");
+                self.dotted_col += 1;
+                if self.dotted_col >= 80 {
+                    let _ = writeln!(self.out);
+                    self.dotted_col = 0;
+                }
+                // A dot the user cannot see is not progress.
+                let _ = self.out.flush();
+            }
+            ConsoleMode::Full => {
+                let lines = self
+                    .buffers
+                    .iter()
+                    .position(|((f, name), _)| f == file && name == scenario)
+                    .map(|position| self.buffers.remove(position).1)
+                    .unwrap_or_default();
+                for line in lines {
+                    let _ = writeln!(self.out, "{line}");
+                }
+                let why = reason
+                    .map(|reason| format!(" — {reason}"))
+                    .unwrap_or_default();
+                let _ = writeln!(self.out, "    {} scenario {scenario}{why}", glyph(status));
+            }
+        }
+    }
 }
 
 fn glyph(status: Status) -> &'static str {
@@ -407,8 +474,10 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 let _ = writeln!(self.out, "proef run {run_id}");
             }
             Event::ScenarioStarted { scenario, file, .. } => {
-                let header = format!("\n  Scenario: {scenario} ({file})");
-                self.buffer_for(file, scenario).push(header);
+                if self.mode == ConsoleMode::Full {
+                    let header = format!("\n  Scenario: {scenario} ({file})");
+                    self.buffer_for(file, scenario).push(header);
+                }
             }
             // Buffered console renders on completion; the live progress
             // signal is for streaming consumers (JSONL record, future TTY).
@@ -422,6 +491,9 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 detail,
                 ..
             } => {
+                if self.mode != ConsoleMode::Full {
+                    return;
+                }
                 let attempts_note = if *attempts > 1 {
                     format!(", {attempts} attempts")
                 } else {
@@ -454,20 +526,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 reason,
                 ..
             } => {
-                let lines = self
-                    .buffers
-                    .iter()
-                    .position(|((f, name), _)| f == file && name == scenario)
-                    .map(|position| self.buffers.remove(position).1)
-                    .unwrap_or_default();
-                for line in lines {
-                    let _ = writeln!(self.out, "{line}");
-                }
-                let why = reason
-                    .as_deref()
-                    .map(|reason| format!(" — {reason}"))
-                    .unwrap_or_default();
-                let _ = writeln!(self.out, "    {} scenario {scenario}{why}", glyph(*status));
+                self.finish_scenario_line(scenario, file, *status, reason.as_deref());
             }
             Event::RunFinished {
                 passed,
@@ -475,6 +534,10 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 skipped,
                 cancelled,
             } => {
+                if self.mode == ConsoleMode::Dotted && self.dotted_col > 0 {
+                    let _ = writeln!(self.out);
+                    self.dotted_col = 0;
+                }
                 let note = if *cancelled { " · cancelled" } else { "" };
                 let _ = writeln!(
                     self.out,
@@ -615,7 +678,8 @@ mod tests {
     fn console_buffers_per_scenario_and_prints_on_finish() {
         let mut out = Vec::new();
         {
-            let mut console = ConsoleReporter::new(&mut out, Redactions::default());
+            let mut console =
+                ConsoleReporter::new(&mut out, Redactions::default(), ConsoleMode::Full);
             for event in sample_events() {
                 console.on_event(&event);
             }
@@ -808,6 +872,7 @@ mod tests {
                     let mut console = ConsoleReporter::new(
                         &mut out,
                         Redactions::new([secret.clone()]),
+                        ConsoleMode::Full,
                     );
                     console.on_event(&Event::ScenarioStarted {
                         scenario: Arc::from("S"),

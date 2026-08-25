@@ -154,6 +154,7 @@ pub fn execute(
     shard: Option<(u32, u32)>,
     shuffle: bool,
     metadata: &std::collections::BTreeMap<String, String>,
+    console_mode: proef_core::report::ConsoleMode,
     config: &ProjectConfig,
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
@@ -340,6 +341,11 @@ pub fn execute(
         Box::new(ConsoleReporter::new(
             Tee(console_out, log_file),
             redactions.clone(),
+            // run.log mirrors the console verbatim, dots included: the
+            // record (events.jsonl) is the full truth (ADR-0008), and a
+            // second full-mode reporter for a derived view is machinery
+            // the contract does not need.
+            console_mode,
         )),
         Box::new(JsonlReporter::new(events_file)),
     ];

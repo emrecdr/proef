@@ -1213,9 +1213,31 @@ pub fn proef_core::provider::SourceProvider::discover_fragments(&self) -> core::
 pub fn proef_core::provider::SourceProvider::discover_packs(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, proef_core::provider::ProviderError>
 pub fn proef_core::provider::SourceProvider::read(&self, &str) -> core::result::Result<alloc::sync::Arc<str>, proef_core::provider::ProviderError>
 pub mod proef_core::report
+pub enum proef_core::report::ConsoleMode
+pub proef_core::report::ConsoleMode::Dotted
+pub proef_core::report::ConsoleMode::Full
+pub proef_core::report::ConsoleMode::Quiet
+impl core::clone::Clone for proef_core::report::ConsoleMode
+pub fn proef_core::report::ConsoleMode::clone(&self) -> proef_core::report::ConsoleMode
+impl core::cmp::Eq for proef_core::report::ConsoleMode
+impl core::cmp::PartialEq for proef_core::report::ConsoleMode
+pub fn proef_core::report::ConsoleMode::eq(&self, &proef_core::report::ConsoleMode) -> bool
+impl core::default::Default for proef_core::report::ConsoleMode
+pub fn proef_core::report::ConsoleMode::default() -> proef_core::report::ConsoleMode
+impl core::fmt::Debug for proef_core::report::ConsoleMode
+pub fn proef_core::report::ConsoleMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for proef_core::report::ConsoleMode
+impl core::marker::StructuralPartialEq for proef_core::report::ConsoleMode
+impl core::marker::Freeze for proef_core::report::ConsoleMode
+impl core::marker::Send for proef_core::report::ConsoleMode
+impl core::marker::Sync for proef_core::report::ConsoleMode
+impl core::marker::Unpin for proef_core::report::ConsoleMode
+impl core::marker::UnsafeUnpin for proef_core::report::ConsoleMode
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::report::ConsoleMode
+impl core::panic::unwind_safe::UnwindSafe for proef_core::report::ConsoleMode
 pub struct proef_core::report::ConsoleReporter<W: core::io::write::Write + core::marker::Send>
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::ConsoleReporter<W>
-pub fn proef_core::report::ConsoleReporter<W>::new(W, proef_core::report::Redactions) -> Self
+pub fn proef_core::report::ConsoleReporter<W>::new(W, proef_core::report::Redactions, proef_core::report::ConsoleMode) -> Self
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::ConsoleReporter<W>
 pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::event::Event)
 impl<W> core::marker::Freeze for proef_core::report::ConsoleReporter<W> where W: core::marker::Freeze
