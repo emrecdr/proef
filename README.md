@@ -272,6 +272,9 @@ pure prose:
   `[http]` (`timeout-ms`, `follow-location`).
 - **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /
   `${vars:apiVersion}`. Secrets stay in the encrypted store (`${secret:…}`), never here.
+- **Metadata & links** — `[meta]` key/values recorded verbatim in the run head
+  (`--meta` wins; proef never harvests git/host/CI — ADR-0020), and `[tag-links]`
+  globs that turn matching tags into tracker links in the report and summary.
 - **Environments** — `[env.<name>.<section>]` deep-merges per-environment overrides over
   the base tables; `proef test --env prod` (or `PROEF_ENV`) selects one.
 
@@ -313,7 +316,7 @@ Author-facing guides: [`docs/WRITING-SCENARIOS.md`](docs/WRITING-SCENARIOS.md)
 run record — [`docs/EVENTS.md`](docs/EVENTS.md).
 The full corpus is rendered at <https://emrecdr.github.io/proef/>; the
 maintainer corpus lives in [`docs/`](docs/README.md): PRD, ADR decision log
-(ADR-0001…0018), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
+(ADR-0001…0020), TECH-SPEC, IMPLEMENTATION-PLAN, TESTING-STRATEGY. Architectural
 changes require a new ADR in the same PR.
 
 ## Releases

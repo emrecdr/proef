@@ -148,24 +148,28 @@ round 18's, not RF's, but shipped in the same wave.
 compiles clean and is silently stripped from every stamped stream unless
 threaded there, with an integration test per field.
 
-### RF wave 3 — queued behind wave 2
+### RF wave 3 *(shipped, #106–#108)*
 
-- **Rerun merge-at-report** — the missing half of `--rerun` (see E2 below).
-- **Console modes** (`--console full|dotted|quiet`; sink mutex already
-  prevents interleaving; failure details already print post-pool) + OSC-8
-  hyperlinks on printed paths.
-- **Quarantine in JUnit** — surface disagreement, needs a decision: JUnit
-  shows a plain `<failure>` for a quarantined failure, so Jenkins marks
-  UNSTABLE while proef exits 0. RF converts the status so all surfaces
-  agree; mapping to `<skipped message="quarantined: …">` is the candidate.
-  **Human decision, not yet taken.**
+- **Rerun merge-at-report** *(shipped — #106)* — the record-composition half
+  of E2: a rerun's JUnit carries the base's not-re-run suite scenarios as
+  ordinary testcases, and `report` overlays the base for one whole-suite
+  page. Composition over records — the record files themselves never merge
+  (ADR-0008); totals and the exit code stay the rerun's own (ADR-0014).
+- **Console modes** *(shipped — #107)* — `--console full|dotted|quiet`. The
+  OSC-8 hyperlink half did **not** ship: printed paths stay plain until a
+  terminal consumer asks (the same named-consumer method as JUnit
+  `<properties>`).
+- **Quarantine in JUnit** *(decision taken; shipped with ADR-0019, #103)* —
+  a quarantined test-failure maps to `<skipped message="quarantined failure
+  (non-gating): …">`, so Jenkins, the dashboards and the exit code agree.
 
 ### Deferred with named triggers
 
 Report-size mechanism (first >1k-scenario record; failures-only render, one
 mechanism not three knobs) · `--runemptysuite` (first CI consumer; settle
-the early-error record first) · `--tagstatlink`-style issue links (after
-RF-W2-tags) · JUnit `<properties>` (a Jenkins-`keepProperties` user).
+the early-error record first) · JUnit `<properties>` (a
+Jenkins-`keepProperties` user). The `--tagstatlink` analogue left this list:
+it shipped as `[tag-links]` (#108).
 
 ### Rejected, and where the basis actually lives
 

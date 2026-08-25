@@ -125,7 +125,7 @@ M ~days · L ~weeks.
 | 3a | "passed on attempt N" badge (JUnit/summary) | **shipped** | ✅ | proef-cli `ci_reports.rs` | S | `attempts:u32` already on `StepFinished` (`event.rs:72`) + `StepOutcome`; JUnit ignores it today (`ci_reports.rs:43`). |
 | 9 | Stub-gen for unbound steps | **shipped** | ⚠️ | proef-core `bind.rs` | S | Augment the existing did-you-mean help (`bind.rs:89`), zero-match arm only — **not** a new command. Derive `{param}` from quoted tokens (matcher already sheds quotes, `matcher.rs:85`). |
 | 10 | SARIF export of `--dry-run` diagnostics | **shipped** | ✅ | proef-cli new `sarif.rs` | S–M | `Diag` (`diag.rs:56`) → SARIF result ~1:1: `code`→ruleId, byte `span`→`region.byteOffset`. Pre-populate `rules[]` from the closed diagnostic-code set. A parallel serializer to `render.rs`. |
-| 14 | `--seed` (reproducible fakes) | open | ⚠️ | proef-cli `main.rs`/`exec.rs` | S | Thread into `front::run`'s existing `run_id` param (`artifacts` already exposes `--run-id`, `main.rs:101`). Caveats: arbitrary seed breaks JUnit's UUID parse (`ci_reports.rs:22`); occurrence is **per-scenario, not per-run** — identical `${fake:X}` at the same position in two *different* scenarios still draws the same value (a known limitation; see OPEN-FINDINGS). *Note: the per-**step** reset this row originally cited (`Refs::default()` on every `lower()` call) was fixed in 0.6.0 — the counter now threads through `lower` with a high-water mark. Only the cross-scenario half remains.* |
+| 14 | `--seed` (reproducible fakes) | **shipped** (as run-id) | ⚠️ | proef-cli `main.rs`/`exec.rs` | S | Thread into `front::run`'s existing `run_id` param (`artifacts` already exposes `--run-id`, `main.rs:101`). Caveats: arbitrary seed breaks JUnit's UUID parse (`ci_reports.rs:22`); occurrence is **per-scenario, not per-run** — identical `${fake:X}` at the same position in two *different* scenarios still draws the same value (a known limitation; see OPEN-FINDINGS). *Note: the per-**step** reset this row originally cited (`Refs::default()` on every `lower()` call) was fixed in 0.6.0 — the counter now threads through `lower` with a high-water mark. Only the cross-scenario half remains.* **Shipped as the one knob §7 demanded (no separate `--seed`):** `test --run-id` pins the fakes, and `--shuffle` seeds its permutation from the same id. |
 | 7 | Dead-macro / usage report | **shipped** | ✅ | proef-cli new `macros --usage` | S–M | `BoundStep.macro_name` (`bind.rs:20`) vs `packs.macros`. Count `use:`-only macros (`pattern:None`, `pack/mod.rs:165`) as reachable via the `use:` graph. Report the whole corpus, not a `--tags` subset. |
 | 6 | Self-contained HTML report | **shipped** | ✅ | core `render_html(&[Event])` + cli write | M | Post-hoc `proef report <run-id>` replaying `events.jsonl` like `explain` (`explain.rs:12`) — the command *is* the HTML report, so it took no `--html` flag; `-o` picks the file. Bodies live in `artifacts/` — deep-link, don't inline. Derived view, never a second record (ADR-0008). |
 | 12 | `proef diff` between two runs | **shipped** | ⚠️ | proef-cli `diff.rs` | M | Identity `(file,scenario)` (why ADR-0008 added `file`, `event.rs:86`); key step diffs on **`text` not `line`** (lines shift on edit). `attempts`+`duration_ms` → free flakiness/perf-regression detector. Pre-`file` records replay `file=""`. |
@@ -139,8 +139,10 @@ M ~days · L ~weeks.
 ## 6. Prerequisites that unlock clusters
 
 - **P1 — carry scenario tags + a `gating` flag past the CLI edge** into `ScenarioSpec` /
-  `ScenarioOutcome` (`runner.rs:30,121`) and, additively, the event stream. Today tags die
-  at `front.rs` (`bind.rs:35` → `lowered.tags`, no further). **Unlocks #15; simplifies #8.**
+  `ScenarioOutcome` (`runner.rs:30,121`) and, additively, the event stream. **Done (RF
+  waves):** tags ride `ScenarioSpec`/`ScenarioOutcome` and `scenario_finished.tags`;
+  gating became the reserved-tag instruction plus the non-gating list (ADR-0019)
+  rather than a bool. #15 and #8 both shipped on top of it.
 - **P2 — a shared `record::failed_scenarios(run_id)` + a multi-identity scenario
   predicate.** Reused by `explain`, `--rerun` (#8), and `proef diff` (#12).
 - **P3 — a deterministic emitted-`.hurl` fingerprint** (stable run-to-run despite

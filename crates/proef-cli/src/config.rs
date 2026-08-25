@@ -460,9 +460,6 @@ impl ProjectConfig {
         Some(self.resolve(self.run.teardown.as_deref()?))
     }
 
-    /// The injected `${url:…}` / `${vars:…}` scope for the active environment,
-    /// keyed `"<namespace>:<key>"` (deep-merged: base then env override). Passed
-    /// into `LowerCtx::config_vars` so the sans-IO core resolves these without
     /// The run's metadata: `[meta]` under the active `[env.<name>.meta]` under
     /// the `--meta` flags — the same base < env < flags chain as every other
     /// setting (ADR-0020). Flag pairs arrive pre-parsed and pre-checked (a
@@ -484,6 +481,9 @@ impl ProjectConfig {
         merged
     }
 
+    /// The injected `${url:…}` / `${vars:…}` scope for the active environment,
+    /// keyed `"<namespace>:<key>"` (deep-merged: base then env override). Passed
+    /// into `LowerCtx::config_vars` so the sans-IO core resolves these without
     /// reading any file itself.
     pub fn config_vars(
         &self,

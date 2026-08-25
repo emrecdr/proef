@@ -1,8 +1,9 @@
 # proef — Technical Specification
 
-**Status:** normative · **Date:** 2026-07-28, current through ADR-0018 (named hurl
-fragments) · decisions referenced as ADR-XXXX. Post-M5 work — external config and
-environments (ADR-0012), the v0.6–v0.8 correctness series, v0.9.0, and fragments — is
+**Status:** normative · **Date:** 2026-07-28, current through ADR-0020 (run
+metadata) · decisions referenced as ADR-XXXX. Post-M5 work — external config and
+environments (ADR-0012), the v0.6–v0.8 correctness series, v0.9.0, fragments, and the
+RF-audit series (reserved tags ADR-0019, run metadata ADR-0020) — is
 specified here too; "M0–M5" described this file's scope only until those landed.
 Verified upstream facts cite hurl master @ `03fcb84c` (2026-07-27) as `file:line`.
 
@@ -305,7 +306,11 @@ One scenario = one flow/run-record/artifact set. `Background:` prepends. `Rule:`
 pass through (tags accumulate). Outline/Examples per §4.4. Data tables per §4.3.
 Docstrings: reserved for raw request bodies in generic steps (M5). Tags: `@tag` →
 flow tags, `--tags` filters by a boolean expression (`and`/`or`/`not`/parens,
-`proef_core::tags`). Step keywords: And/But resolve to
+`proef_core::tags`); atoms may glob — `*` any run, `?` one char, anchored, a
+metachar-free atom staying literal equality — and the one matcher serves
+`--tags`, `[run] exclusive-tags` and `[tag-links]`. `@skip`/`@skip:reason` and
+`@quarantine` are reserved tags carrying behavior, recognized at the CLI edge —
+core never reads tags (ADR-0019, ADR-0014). Step keywords: And/But resolve to
 the previous primary keyword (gherkin crate `StepType`); keyword itself is not matched
 against patterns.
 
@@ -385,6 +390,7 @@ rotation, default 200 (only uuid-named run records rotate; the in-flight run nev
 `.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
 runner settings (`[run]` jobs/runs-dir/keep-runs/suite/fragments/setup/teardown/exclusive-tags,
 `[http]` timeouts, `[sla]` ceilings) + suite variables (`[url]`/`[vars]`) +
+run metadata (`[meta]`, ADR-0020) + report tag links (`[tag-links]`) +
 per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
 
 **One path rule:** a path *written in* `proef.toml` resolves against the directory

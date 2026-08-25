@@ -255,5 +255,8 @@ of a run (scenario tree, timings, and deep-links to the executed artifacts).
 - `proef flows suite` lists every scenario with tags; `--output json` feeds
   the nextest harness (one IDE test per scenario).
 - `proef test suite --watch` reruns on every file change.
+- Tag a scenario `@skip` / `@skip:reason` to park it — still counted, its
+  reason in every report — or `@quarantine` so a flaky one stops gating CI
+  while you fix it ([AUTHORING.md](AUTHORING.md) · Reserved tags).
 - Exit codes are a contract: `0` pass · `1` test failure · `2` your input ·
   `3` environment — safe to wire straight into CI, with `--junit` for reports.

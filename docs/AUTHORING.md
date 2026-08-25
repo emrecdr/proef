@@ -15,7 +15,10 @@ across `--shard`. A column placeholder in the outline's name
 its data instead of its row number),
 data tables (rows become step arguments), and docstrings (delivered to the
 macro as the `docstring` param). Keywords (`Given/When/Then/And`) don't affect
-binding — only the sentence text does.
+binding — only the sentence text does. Prose between the `Feature:` line and
+the first scenario is the feature's *description*: never executed, but
+`proef flows` prints it (JSON: `featureDescription`) so a file's intent
+travels with its inventory.
 
 An outline's `<column>` placeholders substitute into **the docstring too**, not
 just the scenario name, step text and table cells. That is how a request body
@@ -46,7 +49,10 @@ feature file, and referenced from packs as `${url:key}` / `${vars:key}` — see
 selects scenarios by a boolean expression over them — `and`, `or`, `not`, and
 parentheses, with the `@` optional (e.g. `--tags "@api and not @slow"` or
 `--tags "(smoke or nightly) and not wip"`). A bare tag is a valid expression; a
-selection matching nothing is an error, not a silent green run.
+selection matching nothing is an error, not a silent green run. Atoms may
+glob: `*` matches any run of characters, `?` exactly one — anchored to the
+whole tag and case-sensitive — so `--tags "JIRA-*"` selects every
+ticket-tagged scenario, while a metachar-free atom stays plain equality.
 
 ## Reserved tags
 

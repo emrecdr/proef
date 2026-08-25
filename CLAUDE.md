@@ -253,6 +253,38 @@ build requirement).
       was re-reading and re-hurl-parsing it per request), `StepKindSpec` carries an
       `options` recogniser so option *spellings* live only in the engine that owns them,
       and `ScenarioSpec` carries `exclusive`
+- [x] 0.11.1–0.14.0 — released hardening, then CI scale. 0.11.1 closes 0.11.0's
+      gaps (output paths create the directories they name; `fragments` counts
+      `[run] setup`/`teardown` usage; one `FragmentSupport::claims` predicate;
+      `--config` reaches `lsp` and `--watch`). 0.12.0: the **one path rule**
+      (a path written in `proef.toml` resolves against the config's directory,
+      a flag against the cwd) and the watch feedback/staleness class closed for
+      good (reruns register where they write, config is reread and matched by
+      canonical path). 0.13.0: a record that travels — encoded reflections of
+      secrets are redacted (base64/hex/percent/JSON-escape needles, ADR-0005
+      amendment), the fragment corpus read is bounded, records stop naming the
+      machine, `diff` takes a path, `[run] keep-runs` rotation. 0.14.0: CI
+      scale — `--shard I/N` (frozen-hash bucketing), `--max-fail N`, `--rerun`
+      continues a cancelled run instead of reporting a false green,
+      `proef flaky` verdicts over run history, and the rendered docs site
+- [x] validation rounds 17–18 + the Robot Framework capability audit (unreleased,
+      slated 0.15.0) — two external review rounds validated claim-by-claim (the
+      shard hash gained fmix64 after round 18 *proved* the parity collapse the
+      round-17 refutation was blind to; every matrix re-deals), then a deliberate
+      RF 7.x mining shipped in three waves: detail caps at the engine boundary,
+      tag-atom globs, `flows` feature descriptions, `--shuffle` (seeded by the
+      run id), `reproduce_hint` into the record; `@skip`/`@skip:reason` with
+      reasons in every sink and the authored/mechanical split `--rerun` keys on
+      (ADR-0019, quarantined failures now reach JUnit as skipped-with-message);
+      tags + `exclusive` into the record with per-tag tables in the HTML report
+      and GitHub summary; explicit run metadata `--meta`/`[meta]` +
+      `run_started.env`/`shuffled` (ADR-0020 — harvested-vs-handed-over is the
+      boundary); the rerun overlay (`rerun_of`: one JUnit and one report cover
+      the whole suite, composition never a merged record); `--console
+      dotted|quiet`; `[tag-links]`. Event schema stays 1 throughout —
+      everything additive. Breaking (library): the JUnit identity change plus
+      field additions across `ScenarioSpec`/`ScenarioOutcome`/`Event`,
+      `render_html`/`write_junit`/`ConsoleReporter::new` signatures
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

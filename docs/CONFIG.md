@@ -6,10 +6,11 @@ machine. Every key is optional; an absent file means all defaults. Unknown keys
 are rejected (`deny_unknown_fields`), so typos fail loudly instead of being
 ignored.
 
-The file holds two kinds of thing, kept in distinct sections: **runner config**
-(how proef behaves — `[run]`, `[http]`, `[sla]`) and **suite variables** (data your
-tests reference — `[url]`, `[vars]`), plus per-environment overrides (`[env.<name>]`).
-Secrets never live here (see below).
+The file holds a few kinds of thing, kept in distinct sections: **runner config**
+(how proef behaves — `[run]`, `[http]`, `[sla]`), **suite variables** (data your
+tests reference — `[url]`, `[vars]`), **run metadata** (`[meta]`, recorded in the
+run head) and **report tag links** (`[tag-links]`), plus per-environment overrides
+(`[env.<name>]`). Secrets never live here (see below).
 
 Precedence (highest wins): built-in defaults < `proef.toml` base tables <
 active `[env.<name>]` < command-line flags. For a suite variable that means
@@ -73,7 +74,9 @@ timeout-ms = 60000
 | `[sla] max-ms` | *(unset)* | slowest single-step ceiling; unset = no gate |
 | `[url] <key>` | *(none)* | URL variables, referenced as `${url:<key>}` |
 | `[vars] <key>` | *(none)* | non-secret variables, referenced as `${vars:<key>}` |
-| `[env.<name>.<section>]` | inherits base | per-environment override of any base section (`url`/`vars`/`http`/`run`/`sla`) |
+| `[meta] <key>` | *(none)* | run metadata recorded in the run head; `[env.<name>.meta]` overrides it, `--meta` flags win (ADR-0020) |
+| `[tag-links] "<glob>"` | *(none)* | tag glob → URL template (`{tag}` substituted); matching tags link out from the HTML report and GitHub summary. Base table only |
+| `[env.<name>.<section>]` | inherits base | per-environment override of any base section (`url`/`vars`/`http`/`run`/`sla`/`meta`) |
 
 ## Environments
 

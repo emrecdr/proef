@@ -4,7 +4,9 @@
 object per line, in emission order, no second format. `proef explain`,
 `diff`, `flaky` and the console tree derive from this stream; `--junit` and
 the GitHub summary are built from the same run's in-memory outcome (identical
-content, different plumbing — the stream stays the only *persisted* format).
+content, different plumbing — the stream stays the only *persisted* format;
+the one exception is a `--rerun`'s JUnit, whose carried base scenarios are
+reconstructed from the base *record* — see `rerun_of` below).
 Consume it with `jq`, a log shipper, or anything line-oriented.
 
 Wire shape: serde-tagged with `"event"`, `snake_case` names. The first line is
@@ -57,7 +59,10 @@ inline `hurl:` block and every pre-fragment record omit the key entirely) ·
 `detail` (string, **only present** on
 failures/warnings/skips-with-reason) · `attempt_details` (array of strings —
 the messages from earlier, failed attempts of a step that ultimately passed;
-**only present** for a flaky pass, feeds JUnit `<flakyFailure>`).
+**only present** for a flaky pass, feeds JUnit `<flakyFailure>`) ·
+`reproduce_hint` (string — the redacted curl of the failing request, the same
+line the console prints as `reproduce:`; **only present** on failed steps,
+absent in every pre-field stream, masked at the sink boundary like `detail`).
 
 **`scenario_finished`** — `scenario` · `file` (feature path — with `scenario`,
 the run-wide identity: names are unique only within one file; absent in
