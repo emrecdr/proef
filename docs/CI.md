@@ -85,3 +85,11 @@ scenario failing every run is `DISABLED` (switched off — its failures gate
 nothing, so no job ever reports them), and one green throughout is `recovered`
 (the tag can come off). `--format json` carries `quarantined` and the verdict
 key, so a scheduled job can gate on either without parsing the table.
+
+`--by <key>` splits the same history per run context — `--by env`, or any
+`[meta]`/`--meta` key such as `--by runner`. A scenario that flaps in one
+environment and is solid in another is not flaky but *context-dependent*, and a
+pooled history cannot tell those apart: it reports the one conclusion the
+merged view can never reach, naming the scenarios whose verdict changes with
+where they ran. A run that never set the key is its own `(unset)` bucket rather
+than being folded in with the runs that did.

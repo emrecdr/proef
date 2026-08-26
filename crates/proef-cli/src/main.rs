@@ -257,6 +257,9 @@ enum Command {
         /// Machine format: `json` prints one object per scenario
         #[arg(long, value_enum)]
         format: Option<ListFormat>,
+        /// Split the history by run context: a `[meta]`/`--meta` key, or `env`
+        #[arg(long = "by", value_name = "KEY")]
+        by: Option<String>,
     },
     /// Compare two run records: regressions, fixes, flakiness, perf deltas
     Diff {
@@ -840,10 +843,10 @@ fn main() -> std::process::ExitCode {
             Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref()),
             Err(code) => code,
         },
-        Command::Flaky { format } => {
+        Command::Flaky { format, by } => {
             let output_json = format.is_some();
             match load_config(config_path) {
-                Ok(config) => flaky::flaky(&config.runs_dir(), output_json),
+                Ok(config) => flaky::flaky(&config.runs_dir(), output_json, by.as_deref()),
                 Err(code) => code,
             }
         }

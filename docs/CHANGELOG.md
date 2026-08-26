@@ -8,6 +8,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef flaky --by <key>` splits flakiness by run context.** `--by env`, or
+  any `[meta]`/`--meta` key (`--by runner`), folds the history per context
+  instead of pooling it. A scenario that flaps in one environment and is solid
+  in another is not flaky but *context-dependent* — the fix is in the
+  environment, not the test — and a merged history cannot reach that
+  conclusion, because pooled failures and passes look exactly like one flapping
+  test. The command names the scenarios whose verdict changes with where they
+  ran, which is the finding the flag exists for. A run that never set the key
+  becomes its own `(unset)` bucket rather than being folded in with runs that
+  did; the context also rides in `--format json`. Reads the `env`/`metadata`
+  provenance the record has carried since ADR-0020 — no new recorded field.
+
+
 - **`proef schema config` publishes the `proef.toml` JSON Schema.** TOML
   language servers (Taplo, tombi) validate against JSON Schema, so one file
   buys completion, hover documentation and typo detection in the config —

@@ -28,7 +28,7 @@
 //! toward that scenario's history (`observed`). `[run] setup`/`teardown`
 //! phases are excluded the way `--rerun` and `diff` exclude them (ADR-0014).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use proef_core::error::ExitCode;
@@ -170,7 +170,7 @@ impl Verdict {
 /// informational, like `explain`; a store with fewer than two records is a
 /// user error (`2`), the same refusal `diff` gives, because a verdict over
 /// one run would be noise wearing a table.
-pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
+pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode {
     let runs = record::all_runs(runs_root);
     if runs.len() < 2 {
         crate::render::errln!(
@@ -181,7 +181,9 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
         return ExitCode::UserError;
     }
 
-    let mut histories: BTreeMap<(String, String), History> = BTreeMap::new();
+    // Keyed by (context, file, scenario). Without `--by` every run lands in
+    // one unnamed context, which is exactly the old single-bucket fold.
+    let mut histories: BTreeMap<(String, Key), History> = BTreeMap::new();
     let mut unreadable = 0usize;
     for dir in &runs {
         let rec = match record::read_record(dir) {
@@ -197,13 +199,14 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
                 continue;
             }
         };
+        let context = by.map_or_else(String::new, |key| run_context(&rec, key));
         for (key, run) in rec.scenarios {
             if !run.is_suite() || run.status == Status::Skipped {
                 // A phase is not a suite scenario (ADR-0014); a skipped row is
                 // a run that never reached it — neither is stability evidence.
                 continue;
             }
-            let history = histories.entry(key).or_default();
+            let history = histories.entry((context.clone(), key)).or_default();
             history.quarantined |= run
                 .tags
                 .iter()
@@ -239,7 +242,7 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
         );
     }
 
-    let mut rows: Vec<(Key, History)> = histories.into_iter().collect();
+    let mut rows: Vec<((String, Key), History)> = histories.into_iter().collect();
     rows.sort_by(|a, b| {
         a.1.verdict()
             .cmp(&b.1.verdict())
@@ -247,8 +250,9 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
     });
 
     if output_json {
-        for ((file, scenario), h) in &rows {
+        for ((context, (file, scenario)), h) in &rows {
             let object = serde_json::json!({
+                "context": by.map(|key| serde_json::json!({ key: context })),
                 "file": file,
                 "scenario": scenario,
                 "runs": h.observed(),
@@ -263,20 +267,47 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
         }
         return ExitCode::Success;
     }
-    render_table(&rows, runs.len(), runs_root);
+    render_table(&rows, runs.len(), runs_root, by);
     ExitCode::Success
+}
+
+/// The context value a run belongs to under `--by <key>`: the active `--env`
+/// when the key is the reserved word `env`, else the `[meta]`/`--meta` value.
+///
+/// A run that never set the key is its own bucket rather than being folded in
+/// with the runs that did — merging them would average a context that was
+/// never observed, which is the opposite of what splitting was asked for.
+fn run_context(record: &record::Record, key: &str) -> String {
+    let value = if key == "env" {
+        record.env.clone()
+    } else {
+        record.metadata.get(key).cloned()
+    };
+    value.unwrap_or_else(|| "(unset)".to_owned())
 }
 
 /// The human listing: header, one row per scenario worst-first, and the
 /// quarantine hand-off when anything was flagged.
-fn render_table(rows: &[(Key, History)], runs: usize, runs_root: &Path) {
+fn render_table(
+    rows: &[((String, Key), History)],
+    runs: usize,
+    runs_root: &Path,
+    by: Option<&str>,
+) {
     crate::render::outln!(
         "flakiness over {runs} run(s) under {} (window = [run] keep-runs)\n",
         runs_root.display()
     );
     // Labels once, width from the labels themselves — the spelling and the
-    // width can then never disagree about the separator.
-    let labels: Vec<String> = rows.iter().map(|(key, _)| label(key)).collect();
+    // width can then never disagree about the separator. Under `--by` the
+    // context leads the label, so the same scenario's contexts sort together.
+    let labels: Vec<String> = rows
+        .iter()
+        .map(|((context, key), _)| match by {
+            Some(_) => format!("[{context}] {}", label(key)),
+            None => label(key),
+        })
+        .collect();
     let width = labels.iter().map(String::len).max().unwrap_or(0).max(8);
     crate::render::outln!(
         "{:width$}  {:>4}  {:>5}  {:>11}  {:>13}  {:>6}  verdict",
@@ -308,6 +339,41 @@ fn render_table(rows: &[(Key, History)], runs: usize, runs_root: &Path) {
              running without gating the exit code while it is fixed"
         );
     }
+    // The finding `--by` exists for. A scenario whose verdict *differs*
+    // between contexts is not flaky — it is context-dependent, which points at
+    // the environment rather than at the test, and is the one conclusion a
+    // single merged history can never reach.
+    if by.is_some() {
+        let mut per_scenario: BTreeMap<&Key, BTreeSet<&'static str>> = BTreeMap::new();
+        for ((_, key), history) in rows {
+            per_scenario
+                .entry(key)
+                .or_default()
+                .insert(history.verdict().key());
+        }
+        let split: Vec<String> = per_scenario
+            .iter()
+            .filter(|(_, verdicts)| verdicts.len() > 1)
+            .map(|(key, verdicts)| {
+                format!(
+                    "  {} — {}",
+                    label(key),
+                    verdicts.iter().copied().collect::<Vec<_>>().join(" / ")
+                )
+            })
+            .collect();
+        if !split.is_empty() {
+            crate::render::outln!(
+                "\n{} scenario(s) behave differently per context — look at the \
+                 environment, not the test:",
+                split.len()
+            );
+            for line in split {
+                crate::render::outln!("{line}");
+            }
+        }
+    }
+
     // The other end of the same pipeline. Quarantine is a holding pen, and the
     // two ways out of it are the two things this can say: it never recovered,
     // or it did.

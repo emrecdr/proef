@@ -50,9 +50,15 @@ fn tagged_scenario_events(name: &str, status: &str, attempts: u32, tags: &[&str]
 /// Write run `n` (uuid-v7-shaped name, so `all_runs` orders it by suffix)
 /// holding the given scenario rows.
 fn write_run(root: &Path, n: usize, body: &str, cancelled: bool) {
+    write_run_in(root, n, body, cancelled, "");
+}
+
+/// The same, with extra fields spliced into the `run_started` head — the
+/// `env`/`metadata` provenance `--by` segments on (ADR-0020).
+fn write_run_in(root: &Path, n: usize, body: &str, cancelled: bool, head_extra: &str) {
     let dir = root.join(format!(".proef-runs/0198f3c1-0000-7000-8000-{n:012}"));
     std::fs::create_dir_all(&dir).unwrap();
-    let head = format!(r#"{{"event":"run_started","schema":1,"run_id":"r{n}"}}"#);
+    let head = format!(r#"{{"event":"run_started","schema":1,"run_id":"r{n}"{head_extra}}}"#);
     let tail = format!(
         r#"{{"event":"run_finished","passed":0,"failed":0,"skipped":0,"cancelled":{cancelled}}}"#
     );
@@ -272,4 +278,102 @@ fn a_quarantined_scenario_is_told_apart_from_a_merely_broken_one() {
     assert_eq!(row("cured")["verdict"], "recovered");
     assert_eq!(row("broken")["verdict"], "broken");
     assert_eq!(row("broken")["quarantined"], false);
+}
+
+/// A scenario that flaps in one environment and is rock solid in another is
+/// not flaky — it is context-dependent, and the fix is in the environment.
+///
+/// A single merged history cannot reach that conclusion: pooled together, the
+/// staging failures and the prod passes look exactly like one flapping test.
+/// `--by` splits the fold on the provenance the record already carries.
+#[test]
+fn splitting_by_context_separates_a_flapper_from_an_environment() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
+    // Four runs alternating environment. `envy` fails only in staging;
+    // `steady` passes everywhere.
+    for n in 1..=4 {
+        let staging = n % 2 == 1;
+        let env = if staging { "staging" } else { "prod" };
+        let body = format!(
+            "{}{}",
+            scenario_events("envy", if staging { "failed" } else { "passed" }, 1),
+            scenario_events("steady", "passed", 1),
+        );
+        write_run_in(
+            cwd.path(),
+            n,
+            &body,
+            false,
+            &format!(r#","env":"{env}","metadata":{{"runner":"{env}-box"}}"#),
+        );
+    }
+
+    // Pooled, `envy` looks like a classic flapper.
+    let assert = proef(cwd.path()).args(["flaky"]).assert().code(0);
+    let pooled = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        pooled
+            .lines()
+            .find(|l| l.contains(":: envy"))
+            .is_some_and(|l| l.contains("FLAKY")),
+        "merged history cannot see the split: {pooled}"
+    );
+
+    // Split by environment, each context is internally consistent — and the
+    // callout names the scenario whose verdict depends on where it ran.
+    let assert = proef(cwd.path())
+        .args(["flaky", "--by", "env"])
+        .assert()
+        .code(0);
+    let split = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let row = |ctx: &str, name: &str| -> String {
+        split
+            .lines()
+            .find(|l| l.contains(&format!("[{ctx}] ")) && l.contains(&format!(":: {name}")))
+            .unwrap_or_else(|| panic!("no {ctx}/{name} row:\n{split}"))
+            .to_owned()
+    };
+    assert!(
+        row("staging", "envy").contains("broken, not flaky"),
+        "in staging it always fails: {split}"
+    );
+    assert!(
+        row("prod", "envy").contains("healthy"),
+        "in prod it always passes: {split}"
+    );
+    assert!(
+        split.contains("behave differently per context"),
+        "the split itself is the finding: {split}"
+    );
+    assert!(
+        !split.contains("[staging] suite/f.feature :: steady  ")
+            || row("staging", "steady").contains("healthy"),
+        "a context-independent scenario is healthy everywhere: {split}"
+    );
+
+    // An arbitrary `[meta]` key segments the same way `env` does.
+    let assert = proef(cwd.path())
+        .args(["flaky", "--by", "runner", "--format", "json"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let rows: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("one JSON object per line"))
+        .collect();
+    let envy: Vec<&serde_json::Value> = rows.iter().filter(|r| r["scenario"] == "envy").collect();
+    assert_eq!(envy.len(), 2, "one row per context: {out}");
+    assert!(
+        envy.iter().any(|r| r["context"]["runner"] == "staging-box"),
+        "the context rides in the machine surface: {out}"
+    );
+
+    // A run that never set the key is its own bucket, not silently merged.
+    let assert = proef(cwd.path())
+        .args(["flaky", "--by", "absent", "--format", "json"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(out.contains(r#""absent":"(unset)""#), "{out}");
 }
