@@ -193,8 +193,15 @@ report"; this section records the verdicts and what remains open.
   MSRV statement; `llms-full.txt` as a paste-able manual (the SEO case is
   empirically dead).
 - **Wave 6, LSP:** `lsp-types` 0.97 → `gen-lsp-types` (frozen since
-  2024-06; rust-analyzer and tower-lsp-server both moved; it is what drags
-  `bitflags 1.x` in); the analysis cache (Q2's "no invalidation hook"
+  2024-06; rust-analyzer and tower-lsp-server both moved) — **shipped**,
+  under the original name via cargo's `package =` alias, with the `url`
+  feature restoring `Uri = url::Url` and deleting the hand-rolled
+  path↔URI bridge (ADR-0017 amendment). One premise here was wrong and is
+  corrected: `lsp-types` did *not* drag `bitflags 1.x` in. That entry
+  belongs to `jiff`'s optional `defmt`, and it resolves into no build
+  tree at all (`cargo tree -i bitflags@1.3.2` finds nothing) — the swap
+  removed `fluent-uri` and `serde_repr`, not `bitflags`. Still open: the
+  analysis cache (Q2's "no invalidation hook"
   premise is stale — `fragments_dirty` is the hook); quick-fix code
   actions from existing did-you-means; document symbols; hover; a panic
   hook with `window/showMessage` (ruff's server pattern independently

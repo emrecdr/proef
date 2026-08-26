@@ -29,7 +29,7 @@ proef-core = { path = "crates/proef-core", version = "0.15.0" }
 proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.15.0" }
 proef-lsp = { path = "crates/proef-lsp", version = "0.15.0" }
 lsp-server = "0.10"
-lsp-types = "0.97"
+lsp-types = { version = "0.11", package = "gen-lsp-types", features = ["url"] }
 # lsp-server's own channel crate; we match its `RecvTimeoutError` for the
 # debounce loop, so we depend on the same version it re-exports.
 crossbeam-channel = "0.5"

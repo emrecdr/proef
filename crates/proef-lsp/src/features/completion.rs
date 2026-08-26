@@ -41,7 +41,7 @@ fn complete_fragment_ref(
             .filter(|f| typed.is_empty() || f.name.starts_with(typed))
             .map(|f| CompletionItem {
                 label: f.name.clone(),
-                kind: Some(CompletionItemKind::REFERENCE),
+                kind: Some(CompletionItemKind::Reference),
                 detail: Some(format!("fragment in {}", f.file)),
                 insert_text: Some(f.name.clone()),
                 ..CompletionItem::default()
@@ -168,7 +168,7 @@ fn complete_bind_key(
             let rank = items.len();
             items.push(CompletionItem {
                 label: placeholder.clone(),
-                kind: Some(CompletionItemKind::VARIABLE),
+                kind: Some(CompletionItemKind::Variable),
                 detail: Some(format!("read by {fragment}")),
                 insert_text: Some(format!("{placeholder}: ")),
                 // Nearest `ref:` first, so the step-scope case reads as exact
@@ -266,10 +266,10 @@ pub fn complete(analysis: &Analysis, url: &Uri, position: Position) -> Vec<Compl
         .enumerate()
         .map(|(i, (macro_name, pattern))| CompletionItem {
             label: pattern.to_owned(),
-            kind: Some(CompletionItemKind::SNIPPET),
+            kind: Some(CompletionItemKind::Snippet),
             detail: Some(format!("macro {macro_name}")),
             insert_text: Some(pattern_to_snippet(pattern)),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            insert_text_format: Some(InsertTextFormat::Snippet),
             sort_text: Some(format!("{i:0width$}")),
             filter_text: Some(matcher::literal_skeleton(pattern)),
             ..Default::default()

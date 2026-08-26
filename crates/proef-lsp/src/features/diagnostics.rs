@@ -12,6 +12,9 @@ use crate::analysis::Analysis;
 use crate::convert::LineIndex;
 use crate::documents::name_to_url;
 
+/// The rendered diagnostics catalogue every code links to.
+const CATALOGUE_URL: &str = "https://emrecdr.github.io/proef/DIAGNOSTICS.html";
+
 fn to_lsp(diag: &Diag, index: &LineIndex) -> Diagnostic {
     let range = diag
         .span
@@ -20,21 +23,21 @@ fn to_lsp(diag: &Diag, index: &LineIndex) -> Diagnostic {
     Diagnostic {
         range,
         severity: Some(match diag.severity {
-            Severity::Error => DiagnosticSeverity::ERROR,
-            Severity::Warning => DiagnosticSeverity::WARNING,
+            Severity::Error => DiagnosticSeverity::Error,
+            Severity::Warning => DiagnosticSeverity::Warning,
         }),
-        code: Some(lsp_types::NumberOrString::String(diag.code.to_owned())),
+        code: Some(lsp_types::Code::String(diag.code.to_owned())),
         // The published catalogue: editors render this as a clickable link
         // on the code — the one in-band route from an error to its docs.
-        code_description: "https://emrecdr.github.io/proef/DIAGNOSTICS.html"
+        code_description: CATALOGUE_URL
             .parse()
             .ok()
             .map(|href| lsp_types::CodeDescription { href }),
         source: Some("proef".to_owned()),
-        message: diag.help.as_ref().map_or_else(
+        message: lsp_types::Message::String(diag.help.as_ref().map_or_else(
             || diag.message.clone(),
             |h| format!("{}\n\n{h}", diag.message),
-        ),
+        )),
         ..Default::default()
     }
 }

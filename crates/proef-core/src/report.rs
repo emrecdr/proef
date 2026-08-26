@@ -304,11 +304,11 @@ fn hex(bytes: &[u8], upper: bool) -> String {
 /// all emit. Hand-rolled rather than a dependency: it is ten lines, and the
 /// crate that does it only emits one variant anyway.
 ///
-/// Public because `proef-lsp` encodes document-URI path segments with the
-/// *same* unreserved set — it carried a byte-identical copy until the two were
-/// folded, and a one-character drift between them would silently change either
-/// redaction needles or LSP URIs. One character set, one function.
-pub fn percent_encode(value: &str) -> String {
+/// Private: redaction needles are its only caller. It was public while
+/// `proef-lsp` hand-rolled document-URI encoding against the same unreserved
+/// set; that bridge is now `url::Url`'s own, so the sharing rationale is gone
+/// with it.
+fn percent_encode(value: &str) -> String {
     use std::fmt::Write as _;
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {

@@ -440,7 +440,8 @@ Engine: `hurl =8.0.1`, `hurl_core =8.0.1` (`--locked`; ADR-0003). Core: `gherkin
 `tokio-util 0.7` (default-features = false; CancellationToken only). CLI: `clap 4`
 (derive, env), `miette 7` (fancy), `uuid 1` (v7), `notify =8.2.0`, `ctrlc`,
 `chacha20poly1305 rpassword base64`, `quick-junit`, `toml`. LSP: `lsp-server 0.7`,
-`lsp-types 0.97` (proef-lsp's stdio transport, wired into `proef lsp`). Fixture/harness (dev):
+`gen-lsp-types 0.11` aliased as `lsp-types` with its `url` feature (proef-lsp's stdio
+transport, wired into `proef lsp`; ADR-0017 amendment). Fixture/harness (dev):
 `tiny_http` (ADR-0011 — axum conflicts with the tokio-runtime ban), `libtest-mimic`.
 Engine runtime: `tempfile` (Netscape cookie round-trip between batches, §5).
 Dev: `insta assert_cmd predicates proptest tempfile quick-xml` + `cargo-fuzz`

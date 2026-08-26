@@ -10,10 +10,7 @@ use std::time::{Duration, Instant};
 
 use crossbeam_channel::RecvTimeoutError;
 use lsp_server::{Connection, IoThreads, Message};
-use lsp_types::ServerCapabilities;
-use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
-};
+use lsp_types::{LspNotificationMethod, ServerCapabilities};
 use proef_core::engine::StepKindSpec;
 use proef_core::pack::FragmentCorpus;
 use proef_core::provider::SourceProvider;
@@ -93,15 +90,15 @@ impl std::error::Error for ServerError {}
 /// no capability flag; go-to-definition, completion, and references are all
 /// advertised here. Text sync is FULL (we recompute wholesale anyway).
 fn capabilities() -> ServerCapabilities {
-    use lsp_types::{CompletionOptions, OneOf, TextDocumentSyncCapability, TextDocumentSyncKind};
+    use lsp_types::{
+        CompletionOptions, DefinitionProvider, ReferencesProvider, TextDocumentSync,
+        TextDocumentSyncKind,
+    };
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
-        definition_provider: Some(OneOf::Left(true)),
-        completion_provider: Some(CompletionOptions {
-            trigger_characters: None,
-            ..Default::default()
-        }),
-        references_provider: Some(OneOf::Left(true)),
+        text_document_sync: Some(TextDocumentSync::Kind(TextDocumentSyncKind::Full)),
+        definition_provider: Some(DefinitionProvider::Bool(true)),
+        completion_provider: Some(CompletionOptions::default()),
+        references_provider: Some(ReferencesProvider::Bool(true)),
         ..Default::default()
     }
 }
@@ -260,8 +257,8 @@ fn apply_notification(
     state: &mut State,
     note: &lsp_server::Notification,
 ) -> bool {
-    let touched: lsp_types::Uri = match note.method.as_str() {
-        DidOpenTextDocument::METHOD => {
+    let touched: lsp_types::Uri = match LspNotificationMethod::from(note.method.as_str()) {
+        LspNotificationMethod::TextDocumentDidOpen => {
             let Ok(p) =
                 serde_json::from_value::<lsp_types::DidOpenTextDocumentParams>(note.params.clone())
             else {
@@ -271,7 +268,7 @@ fn apply_notification(
             state.docs.open(p.text_document.uri, p.text_document.text);
             uri
         }
-        DidChangeTextDocument::METHOD => {
+        LspNotificationMethod::TextDocumentDidChange => {
             let Ok(p) = serde_json::from_value::<lsp_types::DidChangeTextDocumentParams>(
                 note.params.clone(),
             ) else {
@@ -281,11 +278,19 @@ fn apply_notification(
             let Some(change) = p.content_changes.into_iter().last() else {
                 return false;
             };
-            let uri = p.text_document.uri.clone();
-            state.docs.change(p.text_document.uri, change.text);
+            let text = match change {
+                lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+                    whole,
+                ) => whole.text,
+                lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+                    partial,
+                ) => partial.text,
+            };
+            let uri = p.text_document.text_document_identifier.uri;
+            state.docs.change(uri.clone(), text);
             uri
         }
-        DidCloseTextDocument::METHOD => {
+        LspNotificationMethod::TextDocumentDidClose => {
             let Ok(p) = serde_json::from_value::<lsp_types::DidCloseTextDocumentParams>(
                 note.params.clone(),
             ) else {
@@ -392,10 +397,14 @@ fn dispatch_request(
     state: &State,
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
-    use lsp_types::request::{Completion, GotoDefinition, References, Request as _};
+    use lsp_types::{
+        CompletionRequest, DefinitionRequest, LspRequestMethod, ReferencesRequest, Request as _,
+    };
 
-    if req.method == GotoDefinition::METHOD {
-        let params: lsp_types::GotoDefinitionParams = match parse_params(req) {
+    let method = LspRequestMethod::from(req.method.as_str());
+
+    if method == DefinitionRequest::METHOD {
+        let params: lsp_types::DefinitionParams = match parse_params(req) {
             Ok(p) => p,
             Err(resp) => {
                 return connection
@@ -415,7 +424,9 @@ fn dispatch_request(
                     params.text_document_position_params.position,
                 )
             })
-            .map(lsp_types::GotoDefinitionResponse::Scalar);
+            .map(|location| {
+                lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(location))
+            });
         let resp = lsp_server::Response::new_ok(req.id.clone(), result);
         return connection
             .sender
@@ -423,7 +434,7 @@ fn dispatch_request(
             .map_err(|e| ServerError::Protocol(e.to_string()));
     }
 
-    if req.method == Completion::METHOD {
+    if method == CompletionRequest::METHOD {
         let params: lsp_types::CompletionParams = match parse_params(req) {
             Ok(p) => p,
             Err(resp) => {
@@ -439,12 +450,12 @@ fn dispatch_request(
             .map(|analysis| {
                 completion::complete(
                     &analysis,
-                    &params.text_document_position.text_document.uri,
-                    params.text_document_position.position,
+                    &params.text_document_position_params.text_document.uri,
+                    params.text_document_position_params.position,
                 )
             })
             .unwrap_or_default();
-        let result = Some(lsp_types::CompletionResponse::Array(items));
+        let result = Some(lsp_types::CompletionResponse::CompletionItemList(items));
         let resp = lsp_server::Response::new_ok(req.id.clone(), result);
         return connection
             .sender
@@ -452,7 +463,7 @@ fn dispatch_request(
             .map_err(|e| ServerError::Protocol(e.to_string()));
     }
 
-    if req.method == References::METHOD {
+    if method == ReferencesRequest::METHOD {
         let params: lsp_types::ReferenceParams = match parse_params(req) {
             Ok(p) => p,
             Err(resp) => {
@@ -468,8 +479,8 @@ fn dispatch_request(
             .map(|analysis| {
                 references::find(
                     &analysis,
-                    &params.text_document_position.text_document.uri,
-                    params.text_document_position.position,
+                    &params.text_document_position_params.text_document.uri,
+                    params.text_document_position_params.position,
                 )
             })
             .unwrap_or_default();

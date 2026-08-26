@@ -42,7 +42,8 @@ go-to-definition, completion, and find-references. Key choices:
 - **`lsp-types 0.97` models document URIs as its own `Uri` type (RFC-3986), not `url::Url`.**
   The 0.97 line dropped the `url` dependency, so the converter and every handler key documents on
   `Uri` (parsed/compared as an RFC-3986 string), never `url::Url` — a change from the pre-0.97 API
-  that would silently fail to compile against the old assumption.
+  that would silently fail to compile against the old assumption. **Superseded — see the
+  amendment below.**
 - The front-end refactor (injectable provider + collect-all) touches `front.rs` and its
   callers; the CLI path must stay behaviourally identical, guarded by the existing integration
   + snapshot suites.
@@ -51,6 +52,36 @@ go-to-definition, completion, and find-references. Key choices:
 - A genuine competitive differentiator, and the natural depth move after the v0.4.0 breadth
   work — but a multi-week (L) effort; sequenced so each step (handshake → provider/collect-all/
   converter → diagnostics → definition → completion → references) is independently testable.
+
+## Amendment — the types crate is `gen-lsp-types`, and `Uri` is `url::Url` again
+
+`lsp-types` stopped receiving releases after 0.97; `gen-lsp-types` is the maintained
+successor, generated from the LSP metamodel. proef depends on it under the original
+name — `lsp-types = { version = "0.11", package = "gen-lsp-types", features = ["url"] }`
+— which is rust-analyzer's own aliasing pattern and leaves every `lsp_types::` path in
+the crate untouched. The *decision* above is unchanged: still sync, still the
+rust-analyzer family, still server-only.
+
+Two consequences change:
+
+- **`Uri` is `url::Url`.** The generated crate gates its URI type behind features
+  (`url`, `fluent-uri`, or a bare `String` newtype). Choosing `url` costs nothing —
+  the embedded hurl engine already pulls `url` into the workspace graph — and buys
+  back `from_file_path`/`to_file_path`, the native-path bridge the 0.97 `Uri` had no
+  equivalent for and that `documents.rs` therefore hand-rolled (drive-letter prefixes,
+  segment joining, percent-encoding). That bridge is deleted; the wrapper that remains
+  exists only to pin the pipeline's source-name identity rule. The consequence the
+  original ADR recorded is retired with it, and the swap **removes** three crates
+  (`lsp-types`, `fluent-uri`, `serde_repr`) while adding none.
+- **Methods are enums, not string constants.** `Request::METHOD` is now an
+  `LspRequestMethod<'static>` whose `From<&str>` falls back to `Custom`, so dispatch
+  compares enum values and an unrecognised method lands in a variant rather than
+  matching nothing.
+
+One behaviour moved: what counts as a malformed document URI. `fluent-uri` rejected a
+raw space; `url` percent-encodes it. The malformed-params test therefore asserts on a
+*schemeless* URI, which `url` genuinely rejects — the guarantee under test (a bad URI
+is answered with `InvalidParams`, never a dead server) is unchanged.
 
 ## Alternatives considered
 
