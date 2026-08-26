@@ -8,6 +8,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **The `proef init` scaffold goes green against the dev fixture.** The
+  advertised fastest path (`init` → fixture → `test`) ended 1 pass /
+  2 fail: the scaffold calls `/search` and `/version`, and the fixture
+  served neither — a red first run that read as a broken tool. Both routes
+  exist now, the whole path is pinned by an integration test, and the
+  scaffold's `ref:` fragment thereby executes against a live endpoint —
+  the body form's first runnable demonstration.
+
+### Added
+
+- **Every release archive ships a `.sha256` sidecar** (basename inside, so
+  `sha256sum -c` works from a download directory). Attestation covers the
+  provenance story for `gh` users; the sidecar covers everyone who
+  installs with `curl` — the half that was missing against the
+  ripgrep/uv/starship baseline.
+
 - **A broken `proef.toml` is a located diagnostic, not a bare sentence.**
   The file is edited as often as any pack, and it was the one authored
   input whose errors carried no code, no source excerpt and no caret —

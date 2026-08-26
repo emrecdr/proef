@@ -183,6 +183,16 @@ fn handle_request(mut request: tiny_http::Request, state: &Mutex<Envs>) {
     let st = envs.envs.entry(env_key).or_default();
 
     match (method.as_str(), path) {
+        // The two routes the `proef init` scaffold calls beside `/health`,
+        // so the advertised fastest path (`init` → fixture → `test`) ends
+        // green instead of 1 pass / 2 fail — and the scaffold's `ref:`
+        // fragment has a live endpoint to demonstrate the body form against.
+        ("GET", "/search") => {
+            respond_json(request, 200, r#"{"results":[]}"#);
+        }
+        ("GET", "/version") => {
+            respond_json(request, 200, r#"{"version":"fixture"}"#);
+        }
         ("GET", "/health") => {
             // Versioned identity: who this backend is and when it answered.
             // Reading the wall clock is fine here — the fixture is dev-only; the

@@ -176,7 +176,9 @@ cargo install proef --locked
 Or grab a prebuilt archive from a [GitHub Release](https://github.com/emrecdr/proef/releases/latest)
 — five targets ship per tag (macOS arm64/x86_64, Linux arm64/x86_64-gnu, Windows
 x86_64-msvc), each with SLSA build provenance
-(`gh attestation verify <archive> --owner emrecdr`). The Windows zip bundles the
+(`gh attestation verify <archive> --owner emrecdr`) and a `.sha256` sidecar
+(`sha256sum -c proef-<tag>-<target>.tar.gz.sha256` from the download
+directory). The Windows zip bundles the
 libcurl/libxml2 DLLs the binary needs; Linux binaries expect the distro's
 `libcurl4` and `libxml2` (present on virtually every system, or
 `apt install libcurl4 libxml2`).
