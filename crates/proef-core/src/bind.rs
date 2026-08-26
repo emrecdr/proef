@@ -164,13 +164,16 @@ fn bind_scenario(
                         macro_.params.iter().map(String::as_str),
                         None,
                     );
-                    diags.push(at(Diag::error(
-                        "proef::bind::unknown_table_key",
-                        format!(
-                            "`{key}` is not a param of macro `{}`{suggestion}",
-                            macro_.name
-                        ),
-                    )));
+                    diags.push(
+                        at(Diag::error(
+                            "proef::bind::unknown_table_key",
+                            format!(
+                                "`{key}` is not a param of macro `{}`{suggestion}",
+                                macro_.name
+                            ),
+                        ))
+                        .with_fix_replacing(key, suggestion.nearest.as_deref()),
+                    );
                     continue;
                 }
                 args.insert(key.clone(), value.clone());

@@ -17,7 +17,7 @@ use proef_core::provider::SourceProvider;
 
 use crate::analysis::{Analysis, RecomputeInputs, read_fragments, recompute};
 use crate::documents::Documents;
-use crate::features::{completion, definition, diagnostics, references};
+use crate::features::{code_action, completion, definition, diagnostics, references};
 
 /// How the server talks to its client.
 pub enum Transport {
@@ -91,14 +91,21 @@ impl std::error::Error for ServerError {}
 /// advertised here. Text sync is FULL (we recompute wholesale anyway).
 fn capabilities() -> ServerCapabilities {
     use lsp_types::{
-        CompletionOptions, DefinitionProvider, ReferencesProvider, TextDocumentSync,
-        TextDocumentSyncKind,
+        CodeActionKind, CodeActionOptions, CodeActionProvider, CompletionOptions,
+        DefinitionProvider, ReferencesProvider, TextDocumentSync, TextDocumentSyncKind,
     };
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSync::Kind(TextDocumentSyncKind::Full)),
         definition_provider: Some(DefinitionProvider::Bool(true)),
         completion_provider: Some(CompletionOptions::default()),
         references_provider: Some(ReferencesProvider::Bool(true)),
+        // Announcing the kind, not just `true`: a client that filters by kind
+        // (VS Code's "quick fix" keybinding does) skips a server that only
+        // says "yes, actions" without saying which.
+        code_action_provider: Some(CodeActionProvider::CodeActionOptions(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QuickFix]),
+            ..CodeActionOptions::default()
+        })),
         ..Default::default()
     }
 }
@@ -432,6 +439,38 @@ fn parse_params<P: serde::de::DeserializeOwned>(
     })
 }
 
+/// Answer one request: deserialize its params, hand them to `handle` together
+/// with the current analysis, and send whatever it returns.
+///
+/// Every feature shares this shape, including the two ways a request can come
+/// to nothing. Malformed params are *answered* with `InvalidParams` rather than
+/// propagated, so one bad request never takes the server down. And a `None`
+/// analysis — a recompute that panicked — is not an error to the client either:
+/// it means we have nothing to offer *this* request, so `handle` decides what
+/// empty looks like for its own feature and the client gets a normal response.
+fn answer<P, R>(
+    connection: &Connection,
+    cfg: &ServerConfig,
+    state: &mut State,
+    req: &lsp_server::Request,
+    handle: impl FnOnce(Option<&Analysis>, P) -> R,
+) -> Result<(), ServerError>
+where
+    P: serde::de::DeserializeOwned,
+    R: serde::Serialize,
+{
+    let resp = match parse_params::<P>(req) {
+        Ok(params) => {
+            lsp_server::Response::new_ok(req.id.clone(), handle(analysis(cfg, state), params))
+        }
+        Err(invalid) => invalid,
+    };
+    connection
+        .sender
+        .send(Message::Response(resp))
+        .map_err(|e| ServerError::Protocol(e.to_string()))
+}
+
 fn dispatch_request(
     connection: &Connection,
     cfg: &ServerConfig,
@@ -439,97 +478,78 @@ fn dispatch_request(
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
     use lsp_types::{
-        CompletionRequest, DefinitionRequest, LspRequestMethod, ReferencesRequest, Request as _,
+        CodeActionRequest, CompletionRequest, DefinitionRequest, LspRequestMethod,
+        ReferencesRequest, Request as _,
     };
 
     let method = LspRequestMethod::from(req.method.as_str());
 
     if method == DefinitionRequest::METHOD {
-        let params: lsp_types::DefinitionParams = match parse_params(req) {
-            Ok(p) => p,
-            Err(resp) => {
-                return connection
-                    .sender
-                    .send(Message::Response(resp))
-                    .map_err(|e| ServerError::Protocol(e.to_string()));
-            }
-        };
-        // No analysis (a panicked recompute) is not an error to the client —
-        // it just means we have nothing to offer this request; respond with
-        // no result rather than propagating the failure.
-        let result = analysis(cfg, state)
-            .and_then(|analysis| {
-                definition::goto(
-                    analysis,
-                    &params.text_document_position_params.text_document.uri,
-                    params.text_document_position_params.position,
-                )
-            })
-            .map(|location| {
-                lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(location))
-            });
-        let resp = lsp_server::Response::new_ok(req.id.clone(), result);
-        return connection
-            .sender
-            .send(Message::Response(resp))
-            .map_err(|e| ServerError::Protocol(e.to_string()));
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::DefinitionParams| {
+                let at = params.text_document_position_params;
+                analysis
+                    .and_then(|a| definition::goto(a, &at.text_document.uri, at.position))
+                    .map(|location| {
+                        lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(
+                            location,
+                        ))
+                    })
+            },
+        );
     }
 
     if method == CompletionRequest::METHOD {
-        let params: lsp_types::CompletionParams = match parse_params(req) {
-            Ok(p) => p,
-            Err(resp) => {
-                return connection
-                    .sender
-                    .send(Message::Response(resp))
-                    .map_err(|e| ServerError::Protocol(e.to_string()));
-            }
-        };
-        // No analysis (a panicked recompute) yields no completions, never a
-        // dropped/errored response.
-        let items = analysis(cfg, state)
-            .map(|analysis| {
-                completion::complete(
-                    analysis,
-                    &params.text_document_position_params.text_document.uri,
-                    params.text_document_position_params.position,
-                )
-            })
-            .unwrap_or_default();
-        let result = Some(lsp_types::CompletionResponse::CompletionItemList(items));
-        let resp = lsp_server::Response::new_ok(req.id.clone(), result);
-        return connection
-            .sender
-            .send(Message::Response(resp))
-            .map_err(|e| ServerError::Protocol(e.to_string()));
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::CompletionParams| {
+                let at = params.text_document_position_params;
+                let items = analysis
+                    .map(|a| completion::complete(a, &at.text_document.uri, at.position))
+                    .unwrap_or_default();
+                Some(lsp_types::CompletionResponse::CompletionItemList(items))
+            },
+        );
     }
 
     if method == ReferencesRequest::METHOD {
-        let params: lsp_types::ReferenceParams = match parse_params(req) {
-            Ok(p) => p,
-            Err(resp) => {
-                return connection
-                    .sender
-                    .send(Message::Response(resp))
-                    .map_err(|e| ServerError::Protocol(e.to_string()));
-            }
-        };
-        // No analysis (a panicked recompute) yields no references, never a
-        // dropped/errored response — mirrors definition/completion.
-        let locations = analysis(cfg, state)
-            .map(|analysis| {
-                references::find(
-                    analysis,
-                    &params.text_document_position_params.text_document.uri,
-                    params.text_document_position_params.position,
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::ReferenceParams| {
+                let at = params.text_document_position_params;
+                Some(
+                    analysis
+                        .map(|a| references::find(a, &at.text_document.uri, at.position))
+                        .unwrap_or_default(),
                 )
-            })
-            .unwrap_or_default();
-        let resp = lsp_server::Response::new_ok(req.id.clone(), Some(locations));
-        return connection
-            .sender
-            .send(Message::Response(resp))
-            .map_err(|e| ServerError::Protocol(e.to_string()));
+            },
+        );
+    }
+
+    if method == CodeActionRequest::METHOD {
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::CodeActionParams| {
+                Some(
+                    analysis
+                        .map(|a| code_action::actions(a, &params.text_document.uri, params.range))
+                        .unwrap_or_default(),
+                )
+            },
+        );
     }
 
     // Unknown methods get a method-not-found response so the client never

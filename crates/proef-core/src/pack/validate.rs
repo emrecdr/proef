@@ -532,7 +532,8 @@ fn ref_target_passes(
                  directory holding them"
             } else {
                 "a fragment is one hurl entry marked `# @proef <name>` in a scanned file"
-            }),
+            })
+            .with_fix_replacing(target, suggestion.nearest.as_deref()),
         );
         return;
     };
@@ -658,7 +659,8 @@ fn unread_bind_pass<'a>(
                     "the fragments in scope read: `{}`",
                     readable.iter().copied().collect::<Vec<_>>().join("`, `")
                 )
-            }),
+            })
+            .with_fix_replacing(key, suggestion.nearest.as_deref()),
         );
     }
 }
@@ -702,13 +704,16 @@ fn use_target_passes(
             set.macros.keys().map(String::as_str),
             Some("`proef macros` lists them"),
         );
-        diags.push(at(Diag::error(
-            "proef::pack::unknown_use",
-            format!(
-                "macro `{}` step {index}: `use: {target}` names no loaded macro{suggestion}",
-                macro_.name
-            ),
-        )));
+        diags.push(
+            at(Diag::error(
+                "proef::pack::unknown_use",
+                format!(
+                    "macro `{}` step {index}: `use: {target}` names no loaded macro{suggestion}",
+                    macro_.name
+                ),
+            ))
+            .with_fix_replacing(target, suggestion.nearest.as_deref()),
+        );
         return;
     };
 
@@ -719,13 +724,16 @@ fn use_target_passes(
                 target_macro.params.iter().map(String::as_str),
                 None,
             );
-            diags.push(at(Diag::error(
-                "proef::pack::unknown_with_key",
-                format!(
-                    "macro `{}` step {index}: `with:` key `{key}` is not a param of `{}`{suggestion}",
-                    macro_.name, target_macro.name
-                ),
-            )));
+            diags.push(
+                at(Diag::error(
+                    "proef::pack::unknown_with_key",
+                    format!(
+                        "macro `{}` step {index}: `with:` key `{key}` is not a param of `{}`{suggestion}",
+                        macro_.name, target_macro.name
+                    ),
+                ))
+                .with_fix_replacing(key, suggestion.nearest.as_deref()),
+            );
         }
     }
     for param in &target_macro.params {
@@ -761,13 +769,16 @@ fn payload_passes(
         // silent-below-threshold tail never named it — the message said "not
         // claimed by any registered engine" about a registry of one.
         let suggestion = matcher::suggest_or_enumerate(kind, kinds.iter().map(|s| s.prefix), None);
-        diags.push(at(Diag::error(
-            "proef::pack::unknown_step_kind",
-            format!(
-                "macro `{}` step {index}: step kind `{kind}:` is not claimed by any registered engine{suggestion}",
-                macro_.name
-            ),
-        )));
+        diags.push(
+            at(Diag::error(
+                "proef::pack::unknown_step_kind",
+                format!(
+                    "macro `{}` step {index}: step kind `{kind}:` is not claimed by any registered engine{suggestion}",
+                    macro_.name
+                ),
+            ))
+            .with_fix_replacing(kind, suggestion.nearest.as_deref()),
+        );
         return;
     };
 

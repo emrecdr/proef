@@ -15,7 +15,10 @@ use crate::documents::name_to_url;
 /// The rendered diagnostics catalogue every code links to.
 const CATALOGUE_URL: &str = "https://emrecdr.github.io/proef/DIAGNOSTICS.html";
 
-fn to_lsp(diag: &Diag, index: &LineIndex) -> Diagnostic {
+/// One `Diag` as the LSP shape the publisher sends. Shared with the quick-fix
+/// handler, which must name a fix's diagnostic in exactly the form the client
+/// already holds, or the editor cannot match the action to the squiggle.
+pub(crate) fn to_lsp(diag: &Diag, index: &LineIndex) -> Diagnostic {
     let range = diag
         .span
         .map(|s| index.span_to_range(s))

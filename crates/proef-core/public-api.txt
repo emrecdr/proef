@@ -194,6 +194,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Severity
 impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Severity
 pub struct proef_core::diag::Diag
 pub proef_core::diag::Diag::code: &'static str
+pub proef_core::diag::Diag::fix: core::option::Option<proef_core::diag::Fix>
 pub proef_core::diag::Diag::help: core::option::Option<alloc::string::String>
 pub proef_core::diag::Diag::message: alloc::string::String
 pub proef_core::diag::Diag::severity: proef_core::diag::Severity
@@ -203,6 +204,7 @@ pub proef_core::diag::Diag::span: core::option::Option<proef_core::diag::Span>
 impl proef_core::diag::Diag
 pub fn proef_core::diag::Diag::error(&'static str, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::diag::Diag::warning(&'static str, impl core::convert::Into<alloc::string::String>) -> Self
+pub fn proef_core::diag::Diag::with_fix_replacing(self, &str, core::option::Option<&str>) -> Self
 pub fn proef_core::diag::Diag::with_help(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn proef_core::diag::Diag::with_source(self, impl core::convert::Into<alloc::string::String>, alloc::sync::Arc<str>) -> Self
 pub fn proef_core::diag::Diag::with_span(self, proef_core::diag::Span) -> Self
@@ -221,6 +223,25 @@ impl core::marker::Unpin for proef_core::diag::Diag
 impl core::marker::UnsafeUnpin for proef_core::diag::Diag
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Diag
 impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Diag
+pub struct proef_core::diag::Fix
+pub proef_core::diag::Fix::replacement: alloc::string::String
+pub proef_core::diag::Fix::span: proef_core::diag::Span
+pub proef_core::diag::Fix::title: alloc::string::String
+impl core::clone::Clone for proef_core::diag::Fix
+pub fn proef_core::diag::Fix::clone(&self) -> proef_core::diag::Fix
+impl core::cmp::Eq for proef_core::diag::Fix
+impl core::cmp::PartialEq for proef_core::diag::Fix
+pub fn proef_core::diag::Fix::eq(&self, &proef_core::diag::Fix) -> bool
+impl core::fmt::Debug for proef_core::diag::Fix
+pub fn proef_core::diag::Fix::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::diag::Fix
+impl core::marker::Freeze for proef_core::diag::Fix
+impl core::marker::Send for proef_core::diag::Fix
+impl core::marker::Sync for proef_core::diag::Fix
+impl core::marker::Unpin for proef_core::diag::Fix
+impl core::marker::UnsafeUnpin for proef_core::diag::Fix
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Fix
+impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Fix
 pub struct proef_core::diag::Span
 pub proef_core::diag::Span::end: usize
 pub proef_core::diag::Span::start: usize
@@ -959,6 +980,26 @@ impl core::marker::Unpin for proef_core::matcher::Token
 impl core::marker::UnsafeUnpin for proef_core::matcher::Token
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::matcher::Token
 impl core::panic::unwind_safe::UnwindSafe for proef_core::matcher::Token
+pub struct proef_core::matcher::Suggestion
+pub proef_core::matcher::Suggestion::nearest: core::option::Option<alloc::string::String>
+pub proef_core::matcher::Suggestion::tail: alloc::string::String
+impl core::clone::Clone for proef_core::matcher::Suggestion
+pub fn proef_core::matcher::Suggestion::clone(&self) -> proef_core::matcher::Suggestion
+impl core::cmp::Eq for proef_core::matcher::Suggestion
+impl core::cmp::PartialEq for proef_core::matcher::Suggestion
+pub fn proef_core::matcher::Suggestion::eq(&self, &proef_core::matcher::Suggestion) -> bool
+impl core::fmt::Debug for proef_core::matcher::Suggestion
+pub fn proef_core::matcher::Suggestion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for proef_core::matcher::Suggestion
+pub fn proef_core::matcher::Suggestion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::matcher::Suggestion
+impl core::marker::Freeze for proef_core::matcher::Suggestion
+impl core::marker::Send for proef_core::matcher::Suggestion
+impl core::marker::Sync for proef_core::matcher::Suggestion
+impl core::marker::Unpin for proef_core::matcher::Suggestion
+impl core::marker::UnsafeUnpin for proef_core::matcher::Suggestion
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::matcher::Suggestion
+impl core::panic::unwind_safe::UnwindSafe for proef_core::matcher::Suggestion
 pub fn proef_core::matcher::closest<'a>(&str, impl core::iter::traits::iterator::Iterator<Item = &'a str>) -> core::option::Option<&'a str>
 pub fn proef_core::matcher::levenshtein(&str, &str) -> usize
 pub fn proef_core::matcher::literal_skeleton(&str) -> alloc::string::String
@@ -966,7 +1007,7 @@ pub fn proef_core::matcher::match_pattern(&str, &str) -> core::option::Option<al
 pub fn proef_core::matcher::near_duplicate_macros<'a>(impl core::iter::traits::collect::IntoIterator<Item = (&'a str, &'a str)>) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
 pub fn proef_core::matcher::pattern_problems(&str, &[alloc::string::String]) -> alloc::vec::Vec<proef_core::matcher::PatternProblem>
 pub fn proef_core::matcher::prefix_rank(&str, &str) -> (u8, usize)
-pub fn proef_core::matcher::suggest_or_enumerate<'a>(&str, impl core::iter::traits::iterator::Iterator<Item = &'a str> + core::clone::Clone, core::option::Option<&str>) -> alloc::string::String
+pub fn proef_core::matcher::suggest_or_enumerate<'a>(&str, impl core::iter::traits::iterator::Iterator<Item = &'a str> + core::clone::Clone, core::option::Option<&str>) -> proef_core::matcher::Suggestion
 pub fn proef_core::matcher::tokenize(&str) -> alloc::vec::Vec<proef_core::matcher::Token>
 pub mod proef_core::pack
 pub enum proef_core::pack::Admit

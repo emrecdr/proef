@@ -317,14 +317,14 @@ fn lookup(
                 // Unknown generators are statically wrong — they error in every
                 // mode (incl. Probe: the pack lint catches typos at load).
                 if !crate::fake::is_known_generator(arg) {
-                    let tail = crate::matcher::suggest_or_enumerate(
+                    let suggestion = crate::matcher::suggest_or_enumerate(
                         arg,
                         crate::fake::GENERATORS.iter().copied(),
                         None,
                     );
                     return Err(ResolveError::FakeUnknown {
                         kind: arg.to_owned(),
-                        suggestion: (!tail.is_empty()).then_some(tail),
+                        suggestion: (!suggestion.tail.is_empty()).then_some(suggestion.tail),
                     });
                 }
                 let occurrence = *fakes;
@@ -354,9 +354,9 @@ fn lookup(
         ResolveError::UnknownVariable {
             name: name.to_owned(),
             suggestion: {
-                let tail =
+                let suggestion =
                     crate::matcher::suggest_or_enumerate(name, known.map(String::as_str), None);
-                (!tail.is_empty()).then_some(tail)
+                (!suggestion.tail.is_empty()).then_some(suggestion.tail)
             },
         },
         ctx.mode,
@@ -380,7 +380,7 @@ fn resolve_config_var(
     // Candidates are scoped to the same namespace, so a `url:` typo can never
     // suggest a `vars:` key. Keys are stored as `namespace:key`.
     let prefix = format!("{namespace}:");
-    let tail = crate::matcher::suggest_or_enumerate(
+    let suggestion = crate::matcher::suggest_or_enumerate(
         arg,
         ctx.config_vars
             .keys()
@@ -391,7 +391,7 @@ fn resolve_config_var(
         ResolveError::MissingConfigVar {
             namespace: namespace.to_owned(),
             key: arg.to_owned(),
-            suggestion: (!tail.is_empty()).then_some(tail),
+            suggestion: (!suggestion.tail.is_empty()).then_some(suggestion.tail),
         },
         ctx.mode,
     )

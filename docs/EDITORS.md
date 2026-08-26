@@ -17,6 +17,14 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
   (`[Options] variable:`) is left out: it needs no `bind:`, and binding it would
   be refused as `option_declared_twice`.
 - **Find-references** — every step across the suite that a given macro binds.
+- **Quick fixes** — a misspelled name that already earned a "did you mean"
+  becomes an applicable edit: `use:` and `ref:` targets, `with:` and `bind:`
+  keys, step kinds, Examples placeholders, and data-table columns. A fix is
+  offered only when it is certain — the suggested name is near enough, and the
+  misspelling occurs exactly once as a whole token in that same file — so
+  applying one is never a guess. Reach it from the squiggle or from the token
+  itself; a `use:` error underlines the macro's name key, which is often several
+  lines above the word you typed.
 
 The server analyzes **the configured suite** — `proef.toml`'s `[run] suite` if
 set, else the `tests/` convention — resolved under the directory it is launched

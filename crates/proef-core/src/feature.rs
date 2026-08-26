@@ -437,17 +437,23 @@ fn concrete_scenario(
                 if let Some(name) = unknown
                     && seen_unknown.insert((span.start, name.clone()))
                 {
-                    let tail =
+                    let suggestion =
                         crate::matcher::suggest_or_enumerate(&name, map.keys().copied(), None);
                     diags.push(
                         Diag::error(
                             "proef::feature::unknown_placeholder",
                             format!(
-                                "{what} references `<{name}>`, which is not an Examples column{tail}"
+                                "{what} references `<{name}>`, which is not an Examples column{suggestion}"
                             ),
                         )
                         .with_source(path.to_owned(), Arc::clone(source))
-                        .with_span(clamp(span, source)),
+                        .with_span(clamp(span, source))
+                        // The placeholder is written `<name>` in the step, so
+                        // that — not the bare name — is what an edit replaces.
+                        .with_fix_replacing(
+                            &format!("<{name}>"),
+                            suggestion.nearest.as_ref().map(|c| format!("<{c}>")).as_deref(),
+                        ),
                     );
                 }
                 result
