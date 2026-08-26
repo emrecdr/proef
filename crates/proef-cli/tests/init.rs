@@ -333,11 +333,15 @@ fn a_run_against_untouched_scaffold_routes_says_so() {
     proef(tmp.path()).arg("init").assert().code(0);
 
     // Do exactly what `init` says: point the target at a real, reachable API
-    // and leave the routes alone.
+    // and leave the routes alone. The API must be one that does NOT serve
+    // the scaffold's paths — the dev fixture now serves them at its root
+    // (the fastest path goes green by design), so aim under a prefix it
+    // 404s: reachable target, placeholder routes, exactly the reader whose
+    // half-filled scaffold this note exists for.
     let config = tmp.path().join("proef.toml");
     let text = std::fs::read_to_string(&config).unwrap().replace(
         "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}",
-        &fixture.base_url,
+        &format!("{}/not-this-api", fixture.base_url),
     );
     std::fs::write(&config, text).unwrap();
 

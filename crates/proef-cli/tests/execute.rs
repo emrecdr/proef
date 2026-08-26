@@ -3428,6 +3428,33 @@ fn rerun_after_a_phase_only_failure_says_there_is_nothing_to_rerun() {
         .stderr(predicate::str::contains("no scenarios matched the filters").not());
 }
 
+/// The advertised fastest path ends green: `proef init` → dev fixture →
+/// `proef test`. It used to end 1 pass / 2 fail — the scaffold called
+/// `/search` and `/version`, and the fixture served neither — which read as
+/// a broken tool on a first run. This is also the scaffold's `ref:`
+/// fragment executing against a live endpoint.
+#[test]
+fn the_init_scaffold_passes_against_the_fixture() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .args(["init"])
+        .assert()
+        .code(0);
+    // The scaffold's own proef.toml honors PROEF_BASE_URL, so no rewrite —
+    // exactly the checkout user's path (GETTING-STARTED §0).
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test"])
+        .assert()
+        .code(0);
+}
+
 /// A typo'd filter names the nearest real spelling: every scenario name and
 /// tag is in hand at the refusal, and "check --tags/--scenario" alone left
 /// the operator to diff by eye — the treatment `[run] exclusive-tags`

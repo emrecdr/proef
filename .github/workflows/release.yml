@@ -141,12 +141,18 @@ jobs:
             vcpkg_dir="$(dirname "$(command -v vcpkg)")"
             cp "$vcpkg_dir"/installed/x64-windows/bin/*.dll "$stage_dir/"
             (cd "$stage_dir" && 7z a "../${archive_name}.zip" ./* >/dev/null)
-            echo "archive=dist/${archive_name}.zip" >> "$GITHUB_OUTPUT"
+            archive="${archive_name}.zip"
           else
             cp "target/${{ matrix.target }}/release/proef" "$stage_dir/proef"
             tar -C "$stage_dir" -czf "dist/${archive_name}.tar.gz" .
-            echo "archive=dist/${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
+            archive="${archive_name}.tar.gz"
           fi
+          # A checksum sidecar beside every archive (basename inside, so
+          # `sha256sum -c` works from a download directory): attestation
+          # covers the provenance story for `gh` users; the sidecar covers
+          # everyone who installs with `curl` — the half that was missing.
+          (cd dist && sha256sum "$archive" > "${archive}.sha256")
+          echo "archive=dist/${archive}" >> "$GITHUB_OUTPUT"
           rm -rf "$stage_dir"
 
       # Attestations require a public repo (or Enterprise); gate instead of
@@ -205,11 +211,13 @@ jobs:
           # 5 = build-matrix cardinality — update together with the matrix.
           count=$(ls dist/proef-*.tar.gz dist/proef-*.zip | wc -l)
           [ "$count" -eq 5 ] || { echo "expected 5 archives, found $count" >&2; exit 1; }
+          count_sums=$(ls dist/proef-*.sha256 | wc -l)
+          [ "$count_sums" -eq 5 ] || { echo "expected 5 checksum sidecars, found $count_sums" >&2; exit 1; }
           gh release create "$GITHUB_REF_NAME" \
             --title "proef $GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             --verify-tag \
-            dist/proef-*.tar.gz dist/proef-*.zip
+            dist/proef-*.tar.gz dist/proef-*.zip dist/proef-*.sha256
 
   # Regenerate emrecdr/homebrew-proef/Formula/proef.rb from this run's own
   # artifacts (bit-identical to the Release assets — no CDN race).
