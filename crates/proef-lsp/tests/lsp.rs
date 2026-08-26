@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
@@ -45,6 +46,29 @@ impl SourceProvider for FakeDisk {
             .get(name)
             .cloned()
             .ok_or_else(|| ProviderError(format!("no {name}")))
+    }
+}
+
+/// A [`FakeDisk`] that counts every `read`, so a test can assert how many times
+/// the pipeline went back to the provider — the deterministic stand-in for
+/// "did this recompute?" that the flake rule prefers over timing.
+struct CountingDisk {
+    inner: FakeDisk,
+    reads: Arc<AtomicUsize>,
+}
+impl SourceProvider for CountingDisk {
+    fn discover_features(&self) -> Result<Vec<String>, ProviderError> {
+        self.inner.discover_features()
+    }
+    fn discover_packs(&self) -> Result<Vec<String>, ProviderError> {
+        self.inner.discover_packs()
+    }
+    fn discover_fragments(&self) -> Result<Vec<String>, ProviderError> {
+        self.inner.discover_fragments()
+    }
+    fn read(&self, name: &str) -> Result<Arc<str>, ProviderError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        self.inner.read(name)
     }
 }
 
@@ -907,6 +931,130 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
     assert!(
         alive.is_none(),
         "no binding exists, so a null result — but the server answered"
+    );
+
+    shutdown(&client, server);
+}
+
+/// Two feature requests with no edit between them share one analysis; an edit
+/// between them does not.
+///
+/// Every feature — completion, definition, references — used to run the whole
+/// pipeline from scratch: read every pack and feature off the provider, parse,
+/// bind, lower, then throw the result away. Between two keystrokes none of its
+/// inputs have changed, so the second run could only reproduce the first one's
+/// answer. Counting provider reads is how that is pinned without timing
+/// anything: reads are the pipeline's first act, so a recompute cannot happen
+/// without them, and the count is deterministic where a duration is not.
+#[test]
+fn an_analysis_is_reused_until_an_edit_retires_it() {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let feature_text = "Feature: F\n  Scenario: S\n    When I greet Sam\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(
+        pack_name.clone(),
+        Arc::from(
+            "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n",
+        ),
+    );
+    let reads = Arc::new(AtomicUsize::new(0));
+    let disk = CountingDisk {
+        inner: FakeDisk {
+            features: vec![feature_name.clone()],
+            packs: vec![pack_name],
+            fragments: Vec::new(),
+            files,
+        },
+        reads: Arc::clone(&reads),
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: None,
+        options: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    let definition_at = |id: i32| {
+        client
+            .sender
+            .send(Message::Request(Request {
+                id: RequestId::from(id),
+                method: "textDocument/definition".to_owned(),
+                params: serde_json::to_value(DefinitionParams {
+                    text_document_position_params: TextDocumentPositionParams {
+                        text_document: TextDocumentIdentifier { uri: url.clone() },
+                        position: Position {
+                            line: 2,
+                            character: 9,
+                        },
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                })
+                .unwrap(),
+            }))
+            .unwrap();
+        wait_for_response::<Option<DefinitionResponse>>(&client, &RequestId::from(id))
+    };
+
+    // The debounced recompute above already filled the cache, so the first
+    // request reads nothing at all.
+    let before = reads.load(Ordering::SeqCst);
+    assert!(definition_at(40).is_some(), "the step resolves");
+    let after_first = reads.load(Ordering::SeqCst);
+    assert_eq!(
+        after_first, before,
+        "a request after a recompute reuses that analysis"
+    );
+
+    // A second request, still no edit: nothing to reread.
+    assert!(definition_at(41).is_some(), "the step still resolves");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        after_first,
+        "a second request with no edit between reuses the same analysis"
+    );
+
+    // An edit retires it: the next request must see the new text, so it reads.
+    client
+        .sender
+        .send(Message::Notification(Notification {
+            method: "textDocument/didChange".to_owned(),
+            params: serde_json::json!({
+                "textDocument": { "uri": url.as_str(), "version": 2 },
+                "contentChanges": [{ "text": feature_text }]
+            }),
+        }))
+        .unwrap();
+    let _ = wait_for_any_diagnostics(&client);
+    assert!(
+        reads.load(Ordering::SeqCst) > after_first,
+        "an edit invalidates the cache — the suite is read again"
     );
 
     shutdown(&client, server);
