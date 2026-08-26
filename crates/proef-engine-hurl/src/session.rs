@@ -401,12 +401,16 @@ impl EngineSession for HurlSession {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let rendered = format!(
-                    "{} ({}.hurl:{}: {})",
+                    "{} ({}.hurl:{}: {}){}",
                     error.description(),
                     self.artifact.slug,
                     error.source_info.start.line,
-                    fixme
+                    fixme,
+                    whitespace_note(&error.kind).unwrap_or_default()
                 );
+                // Redacted *after* the note is appended: the note quotes the
+                // asserted values, which can be a resolved secret exactly as
+                // the message they sit beside can.
                 self.redactions.apply(&rendered)
             };
             // Lines owned by merged-asserts steps (§2.7): their errors
@@ -878,6 +882,77 @@ enum HurlErrorClass {
     Infra,
 }
 
+/// A note naming a whitespace-only assertion difference, and showing it.
+///
+/// `actual: string <ok> expected: string <ok >` is the message hurl already
+/// produces, and it is *correct* — but the defect is one space at the end of a
+/// value, inside a line long enough to wrap. Trailing spaces, a stray `\r` from
+/// a CRLF fixture, a tab where the author typed spaces, a non-breaking space
+/// pasted out of a browser: each renders as nothing at all, so the reader sees
+/// two values that look identical and concludes the tool is wrong.
+///
+/// The note repeats both values with every whitespace character made visible,
+/// which is the only rendering in which the difference can be *seen*. It fires
+/// only when the values differ and differ **solely** in whitespace, so it never
+/// competes with a message that already shows a visible difference.
+fn whitespace_note(kind: &runner::RunnerErrorKind) -> Option<String> {
+    use runner::RunnerErrorKind as K;
+    // A type mismatch is a different defect wearing the same two fields: the
+    // values are not comparable, so whitespace is not what went wrong.
+    let (K::AssertFailure {
+        actual,
+        expected,
+        type_mismatch: false,
+    }
+    | K::AssertBodyValueError { actual, expected }) = kind
+    else {
+        return None;
+    };
+    let bare = |text: &str| {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    if actual == expected || bare(actual) != bare(expected) {
+        return None;
+    }
+    Some(format!(
+        " [whitespace only — actual: {}, expected: {}]",
+        show_whitespace(actual),
+        show_whitespace(expected)
+    ))
+}
+
+/// Render `text` with every whitespace character visible: a middle dot for a
+/// space, the familiar escapes for tab/CR/LF, and `\u{…}` for the exotic ones
+/// (a non-breaking space is `\u{a0}`, which is the answer the reader needs —
+/// naming it is what turns "these look the same" into a fix).
+///
+/// Capped, because it is a note beside the message rather than a second copy of
+/// it, and ADR-0007's detail budget is shared.
+fn show_whitespace(text: &str) -> String {
+    const MAX: usize = 60;
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            ' ' => out.push('\u{b7}'),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\n' => out.push_str("\\n"),
+            c if c.is_whitespace() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{{{:x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+        if out.chars().count() >= MAX {
+            out.push('\u{2026}');
+            break;
+        }
+    }
+    out
+}
+
 fn classify_error(error: &runner::RunnerError) -> HurlErrorClass {
     use runner::RunnerErrorKind as K;
     match &error.kind {
@@ -1053,6 +1128,76 @@ fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {
         Some(DurationUnit::Second) => Duration::from_secs(value),
         Some(DurationUnit::Minute) => Duration::from_secs(value.saturating_mul(60)),
         Some(DurationUnit::Hour) => Duration::from_secs(value.saturating_mul(3600)),
+    }
+}
+
+#[cfg(test)]
+mod whitespace_tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use super::{show_whitespace, whitespace_note};
+    use hurl::runner::RunnerErrorKind as K;
+
+    fn note(actual: &str, expected: &str) -> Option<String> {
+        whitespace_note(&K::AssertFailure {
+            actual: actual.to_owned(),
+            expected: expected.to_owned(),
+            type_mismatch: false,
+        })
+    }
+
+    /// The whole point: the characters that make the values differ are the
+    /// ones a terminal draws as nothing.
+    #[test]
+    fn an_invisible_difference_is_named_and_shown() {
+        let trailing = note("string <ok>", "string <ok >").expect("a trailing space is a note");
+        assert!(trailing.contains("whitespace only"), "{trailing}");
+        // The space is now a character the reader can see.
+        assert!(trailing.contains("string\u{b7}<ok\u{b7}>"), "{trailing}");
+
+        // A stray CR from a CRLF fixture, a tab where spaces were typed, and a
+        // non-breaking space pasted out of a browser — three ways to spend an
+        // afternoon on a value that looks correct.
+        assert!(note("<ok>", "<ok\r>").is_some());
+        assert!(note("<a b>", "<a\tb>").is_some());
+        assert!(note("<a b>", "<a\u{a0}b>").is_some());
+        // …and the exotic one is named rather than merely marked.
+        let nbsp = note("<a b>", "<a\u{a0}b>").unwrap();
+        assert!(nbsp.contains("\\u{a0}"), "{nbsp}");
+    }
+
+    /// A note that fires on ordinary failures is noise, and noise beside a
+    /// correct message is worse than silence.
+    #[test]
+    fn a_visible_difference_gets_no_note() {
+        assert!(note("string <ok>", "string <nope>").is_none());
+        assert!(note("string <ok>", "string <ok>").is_none(), "identical");
+        assert!(
+            note("<ok>", "<0k>").is_none(),
+            "a one-character swap is visible"
+        );
+        // Same characters, same whitespace, different *type*: a different
+        // defect wearing the same two fields.
+        assert!(
+            whitespace_note(&K::AssertFailure {
+                actual: "string <1>".to_owned(),
+                expected: "int <1>".to_owned(),
+                type_mismatch: true,
+            })
+            .is_none()
+        );
+        // A kind that carries no comparable pair says nothing.
+        assert!(whitespace_note(&K::InvalidRegex).is_none());
+    }
+
+    /// The note rides in a bounded detail (ADR-0007), so its own rendering is
+    /// bounded too — and cut on a character boundary, not a byte one.
+    #[test]
+    fn a_long_value_is_cut_and_marked() {
+        let long = format!("<{}>", "é".repeat(200));
+        let shown = show_whitespace(&long);
+        assert!(shown.chars().count() <= 62, "{}", shown.chars().count());
+        assert!(shown.ends_with('\u{2026}'), "{shown}");
     }
 }
 

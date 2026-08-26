@@ -8,6 +8,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **An assertion that fails on values looking identical now says why.** When
+  the actual and expected values differ *solely* in whitespace, the failure
+  carries a note repeating both with every whitespace character drawn — `·` for
+  a space, `\t`/`\r`/`\n` for the usual escapes, `\u{a0}` for the exotic ones.
+  hurl's own message was already correct; the defect was simply invisible, so a
+  trailing space, a CRLF fixture leaking `\r`, or a non-breaking space pasted
+  out of a browser read as "the tool is wrong". Taken from hurl's structured
+  `actual`/`expected` rather than parsed back out of its prose, and emitted per
+  error so it sits beside the values it explains; silent whenever the
+  difference is already visible.
+
+
 - **`proef flaky` audits quarantine, which nothing else could.** A
   `@quarantine` scenario's failures gate nothing by design, so no exit code, no
   summary and no CI job reports them — which makes the tag's own failure mode
