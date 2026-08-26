@@ -66,6 +66,17 @@ enum ListFormat {
     Json,
 }
 
+/// Which authored file format `proef schema` describes. Two formats, one
+/// command: a second top-level verb for the same question ("what may I write
+/// in this file?") would be two ways to do one thing.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SchemaKind {
+    /// The macro pack schema, including every registered engine's step kinds
+    Pack,
+    /// The `proef.toml` schema, for a TOML language server
+    Config,
+}
+
 #[derive(Parser)]
 #[command(
     name = "proef",
@@ -203,8 +214,11 @@ enum Command {
         #[arg(long, value_parser = parse_run_id)]
         run_id: Option<String>,
     },
-    /// Print the pack JSON Schema (or install it next to pack files)
+    /// Print a JSON Schema for proef's authored files: `pack` (default) or `config`
     Schema {
+        /// Which file format to describe
+        #[arg(value_enum, default_value_t = SchemaKind::Pack)]
+        kind: SchemaKind,
         /// Write the schema next to these pack files and add editor modelines
         #[arg(long = "add-to", num_args = 1..)]
         add_to: Vec<PathBuf>,
@@ -728,9 +742,12 @@ fn main() -> std::process::ExitCode {
                 commands::artifacts(&path, &output, run_id, active_env.as_deref(), &config)
             }
         },
-        Command::Schema { add_to } => match check_config_flag(config_path) {
+        Command::Schema { kind, add_to } => match check_config_flag(config_path) {
             Err(code) => code,
-            Ok(()) => commands::schema(&add_to, true),
+            Ok(()) => match kind {
+                SchemaKind::Pack => commands::schema(&add_to, true),
+                SchemaKind::Config => commands::config_schema(&add_to),
+            },
         },
         Command::Init { dir } => match check_config_flag(config_path) {
             Err(code) => code,

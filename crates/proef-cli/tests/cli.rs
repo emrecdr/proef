@@ -813,3 +813,104 @@ fn a_matching_exclusive_expression_is_silent_even_when_tags_filter_it_out() {
             .stderr(contains("matches no scenario").not());
     }
 }
+
+/// The `proef.toml` schema describes the file as it is *written*, not as the
+/// Rust struct is spelled.
+///
+/// Every multi-word config key is `#[serde(rename)]`d to kebab-case, and a
+/// schema that published the field names instead would red-underline correct
+/// config in the editor — worse than no schema, because it is confidently
+/// wrong. Its `deny_unknown_fields` must survive too, or the one thing an
+/// editor can catch before a run (a typo'd key) goes unflagged.
+#[test]
+fn the_config_schema_describes_the_file_as_authored() {
+    let out = proef()
+        .args(["schema", "config"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let schema: serde_json::Value = serde_json::from_slice(&out).expect("the schema is JSON");
+
+    // Every authored top-level table, and nothing internal.
+    let tables = schema["properties"]
+        .as_object()
+        .expect("an object schema")
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    for expected in [
+        "run",
+        "http",
+        "meta",
+        "tag-links",
+        "sla",
+        "url",
+        "vars",
+        "env",
+    ] {
+        assert!(
+            tables.contains(expected),
+            "missing `{expected}`: {tables:?}"
+        );
+    }
+    assert!(
+        !tables.contains("path"),
+        "`path` is where the file was found, not something anyone writes in it: {tables:?}"
+    );
+
+    // The renamed keys, in their TOML spelling. `runs_dir` here would mean the
+    // editor rejects the `runs-dir` every project actually writes.
+    let run = schema["$defs"]["RunTable"]["properties"]
+        .as_object()
+        .expect("[run] is an object");
+    for kebab in ["runs-dir", "keep-runs", "exclusive-tags"] {
+        assert!(
+            run.contains_key(kebab),
+            "missing `{kebab}`: {:?}",
+            run.keys()
+        );
+    }
+    assert!(
+        !run.contains_key("runs_dir") && !run.contains_key("keep_runs"),
+        "the struct spelling must not reach the schema: {:?}",
+        run.keys()
+    );
+    assert_eq!(
+        schema["properties"]["tag-links"]["type"], "object",
+        "`tag-links` keeps its hyphen too"
+    );
+
+    // Unknown keys are refused, exactly as proef refuses them.
+    assert_eq!(
+        schema["additionalProperties"],
+        serde_json::Value::Bool(false)
+    );
+    assert_eq!(
+        schema["$defs"]["RunTable"]["additionalProperties"],
+        serde_json::Value::Bool(false)
+    );
+
+    // The doc comments are the hover text; an undocumented key is a key nobody
+    // can use without reading the source.
+    assert!(
+        run["suite"]["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "keys carry their documentation: {:?}",
+        run["suite"]
+    );
+}
+
+/// `--add-to` belongs to the pack schema; asking for it with `config` says so
+/// and names the one-line alternative rather than failing blankly.
+#[test]
+fn add_to_is_refused_for_the_config_schema() {
+    proef()
+        .args(["schema", "config", "--add-to", "packs/p.yaml"])
+        .assert()
+        .code(2)
+        .stderr(contains("has no meaning for the config schema"))
+        .stderr(contains("#:schema"));
+}

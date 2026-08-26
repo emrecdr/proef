@@ -306,6 +306,37 @@ pool and breaks isolation intermittently — which reads as flakiness rather tha
 as a missing declaration. The expression keeps the rule in one reviewable place.
 A malformed one is a user error (exit 2), never a silently-ignored key.
 
+## Editor support (JSON Schema)
+
+TOML language servers validate against JSON Schema, so one file buys
+completion, hover documentation and typo detection in `proef.toml` itself:
+
+```bash
+proef schema config > proef-config.schema.json
+```
+
+Then point your editor at it. Taplo and tombi (the engines behind VS Code's
+Even Better TOML, and the usual Neovim/Helix TOML setups) both read a
+first-line directive:
+
+```toml
+#:schema ./proef-config.schema.json
+
+[run]
+suite = "tests"
+```
+
+The schema is generated from the same Rust model that parses the file, so it
+describes the keys as they are *written* — kebab-case (`runs-dir`,
+`keep-runs`, `exclusive-tags`), not the struct spelling — and inherits
+`deny_unknown_fields`, so an editor flags a typo'd key before you run anything.
+Each key's hover text is its documentation from this page's source.
+
+Regenerate it after upgrading proef; there is no `--add-to` here (that
+installs the *pack* schema beside packs), because a project has one
+`proef.toml` and the `#:schema` line is a one-time edit to a file proef
+otherwise only ever reads.
+
 ## What does *not* live here
 
 - **Secrets** — `proef secret set` / `PROEF_SECRET_<NAME>` env, on their own

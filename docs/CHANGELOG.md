@@ -8,6 +8,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef schema config` publishes the `proef.toml` JSON Schema.** TOML
+  language servers (Taplo, tombi) validate against JSON Schema, so one file
+  buys completion, hover documentation and typo detection in the config —
+  before a run rather than after one. Generated from the same Rust model that
+  parses the file, so it describes keys as they are *written* (`runs-dir`, not
+  `runs_dir`) and inherits `deny_unknown_fields`, making an editor refuse
+  exactly what proef refuses. `proef schema` keeps printing the pack schema, so
+  one command answers "what may I write in this file?" for both authored
+  formats rather than two verbs answering it once each.
+
+
 - **An assertion that fails on values looking identical now says why.** When
   the actual and expected values differ *solely* in whitespace, the failure
   carries a note repeating both with every whitespace character drawn — `·` for

@@ -47,6 +47,7 @@ base64 = { workspace = true }
 strip-ansi-escapes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }        # `proef schema config` — the proef.toml JSON Schema editors validate against
 
 [dev-dependencies]
 proptest = { workspace = true }
