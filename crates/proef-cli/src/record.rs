@@ -117,6 +117,14 @@ pub struct ScenarioRun {
     /// and always start with `@`; mechanical cancellation prose never
     /// does — the split `rerun_candidates` keys on.
     pub reason: Option<String>,
+    /// The scenario's accumulated tags, `@` stripped, as the run saw them.
+    ///
+    /// The event has carried these since 0.15.0; the reader dropped them, so
+    /// every record consumer was tag-blind. `flaky` is the one that needed
+    /// them: a quarantined scenario failing every run is *disabled*, not
+    /// broken, and without the tags that distinction is invisible in exactly
+    /// the case where it matters most.
+    pub tags: Vec<String>,
 }
 
 impl ScenarioRun {
@@ -325,6 +333,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                 status,
                 phase,
                 reason,
+                tags,
                 ..
             } => {
                 let mut key = (file.to_string(), scenario.to_string());
@@ -335,6 +344,7 @@ pub fn parse_record(events: &[Event]) -> Record {
                         status: *status,
                         phase: phase.as_ref().map(ToString::to_string),
                         reason: reason.as_ref().map(ToString::to_string),
+                        tags: tags.clone(),
                         steps,
                     },
                 );

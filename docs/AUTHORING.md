@@ -64,6 +64,13 @@ Two tag names carry behavior; every other tag is yours (selection via
   message="quarantined failure (non-gating): …">`, and maps to `# TODO` in
   TAP. For flaky tests while they are being fixed — a User/System fault
   still fails the run.
+
+  Quarantine is a holding pen, not a destination, and `proef flaky` is what
+  keeps it one: over the retained records it separates a quarantined scenario
+  that fails *every* run (`DISABLED` — switched off, and nobody is watching
+  those failures because by design nothing reports them) from one that has
+  been green throughout (`recovered` — the tag outlived the problem and is now
+  suppressing the next real regression). Neither is visible any other way.
 - **`@skip`** / **`@skip:<reason-token>`** — the scenario is parked: never
   prepared or run, counted as skipped, and the reason (the tag spelling
   itself) appears in the console, JUnit, TAP, the record, the report,
