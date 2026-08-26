@@ -4,9 +4,11 @@
 
 # Using proef
 
-- [Writing scenarios](WRITING-SCENARIOS.md)
+- [Installing](INSTALL.md)
 - [Getting started](GETTING-STARTED.md)
+- [Writing scenarios](WRITING-SCENARIOS.md)
 - [Authoring reference](AUTHORING.md)
+- [CI](CI.md)
 - [Editor setup](EDITORS.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
 - [Configuration](CONFIG.md)

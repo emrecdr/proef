@@ -270,6 +270,82 @@ silently from that entry on (hurl's `variable:` assigns into one shared set),
 so `proef::lower::bind_shadows_capture` names it — rename the binding if the
 capture was the point.
 
+## Recipes — the three shapes every real suite needs
+
+### Log in, then use the token
+
+The most common real-world flow: the API mints a token at a login endpoint,
+and every later request carries it. A capture crosses steps through the
+World, so the shape is one `login` macro capturing the token and any number
+of authed macros reading it:
+
+```yaml
+macros:
+  logIn:
+    match: the operator logs in
+    steps:
+      - hurl: |
+          POST ${url:base}/auth/login
+          {"user": "${vars:user}", "password": "${secret:password}"}
+          HTTP 200
+          [Captures]
+          token: jsonpath "$.token"
+
+  listRecords:
+    match: the records are listed
+    steps:
+      - hurl: |
+          GET ${url:base}/records
+          Authorization: Bearer {{token}}
+          HTTP 200
+```
+
+`{{token}}` is hurl run-time vocabulary (the second tier): the capture is
+assigned when the login entry runs, and every later entry in the scenario
+reads it — no `bind:`, no config. To reuse one login across *scenarios*, add
+`saveAs: { token: global }` to the login step and read `${global:token}`;
+note the promotion is refused if the value carries a secret (ADR-0005).
+
+### Wait for an eventually-consistent result
+
+A `POST` answers `202` and the resource appears a moment later. Don't sleep —
+put a finite `retry:` on the step that polls, and let its asserts be the
+condition:
+
+```yaml
+  awaitRecord:
+    params: [id]
+    match: record {id} is eventually visible
+    steps:
+      - retry: { count: 10, interval_ms: 300 }
+        hurl: |
+          GET ${url:base}/records/${id}
+          HTTP 200
+```
+
+The retry re-runs the entry until its asserts pass or the count runs out —
+and the count **must** be finite: hurl cannot be interrupted mid-call, so an
+unbounded retry is a hang the watchdog would have to abandon (the same
+reason `retry: -1` is refused at load). The retry also bakes into the
+emitted artifact's `[Options]`, so a replay under stock `hurl` polls the
+same way.
+
+### Seed data before, clean up after
+
+Three scopes, three mechanisms — pick by lifetime:
+
+- **Per scenario**: a `Background:` in the feature file runs its steps
+  before every scenario in that file — provisioning prose, bound to macros
+  like any other step.
+- **Per suite**: `[run] setup` / `[run] teardown` in `proef.toml` name
+  feature files that run once around the whole pool — seed a database,
+  then delete the run's residue. Teardown runs even when the suite fails
+  or is interrupted; a teardown failure is exit 3, never silent. The keys
+  are documented in [Configuration](CONFIG.md).
+- **Across scenarios**: a `saveAs: { id: global }` capture in setup (or any
+  scenario) persists into later scenarios and runs as `${global:id}` — the
+  handle teardown needs to delete what setup created.
+
 ## Asserting responses — the hurl vocabulary
 
 Assertions live inside a step's raw `hurl:` block (or an `expect:` macro), so the
