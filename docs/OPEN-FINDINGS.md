@@ -267,9 +267,28 @@ report"; this section records the verdicts and what remains open.
   the numbers above are the ones to trust. No timing assertion guards it:
   TESTING-STRATEGY's flake rule forbids wall-clock in tests, and the
   behaviour is pinned by the existing span snapshots instead.
-  Still open: `captures_before` O(steps²); redaction runs inside the reporter
-  mutex; `bake_entry_options` triple-materializes; `levenshtein` lacks the
-  length prune; tag-expression `eval`/`Drop` recurse on long chains.
+  `levenshtein` lacks the length prune — **fixed** in `closest`, where the
+  threshold is known; `levenshtein` itself stays exact for the callers that
+  want the true distance, and a case-table test pins that the prune cannot
+  change an answer.
+
+  Tag-expression `eval`/`Drop` recurse on long chains — **fixed, and it was a
+  bug rather than a slow path.** `and`/`or` chains parse iteratively, which the
+  module doc offered as proof that long chains were safe; they are not, because
+  an iterative parse still builds a left-leaning tree as deep as the chain is
+  long, and `eval` and the derived `Drop` walk it recursively. Reproduced: a
+  `--tags` expression of ~20 000 `and`-joined atoms overflows the stack and
+  aborts with SIGABRT — a signal, not one of ADR-0009's four exit codes, and
+  well inside what `ARG_MAX` permits. Capped at `MAX_TOKENS = 512` in `parse`,
+  which bounds the tree and so bounds both walks. The existing test built
+  5 000 atoms and asserted success — one order of magnitude below the cliff,
+  which is why it read as reassurance.
+
+  Still open: `captures_before` O(steps²) — deliberately left, since it already
+  runs only when a `ref:`/`bind:` consumes it and is bounded by scenario size
+  (tens of steps), so threading a running set through lowering would be churn
+  against a bound that is not tight; redaction runs inside the reporter mutex;
+  `bake_entry_options` triple-materializes.
 - **Architecture & test debt (recorded):** ~290 lines of hurl grammar in
   `proef-core` vs the seam story — amend ADR-0002's "diff-empty" claim or
   route through `StepKindSpec`; three JSONL read loops / six event folds

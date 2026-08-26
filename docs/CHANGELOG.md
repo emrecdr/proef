@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A long `--tags` expression aborted the process instead of failing.**
+  `and`/`or` chains parse iteratively, and the module said so as though that
+  settled it — but an iterative parse still builds a left-leaning tree as deep
+  as the chain is long, and both `eval` and the derived `Drop` walk that tree
+  recursively. A `--tags` expression of roughly twenty thousand `and`-joined
+  atoms therefore overflowed the stack and died on SIGABRT: a signal, not one
+  of the four exit codes ADR-0009 promises, and well within what a command line
+  accepts. Expressions are now capped at 512 tokens, which bounds the tree and
+  so bounds both walks, and past the cap you get a message naming the limit.
+  (The test that was meant to cover this built 5 000 atoms and asserted
+  success — one order of magnitude below the cliff.)
+
 ### Changed
 
 - **Pack validation is linear in the macro count, not quadratic.** Every
