@@ -158,6 +158,28 @@ These are settled non-goals, not gaps awaiting a contribution:
   them, including a whole multi-line docstring body, which a bound variable
   cannot express.
 
+## When something else fits better
+
+An honest map beats a pitch:
+
+- **Raw `hurl` alone** — when you need no business-readable prose, no shared
+  step vocabulary, and no cross-request state beyond one file. proef embeds
+  hurl and its artifacts replay under stock `hurl`, so the exit stays open
+  in both directions: annotate your `.hurl` files and the same bytes run
+  under both runners — or walk away, and they still run.
+- **Karate** — the closest neighbor (Gherkin with pre-implemented HTTP
+  steps, assertions in the feature file). Choose it for its embedded-JS
+  escape hatch and whole-body fuzzy matching (`{ id: '#uuid' }`) — the two
+  mechanisms proef deliberately refuses (a deterministic sans-IO core;
+  hurl's path-at-a-time predicates). Choose proef for one binary over a
+  JVM, deterministic reproduction (one run id seeds fakes and shuffle
+  order), a hash-locked replayable artifact per scenario — and the property
+  Karate structurally cannot offer: test files that run with no framework
+  at all.
+- **Postman/Bruno-class clients** — for exploration and ad-hoc calls. proef
+  is a test runner: the collection-equivalent is plain text in git, diffed
+  in review, and nothing needs an account.
+
 ## Installation
 
 Pick whichever fits your machine:
@@ -221,7 +243,8 @@ complete working suite in exactly this shape.
 mkdir -p suite/packs
 # 1. write suite/case.feature (prose) and suite/packs/api.yaml (bindings);
 #    every sentence needs a binding — extend the snippets above the same way,
-#    or copy tests/features/ wholesale as a working start
+#    copy tests/features/ wholesale as a working start, or run `proef init`
+#    for a scaffold that also shows the `ref:` form against a real .hurl file
 # 2. store secrets the packs reference
 proef secret set apiToken            # or: export PROEF_SECRET_APITOKEN=…
 # 3. validate everything without touching the network

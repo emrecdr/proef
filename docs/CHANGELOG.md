@@ -8,6 +8,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **README answers the comparison a prospect actually runs**: a "When
+  something else fits better" section maps raw `hurl` (the exit stays open
+  in both directions), Karate (choose it for embedded JS and whole-body
+  fuzzy matching — the two mechanisms proef deliberately refuses; choose
+  proef for one binary, deterministic reproduction, and files that run
+  with no framework at all), and Postman/Bruno-class clients. The
+  quick-start also points at `proef init` as the start that demonstrates
+  the `ref:` body form — `tests/features/` is deliberately fragment-free
+  (the reference corpus is config-independent by design, and
+  `[run] fragments` is a config key; the runnable `ref:` demo lives in
+  the scaffold, pinned green against the fixture).
+
 - **The docs site can get a visitor to a binary, and CI to a green
   workflow.** New [Installing](INSTALL.md) page — install lived only in
   the repo README, outside the published site's source, so the site's
