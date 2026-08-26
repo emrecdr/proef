@@ -254,12 +254,22 @@ report"; this section records the verdicts and what remains open.
     permanently larger needle list, against a scope decision that was made
     deliberately. Reopen it only with a concrete case where a reflected digest
     was itself usable.
-- **Performance (recorded, unscheduled):** pack validation is quadratic
-  and measured (24.9 s at 3200 macros, profiler-attributed to the
-  per-macro `locate` rescans); `captures_before` O(steps²); redaction runs
-  inside the reporter mutex; `bake_entry_options` triple-materializes;
-  `levenshtein` lacks the length prune; tag-expression `eval`/`Drop`
-  recurse on long chains.
+- **Performance (recorded, unscheduled):** pack validation was quadratic —
+  **fixed**. Every locator scanned the whole pack file to find its macro's
+  block, so a pack of N macros scanned it N times. `locate::MacroIndex`
+  records every macro's name span and block region in one pass and the
+  locators became lookups. Re-measured on a release build over generated
+  packs: 0.03 → 0.12 → 0.49 → 1.96 s across 400/800/1600/3200 macros before
+  (4× per doubling), 0.01 → 0.01 → 0.02 → 0.03 s after (~2×), i.e. **65× at
+  3200 macros**, and 6400 macros — off the old curve at roughly 8 s — now
+  costs 0.06 s. The original note said 24.9 s at 3200; that figure did not
+  reproduce here and was probably a debug build or a heavier macro shape, so
+  the numbers above are the ones to trust. No timing assertion guards it:
+  TESTING-STRATEGY's flake rule forbids wall-clock in tests, and the
+  behaviour is pinned by the existing span snapshots instead.
+  Still open: `captures_before` O(steps²); redaction runs inside the reporter
+  mutex; `bake_entry_options` triple-materializes; `levenshtein` lacks the
+  length prune; tag-expression `eval`/`Drop` recurse on long chains.
 - **Architecture & test debt (recorded):** ~290 lines of hurl grammar in
   `proef-core` vs the seam story — amend ADR-0002's "diff-empty" claim or
   route through `StepKindSpec`; three JSONL read loops / six event folds

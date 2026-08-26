@@ -6,6 +6,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **Pack validation is linear in the macro count, not quadratic.** Every
+  span locator scanned the whole pack file to find its macro's block, so
+  validating N macros scanned the file N times. A single indexing pass
+  (`locate::MacroIndex`) records each macro's name span and block region, and
+  the locators became lookups into it. Measured on a release build over
+  generated packs: 3200 macros went from **1.96 s to 0.03 s** (~65×), and the
+  curve changed shape — 4× per doubling before, ~2× after — so 6400 macros now
+  cost 0.06 s where the old scaling predicts ~8 s.
+
+  It also fixes an inconsistency the split readers hid: `macro_span` accepted a
+  quoted `"macro name":` header while the region scan behind every other
+  locator accepted only the bare form, so a quoted macro got a caret on its
+  name and silently no span for its `match:`, `use:`, `ref:` or payload lines.
+  One reader now gives one answer.
+
 ### Added
 
 - **`proef flaky --by <key>` splits flakiness by run context.** `--by env`, or

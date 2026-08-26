@@ -683,9 +683,14 @@ pub(crate) fn load_collecting(
     // Normalize each raw macro (structural checks happen inline).
     for (source_index, pack_name, raw) in &raw_packs {
         let source = &sources[*source_index];
+        // One scan of this file, shared by every macro in it. Locating a macro
+        // used to walk the whole text, so a pack of N macros scanned it N
+        // times — quadratic, and measured at 4× per doubling.
+        let index = locate::MacroIndex::new(&source.text);
         for (macro_name, raw_macro) in &raw.macros {
-            let normalized =
-                validate::normalize_macro(macro_name, raw_macro, pack_name, source, &mut diags);
+            let normalized = validate::normalize_macro(
+                macro_name, raw_macro, pack_name, source, &index, &mut diags,
+            );
             if let Some(macro_) = normalized {
                 // Pass 3: duplicate macro names across packs.
                 if let Some(existing) = set.macros.get(macro_name) {
