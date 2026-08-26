@@ -4,7 +4,7 @@ proef runs end-to-end API tests written as plain Gherkin prose. The prose stays
 readable by anyone; a YAML *pack* binds each sentence to real HTTP work. This
 walkthrough builds a two-file suite from nothing and runs it.
 
-Install first (see the [README](https://github.com/emrecdr/proef/blob/main/README.md#installation)), then verify:
+Install first ([Installing](INSTALL.md)), then verify:
 
 ```console
 $ proef doctor
@@ -45,13 +45,14 @@ Pasting the tutorial's `Then` line into the scaffold's feature file fails with
 `bind::unbound_step` — read on to build the fuller suite by hand, or extend
 the scaffold yourself once you understand the pieces.
 
-## 1. A suite is two things
+## 1. A suite is three files
 
 ```
 suite/
   case.feature        # the prose — what the test says
   packs/
     api.yaml          # the vocabulary — what each sentence does
+proef.toml            # the configuration — where URLs and variables live (§3.5)
 ```
 
 Layout is convention, not configuration. `proef test suite` takes one path and
@@ -129,6 +130,7 @@ directory (like cargo/git):
 # proef.toml
 [run]
 suite = "suite"                    # `proef test` needs no path argument
+# fragments = "hurl"               # uncomment to `ref:` entries of real .hurl files (§3.6)
 
 [url]
 base = "${env:PROEF_BASE_URL:-http://127.0.0.1:8787}"   # → ${url:base} (env override wins)
@@ -164,15 +166,13 @@ Everything above uses an inline `hurl:` block, which is complete and permanent. 
 form is `ref: <name>`, which points at one entry of a **real `.hurl` file** marked
 `# @proef <name>`, with values supplied by a `bind:` table:
 
-```toml
-# proef.toml — where the corpus lives
-[run]
-fragments = "tests/hurl"
-```
+Uncomment `fragments = "hurl"` in §3.5's `proef.toml` (a second `[run]`
+table would be a TOML error — one table, both keys), put the annotated file
+under `hurl/`, and point a step at its entry:
 
 ```yaml
     steps:
-      - ref: admin.search          # one entry of tests/hurl/admin.hurl
+      - ref: admin.search          # one entry of hurl/admin.hurl
         bind: { q: "${term}" }
 ```
 

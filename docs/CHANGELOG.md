@@ -6,7 +6,35 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The docs site can get a visitor to a binary, and CI to a green
+  workflow.** New [Installing](INSTALL.md) page — install lived only in
+  the repo README, outside the published site's source, so the site's
+  first step sent visitors back to GitHub — and a new [CI](CI.md) page
+  with the paste-ready workflow the docs never had (zero `runs-on` blocks
+  existed anywhere): install, secrets via `PROEF_SECRET_*`, `--junit
+  auto`, a `--shard` matrix, `--meta` provenance, the `diff
+  --fail-on-regression` baseline gate, `--rerun` continuation, and
+  `flaky` over retained records. Nav reordered visitor-first (Installing →
+  Getting started → Writing scenarios).
+- **AUTHORING gains the three recipes every real suite needs**:
+  login-then-use-the-token (the docs' most-asked absent question — zero
+  "login" hits existed), waiting for an eventually-consistent result
+  (finite `retry:` as the polling primitive, and why it must be finite),
+  and test-data seeding/cleanup across its three scopes (`Background:`,
+  `[run] setup`/`teardown`, `saveAs: global`).
+
 ### Fixed
+
+- **The tutorial's `ref:` invitation no longer self-destructs.** §3.6
+  showed a second `[run]` table that, pasted beside §3.5's, was a TOML
+  duplicate-table error naming a directory the tutorial's layout doesn't
+  have; the fragments key now lives (commented) in §3.5's one config
+  block. "A suite is two things" undercounted its own mandatory
+  `proef.toml` — it says three files now, and the tree shows all three.
+  TROUBLESHOOTING stops listing hurl's `[Options] repeat:` as if it were
+  a proef step key.
 
 - **The `proef init` scaffold goes green against the dev fixture.** The
   advertised fastest path (`init` → fixture → `test`) ended 1 pass /
