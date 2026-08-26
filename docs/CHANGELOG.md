@@ -8,6 +8,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A parse error pointing at a non-ASCII character produced a span that split
+  the codepoint.** gherkin reports a char-counted column, so the span's *start*
+  was correct; its end added one **byte** to that, landing inside a multi-byte
+  character whenever the error pointed at one — a span that is not a valid
+  slice of its own source. Nothing crashed, which is how it survived: miette
+  tolerated it and drew the caret slightly to the left, and the LSP's converter
+  snaps to a boundary defensively, so every consumer defended itself instead of
+  the producer being right. Found by the new `fuzz_feature_parse` target within
+  a minute of first running.
+
+
 - **A long `--tags` expression aborted the process instead of failing.**
   `and`/`or` chains parse iteratively, and the module said so as though that
   settled it — but an iterative parse still builds a left-leaning tree as deep
