@@ -596,6 +596,49 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
     }
 }
 
+/// The suite verdict of a *recorded* run: `RunFinished`'s own totals when they
+/// can be trusted, else a reconstruction by counting the scenarios the record
+/// holds.
+///
+/// One implementation, because there were two and they disagreed. `explain` and
+/// the HTML report each carried a fallback for a truncated record, and on the
+/// same bytes they printed different numbers three ways: the report dropped
+/// `Warned` scenarios from every column, counted `[run] setup`/`teardown`
+/// phases into a headline its own page labels "excluded from totals above", and
+/// read a pre-0.6.0 record's per-phase totals under today's suite-only meaning.
+///
+/// The rule, matching what the live path reports:
+///
+/// - Prefer the tail `RunFinished`. A truncated record has none, and a
+///   pre-0.6.0 record has several whose totals counted every phase rather than
+///   the suite (a semantic change that never bumped `schema`) — both fall back.
+/// - Count **suite scenarios only** (ADR-0014).
+/// - Count `Warned` with `Passed`, as `RunSummary::passed` does: `optional:`
+///   steps exist so a scenario can warn and still pass.
+///
+/// `scenarios` yields `(is_suite, status)` so a caller can feed it whatever
+/// shape it already holds — parsed record rows, or rendered report blocks.
+pub fn suite_totals(
+    run_finished: Option<(usize, usize, usize)>,
+    legacy_multi_pair: bool,
+    scenarios: impl Iterator<Item = (bool, Option<Status>)>,
+) -> (usize, usize, usize) {
+    if let Some(totals) = run_finished.filter(|_| !legacy_multi_pair) {
+        return totals;
+    }
+    let (mut passed, mut failed, mut skipped) = (0usize, 0usize, 0usize);
+    for (is_suite, status) in scenarios.filter(|(is_suite, _)| *is_suite) {
+        debug_assert!(is_suite);
+        match status {
+            Some(Status::Passed | Status::Warned) => passed += 1,
+            Some(Status::Failed) => failed += 1,
+            Some(Status::Skipped) => skipped += 1,
+            None => {}
+        }
+    }
+    (passed, failed, skipped)
+}
+
 /// Run totals derived from the event stream — the `Summarize` leg of the
 /// decorator stack (ADR-0008): leaves (GitHub summary, `--format json`, …)
 /// consume the totals at `RunFinished` instead of re-deriving them.
@@ -663,6 +706,42 @@ impl<W: Write + Send> Reporter for JsonlReporter<W> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+
+    /// The two surfaces that reconstruct a truncated record's verdict must
+    /// agree, because they used to disagree three ways on the same bytes.
+    ///
+    /// `explain` counted suite scenarios with `Warned` folded into `passed`;
+    /// the HTML report counted *every* block and dropped `Warned` entirely, on
+    /// a page whose own label says phases are "excluded from totals above".
+    /// A pre-0.6.0 record made it worse: `explain` fell back, the report read
+    /// the last phase's totals as the run's verdict.
+    #[test]
+    fn a_truncated_record_reconstructs_the_live_verdict() {
+        // One of each, plus a phase scenario that must not be counted.
+        let rows = || {
+            [
+                (true, Some(Status::Passed)),
+                (true, Some(Status::Warned)),
+                (true, Some(Status::Failed)),
+                (true, Some(Status::Skipped)),
+                (false, Some(Status::Failed)),
+                (true, None),
+            ]
+            .into_iter()
+        };
+
+        // Truncated: no tail event, so count. Warned rides with passed, the
+        // phase row is excluded, and a status-less block counts nowhere.
+        assert_eq!(suite_totals(None, false, rows()), (2, 1, 1));
+
+        // Complete: the tail event is the verdict, counting never happens.
+        assert_eq!(suite_totals(Some((9, 8, 7)), false, rows()), (9, 8, 7));
+
+        // Pre-0.6.0: several tail events, each counting one phase. Reading them
+        // under today's suite-only meaning reports the wrong verdict with full
+        // confidence, so fall back exactly as a truncated record does.
+        assert_eq!(suite_totals(Some((9, 8, 7)), true, rows()), (2, 1, 1));
+    }
 
     use super::*;
     use crate::step::StepRef;
