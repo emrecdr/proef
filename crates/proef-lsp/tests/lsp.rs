@@ -1180,6 +1180,92 @@ fn a_file_outlines_to_its_own_vocabulary_and_a_step_hovers_to_its_macro() {
     shutdown(&client, server);
 }
 
+/// A step bound to a **built-in** macro hovers, even though it has nowhere to
+/// jump to.
+///
+/// `EDITORS.md` has always said built-ins have no jump target — their pack is
+/// embedded in the binary, so there is no file to open. Hover is not bound by
+/// that: the macro is in the analysis like any other, so its pattern and params
+/// are answerable in place. This pins the difference, because the docs now
+/// claim it.
+#[test]
+fn a_built_in_macro_hovers_even_though_it_cannot_be_jumped_to() {
+    use lsp_types::{Contents, Hover, HoverParams};
+
+    let feature_name = native_abs("suite/f.feature");
+    let feature_text = "Feature: F\n  Scenario: S\n    Then the response status is 200\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: Vec::new(),
+        fragments: Vec::new(),
+        files,
+    };
+
+    let (client, server) = spawn(disk, hurl_kinds());
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(70),
+            method: "textDocument/hover".to_owned(),
+            params: serde_json::to_value(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 12,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let hover: Hover = wait_for_response::<Option<Hover>>(&client, &RequestId::from(70))
+        .expect("a step bound to a built-in still hovers");
+    let Contents::MarkupContent(markup) = hover.contents else {
+        panic!("expected markup contents");
+    };
+    assert!(markup.value.contains("expectStatus"), "{}", markup.value);
+    assert!(
+        markup.value.contains("builtin:"),
+        "the pack is named as built-in, which is why there is no jump: {}",
+        markup.value
+    );
+
+    // And the jump genuinely is unavailable — `builtin:core.yaml` is no path.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(71),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(DefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 12,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+    let jump: Option<DefinitionResponse> = wait_for_response(&client, &RequestId::from(71));
+    assert!(jump.is_none(), "a built-in has no file to open: {jump:?}");
+
+    shutdown(&client, server);
+}
+
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
 }

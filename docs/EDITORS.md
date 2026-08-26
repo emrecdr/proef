@@ -157,10 +157,12 @@ This is the first release of the language server. Known boundaries:
   `PROEF_ENV`), **restart the server** to pick up the change; until then those
   references analyze against the old (or, if the file could not be loaded at
   startup, an empty) scope and may warn.
-- **Built-in macros have no jump target and no hover.** The `expect*` family
-  lives in a pack compiled into the binary, not a file on disk, so there is
-  nothing for go-to-definition to open. `proef macros` lists them with the
-  sentence each binds, which is the answer that question usually wants.
+- **Built-in macros have no jump target.** The `expect*` family lives in a pack
+  compiled into the binary, not a file on disk, so there is nothing for
+  go-to-definition to open. Hover still answers — the macro is in the analysis
+  like any other, and reports its pack as `builtin:…`, which is *why* the jump
+  is unavailable. `proef macros` lists the whole family with the sentence each
+  binds.
 - **Completion ranking is best-effort.** All of the suite's macros are offered;
   ranking is a lightweight edit-distance heuristic. Full context-aware ranking is
   a follow-up.
@@ -171,6 +173,19 @@ This is the first release of the language server. Known boundaries:
 - **No VS Code extension yet.** v1 is a server-only generic-LSP binary. It works
   with any editor that speaks generic LSP (Neovim, Helix, Emacs, Sublime LSP, …);
   a VS Code wrapper is a possible follow-up.
+
+  If one is built, its `documentSelector` must match on **path**
+  (`{ scheme: "file", pattern: "**/*.feature" }`), not on a language id. The
+  ecosystem is split — the two established Gherkin extensions register
+  `cucumber` and `feature` respectively — so a selector naming either id
+  attaches for some users and silently does nothing for the rest. The table
+  under [File types served](#file-types-served) is that split; a path selector
+  is the only thing all of it has in common.
+
+- **No Zed support.** Zed binds language servers to languages it has a
+  tree-sitter grammar for, and there is no Gherkin grammar in it. That grammar
+  is a prerequisite, not a configuration step, so Zed waits on work outside this
+  repository.
 - **Overlay lookup can still miss if the suite root is reached through a
   symlink.** The root is deliberately left uncanonicalized (canonicalizing
   would resolve symlinks and desync source names from the client's document

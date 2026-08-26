@@ -48,6 +48,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   is reachable from either the diagnostic or the token, because the two are
   regularly lines apart: a `use:` error carets the macro's name key.
 
+### Fixed
+
+- **EDITORS.md no longer under-promises on built-in macros.** It said the
+  `expect*` family has "no jump target and no hover"; the first half is true and
+  structural (their pack is compiled into the binary, so there is no file to
+  open), the second is not — a built-in is in the analysis like any other macro,
+  so hover answers with its pattern and params and names the pack as `builtin:…`,
+  which is exactly *why* the jump is unavailable. Pinned by a test, since the
+  page now claims it.
+
 ### Changed
 
 - **The editor stops re-analysing the suite on every keystroke.** Completion,
