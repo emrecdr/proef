@@ -17,6 +17,14 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
   (`[Options] variable:`) is left out: it needs no `bind:`, and binding it would
   be refused as `option_declared_twice`.
 - **Find-references** — every step across the suite that a given macro binds.
+- **Document symbols** — a feature outlines to its scenarios (tagged ones
+  showing their tags), a pack to its macros (detailed by the pattern each
+  matches). Which vocabulary applies is decided by what discovery found in the
+  file, not by its extension.
+- **Hover** — the macro a step binds, or a `use:` targets, with its pack,
+  pattern and params; on a `ref:`, the fragment's file and the variables still
+  needing a `bind:`. Every fact comes from the same analysis the diagnostics
+  do, so a hover can never contradict the squiggle on the same line.
 - **Quick fixes** — a misspelled name that already earned a "did you mean"
   becomes an applicable edit: `use:` and `ref:` targets, `with:` and `bind:`
   keys, step kinds, Examples placeholders, and data-table columns. A fix is
@@ -32,6 +40,17 @@ in (its working directory), discovering every `.feature` file and every
 `packs/*.yaml` / `packs/*.yml` macro pack beneath that root — the same
 resolution `proef test` uses, so the two never diverge. Launch your editor from
 the project root (or configure the server's root/working directory to it).
+
+## When analysis fails
+
+A panic inside analysis or a feature never ends the server. proef reports it
+once through `window/showMessage` — the channel an editor actually surfaces —
+and keeps serving; the next edit retries, and reports again only if the new
+state also fails. A server that died would show *nothing*, which reads as "proef
+has no opinion about this file" rather than as the failure it is.
+
+Running `proef lsp` by hand also prints the panic to stderr, which is where the
+detail lives.
 
 ## Naming the config: `--config`
 

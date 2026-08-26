@@ -81,12 +81,33 @@ impl core::marker::Unpin for proef_core::analyze::MacroRef
 impl core::marker::UnsafeUnpin for proef_core::analyze::MacroRef
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::MacroRef
 impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::MacroRef
+pub struct proef_core::analyze::ScenarioRef
+pub proef_core::analyze::ScenarioRef::feature: alloc::string::String
+pub proef_core::analyze::ScenarioRef::line: usize
+pub proef_core::analyze::ScenarioRef::name: alloc::string::String
+pub proef_core::analyze::ScenarioRef::tags: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for proef_core::analyze::ScenarioRef
+pub fn proef_core::analyze::ScenarioRef::clone(&self) -> proef_core::analyze::ScenarioRef
+impl core::cmp::Eq for proef_core::analyze::ScenarioRef
+impl core::cmp::PartialEq for proef_core::analyze::ScenarioRef
+pub fn proef_core::analyze::ScenarioRef::eq(&self, &proef_core::analyze::ScenarioRef) -> bool
+impl core::fmt::Debug for proef_core::analyze::ScenarioRef
+pub fn proef_core::analyze::ScenarioRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::analyze::ScenarioRef
+impl core::marker::Freeze for proef_core::analyze::ScenarioRef
+impl core::marker::Send for proef_core::analyze::ScenarioRef
+impl core::marker::Sync for proef_core::analyze::ScenarioRef
+impl core::marker::Unpin for proef_core::analyze::ScenarioRef
+impl core::marker::UnsafeUnpin for proef_core::analyze::ScenarioRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::analyze::ScenarioRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::analyze::ScenarioRef
 pub struct proef_core::analyze::SuiteAnalysis
 pub proef_core::analyze::SuiteAnalysis::bindings: alloc::vec::Vec<proef_core::analyze::Binding>
 pub proef_core::analyze::SuiteAnalysis::diagnostics: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<proef_core::diag::Diag>>
 pub proef_core::analyze::SuiteAnalysis::fragment_refs: alloc::vec::Vec<proef_core::analyze::FragmentRef>
 pub proef_core::analyze::SuiteAnalysis::fragments: alloc::vec::Vec<proef_core::analyze::FragmentDef>
 pub proef_core::analyze::SuiteAnalysis::macros: alloc::vec::Vec<proef_core::analyze::MacroRef>
+pub proef_core::analyze::SuiteAnalysis::scenarios: alloc::vec::Vec<proef_core::analyze::ScenarioRef>
 pub proef_core::analyze::SuiteAnalysis::use_refs: alloc::vec::Vec<proef_core::analyze::UseRef>
 impl core::default::Default for proef_core::analyze::SuiteAnalysis
 pub fn proef_core::analyze::SuiteAnalysis::default() -> proef_core::analyze::SuiteAnalysis

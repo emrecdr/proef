@@ -123,6 +123,26 @@ pub struct SuiteAnalysis {
     pub fragment_refs: Vec<FragmentRef>,
     /// Every fragment definition across the scanned files.
     pub fragments: Vec<FragmentDef>,
+    /// Every scenario across the discovered features, in authored order.
+    pub scenarios: Vec<ScenarioRef>,
+}
+
+/// One scenario, as an editor needs to list it: what it is called, where it
+/// starts, and what it is tagged.
+///
+/// Taken from the *parse*, not from binding, so a scenario whose steps do not
+/// resolve still appears — an outline that hides exactly the scenarios you are
+/// debugging would be worse than no outline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioRef {
+    /// Source name of the feature the scenario is defined in.
+    pub feature: String,
+    /// Scenario name, with outline placeholders already substituted.
+    pub name: String,
+    /// 1-based line of the scenario header.
+    pub line: usize,
+    /// Accumulated tags (feature + rule + scenario + examples), without `@`.
+    pub tags: Vec<String>,
 }
 
 /// Everything `analyze_suite` needs, injected at the IO edge (sans-IO core).
@@ -234,6 +254,15 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
                 continue; // parse failed → skip downstream, no cascade
             }
         };
+
+        for scenario in &file.scenarios {
+            out.scenarios.push(ScenarioRef {
+                feature: name.clone(),
+                name: scenario.name.clone(),
+                line: scenario.line,
+                tags: scenario.tags.clone(),
+            });
+        }
 
         let (bound, bind_diags) = bind::bind_collect(&file, &packs);
         out.push_diags(name, bind_diags);
