@@ -8,6 +8,19 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **The editor stops re-analysing the suite on every keystroke.** Completion,
+  go-to-definition and find-references each ran the whole pipeline from
+  scratch — read every pack and feature off the provider, parse, bind, lower —
+  and threw the result away; between two keystrokes none of those inputs have
+  changed, so the second run could only reproduce the first one's answer. The
+  server now holds the analysis and drops it exactly where an edit lands (the
+  same notification path that already marks the suite dirty), so one recompute
+  serves the debounced diagnostics publish *and* every request until the next
+  edit. Measured on the two-file test suite: 10 provider reads per request
+  before, none between edits after — pinned by a read-counting provider rather
+  than by timing, per the flake rule.
+
+
 - **The LSP's type layer moved to the maintained generator**: `lsp-types`
   0.97 (unmaintained since; the crate that shipped its own `fluent-uri`
   `Uri` newtype) is replaced by `gen-lsp-types` 0.11 under the same
