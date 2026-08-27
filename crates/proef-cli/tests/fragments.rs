@@ -682,6 +682,39 @@ fn unannotated_entries_are_inert() {
     );
 }
 
+/// Inert covers the entry's *prose* too. hurl attaches the comment lines above
+/// a request to that request, so a fragment bounded on the next request line
+/// rather than on the block above it copied its neighbour's documentation into
+/// the artifact — a comment describing a `DELETE` in a file with no `DELETE`,
+/// durable and misleading to whoever reads the run's output later.
+#[test]
+fn a_neighbours_prose_never_reaches_the_artifact() {
+    let hurl = format!(
+        "{CORPUS}\n# Destructive. Operators only.\nDELETE {{{{base}}}}/api/v1/admin/records/1\nHTTP 204\n"
+    );
+    let dir = project(&hurl, PACK);
+    std::fs::write(
+        dir.path().join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n\
+         [url]\nbase = \"http://example.test\"\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("proef")
+        .unwrap()
+        .current_dir(dir.path())
+        .env("NO_COLOR", "1")
+        .args(["artifacts", "tests/features", "-o", "out", "--run-id", "p"])
+        .assert()
+        .code(0);
+
+    let artifact = std::fs::read_to_string(dir.path().join("out/a--s.hurl")).unwrap();
+    assert!(
+        !artifact.contains("Destructive"),
+        "the comment introducing the next entry belongs to that entry: {artifact}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Provenance: what a run record says about where a request came from
 // ---------------------------------------------------------------------------

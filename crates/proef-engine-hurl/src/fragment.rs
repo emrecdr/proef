@@ -62,15 +62,28 @@ pub(crate) fn scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
 
     let lines: Vec<&str> = normalized.lines().collect();
     let starts: Vec<usize> = file.entries.iter().map(start_line).collect();
+    // Where each entry's *lines* begin, as opposed to where its request does.
+    // hurl attaches the blank and comment lines above a request to that
+    // request, so the two differ by exactly the prose a reader wrote to
+    // introduce it — and bounding a fragment on the next `starts` entry
+    // therefore handed it that prose. The gap between two entries documents
+    // the one below it and belongs to neither fragment.
+    let blocks: Vec<usize> = file.entries.iter().map(block_start).collect();
+    // Same rule past the last entry: a file's trailing terminators are its
+    // own, not a continuation of the request above them.
+    let after_last = file
+        .line_terminators
+        .first()
+        .map_or(lines.len() + 1, |lt| lt.space0.source_info.start.line);
     let mut out = Vec::with_capacity(file.entries.len());
     let mut unannotated = Vec::new();
 
     for (index, entry) in file.entries.iter().enumerate() {
         // An unannotated entry is not a fragment and nothing downstream can use
         // one, so only its line is kept — never a built-then-discarded
-        // `ScannedFragment`. The `starts` table above still covers it, which is
-        // what keeps an annotated entry's text ending where the *next* entry
-        // begins, named or not. A corpus proef did not write is mostly
+        // `ScannedFragment`. The `blocks` table above still covers it, which is
+        // what stops an annotated entry running on into the *next* entry,
+        // named or not. A corpus proef did not write is mostly
         // unannotated and the LSP re-scans it on every recompute, so this stays
         // a push rather than the majority of the work.
         let Some(name) = annotation(entry)? else {
@@ -78,12 +91,12 @@ pub(crate) fn scan(text: &str) -> Result<ScannedFile, FragmentScanError> {
             continue;
         };
         let start = starts[index];
-        // Each entry owns its lines up to where the next one begins, so no byte
-        // of the file belongs to two fragments or to none.
-        let end = starts
+        // A fragment runs from its annotation to the end of its own request and
+        // response — never into the block introducing whatever comes next.
+        let end = blocks
             .get(index + 1)
             .copied()
-            .unwrap_or(lines.len() + 1)
+            .unwrap_or(after_last)
             .min(lines.len() + 1);
         let body = lines
             .get(start.saturating_sub(1)..end.saturating_sub(1))
@@ -168,6 +181,20 @@ fn start_line(entry: &Entry) -> usize {
             || entry.request.space0.source_info.start.line,
             |comment| comment.source_info.start.line,
         )
+}
+
+/// The first line an entry occupies, counting the blank and comment lines hurl
+/// hands it — the boundary that ends the entry *above* it.
+///
+/// Distinct from [`start_line`] on purpose, and only ever used as an end. A
+/// fragment begins at its annotation, so the prose a reader wrote above that
+/// annotation to introduce the request is not part of it; neither is the prose
+/// above an unannotated neighbour. Both sit in the gap this returns the top of.
+fn block_start(entry: &Entry) -> usize {
+    entry.request.line_terminators.first().map_or_else(
+        || entry.request.space0.source_info.start.line,
+        |lt| lt.space0.source_info.start.line,
+    )
 }
 
 /// A scan error positioned at `comment` — the four sites below differ only in
@@ -443,6 +470,55 @@ mod tests {
         assert!(hurl_core::parser::parse_hurl_file(&scanned.fragments[0].text).is_ok());
     }
 
+    /// The prose above a request documents *that* request. hurl attaches it to
+    /// that request, and a fragment bounded on the request line rather than on
+    /// the block above it took the prose with it — writing a comment about the
+    /// `DELETE` into an artifact that does not contain the `DELETE`.
+    #[test]
+    fn a_fragment_stops_above_the_prose_introducing_the_next_entry() {
+        let scanned = scan(concat!(
+            "# @proef a\n",
+            "GET http://x\n",
+            "HTTP 200\n",
+            "\n",
+            "# prose about the DELETE below\n",
+            "DELETE http://y\n",
+            "HTTP 204\n",
+            "\n",
+            "# prose about b\n",
+            "# @proef b\n",
+            "GET http://z\n",
+            "HTTP 200\n",
+        ))
+        .unwrap();
+        assert_eq!(scanned.fragments.len(), 2);
+        // Neither the prose above an unannotated neighbour…
+        assert!(
+            !scanned.fragments[0].text.contains("DELETE below"),
+            "prose introducing the next entry is not part of this one: {}",
+            scanned.fragments[0].text
+        );
+        // …nor the prose above an annotated one, which the annotation's own
+        // start line would otherwise leave stranded on the fragment above.
+        assert!(
+            !scanned.fragments[0].text.contains("prose about b"),
+            "{}",
+            scanned.fragments[0].text
+        );
+        assert!(scanned.fragments[1].text.starts_with("# @proef b\n"));
+    }
+
+    /// The same rule at the end of the file: a trailing note is the file's, and
+    /// `trim_end` cannot drop it because a comment is not whitespace.
+    #[test]
+    fn a_fragment_stops_above_the_files_trailing_prose() {
+        let scanned = scan("# @proef t\nGET http://x\nHTTP 200\n\n# a trailing note\n").unwrap();
+        assert_eq!(
+            scanned.fragments[0].text,
+            "# @proef t\nGET http://x\nHTTP 200\n"
+        );
+    }
+
     #[test]
     fn a_retry_option_is_reported_for_the_double_declaration_check() {
         let scanned = scan("# @proef poll\nGET http://x\n[Options]\nretry: 3\nHTTP 200\n").unwrap();
@@ -685,6 +761,16 @@ mod properties {
                 prop_assert!(
                     fragment.text.starts_with(&format!("# @proef {}", fragment.name)),
                     "fragment text must start at its annotation: {:?}", fragment.text
+                );
+                // The generator's filler is the block *introducing* an entry,
+                // so no fragment may hold any of it — not its own (which sits
+                // above its annotation) and not its neighbour's (which the
+                // request-line boundary used to hand it). The request-count
+                // assertion above cannot see this: comments are not requests.
+                prop_assert!(
+                    !fragment.text.contains("# filler"),
+                    "fragment {} holds a block introducing an entry: {:?}",
+                    fragment.name, fragment.text
                 );
                 for family in &fragment.declared_options {
                     prop_assert!(
