@@ -585,22 +585,55 @@ fn parse_error_span(message: &str, source: &str) -> Option<Span> {
         .map(str::len)
         .sum();
     let line_text = source[line_start..].lines().next().unwrap_or("");
-    let byte_in_line = line_text
+    // The end is the *next char boundary*, not the next byte. The start is
+    // already char-counted; adding 1 to it landed inside a multi-byte codepoint
+    // whenever the error pointed at one, producing a span that is not a valid
+    // slice of its own source. miette happened to tolerate it and draw the
+    // caret a little to the left, and the LSP's converter snaps to a boundary
+    // defensively — so nothing crashed, and the span stayed wrong. Found by
+    // `fuzz_feature_parse`.
+    let (byte_in_line, char_len) = line_text
         .char_indices()
         .nth(col.saturating_sub(1))
-        .map_or(line_text.len(), |(idx, _)| idx);
+        .map_or((line_text.len(), 1), |(idx, ch)| (idx, ch.len_utf8()));
     Some(Span::clamped(
         line_start + byte_in_line,
-        line_start + byte_in_line + 1,
+        line_start + byte_in_line + char_len,
         source.len(),
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// A parse error pointing at a multi-byte character spans that whole
+    /// character, not its first byte.
+    ///
+    /// The column gherkin reports is char-counted, so the *start* was already
+    /// right; the end added one **byte** to it and landed inside the codepoint.
+    /// Nothing crashed — miette tolerated the span and drew the caret slightly
+    /// left, and the LSP converter snaps to a boundary on its own — which is
+    /// exactly why it survived: every consumer defended itself instead of the
+    /// producer being correct. `fuzz_feature_parse` found it; this is its
+    /// minimized input.
+    #[test]
+    fn a_parse_error_span_never_splits_a_codepoint() {
+        let source = String::from_utf8(vec![
+            13, 0, 0, 0, 0, 0, 0, 1, 0, 0, 51, 0, 64, 228, 181, 181, 10,
+        ])
+        .expect("valid utf-8");
+        let span = parse_error_span("Error at 1:14: {\"unknown keyword\"}", &source)
+            .expect("a located parse error");
+        assert!(
+            source.is_char_boundary(span.start) && source.is_char_boundary(span.end),
+            "span {span:?} must slice cleanly"
+        );
+        // It covers the whole character it points at.
+        assert_eq!(&source[span.start..span.end], "\u{4d75}");
+    }
 
     const FEATURE: &str = "@e2e @api\nFeature: Search\n\n  Background:\n    Given the api is available\n\n  @search\n  Scenario: Find a record\n    When I search for \"Jansen\"\n    Then the response status is 200\n\n  Scenario Outline: Statuses\n    When I check <path>\n    Then the response status is <status>\n\n    Examples:\n      | path | status |\n      | /a   | 200    |\n      | /b   | 404    |\n";
 

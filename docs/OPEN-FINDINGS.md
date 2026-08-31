@@ -294,8 +294,20 @@ report"; this section records the verdicts and what remains open.
   route through `StepKindSpec`; three JSONL read loops / six event folds
   (the truncated-totals fallback exists twice and disagrees between
   `explain` and the HTML report); the exclusive-tags scheduler and
-  `RecordGate` have no direct tests; `feature.rs` is the one user-input
-  parser with no fuzz target; `bake_entry_options` deserves a proptest;
+  `RecordGate` have no direct tests; `feature.rs` was the one
+  user-input parser with no fuzz target — **fixed**, and the target found a real
+  defect within a minute of first running: a parse error pointing at a
+  multi-byte character produced a span that split the codepoint (gherkin's
+  column is char-counted, so the start was right; the end added one *byte*).
+  Nothing crashed, which is why it survived — miette tolerated the span and drew
+  the caret slightly left, and the LSP's converter snaps to a boundary on its
+  own, so every consumer defended itself instead of the producer being correct.
+  The target asserts spans are in range *and* on char boundaries, which is what
+  makes it worth more than "did not panic". Related, recorded in the target
+  itself: `fuzz_tag_expr` could never have reached the stack overflow fixed
+  above — libFuzzer's default `-max_len` of 4096 bytes is about 585 chained
+  atoms and the overflow needed thousands, so a green run there was not
+  coverage of deep input. `bake_entry_options` deserves a proptest;
   fragment bodies swallow the next entry's leading prose comments.
 
 ### Needs a named decision (ADR question, not a patch)

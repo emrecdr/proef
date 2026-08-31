@@ -37,6 +37,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "fuzz_feature_parse"
+path = "fuzz_targets/fuzz_feature_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "fuzz_tag_expr"
 path = "fuzz_targets/fuzz_tag_expr.rs"
 test = false
