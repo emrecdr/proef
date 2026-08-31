@@ -21,18 +21,17 @@ pub fn report(
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
     };
-    let events_path = record_dir.join("events.jsonl");
-    let text = match std::fs::read_to_string(&events_path) {
-        Ok(text) => text,
+    // Through `record::read_events` — the same reader the base record below
+    // already uses, and the only one carrying the record-size ceiling. It
+    // returns the parsed events, which is exactly the read-once/parse-once
+    // this needs.
+    let events: Vec<Event> = match crate::record::read_events(&record_dir) {
+        Ok(events) => events,
         Err(err) => {
-            crate::render::errln!("error: cannot read {}: {err}", events_path.display());
+            crate::render::errln!("error: {err}");
             return ExitCode::UserError;
         }
     };
-    let events: Vec<Event> = text
-        .lines()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect();
     // Read once, parse once: `render_html` needs the raw events (steps,
     // timing, detail — pruned out of `Record`) and completion needs
     // `parse_record`'s fold over the same events, not a second

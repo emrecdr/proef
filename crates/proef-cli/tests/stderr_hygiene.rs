@@ -15,6 +15,9 @@
 //! first written for. One implementation of the rule scans both crates,
 //! rather than a second copy of this test living under `proef-lsp`.
 //!
+//! The third: nothing opens a run record except `record::read_events`, which
+//! is where the record-size ceiling lives.
+//!
 //! This lives in `tests/` rather than a `#[cfg(test)] mod` inside `src/` for a
 //! correctness reason, not a stylistic one: a source-scanning assertion placed
 //! inside its own scan target would match its own needle.
@@ -130,6 +133,60 @@ fn user_facing_plurals_are_never_a_malformed_parenthetical() {
         offenders.is_empty(),
         "a stem-changing plural cannot be written parenthetically — the singular it \
          offers is not a word. Spell both endings with `plural(n, \"y\", \"ies\")`:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+/// A run record is opened through `record::read_events` and nowhere else.
+///
+/// That function carries the 256 MiB ceiling, and its own comment explains
+/// why: the read, the line split and the parsed `Vec<Event>` are resident at
+/// once, so a corrupt or hostile file is an OOM rather than an error. Records
+/// travel — `diff` reads a downloaded baseline, `flaky` reads every retained
+/// run — so the input is not one proef necessarily wrote.
+///
+/// The ceiling reached two of its four readers. `explain` and `report` each
+/// opened `events.jsonl` with a bare `read_to_string`, so neither had it —
+/// `report` even used the guarded reader for the *base* record two dozen lines
+/// below the raw read of the primary one. Nothing was wrong with either patch;
+/// the guard was simply added in one place and left for the next call site to
+/// rediscover. This scan is what makes that impossible: a fifth reader has to
+/// go through the same door.
+#[test]
+fn a_run_record_is_only_ever_opened_by_the_reader_that_bounds_it() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    rust_sources(&manifest.join("src"), &mut files);
+    assert!(!files.is_empty(), "no Rust sources found");
+
+    let mut offenders = Vec::new();
+    for file in &files {
+        // `record.rs` *is* the bounded reader.
+        if file.file_name().is_some_and(|name| name == "record.rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(file).expect("readable source file");
+        for (index, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // The record's own file name next to a raw read is the shape:
+            // either on one line, or a `read_to_string` of a path built from
+            // it. Both spellings appeared in the two sites this caught.
+            if line.contains("events.jsonl")
+                && (text.contains("read_to_string(&events_path)")
+                    || line.contains("read_to_string"))
+            {
+                offenders.push(format!("{}:{}", file.display(), index + 1));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "a run record must be read through `record::read_events`, which is \
+         where the size ceiling lives \u{2014} these open it directly:\n  {}",
         offenders.join("\n  ")
     );
 }
