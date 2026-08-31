@@ -55,13 +55,13 @@ enum OutputFormat {
     Tap,
 }
 
-/// `--format` for the listing commands (`flows`, `macros`, `fragments`,
-/// `flaky`): `json` is the only machine format they speak, and a
-/// single-variant enum lets clap say exactly that — the shared enum
-/// advertised `tap` in their help while `json_only` rejected it at runtime,
-/// help text lying about a quarter of the command surface.
+/// `--format` for every command whose only machine format is JSON (`flows`,
+/// `macros`, `fragments`, `flaky`, `explain`, `diff`, `doctor`): a
+/// single-variant enum lets clap say exactly that — the shared
+/// [`OutputFormat`] advertised `tap` in their help while the runtime rejected
+/// it, help text lying about a quarter of the command surface.
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum ListFormat {
+enum JsonFormat {
     /// One JSON object per row to stdout
     Json,
 }
@@ -179,7 +179,7 @@ enum Command {
         path: Option<PathBuf>,
         /// Machine format: `json` prints one object per scenario
         #[arg(long, value_enum)]
-        format: Option<ListFormat>,
+        format: Option<JsonFormat>,
     },
     /// List every macro with the sentence it binds and its call count, flagging pattern macros nothing binds
     Macros {
@@ -187,7 +187,7 @@ enum Command {
         path: Option<PathBuf>,
         /// Machine format: `json` prints one object per macro
         #[arg(long, value_enum)]
-        format: Option<ListFormat>,
+        format: Option<JsonFormat>,
     },
     /// List the .hurl fragment corpus with how many scenarios run each entry, flagging ones nothing reaches
     Fragments {
@@ -195,7 +195,7 @@ enum Command {
         path: Option<PathBuf>,
         /// Machine format: `json` prints one object per entry
         #[arg(long, value_enum)]
-        format: Option<ListFormat>,
+        format: Option<JsonFormat>,
         /// Exit 1 when a fragment exists that no scenario runs
         #[arg(long)]
         check: bool,
@@ -229,7 +229,11 @@ enum Command {
         dir: Option<PathBuf>,
     },
     /// Check native libraries and environment prerequisites for all registered engines
-    Doctor,
+    Doctor {
+        /// Machine format: `json` prints one object of checks
+        #[arg(long, value_enum)]
+        format: Option<JsonFormat>,
+    },
     /// Shell completion script to stdout: `proef completions zsh >
     /// "${fpath[1]}/_proef"` (hidden from help; documented in INSTALL)
     #[command(hide = true)]
@@ -250,13 +254,16 @@ enum Command {
         /// Run id (default: the latest run)
         #[arg(value_parser = parse_run_id)]
         run_id: Option<String>,
+        /// Machine format: `json` prints one summary object
+        #[arg(long, value_enum)]
+        format: Option<JsonFormat>,
     },
     /// Flakiness verdicts over the retained run history: flapping,
     /// passes-only-on-retry, always-failing
     Flaky {
         /// Machine format: `json` prints one object per scenario
         #[arg(long, value_enum)]
-        format: Option<ListFormat>,
+        format: Option<JsonFormat>,
         /// Split the history by run context: a `[meta]`/`--meta` key, or `env`
         #[arg(long = "by", value_name = "KEY")]
         by: Option<String>,
@@ -272,6 +279,9 @@ enum Command {
         /// Exit 1 when a scenario regressed (passed → failed), for CI gating
         #[arg(long)]
         fail_on_regression: bool,
+        /// Machine format: `json` prints one comparison object
+        #[arg(long, value_enum)]
+        format: Option<JsonFormat>,
     },
     /// Write a self-contained HTML report for a run from its event record
     Report {
@@ -784,7 +794,7 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Command::Doctor => {
+        Command::Doctor { format } => {
             // Lenient about *discovery*, like `proef lsp`: `doctor` reports on
             // the environment and must run anywhere, including outside a
             // project, where no config and no suite simply means there are no
@@ -800,6 +810,7 @@ fn main() -> std::process::ExitCode {
                     &config.runs_dir(),
                     config_error.as_deref(),
                     &commands::naming(&config),
+                    format.is_some(),
                 ),
             }
         }
@@ -839,8 +850,8 @@ fn main() -> std::process::ExitCode {
         // error" — they each carried their own copy of that rendering. Loud,
         // not lenient: a config that silently defaulted `runs-dir` would
         // misdiagnose "no runs" (same reasoning as `test`, exec.rs).
-        Command::Explain { run_id } => match load_config(config_path) {
-            Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref()),
+        Command::Explain { run_id, format } => match load_config(config_path) {
+            Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref(), format.is_some()),
             Err(code) => code,
         },
         Command::Flaky { format, by } => {
@@ -854,12 +865,14 @@ fn main() -> std::process::ExitCode {
             base,
             new,
             fail_on_regression,
+            format,
         } => match load_config(config_path) {
             Ok(config) => diff::diff(
                 &config.runs_dir(),
                 base.as_deref(),
                 new.as_deref(),
                 fail_on_regression,
+                format.is_some(),
             ),
             Err(code) => code,
         },

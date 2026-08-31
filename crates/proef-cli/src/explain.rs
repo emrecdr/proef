@@ -13,7 +13,15 @@ use proef_core::step::Status;
 use crate::record::{self, RunCompletion};
 
 /// Explain the named run (or the latest) from `.proef-runs/`.
-pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
+///
+/// `machine` swaps the prose for one JSON object carrying the same facts.
+/// It exists because the alternative was worse: a run directory is
+/// `artifacts/ + events.jsonl + run.log` and holds no structured summary, so
+/// anything analysing a run it did not launch had to fold `events.jsonl`
+/// itself — and that fold is exactly the one proef's own two copies disagreed
+/// on three ways before `report::suite_totals` unified them. Handing the
+/// canonical answer over is cheaper than inviting everyone to re-derive it.
+pub fn explain(runs_root: &Path, run_id: Option<&str>, machine: bool) -> ExitCode {
     let Some(record_dir) = record::resolve_dir(runs_root, run_id) else {
         crate::render::errln!("error: no run records under {}", runs_root.display());
         return ExitCode::UserError;
@@ -70,14 +78,22 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
         }
     }
 
-    crate::render::outln!(
-        "run {} — {}",
-        record_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default(),
-        record_dir.display()
-    );
+    let id = record_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+
+    if machine {
+        return machine_summary(
+            &events,
+            &rec,
+            record_dir.as_path(),
+            id,
+            (passed, failed, skipped, steps, attempts),
+        );
+    }
+
+    crate::render::outln!("run {id} — {}", record_dir.display());
     if let Some(env) = &rec.env {
         crate::render::outln!("env: {env}");
     }
@@ -139,6 +155,74 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
         );
     }
     ExitCode::Success
+}
+
+/// The same summary as one JSON object on stdout.
+///
+/// Mirrors the prose field for field rather than modelling a richer view: the
+/// prose is the contract a reader already knows, and a machine surface that
+/// says something *different* is a second answer to one question. Emitted with
+/// `outln!`, so a closed pipe reaches the exit code like every other sink.
+fn machine_summary(
+    events: &[Event],
+    rec: &record::Record,
+    record_dir: &Path,
+    id: &str,
+    totals: (usize, usize, usize, usize, u64),
+) -> ExitCode {
+    let (passed, failed, skipped, steps, attempts) = totals;
+    let failures = failure_detail(events);
+    let scenario_rows = |want: Status| -> Vec<serde_json::Value> {
+        rec.scenarios
+            .iter()
+            .filter(|(_, run)| run.status == want)
+            .map(|(key, run)| {
+                let mut row = serde_json::json!({
+                    "file": key.0,
+                    "scenario": key.1,
+                    "phase": run.phase,
+                    "tags": run.tags,
+                });
+                if want == Status::Failed {
+                    row["detail"] =
+                        serde_json::json!(failures.get(key).cloned().unwrap_or_default());
+                } else if let Some(reason) = &run.reason {
+                    row["reason"] = serde_json::json!(reason);
+                }
+                row
+            })
+            .collect()
+    };
+    let body = serde_json::json!({
+        "run_id": id,
+        "dir": record_dir.display().to_string(),
+        "env": rec.env,
+        "metadata": rec.metadata,
+        // The two conditions the prose warns about, as booleans a gate can
+        // read: a truncated record whose totals are counted rather than read,
+        // and a pre-0.6.0 one whose recorded totals meant something else.
+        "complete": rec.completion != RunCompletion::Incomplete,
+        "legacy_per_phase_totals": rec.legacy_multi_pair,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "steps": steps,
+        "attempts": attempts,
+        "failures": scenario_rows(Status::Failed),
+        "skips": scenario_rows(Status::Skipped),
+        "artifacts": record_dir.join("artifacts").display().to_string(),
+        "log": record_dir.join("run.log").display().to_string(),
+    });
+    match serde_json::to_string_pretty(&body) {
+        Ok(text) => {
+            crate::render::outln!("{text}");
+            ExitCode::Success
+        }
+        Err(err) => {
+            crate::render::errln!("error: cannot render the summary as JSON: {err}");
+            ExitCode::SystemError
+        }
+    }
 }
 
 /// `(file, scenario) -> per-step failure lines` (`file:line`, message,

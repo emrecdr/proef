@@ -6,6 +6,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`explain`, `diff` and `doctor` speak `--format json`.** They were the three
+  commands with no machine output, and the three a consumer reaches for
+  *after* a run. A run directory is `artifacts/ + events.jsonl + run.log` and
+  carries no structured summary, so anything analysing a run it did not launch
+  — a CI job reading another job's artifact, a script, an agent — had to fold
+  `events.jsonl` itself. That is the fold proef's own two internal copies
+  disagreed on three ways before `report::suite_totals` unified them; handing
+  the canonical answer over is cheaper than inviting everyone to re-derive the
+  one proef got wrong.
+
+  Each object mirrors its prose field for field rather than modelling a richer
+  view — the prose is the contract a reader already knows, and a machine
+  surface that says something *different* is a second answer to one question.
+  `diff`'s `flaky`/`slower` stay the rendered sentences for the same reason.
+  The flag is the existing single-variant `json` enum the listing commands
+  already use, renamed from `ListFormat` to `JsonFormat` now that it serves
+  non-listing commands too. Machine mode owns stdout: notes whose content the
+  object already carries are suppressed rather than repeated on stderr.
+
+  `doctor` needed a real change to get there — it printed each check as it ran,
+  so the verdict was the only thing a caller could see. Checks are collected
+  before rendering now, which makes the JSON a second *rendering* rather than a
+  second walk: the failure mode where one surface gains a check the other never
+  learns about.
+
 ### Fixed
 
 - **`cargo deny` failed on a yanked transitive crate.** `rand 0.10.2` resolved

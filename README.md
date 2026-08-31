@@ -268,14 +268,14 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--format json`) |
 | `proef fragments [path]` | list the `[run] fragments` corpus with how many scenarios actually run each entry — naming both ways a fragment dies (no macro refs it; only a macro nothing binds does) and the entries carrying no `# @proef` at all (`--check`, `--require-annotated`, `--format json`) |
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`-o`/`--output` names the directory; `--env`) |
-| `proef explain [run-id]` | summarize a run from its event record |
-| `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
+| `proef explain [run-id]` | summarize a run from its event record (`--format json`) |
+| `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating, `--format json`) |
 | `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing, plus quarantine's own two failure modes; `--by <key>` splits the history per environment or `[meta]` value (`--format json`) |
 | `proef report [run-id]` | write a self-contained HTML report for a run (`-o`/`--output` FILE) |
 | `proef schema` | print/install the pack JSON Schema, `--add-to` wiring it into an editor config (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
 | `proef fmt <path>` | canonicalize raw hurl blocks inside packs (`--check` for CI) |
-| `proef doctor` | native library, environment, and secret store/key checks |
+| `proef doctor` | native library, environment, and secret store/key checks (`--format json`) |
 | `proef lsp` | language server over stdio — diagnostics, go-to-definition, completion, references (see [`docs/EDITORS.md`](docs/EDITORS.md)) |
 
 **Exit codes are a contract:** `0` ok · `1` test failure (incl. cancelled runs) ·

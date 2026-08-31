@@ -161,6 +161,137 @@ fn schema_check(suite: Option<&Path>) -> (DoctorStatus, String) {
 ///
 /// Exit code: `0` when nothing failed (warnings allowed), `3` when any check
 /// failed — a broken environment is a system fault (ADR-0009).
+/// One `doctor` check, collected before it is rendered.
+struct DoctorRow {
+    /// Which block it belongs to (`engine:hurl`, `project`, …) — the prose
+    /// prints these as headers, the JSON groups by them.
+    section: String,
+    name: String,
+    status: DoctorStatus,
+    detail: String,
+}
+
+/// Collects `doctor`'s checks and renders them once, as prose or as JSON.
+///
+/// The two used to be impossible to keep in step because there was only one:
+/// every check printed itself as it ran, so the verdict was the only thing a
+/// caller could see. Collecting first makes the machine format a second
+/// *rendering*, never a second walk — the failure mode where one surface
+/// gains a check the other never learns about.
+struct Doctor {
+    rows: Vec<DoctorRow>,
+    worst: DoctorStatus,
+    machine: bool,
+    section: String,
+}
+
+impl Doctor {
+    fn new(machine: bool) -> Self {
+        Self {
+            rows: Vec::new(),
+            worst: DoctorStatus::Pass,
+            machine,
+            section: String::new(),
+        }
+    }
+
+    /// The document title — prose only; JSON's shape says what it is.
+    fn title(&mut self, text: &str) {
+        if !self.machine {
+            crate::render::outln!("{text}");
+        }
+    }
+
+    /// Open a block. `heading` is what a reader sees, `key` what a consumer
+    /// groups on — they differ because a heading naming the engine in
+    /// backticks is prose, not an identifier.
+    fn section(&mut self, heading: &str, key: &str) {
+        key.clone_into(&mut self.section);
+        if !self.machine {
+            crate::render::outln!("\n{heading}:");
+        }
+    }
+
+    /// A line with no check behind it (an engine contributing none).
+    fn note(&mut self, text: &str) {
+        if !self.machine {
+            crate::render::outln!("{text}");
+        }
+    }
+
+    fn row(&mut self, name: &str, status: DoctorStatus, detail: &str) {
+        if !self.machine {
+            let glyph = match status {
+                DoctorStatus::Pass => "ok  ",
+                DoctorStatus::Warn => "warn",
+                DoctorStatus::Fail => "FAIL",
+            };
+            crate::render::outln!("  [{glyph}] {name:<24} {detail}");
+        }
+        self.worst = self.worst.max(status);
+        self.rows.push(DoctorRow {
+            section: self.section.clone(),
+            name: name.to_owned(),
+            status,
+            detail: detail.to_owned(),
+        });
+    }
+
+    /// Render the verdict and return the exit code: `0` when nothing failed
+    /// (warnings allowed), `3` when any check failed (ADR-0009).
+    fn finish(self) -> ExitCode {
+        let (verdict, code) = match self.worst {
+            DoctorStatus::Pass => ("all checks passed", ExitCode::Success),
+            DoctorStatus::Warn => ("usable, with warnings", ExitCode::Success),
+            DoctorStatus::Fail => (
+                "environment is not ready — see failed checks above",
+                ExitCode::SystemError,
+            ),
+        };
+        if !self.machine {
+            crate::render::outln!("\n{verdict}");
+            return code;
+        }
+        let word = |status: DoctorStatus| match status {
+            DoctorStatus::Pass => "pass",
+            DoctorStatus::Warn => "warn",
+            DoctorStatus::Fail => "fail",
+        };
+        let body = serde_json::json!({
+            "status": word(self.worst),
+            "verdict": verdict,
+            "exit_code": code as u8,
+            "checks": self
+                .rows
+                .iter()
+                .map(|row| {
+                    serde_json::json!({
+                        "section": row.section,
+                        "name": row.name,
+                        "status": word(row.status),
+                        "detail": row.detail,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        });
+        match serde_json::to_string_pretty(&body) {
+            Ok(text) => {
+                crate::render::outln!("{text}");
+                code
+            }
+            Err(err) => {
+                crate::render::errln!("error: cannot render the checks as JSON: {err}");
+                ExitCode::SystemError
+            }
+        }
+    }
+}
+
+// Every argument is a distinct thing to check, and grouping them into a
+// struct only to satisfy the lint would put a type between the caller's
+// config and the checks with nothing else to do — the same call the engine
+// seam's `emit_step` and the runner's `spawn_scenario` already make.
+#[allow(clippy::too_many_arguments)]
 pub fn doctor(
     engines: &[Box<dyn EngineFactory>],
     suite: Option<&Path>,
@@ -169,29 +300,25 @@ pub fn doctor(
     runs_dir: &Path,
     config_error: Option<&str>,
     naming: &front::SourceNaming,
+    machine: bool,
 ) -> ExitCode {
-    fn row(worst: &mut DoctorStatus, name: &str, status: DoctorStatus, detail: &str) {
-        let glyph = match status {
-            DoctorStatus::Pass => "ok  ",
-            DoctorStatus::Warn => "warn",
-            DoctorStatus::Fail => "FAIL",
-        };
-        crate::render::outln!("  [{glyph}] {name:<24} {detail}");
-        *worst = (*worst).max(status);
-    }
+    // Rows are collected before they are rendered, so the prose and the JSON
+    // are two renderings of one list rather than two walks of the checks.
+    let mut doc = Doctor::new(machine);
 
-    let mut worst = DoctorStatus::Pass;
-
-    crate::render::outln!("proef doctor");
+    doc.title("proef doctor");
     for engine in engines {
-        crate::render::outln!("\nengine `{}`:", engine.id());
+        doc.section(
+            &format!("engine `{}`", engine.id()),
+            &format!("engine:{}", engine.id()),
+        );
         let checks = engine.doctor();
         if checks.is_empty() {
-            crate::render::outln!("  (no checks contributed)");
+            doc.note("  (no checks contributed)");
         }
         for check in checks {
             let result = (check.run)();
-            row(&mut worst, check.name, result.status, &result.detail);
+            doc.row(check.name, result.status, &result.detail);
         }
     }
 
@@ -201,20 +328,14 @@ pub fn doctor(
     // diagnosis. An absent `proef.toml` stays a non-finding (`doctor` must
     // run anywhere); one that is present and unparseable is a Fail so every
     // row below is understood to have run against defaults.
-    crate::render::outln!("\nproject:");
+    doc.section("project", "project");
     if let Some(error) = config_error {
-        row(&mut worst, "proef.toml", DoctorStatus::Fail, error);
+        doc.row("proef.toml", DoctorStatus::Fail, error);
     }
     match suite {
-        None => row(
-            &mut worst,
-            "suite",
-            DoctorStatus::Pass,
-            "no suite configured",
-        ),
+        None => doc.row("suite", DoctorStatus::Pass, "no suite configured"),
         Some(path) => match front::discover_features(path) {
-            Ok(features) => row(
-                &mut worst,
+            Ok(features) => doc.row(
                 "suite",
                 DoctorStatus::Pass,
                 &format!(
@@ -223,7 +344,7 @@ pub fn doctor(
                     path.display()
                 ),
             ),
-            Err(err) => row(&mut worst, "suite", DoctorStatus::Fail, &format!("{err}")),
+            Err(err) => doc.row("suite", DoctorStatus::Fail, &format!("{err}")),
         },
     }
     // Warn, never Fail: the engine is embedded, so a run needs no `hurl`
@@ -244,38 +365,25 @@ pub fn doctor(
                 .to_owned(),
         ),
     };
-    row(&mut worst, "hurl on PATH", status, &detail);
+    doc.row("hurl on PATH", status, &detail);
     let (status, detail) = probe_runs_dir(runs_dir);
-    row(&mut worst, "runs dir", status, &detail);
+    doc.row("runs dir", status, &detail);
 
     // CLI-owned checks: neither the pack schema nor the secret machinery is
     // engine-contributed, but both gate authoring and runs just the same.
-    crate::render::outln!("\nauthoring:");
+    doc.section("authoring", "authoring");
     let (status, detail) = schema_check(suite);
-    row(&mut worst, "pack schema", status, &detail);
+    doc.row("pack schema", status, &detail);
     if let Some((status, detail)) = fragment_check(fragments, naming) {
-        row(&mut worst, "fragments", status, &detail);
+        doc.row("fragments", status, &detail);
     }
 
-    crate::render::outln!("\nsecrets:");
+    doc.section("secrets", "secrets");
     for (status, name, detail) in crate::secretstore::doctor_checks(secrets) {
-        row(&mut worst, name, status, &detail);
+        doc.row(name, status, &detail);
     }
 
-    match worst {
-        DoctorStatus::Pass => {
-            crate::render::outln!("\nall checks passed");
-            ExitCode::Success
-        }
-        DoctorStatus::Warn => {
-            crate::render::outln!("\nusable, with warnings");
-            ExitCode::Success
-        }
-        DoctorStatus::Fail => {
-            crate::render::outln!("\nenvironment is not ready — see failed checks above");
-            ExitCode::SystemError
-        }
-    }
+    doc.finish()
 }
 
 /// Can the run record actually be written? A doctor that never touches the
