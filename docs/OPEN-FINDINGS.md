@@ -219,12 +219,41 @@ report"; this section records the verdicts and what remains open.
   than a setting.
 - **Wave 7, features:** `@quarantine` owner/expiry as authored tag data +
   `flaky` staleness lints + the broken-vs-flaky discrimination (a 100%-
-  failing quarantined scenario is disabled, not flaky); `retry_if`
-  early-exit and `Retry-After`-aware backoff (ADR-0007 refinements);
-  derived-secret tracking (a hashed secret defeats needle scanning by
-  construction — pairs with #116); a published JSON Schema for
-  `proef.toml`; per-`[meta]` flaky contexts; a whitespace-only-diff note in
-  assertion failures.
+  failing quarantined scenario is disabled, not flaky) — **shipped**, and it
+  needed the record reader to stop dropping the `tags` the event had carried
+  since 0.15.0; a published JSON Schema for `proef.toml` — **shipped** as
+  `proef schema config`; a whitespace-only-diff note in assertion failures —
+  **shipped**, off hurl's structured `actual`/`expected` rather than its prose.
+  Still open: per-`[meta]` flaky contexts.
+
+  Two items were validated and are **not** patches:
+
+  - **`retry_if` early-exit and `Retry-After`-aware backoff are blocked
+    upstream, not unscheduled.** hurl 8.0.1 has no `Retry-After` handling at
+    all (`grep -ri retry.after` over its `src/` is empty) and retries inside
+    `run_request`, called from `run_entries`
+    (`hurl-8.0.1/src/runner/hurl_file.rs`) with a fixed `retry_interval`
+    (`runner_options.rs:122`, defaulted to 1s). The one hook it exposes is
+    `EventListener::on_entry_running(current, last, retry_count)`
+    (`src/runner/event.rs:21-27`) — a `&self` notification *before* an attempt,
+    carrying no response and returning nothing, so it can neither read a
+    `Retry-After` header nor lengthen the wait. The only two routes are an
+    upstream change (extend the listener, or teach hurl the header — an
+    ADR-0003 upstream-PR candidate) or driving retries in proef, which means
+    one entry per `run_entries` call and abandons the maximal batching
+    TECH-SPEC §5 established from measurement. Neither is a patch this worklist
+    can carry.
+
+  - **Derived-secret tracking is declined, and the code already said why.**
+    `Redactions`' doc comment scopes the needle set to "the reversible
+    transforms that actually occur at HTTP boundaries" (base64 ×4, hex ×2,
+    percent, JSON escape). The remaining gap is a *hashed* reflection, and a
+    hash of a secret is not a credential: it authenticates nothing, and against
+    a high-entropy token it is not even a useful guess-verifier. Adding hash
+    needles would buy that narrow case at the cost of a crypto dependency and a
+    permanently larger needle list, against a scope decision that was made
+    deliberately. Reopen it only with a concrete case where a reflected digest
+    was itself usable.
 - **Performance (recorded, unscheduled):** pack validation is quadratic
   and measured (24.9 s at 3200 macros, profiler-attributed to the
   per-macro `locate` rescans); `captures_before` O(steps²); redaction runs
