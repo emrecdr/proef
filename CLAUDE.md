@@ -285,6 +285,42 @@ build requirement).
       everything additive. Breaking (library): the JUnit identity change plus
       field additions across `ScenarioSpec`/`ScenarioOutcome`/`Event`,
       `render_html`/`write_junit`/`ConsoleReporter::new` signatures
+- [x] the deep improvement report — waves 1–8 (#112–#142), one programme run
+      to exhaustion: wave-1 correctness (#112–#116); CI-sink conformance —
+      JUnit detail into element content, an XML-1.0 control-char boundary,
+      real limits on the GitHub sinks (#118); UX — console colour, completions
+      and a man page in every archive, a project-aware `doctor`, a linkable and
+      filterable HTML report, and the **`--format` / `-o` split** (#119–#122,
+      breaking); diagnostics — carets on the defect, parser prose from the
+      parsers, `proef.toml` inside the diagnostic system, codes that lead
+      somewhere (#123–#125); docs and distribution — an install page, `.sha256`
+      sidecars, a README a prospect can run (#126–#128); the LSP wave —
+      `lsp-types` → `gen-lsp-types`, one analysis per edit rather than per
+      keystroke, quick-fix code actions off a structured `Diag::fix`, document
+      symbols, hover, and a panic guard on both message-loop entry points
+      (#129–#132, the analysis cache landing as #146 after a `--delete-branch`
+      auto-closed its original); features — quarantine's own two failure modes,
+      a whitespace-only diff note off hurl's structured `actual`/`expected`,
+      `proef schema config`, `flaky --by` (#133–#137); performance and fuzz —
+      pack validation made linear (65× at 3200 macros), a `--tags` expression
+      that aborted the process on a stack overflow, the last unfuzzed parser
+      (#138–#141)
+- [x] round 19 (#143–#145, #147–#150) — the shape the earlier waves
+      missed: the data model held the right information and the **surfaces**
+      lost it. A step's authored
+      `name:` reached the artifact and nothing else, so one sentence lowering to
+      several engine steps printed as identical rows — the pinned event snapshot
+      had been encoding the defect (#143). `proef report -o` wrote the author's
+      home directory into the one output built to be shared, `--skip` failed
+      WCAG AA (and every dark-mode pill did), and the page had one heading
+      (#144). `explain`/`diff`/`doctor` gained `--format json`, so no consumer
+      re-derives the fold proef's own two copies disagreed on three ways (#145).
+      The worklist itself was stale in five places, including a "~290 lines of
+      hurl grammar in core" that measures 19 in production (#148). Then
+      `--console failed` (#147), redaction moved out of the reporter mutex
+      (#149), and the 256 MiB record ceiling reached the two of four readers it
+      had missed (#150). Breaking (library): `StepOutcome` and
+      `Event::StepFinished` gain `label`; event schema stays 1 (additive)
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

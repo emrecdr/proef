@@ -1,8 +1,11 @@
 # proef — Improvement Plan
 
-**Status:** Round 1 (§1–§11) largely shipped; Round 2 (§12) — **Batches E, F & most of G
-shipped** (N2·N6a·N9·N8·N7·N4·N6b·N3; N1 deferred per ADR-0013) · **Date:** 2026-07-31,
-appended 2026-08-02 · **Owner:** Emre
+**Status:** complete. Round 1 (§1–§11) and Round 2 (§12) are both shipped — every
+batch (N2·N6a·N9·N8·N7·N4·N6b·N3), with N1 deferred per ADR-0013, N5 rejected, and the
+OpenAPI generator settled in ADR-0016. This file is the **historical** feature roadmap
+and its file:line citations are from 2026-07/08; the live worklist is
+[OPEN-FINDINGS](OPEN-FINDINGS.md) and the running ledger is `CLAUDE.md`'s Status block.
+· **Date:** 2026-07-31, appended 2026-08-02, closed 2026-08-31 · **Owner:** Emre
 **Companion docs:** [PRD](PRD.md) (scope + the binding **non-goals**, §3), [adr/](README.md#decision-log-adr-index) (the
 invariants every item must respect), [TECH-SPEC](TECH-SPEC.md) (types/pipeline),
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) (milestones + definition of done).
