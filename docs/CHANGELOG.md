@@ -8,6 +8,23 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`explain` and the HTML report disagreed about a truncated run's totals.**
+  A record with no tail `run_finished` — a run killed mid-flight — is
+  reconstructed by counting, and each surface carried its own version of that
+  fallback. On the same bytes they differed three ways: the report dropped
+  `Warned` scenarios from every column, counted `[run] setup`/`teardown`
+  scenarios into a headline its own page labels "excluded from totals above",
+  and read a pre-0.6.0 record's per-phase totals as the suite verdict where
+  `explain` correctly declined to. One `proef_core::report::suite_totals` now
+  holds the rule — prefer the tail event unless it cannot be trusted, else
+  count suite scenarios with `Warned` riding along with `Passed`, exactly as
+  the live path reports — and both surfaces call it.
+
+  Also un-splices three doc comments in `html.rs` that an earlier change had
+  merged into one, leaving `render_tag_table` and `render_timeline` undocumented
+  and `render_provenance_and_summary` carrying all three.
+
+
 - **A parse error pointing at a non-ASCII character produced a span that split
   the codepoint.** gherkin reports a char-counted column, so the span's *start*
   was correct; its end added one **byte** to that, landing inside a multi-byte

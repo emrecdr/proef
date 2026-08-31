@@ -43,35 +43,14 @@ pub fn explain(runs_root: &Path, run_id: Option<&str>) -> ExitCode {
     // suite — so reading them under today's meaning reports the wrong verdict
     // with full confidence. Fall back to counting the scenarios present, the
     // same path a truncated record already takes.
-    let (passed, failed, skipped) =
-        if let Some(totals) = rec.totals.filter(|_| !rec.legacy_multi_pair) {
-            (totals.passed, totals.failed, totals.skipped)
-        } else {
-            let count = |want: &[Status]| {
-                rec.scenarios
-                    .values()
-                    // Suite scenarios only — the totals this fallback stands in
-                    // for exclude `[run] setup`/`teardown` (ADR-0014), and a
-                    // truncated record that died mid-setup would otherwise fold
-                    // the phase into the headline three lines above the label
-                    // saying it is excluded (R17-2.6; `is_suite` is the same
-                    // filter every other record consumer uses since #72).
-                    .filter(|run| run.is_suite())
-                    .filter(|run| want.contains(&run.status))
-                    .count()
-            };
-            // `Warned` counts with `Passed`, exactly as the live path does
-            // (`RunSummary::passed` is "passed, warnings allowed"). Counting
-            // only the three other variants dropped a warned scenario from
-            // every column, so a fallback total silently disagreed with the
-            // run it was reconstructing — and `optional:` steps exist
-            // precisely so a scenario can warn and still pass.
-            (
-                count(&[Status::Passed, Status::Warned]),
-                count(&[Status::Failed]),
-                count(&[Status::Skipped]),
-            )
-        };
+    let (passed, failed, skipped) = proef_core::report::suite_totals(
+        rec.totals
+            .map(|totals| (totals.passed, totals.failed, totals.skipped)),
+        rec.legacy_multi_pair,
+        rec.scenarios
+            .values()
+            .map(|run| (run.is_suite(), Some(run.status))),
+    );
     // Step/attempt totals are unrelated to the suite-only scenario counts
     // above — they count every step in the stream, `[run] setup`/`teardown`
     // included, straight from the raw events rather than `rec.scenarios`: a

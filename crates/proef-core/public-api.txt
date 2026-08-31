@@ -1375,6 +1375,7 @@ pub fn proef_core::report::ConsoleReporter<W>::on_event(&mut self, &proef_core::
 impl<W: core::io::write::Write + core::marker::Send> proef_core::report::Reporter for proef_core::report::JsonlReporter<W>
 pub fn proef_core::report::JsonlReporter<W>::on_event(&mut self, &proef_core::event::Event)
 pub fn proef_core::report::sink(alloc::vec::Vec<alloc::boxed::Box<dyn proef_core::report::Reporter>>, proef_core::report::Redactions) -> proef_core::event::EventSink
+pub fn proef_core::report::suite_totals(core::option::Option<(usize, usize, usize)>, bool, impl core::iter::traits::iterator::Iterator<Item = (bool, core::option::Option<proef_core::step::Status>)>) -> (usize, usize, usize)
 pub mod proef_core::resolve
 pub enum proef_core::resolve::ResolveError
 pub proef_core::resolve::ResolveError::DepthExceeded

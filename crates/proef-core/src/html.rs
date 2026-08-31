@@ -81,15 +81,25 @@ struct ScenarioBlock {
     worker: Option<u64>,
 }
 
-/// Render `events` as a standalone HTML document. `artifacts_href` is the link
-/// prefix for each scenario's `.hurl` artifact (e.g. `"artifacts"`, resolved
-/// relative to wherever the caller writes the file); the artifact filename is
-/// derived with the same slug the emitter uses, so the links match on disk.
-pub fn render_html(
-    events: &[Event],
-    artifacts_href: &str,
-    tag_links: &std::collections::BTreeMap<String, String>,
-) -> String {
+/// Everything the event stream says about a run, folded once.
+///
+/// Named because it is a distinct job from rendering: the page is built from
+/// this value, and nothing downstream re-reads the events.
+struct Recorded {
+    run_id: String,
+    blocks: Vec<ScenarioBlock>,
+    total_steps: usize,
+    total_attempts: u64,
+    env: Option<String>,
+    metadata: std::collections::BTreeMap<String, String>,
+    /// The last tail `RunFinished`'s totals, when the stream reached one.
+    run_finished: Option<(usize, usize, usize)>,
+    /// How many tail events the stream carried. More than one means a
+    /// pre-0.6.0 record, whose totals counted each phase rather than the suite.
+    run_finished_seen: usize,
+}
+
+fn fold_events(events: &[Event]) -> Recorded {
     let mut run_id = String::new();
     let mut blocks: Vec<ScenarioBlock> = Vec::new();
     let mut index: BTreeMap<(String, String), usize> = BTreeMap::new();
@@ -99,6 +109,7 @@ pub fn render_html(
     let mut metadata: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
     let mut run_finished: Option<(usize, usize, usize)> = None;
+    let mut run_finished_seen = 0usize;
 
     for event in events {
         match event {
@@ -155,13 +166,45 @@ pub fn render_html(
                 skipped,
                 ..
             } => {
+                run_finished_seen += 1;
                 run_finished = Some((*passed, *failed, *skipped));
             }
             _ => {}
         }
     }
 
-    let (passed, failed, skipped) = suite_totals(run_finished, &blocks);
+    Recorded {
+        run_id,
+        blocks,
+        total_steps,
+        total_attempts,
+        env,
+        metadata,
+        run_finished,
+        run_finished_seen,
+    }
+}
+
+/// Render `events` as a standalone HTML document. `artifacts_href` is the link
+/// prefix for each scenario's `.hurl` artifact (e.g. `"artifacts"`, resolved
+/// relative to wherever the caller writes the file); the artifact filename is
+/// derived with the same slug the emitter uses, so the links match on disk.
+pub fn render_html(
+    events: &[Event],
+    artifacts_href: &str,
+    tag_links: &std::collections::BTreeMap<String, String>,
+) -> String {
+    let recorded = fold_events(events);
+    let (passed, failed, skipped) = headline(&recorded);
+    let Recorded {
+        run_id,
+        blocks,
+        total_steps,
+        total_attempts,
+        env,
+        metadata,
+        ..
+    } = &recorded;
     // `warned` is informational only — never part of the aligned three
     // numbers above (no other surface breaks it out either) — so it stays a
     // plain count of every rendered block regardless of phase.
@@ -177,49 +220,25 @@ pub fn render_html(
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>proef report — {run}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n\
          <h1>proef run <code>{run}</code></h1>",
-        run = esc(&run_id)
+        run = esc(run_id)
     );
     render_provenance_and_summary(
         &mut html,
         env.as_deref(),
-        &metadata,
+        metadata,
         (passed, failed, skipped, warned),
-        (total_steps, total_attempts),
+        (*total_steps, *total_attempts),
     );
-    render_failure_jump(&mut html, &blocks);
+    render_failure_jump(&mut html, blocks);
     render_filter_bar(&mut html);
-    render_tag_table(&mut html, &blocks, tag_links);
-    render_timeline(&mut html, &blocks);
-    for block in &blocks {
+    render_tag_table(&mut html, blocks, tag_links);
+    render_timeline(&mut html, blocks);
+    for block in blocks {
         render_block(&mut html, block, artifacts_href, failed);
     }
     html.push_str(FILTER_SCRIPT);
     html.push_str("</body>\n</html>\n");
     html
-}
-
-/// The headline `(passed, failed, skipped)` — mirrors every other surface
-/// that reads `RunFinished` (console `summary:`, `explain`, `--format json`,
-/// `JUnit`, TAP, the SLA gate, the exit code): main-suite scenarios only,
-/// `[run] setup`/`teardown` excluded (ADR-0014). A truncated record has no
-/// `RunFinished` to read, so fall back to counting every rendered block — the
-/// only totals a dead run can offer.
-fn suite_totals(
-    run_finished: Option<(usize, usize, usize)>,
-    blocks: &[ScenarioBlock],
-) -> (usize, usize, usize) {
-    run_finished.unwrap_or_else(|| {
-        let (mut passed, mut failed, mut skipped) = (0usize, 0usize, 0usize);
-        for block in blocks {
-            match block.status {
-                Some(Status::Passed) => passed += 1,
-                Some(Status::Failed) => failed += 1,
-                Some(Status::Skipped) => skipped += 1,
-                Some(Status::Warned) | None => {}
-            }
-        }
-        (passed, failed, skipped)
-    })
 }
 
 /// Find or create the block for `(file, scenario)`, preserving first-seen order.
@@ -411,17 +430,26 @@ fn render_block(
     html.push_str("</ol>\n</details>\n");
 }
 
-/// The cross-worker run timeline (ADR-0015): a lane per worker, each scenario a
-/// bar from its start to its finish, positioned on a shared run-relative axis so
-/// concurrency is visible at a glance. Rendered only when the record carries
-/// injected timing (`start`/`end` timestamps); absent, the report shows just the
-/// Per-tag verdicts — the rollup a fifty-scenario suite is read by (RF's
-/// "statistics by tag", the shape a requirement-tagged suite turns into a
-/// traceability matrix). Suite-only, exactly like every other total
-/// (ADR-0014: phase scenarios are excluded); Warned counts with passed,
-/// mirroring `RunSummary::passed`; time is the sum of the block's step
-/// durations, so it works on records without injected timing. Rendered only
-/// when a suite scenario carries a tag — a tagless suite gets no empty
+/// The headline `(passed, failed, skipped)`, through the one rule every surface
+/// shares ([`crate::report::suite_totals`]): the tail `RunFinished` when it can
+/// be trusted, else suite-only counting with `Warned` riding along with
+/// `Passed`. This page used to carry its own fallback, which disagreed with
+/// `explain` on all three points for the same bytes.
+fn headline(recorded: &Recorded) -> (usize, usize, usize) {
+    crate::report::suite_totals(
+        recorded.run_finished,
+        // More than one tail event means a pre-0.6.0 record: it emitted one
+        // head/tail pair per phase and its totals counted every phase rather
+        // than the suite, so keeping only the last one reported that phase's
+        // numbers as the run's verdict.
+        recorded.run_finished_seen > 1,
+        recorded
+            .blocks
+            .iter()
+            .map(|block| (block.phase.is_none(), block.status)),
+    )
+}
+
 /// The header strip under the `<h1>`: explicit provenance (env, metadata —
 /// ADR-0020) when present, then the totals bar.
 fn render_provenance_and_summary(
@@ -462,6 +490,13 @@ fn render_provenance_and_summary(
 }
 
 /// section, and pre-field records are unchanged.
+/// Per-tag verdicts — the rollup a fifty-scenario suite is read by (RF's
+/// "statistics by tag", the shape a requirement-tagged suite turns into a
+/// traceability matrix). Suite-only, exactly like every other total
+/// (ADR-0014: phase scenarios are excluded); Warned counts with passed,
+/// mirroring `RunSummary::passed`; time is the sum of the block's step
+/// durations, so it works on records without injected timing. Rendered only
+/// when a suite scenario carries a tag — a tagless suite gets no empty table.
 fn render_tag_table(
     html: &mut String,
     blocks: &[ScenarioBlock],
@@ -526,6 +561,11 @@ fn render_tag_table(
 }
 
 /// per-scenario waterfalls, so old records degrade cleanly.
+/// The cross-worker run timeline (ADR-0015): a lane per worker, each scenario a
+/// bar from its start to its finish, positioned on a shared run-relative axis so
+/// concurrency is visible at a glance. Rendered only when the record carries
+/// injected timing (`start`/`end` timestamps); absent, the report shows just the
+/// scenario listing.
 fn render_timeline(html: &mut String, blocks: &[ScenarioBlock]) {
     let timed: Vec<&ScenarioBlock> = blocks
         .iter()

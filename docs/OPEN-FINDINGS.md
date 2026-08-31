@@ -291,9 +291,14 @@ report"; this section records the verdicts and what remains open.
   `bake_entry_options` triple-materializes.
 - **Architecture & test debt (recorded):** ~290 lines of hurl grammar in
   `proef-core` vs the seam story — amend ADR-0002's "diff-empty" claim or
-  route through `StepKindSpec`; three JSONL read loops / six event folds
-  (the truncated-totals fallback exists twice and disagrees between
-  `explain` and the HTML report); the exclusive-tags scheduler and
+  route through `StepKindSpec`; three JSONL read loops / six event folds — the
+  truncated-totals half is **fixed**, and the disagreement was worse than
+  filed: on the same truncated bytes `explain` and the HTML report differed
+  three ways, not one. The report dropped `Warned` scenarios from every column,
+  counted `[run] setup`/`teardown` into a headline its own page labels
+  "excluded from totals above", and read a pre-0.6.0 record's per-phase totals
+  under today's suite-only meaning. One `report::suite_totals` now holds the
+  rule and both call it. Still open: the remaining read loops and folds; the exclusive-tags scheduler and
   `RecordGate` have no direct tests; `feature.rs` was the one
   user-input parser with no fuzz target — **fixed**, and the target found a real
   defect within a minute of first running: a parse error pointing at a
