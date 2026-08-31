@@ -24,7 +24,11 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   beside it. The href is now relative to the report, which resolves everywhere
   the absolute one did *plus* wherever report and artifacts travel together,
   and in the CI shape (`-o public/report.html`) names nothing outside the
-  workspace. A report written somewhere sharing no ancestor with the run dir
+  workspace. The href is built from path *components* joined with `/`, not
+  from `Path::display` — Windows renders `\`, which is not a separator in a
+  URL, so a Windows-generated report's links would have been dead either way
+  (the absolute path it replaces had the same flaw). A report written somewhere
+  sharing no ancestor with the run dir
   still names the directories between them — that is what a correct relative
   path from there is, and it is no worse than what it replaces.
 

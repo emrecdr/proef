@@ -141,6 +141,14 @@ fn banner_incomplete(html: &str) -> String {
 ///
 /// Purely lexical (like the `std::path::absolute` it replaces): no filesystem
 /// access, so it stays usable after the run dir has been rotated away.
+///
+/// The result is a **URL path, not a display path**: components are joined
+/// with `/` on every platform. `Path::display` renders `\` on Windows, and a
+/// backslash is not a separator in a URL — a browser would not resolve
+/// `..\.proef-runs\01ABC\artifacts` at all, so every link in a
+/// Windows-generated report would be dead. Building from components rather
+/// than replacing separators in the rendered string also keeps a Unix
+/// directory whose *name* contains a backslash intact.
 fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
     let out_dir = crate::fsutil::parent_dir(out_path);
     if out_dir == record_dir {
@@ -151,25 +159,31 @@ fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
         // No relative path exists (different Windows prefixes — a report on
         // `D:` for a run dir on `C:`). Absolute is the only thing that can
         // resolve at all, so it stays the fallback rather than a dead link.
+        // Separators are swapped rather than rebuilt from components because
+        // this branch only fires on Windows, where `\` cannot occur inside a
+        // file name and the swap is therefore lossless.
         || {
             std::path::absolute(&artifacts)
                 .unwrap_or(artifacts)
                 .display()
                 .to_string()
+                .replace('\\', "/")
         },
-        |relative| relative.display().to_string(),
+        |relative| relative.join("/"),
     )
 }
 
-/// `to`, expressed relative to the directory `from`; `None` when the two share
-/// no root (distinct Windows path prefixes).
+/// `to`, expressed relative to the directory `from`, as URL path components;
+/// `None` when the two share no root (distinct Windows path prefixes).
+///
+/// Components rather than a `PathBuf` so the caller joins them with `/`
+/// itself — see [`artifacts_href`] on why a rendered path is the wrong thing
+/// to put in an `href`.
 ///
 /// Lexical: `..` components are popped rather than resolved, which is wrong
 /// under symlinks and is the same trade `std::path::absolute` already makes
 /// here.
-fn relative_from(from: &Path, to: &Path) -> Option<std::path::PathBuf> {
-    use std::path::PathBuf;
-
+fn relative_from(from: &Path, to: &Path) -> Option<Vec<String>> {
     let (from_root, from_parts) = split(from)?;
     let (to_root, to_parts) = split(to)?;
     if from_root != to_root {
@@ -180,16 +194,16 @@ fn relative_from(from: &Path, to: &Path) -> Option<std::path::PathBuf> {
         .zip(&to_parts)
         .take_while(|(a, b)| a == b)
         .count();
-    let mut out = PathBuf::new();
+    let mut out: Vec<String> = Vec::new();
     for _ in shared..from_parts.len() {
-        out.push("..");
+        out.push("..".to_owned());
     }
     for part in &to_parts[shared..] {
-        out.push(part);
+        out.push(part.to_string_lossy().into_owned());
     }
     // Same directory: a browser needs *something* to join the filename onto.
-    if out.as_os_str().is_empty() {
-        out.push(".");
+    if out.is_empty() {
+        out.push(".".to_owned());
     }
     Some(out)
 }
@@ -313,6 +327,13 @@ mod tests {
             "the href must not be absolute: {href}"
         );
 
+        // An href is a URL path on every platform — never `Path::display`,
+        // which renders `\` on Windows and would make every link dead.
+        assert!(
+            !href.contains('\\'),
+            "href must not carry a backslash: {href}"
+        );
+
         // And it resolves: joined onto the report's own directory (what a
         // browser does), it lands on the real artifacts directory. Compared
         // through `split`, which pops `..` — `std::path::absolute` deliberately
@@ -333,30 +354,34 @@ mod tests {
                 !Path::new(&href).is_absolute(),
                 "-o {out} produced an absolute href: {href}"
             );
+            assert!(
+                !href.contains('\\'),
+                "-o {out} produced a backslash href: {href}"
+            );
         }
     }
 
+    /// Written with relative inputs so the assertions hold on Windows too,
+    /// where `/a/b` is not an absolute path and `absolute()` would anchor it
+    /// to a drive.
     #[test]
     fn relative_from_walks_up_and_back_down() {
+        let parts = |from: &str, to: &str| relative_from(Path::new(from), Path::new(to));
+        assert_eq!(parts("a/b/c", "a/b/c/d"), Some(vec!["d".to_owned()]));
         assert_eq!(
-            relative_from(Path::new("/a/b/c"), Path::new("/a/b/c/d")),
-            Some(std::path::PathBuf::from("d"))
-        );
-        assert_eq!(
-            relative_from(Path::new("/a/b/c"), Path::new("/a/x/y")),
-            Some(std::path::PathBuf::from("../../x/y"))
+            parts("a/b/c", "a/x/y"),
+            Some(vec![
+                "..".to_owned(),
+                "..".to_owned(),
+                "x".to_owned(),
+                "y".to_owned()
+            ])
         );
         // Same directory still needs a joinable prefix.
-        assert_eq!(
-            relative_from(Path::new("/a/b"), Path::new("/a/b")),
-            Some(std::path::PathBuf::from("."))
-        );
-        // `..` is popped lexically, so an unnormalized input does not produce
-        // a path that walks up too far.
-        assert_eq!(
-            relative_from(Path::new("/a/b/../b/c"), Path::new("/a/b/c/d")),
-            Some(std::path::PathBuf::from("d"))
-        );
+        assert_eq!(parts("a/b", "a/b"), Some(vec![".".to_owned()]));
+        // `..` is popped lexically, so an unnormalized input does not walk up
+        // too far.
+        assert_eq!(parts("a/b/../b/c", "a/b/c/d"), Some(vec!["d".to_owned()]));
     }
 
     #[test]
