@@ -165,7 +165,9 @@ enum Command {
         /// harvests metadata itself (no git, no hostname)
         #[arg(long = "meta", value_name = "KEY=VALUE")]
         meta: Vec<String>,
-        /// Console verbosity: `full` (the BDD tree, default), `dotted`
+        /// Console verbosity: `full` (the BDD tree, default), `failed`
+        /// (that tree, but only for scenarios that failed or warned — a
+        /// clean run prints the run line and summary alone), `dotted`
         /// (one glyph per scenario: `.` pass, `F` fail, `s` skip, `w`
         /// warn; failures still print in full after the run), or `quiet`
         /// (run line and summary only). Purely presentation — record,
@@ -337,6 +339,8 @@ enum ConsoleArg {
     Full,
     Dotted,
     Quiet,
+    /// The full tree, but only for scenarios that failed or warned
+    Failed,
 }
 
 impl From<ConsoleArg> for proef_core::report::ConsoleMode {
@@ -345,6 +349,7 @@ impl From<ConsoleArg> for proef_core::report::ConsoleMode {
             ConsoleArg::Full => Self::Full,
             ConsoleArg::Dotted => Self::Dotted,
             ConsoleArg::Quiet => Self::Quiet,
+            ConsoleArg::Failed => Self::Failed,
         }
     }
 }
