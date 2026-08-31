@@ -1267,6 +1267,45 @@ pub fn artifacts(
     ExitCode::Success
 }
 
+/// `proef schema config` — print the `proef.toml` JSON Schema.
+///
+/// TOML language servers (Taplo, tombi — the engines behind VS Code's Even
+/// Better TOML and the Neovim/Helix TOML setups) validate against JSON Schema,
+/// so one schema buys completion, hover documentation and unknown-key errors
+/// in the config file. The doc comments on the config model become that hover
+/// text, which is why they are worth keeping accurate.
+///
+/// No `--add-to`: the pack flow writes a schema file beside a pack and
+/// prepends a `yaml-language-server` modeline, and neither half transfers. A
+/// project has one `proef.toml`, and the TOML convention is a one-line
+/// `#:schema` comment the author adds themselves — writing into a file proef
+/// otherwise only ever reads is not a thing to do behind a flag.
+pub fn config_schema(add_to: &[PathBuf]) -> ExitCode {
+    if !add_to.is_empty() {
+        crate::render::errln!(
+            "error: `--add-to` installs the *pack* schema beside pack files; it has no meaning for the config schema"
+        );
+        crate::render::errln!(
+            "help: write it once with `proef schema config > proef-config.schema.json`, then point your TOML language server at it (`#:schema ./proef-config.schema.json` on the first line of proef.toml)"
+        );
+        return ExitCode::UserError;
+    }
+    let schema = schemars::schema_for!(crate::config::ProjectConfig);
+    match serde_json::to_string_pretty(&schema) {
+        Ok(rendered) => {
+            crate::render::outln!("{rendered}");
+            ExitCode::Success
+        }
+        // The same refusal the pack schema gives: a fallback here would print
+        // an accept-everything schema and silently disable the validation the
+        // command exists to provide.
+        Err(err) => {
+            crate::render::errln!("error: cannot serialize the config schema: {err}");
+            ExitCode::SystemError
+        }
+    }
+}
+
 /// `proef schema` — print (or install) the pack JSON Schema, including the
 /// step-kind fragments contributed by registered engines.
 pub fn schema(add_to: &[PathBuf], overwrite_existing: bool) -> ExitCode {

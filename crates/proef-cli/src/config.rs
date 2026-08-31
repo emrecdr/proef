@@ -41,7 +41,7 @@ fn find_config_from(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Loaded `proef.toml` (all fields optional — defaults apply).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectConfig {
     /// The `proef.toml` this was read from, when there was one.
@@ -52,7 +52,12 @@ pub struct ProjectConfig {
     /// rediscover it by walking up from the working directory, which silently
     /// ignored `--config` and left the editor analysing a different project
     /// than the runner ran.
+    // Not part of the file format: where the file was found, not something
+    // anyone writes in it. `serde(skip)` keeps it out of parsing and
+    // `schemars(skip)` keeps it out of the published schema, which would
+    // otherwise advertise a key that `deny_unknown_fields` then rejects.
     #[serde(skip)]
+    #[schemars(skip)]
     path: Option<PathBuf>,
     /// `[run]` table.
     #[serde(default)]
@@ -87,7 +92,7 @@ pub struct ProjectConfig {
 }
 
 /// `[run]` settings (env-overridable via `[env.<name>.run]`).
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunTable {
     /// Parallel scenario workers (default: available parallelism).
@@ -136,7 +141,7 @@ pub struct RunTable {
 /// `jobs` is environment-scoped. `runs-dir` and `suite` are project-wide, so
 /// `deny_unknown_fields` rejects them here — a per-environment `suite`/`runs-dir`
 /// is a loud error, not the silent no-op that reusing the full `RunTable` caused.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RunOverride {
     /// Parallel scenario workers for this environment (overrides `[run] jobs`).
@@ -145,7 +150,7 @@ pub struct RunOverride {
 
 /// `[http]` settings (batch-level defaults; per-entry `[Options]` override).
 /// Env-overridable via `[env.<name>.http]`.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HttpTable {
     /// Per-request timeout in milliseconds.
@@ -160,7 +165,7 @@ pub struct HttpTable {
 /// milliseconds). Env-overridable via `[env.<name>.sla]`. Every field is
 /// optional and unset means "no gate for that metric", so an absent `[sla]`
 /// table leaves the run byte-identical to an SLA-unaware build.
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlaTable {
     /// 95th-percentile per-step duration ceiling.
@@ -173,7 +178,7 @@ pub struct SlaTable {
 
 /// An `[env.<name>]` profile: per-environment overrides that deep-merge over the
 /// base sections, key by key. Only the deltas need listing; unlisted keys inherit.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EnvProfile {
     /// `[env.<name>.url]` — URL overrides.

@@ -1741,6 +1741,7 @@ dependencies = [
  "quick-junit",
  "quick-xml",
  "rpassword",
+ "schemars",
  "serde",
  "serde_json",
  "strip-ansi-escapes",
