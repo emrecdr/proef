@@ -382,6 +382,36 @@ pub enum ConsoleMode {
     Dotted,
     /// The run line and the summary only.
     Quiet,
+    /// The [`Self::Full`] tree, but only for scenarios that failed or
+    /// **warned** — a clean run prints the run line and the summary alone.
+    ///
+    /// Warned is included on purpose, and the reason is that nothing else
+    /// carries it: a warned scenario is one whose `optional:` step failed,
+    /// `RunSummary::passed` counts it with the passes, and the summary line
+    /// has no warned column. Showing only `Failed` would let a run in which
+    /// something did fail — non-gatingly, but really — print exactly what a
+    /// spotless one prints.
+    Failed,
+}
+
+impl ConsoleMode {
+    /// Does this mode buffer per-scenario lines for a later flush?
+    ///
+    /// [`Self::Full`] and [`Self::Failed`] build the same tree; they differ
+    /// only in which scenarios' buffers reach the terminal, which is decided
+    /// at `scenario_finished`, when the verdict is known.
+    fn buffers(self) -> bool {
+        matches!(self, Self::Full | Self::Failed)
+    }
+
+    /// Is this scenario's buffered tree worth printing?
+    fn shows(self, status: Status) -> bool {
+        match self {
+            Self::Full => true,
+            Self::Failed => matches!(status, Status::Failed | Status::Warned),
+            Self::Dotted | Self::Quiet => false,
+        }
+    }
 }
 
 /// Console BDD tree, buffered per scenario — keyed by `(file, scenario)`
@@ -473,13 +503,18 @@ impl<W: Write + Send> ConsoleReporter<W> {
                 // A dot the user cannot see is not progress.
                 let _ = self.out.flush();
             }
-            ConsoleMode::Full => {
+            ConsoleMode::Full | ConsoleMode::Failed => {
                 let lines = self
                     .buffers
                     .iter()
                     .position(|((f, name), _)| f == file && name == scenario)
                     .map(|position| self.buffers.remove(position).1)
                     .unwrap_or_default();
+                // Removed either way: a scenario this mode does not show must
+                // not accumulate for the length of the run.
+                if !self.mode.shows(status) {
+                    return;
+                }
                 for line in lines {
                     let _ = writeln!(self.out, "{line}");
                 }
@@ -529,7 +564,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 let _ = writeln!(self.out, "proef run {run_id}");
             }
             Event::ScenarioStarted { scenario, file, .. } => {
-                if self.mode == ConsoleMode::Full {
+                if self.mode.buffers() {
                     let header = format!("\n  Scenario: {scenario} ({file})");
                     self.buffer_for(file, scenario).push(header);
                 }
@@ -547,7 +582,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 label,
                 ..
             } => {
-                if self.mode != ConsoleMode::Full {
+                if !self.mode.buffers() {
                     return;
                 }
                 let attempts_note = if *attempts > 1 {
@@ -967,6 +1002,106 @@ mod tests {
             !plain.contains('›'),
             "an unlabelled step gains no separator: {plain}"
         );
+    }
+
+    /// `--console failed` is the CI middle ground: a clean run says almost
+    /// nothing, a dirty one says everything `full` would.
+    #[test]
+    fn the_failed_console_shows_only_what_is_not_clean() {
+        let scenario = |name: &str, status: Status| {
+            vec![
+                Event::ScenarioStarted {
+                    scenario: Arc::from(name),
+                    file: Arc::from("f.feature"),
+                    timestamp_ms: None,
+                    worker: None,
+                    phase: None,
+                    exclusive: false,
+                },
+                Event::StepFinished {
+                    scenario: Arc::from(name),
+                    engine: Arc::from("hurl"),
+                    step: crate::step::StepRef {
+                        file: Arc::from("f.feature"),
+                        line: 3,
+                        text: Arc::from(format!("the {name} step")),
+                    },
+                    status,
+                    attempts: 1,
+                    duration_ms: 1,
+                    captures: Vec::new(),
+                    fragment: None,
+                    label: None,
+                    detail: None,
+                    attempt_details: Vec::new(),
+                    reproduce_hint: None,
+                },
+                Event::ScenarioFinished {
+                    scenario: Arc::from(name),
+                    file: Arc::from("f.feature"),
+                    status,
+                    timestamp_ms: None,
+                    worker: None,
+                    phase: None,
+                    reason: None,
+                    tags: Vec::new(),
+                },
+            ]
+        };
+        let mut events = vec![Event::RunStarted {
+            schema: crate::event::EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("r"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
+            rerun_of: None,
+        }];
+        events.extend(scenario("clean", Status::Passed));
+        events.extend(scenario("broken", Status::Failed));
+        events.extend(scenario("noisy", Status::Warned));
+        events.extend(scenario("parked", Status::Skipped));
+        events.push(Event::RunFinished {
+            passed: 2,
+            failed: 1,
+            skipped: 1,
+            cancelled: false,
+        });
+
+        let render = |mode| {
+            let mut out = Vec::new();
+            {
+                let mut console =
+                    ConsoleReporter::new(&mut out, Redactions::default(), mode, false);
+                for event in &events {
+                    console.on_event(event);
+                }
+            }
+            String::from_utf8(out).unwrap()
+        };
+
+        let failed = render(ConsoleMode::Failed);
+        assert!(failed.contains("the broken step"), "{failed}");
+        // Warned is shown: nothing else carries it — the summary counts it
+        // with the passes and has no warned column, so hiding it would make a
+        // run where an `optional:` step failed look spotless.
+        assert!(failed.contains("the noisy step"), "{failed}");
+        assert!(!failed.contains("the clean step"), "{failed}");
+        assert!(!failed.contains("the parked step"), "{failed}");
+
+        // The verdict is identical in every mode — the flag is presentation.
+        for mode in [ConsoleMode::Failed, ConsoleMode::Dotted, ConsoleMode::Quiet] {
+            let text = render(mode);
+            assert!(
+                text.contains("summary: 2 passed \u{b7} 1 failed \u{b7} 1 skipped"),
+                "{mode:?} changed the verdict: {text}"
+            );
+        }
+        // And `failed` is a strict subset of `full`: every line it shows, it
+        // shows the same way — not a second renderer that could drift.
+        let full = render(ConsoleMode::Full);
+        for line in failed.lines().filter(|l| l.contains("the ")) {
+            assert!(full.contains(line), "`failed` invented a line: {line}");
+        }
     }
 
     #[test]

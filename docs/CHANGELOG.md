@@ -32,6 +32,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   before rendering now, which makes the JSON a second *rendering* rather than a
   second walk: the failure mode where one surface gains a check the other never
   learns about.
+- **`--console failed`** — the `full` BDD tree, but only for scenarios that
+  failed or warned. A clean run prints the run line and the summary; a dirty
+  one prints exactly what `full` would. The gap it fills is the CI one:
+  `full` is a wall of green on a large suite, `dotted` drops the detail you
+  need when something breaks, and `quiet` drops everything.
+
+  Warned scenarios are shown, which the name does not say and the code
+  explains: a warned scenario is one whose `optional:` step failed,
+  `RunSummary::passed` counts it with the passes, and the summary line has no
+  warned column — so a mode that showed only `Failed` would let a run in which
+  something *did* fail print exactly what a spotless one prints. A fourth
+  value on the existing flag rather than a new one.
 
 ### Fixed
 

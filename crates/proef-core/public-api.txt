@@ -1279,6 +1279,7 @@ pub fn proef_core::provider::SourceProvider::read(&self, &str) -> core::result::
 pub mod proef_core::report
 pub enum proef_core::report::ConsoleMode
 pub proef_core::report::ConsoleMode::Dotted
+pub proef_core::report::ConsoleMode::Failed
 pub proef_core::report::ConsoleMode::Full
 pub proef_core::report::ConsoleMode::Quiet
 impl core::clone::Clone for proef_core::report::ConsoleMode
