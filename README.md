@@ -270,7 +270,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef artifacts [path] -o DIR` | emit canonical `.hurl` + sidecars (+ referenced file assets) for CI hand-off (`-o`/`--output` names the directory; `--env`) |
 | `proef explain [run-id]` | summarize a run from its event record |
 | `proef diff [base] [new]` | compare two run records — regressions, fixes, flakiness, perf deltas (`--fail-on-regression` for CI gating) |
-| `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing (`--format json`) |
+| `proef flaky` | flakiness verdicts over the retained run history — flapping, passes-only-on-retry, always-failing, plus quarantine's own two failure modes; `--by <key>` splits the history per environment or `[meta]` value (`--format json`) |
 | `proef report [run-id]` | write a self-contained HTML report for a run (`-o`/`--output` FILE) |
 | `proef schema` | print/install the pack JSON Schema, `--add-to` wiring it into an editor config (engine fragments included) |
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
