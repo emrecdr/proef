@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The record-size ceiling reached two of its four readers.** 0.13.0 bounded
+  the run-record read at 256 MiB because records travel — `diff` reads a
+  downloaded baseline, `flaky` reads every retained run — and the read, the
+  line split and the parsed `Vec<Event>` are resident at once, so a corrupt or
+  hostile file was an OOM rather than an error. The bound lives in
+  `record::read_events`, and `explain` and `report` each opened
+  `events.jsonl` with a bare `read_to_string` instead, so neither had it.
+  `report` even used the guarded reader for the *base* record two dozen lines
+  below the raw read of the primary one.
+
+  Both now go through `read_events`, which returns the parsed events — exactly
+  the read-once/parse-once its own comment asked for. A source-scanning test
+  makes the next reader go through the same door, the shape this project
+  already uses for the raw-print and malformed-plural rules: a guard added in
+  one place and left for the next call site to rediscover is how it went
+  missing the first time.
+
 ### Added
 
 - **`explain`, `diff` and `doctor` speak `--format json`.** They were the three
