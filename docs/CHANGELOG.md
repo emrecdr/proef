@@ -6,6 +6,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-31 (the surfaces tell the truth: an eight-wave improvement programme, and the round that found what it missed)
+
+> Supersedes **0.15.0**, which was cut (`release: v0.15.0`, 2026-08-25) but never
+> tagged or published — its changes are all here, and crates.io goes 0.14.0 →
+> 0.16.0 with nothing skipped.
+
 ### Fixed
 
 - **The record-size ceiling reached two of its four readers.** 0.13.0 bounded

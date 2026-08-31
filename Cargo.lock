@@ -1720,7 +1720,7 @@ dependencies = [
 
 [[package]]
 name = "proef"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "assert_cmd",
  "base64",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "proef-core"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64",
  "gherkin",
@@ -1768,7 +1768,7 @@ dependencies = [
 
 [[package]]
 name = "proef-engine-hurl"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "hurl",
  "hurl_core",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "proef-fixture"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "base64",
  "jiff",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "proef-harness"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "libtest-mimic",
  "serde_json",
@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "proef-lsp"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "crossbeam-channel",
  "gen-lsp-types",
@@ -2961,7 +2961,7 @@ checksum = "636f85e5ca6488e96401b61eb7de54f4e44755c988af0f52cf90230c312a1a89"
 
 [[package]]
 name = "xtask"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "proef-fixture",
  "serde_norway",
