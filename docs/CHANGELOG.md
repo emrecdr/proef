@@ -8,6 +8,33 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A step's `name:` label reached the artifact and nothing else.** A macro
+  with more than one step turns one feature sentence into several engine
+  steps, and they share a `StepRef` exactly — same file, same line, same
+  text. The emitter has always written the authored `name:` into the
+  artifact's entry comment, which is why the `.hurl` could tell them apart;
+  `StepRef` never carried it, so the console, the HTML report, `JUnit`, TAP,
+  the job summary and `explain` all printed the same sentence once per step,
+  with nothing but the status glyph to distinguish a warning from the failure
+  beside it. The reference corpus demonstrated it: three `step_finished`
+  events for *the cookie session is exercised*, byte-identical in the pinned
+  snapshot, are now `obtain the session cookie`, `optional probe (forces a
+  split)` and `cookie survives the split`.
+
+  `StepOutcome` and `step_finished` now carry `label`, exactly as they carry
+  `fragment` — the two answer neighbouring questions (*which file did this
+  request come from* / *which step of the sentence is this*) and travel the
+  same channels. One `proef_core::report::step_label` renders it for every
+  sink, so the six cannot drift. Additive on the wire: absent when a step has
+  no `name:`, so every pre-existing record still parses and re-renders
+  unchanged, and the event schema stays `1`.
+
+  This retires two claims that were not true when written:
+  `AUTHORING.md`'s "they anchor artifacts, events, and failure output" and
+  `LoweredStep::label`'s own "(events/console)". Same class as
+  `reproduce_hint` in the R18 wave — computed all along, printed all along,
+  dropped by the record.
+
 - **A fragment's text ran on into the comments introducing the entry below it.**
   hurl attaches the blank and comment lines above a request to *that* request,
   which is exactly what makes the `# @proef` binding reliable — but it also

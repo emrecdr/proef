@@ -654,3 +654,17 @@ Keep prose at business level — no URLs, headers, or JSON in feature files;
 that's what packs are for. Prefer several small macros composed with `use:`
 over one large one. Give steps `name:` labels — they anchor artifacts,
 events, and failure output.
+
+Label a macro's steps whenever it has more than one. A macro with three steps
+turns one feature sentence into three engine steps that share a `step` anchor
+exactly — same file, same line, same text — so on the console, in the HTML
+report, in `JUnit`, TAP and the job summary they arrive as the same sentence
+repeated, one row per step. The `name:` is the only thing that distinguishes
+them:
+
+```
+✓ tests/features/a.feature:9 — the workspace is provisioned › fixture warm-up probe (4ms)
+✗ tests/features/a.feature:9 — the workspace is provisioned › provision the environment (7ms)
+```
+
+Without the labels those two lines differ only by their glyph.

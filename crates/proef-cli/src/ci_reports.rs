@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::render::via;
-use proef_core::report::Redactions;
+use proef_core::report::{Redactions, step_label};
 use proef_core::runner::{Fault, RunSummary, ScenarioOutcome};
 use proef_core::step::Status;
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestRerun, TestSuite};
@@ -162,9 +162,13 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                         .iter()
                         .filter(|s| s.status == Status::Failed)
                         .filter_map(|s| {
-                            s.detail
-                                .as_deref()
-                                .map(|d| format!("{d}{}", via(s.fragment.as_deref())))
+                            s.detail.as_deref().map(|d| {
+                                format!(
+                                    "{d}{}{}",
+                                    step_label(s.label.as_deref()),
+                                    via(s.fragment.as_deref())
+                                )
+                            })
                         })
                         .collect::<Vec<_>>()
                         .join("; "),
@@ -318,9 +322,10 @@ fn summary_body(
                 };
                 let _ = writeln!(
                     failures,
-                    "- `{}:{}`{attempts} — {detail}{}",
+                    "- `{}:{}`{}{attempts} — {detail}{}",
                     step.step.file,
                     step.step.line,
+                    step_label(step.label.as_deref()),
                     via(step.fragment.as_deref())
                 );
             }
@@ -381,7 +386,12 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                     // and step text are free prose, so clip before encoding
                     // (encoding expands, never shrinks).
                     enc_prop(&clip_chars(
-                        &format!("{}: {}", outcome.name, step.step.text),
+                        &format!(
+                            "{}: {}{}",
+                            outcome.name,
+                            step.step.text,
+                            step_label(step.label.as_deref())
+                        ),
                         200
                     )),
                     enc_msg(
@@ -521,7 +531,7 @@ mod provenance_tests {
     use proef_core::step::{Status, StepOutcome, StepRef};
     use std::sync::Arc;
 
-    fn failed_run(fragment: Option<&str>) -> RunSummary {
+    fn failed_run(fragment: Option<&str>, label: Option<&str>) -> RunSummary {
         RunSummary {
             outcomes: vec![ScenarioOutcome {
                 file: "tests/features/a.feature".into(),
@@ -543,6 +553,7 @@ mod provenance_tests {
                     attempt_details: Vec::new(),
                     reproduce_hint: None,
                     fragment: fragment.map(ToOwned::to_owned),
+                    label: label.map(ToOwned::to_owned),
                 }],
                 fault: None,
                 artifact_slug: None,
@@ -561,7 +572,7 @@ mod provenance_tests {
     fn every_ci_sink_names_the_fragment_a_failure_came_from() {
         let none = Redactions::new(std::iter::empty());
 
-        let summary = failed_run(Some("tests/hurl/admin.hurl#admin.search"));
+        let summary = failed_run(Some("tests/hurl/admin.hurl#admin.search"), None);
         let annotations = github_annotations(&summary, &none);
         // In the *message* body, not a property: `enc_msg` encodes only `%`,
         // CR and LF, so the `#` of `file.hurl#name` survives verbatim and the
@@ -576,7 +587,7 @@ mod provenance_tests {
             "the job summary must carry it: {summary_md}"
         );
 
-        let inline = failed_run(None);
+        let inline = failed_run(None, None);
         assert!(
             !github_annotations(&inline, &none).contains("via "),
             "an inline step has no fragment and must not render an empty one"
@@ -586,6 +597,43 @@ mod provenance_tests {
             "an inline step has no fragment and must not render an empty one"
         );
     }
+    /// The label rides the same channels as the fragment, and answers the
+    /// neighbouring question: `via` says which *file*, the label says which
+    /// *step of the sentence*. CI is the surface where a reader can least go
+    /// looking, so a sentence that lowered to several steps must not arrive
+    /// there as one anonymous failure.
+    #[test]
+    fn every_ci_sink_names_which_step_of_the_sentence_failed() {
+        let none = Redactions::new(std::iter::empty());
+        let summary = failed_run(None, Some("provision the environment"));
+
+        let annotations = github_annotations(&summary, &none);
+        assert!(
+            annotations.contains("provision the environment"),
+            "the annotation must carry it: {annotations}"
+        );
+        let summary_md = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
+        assert!(
+            summary_md.contains("› provision the environment"),
+            "the job summary must carry it: {summary_md}"
+        );
+
+        // Both at once, and in a stable order: label then provenance.
+        let both = failed_run(Some("tests/hurl/a.hurl#x"), Some("second entry"));
+        let md = summary_body(&both, &std::collections::BTreeMap::new(), "run-1");
+        assert!(
+            md.contains("› second entry") && md.contains("(via tests/hurl/a.hurl#x)"),
+            "{md}"
+        );
+
+        // An unnamed step adds no separator.
+        let unnamed = failed_run(None, None);
+        assert!(
+            !summary_body(&unnamed, &std::collections::BTreeMap::new(), "run-1").contains('›'),
+            "a step with no `name:` gains nothing"
+        );
+    }
+
     /// The by-tag rollup: one row per tag, Warned counts with passed,
     /// rendered only when any outcome carries tags.
     #[test]
@@ -733,6 +781,7 @@ mod junit_tests {
                 reproduce_hint: (status == Status::Failed)
                     .then(|| "curl -X GET http://x".to_owned()),
                 fragment: None,
+                label: None,
             }],
             fault: None,
             artifact_slug: None,
@@ -925,6 +974,7 @@ mod budget_tests {
                     attempt_details: Vec::new(),
                     reproduce_hint: None,
                     fragment: None,
+                    label: None,
                 })
                 .collect(),
             fault: None,

@@ -529,6 +529,7 @@ pub fn carried_outcomes(
                 attempt_details,
                 reproduce_hint,
                 fragment,
+                label,
                 ..
             } => {
                 steps
@@ -543,6 +544,7 @@ pub fn carried_outcomes(
                         attempt_details: attempt_details.clone(),
                         reproduce_hint: reproduce_hint.clone(),
                         fragment: fragment.clone(),
+                        label: label.clone(),
                     });
             }
             Event::ScenarioFinished {
@@ -625,6 +627,7 @@ mod tests {
             duration_ms,
             captures: Vec::new(),
             fragment: None,
+            label: None,
             detail: None,
             attempt_details: Vec::new(),
             reproduce_hint: None,

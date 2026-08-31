@@ -131,6 +131,20 @@ pub enum Event {
         /// fragments existed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fragment: Option<String>,
+        /// The pack step's authored `name:`, resolved (`${…}` replayed from the
+        /// payload's own occurrence window — see `lower`).
+        ///
+        /// One feature sentence commonly lowers to several engine steps, and
+        /// they all share a [`StepRef`]: same file, same line, same text. The
+        /// label is the only thing that tells them apart, which is why the
+        /// emitter has always written it into the artifact comment. Without it
+        /// here, every reader downstream of the record — console, HTML,
+        /// `JUnit`, TAP, the job summary, `explain` — printed the same sentence
+        /// twice with different verdicts and no way to say which was which.
+        /// Additive schema field: absent when the step has no `name:`, which is
+        /// every step in every stream written before this field existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
         /// Failure detail, when the step failed (additive schema field —
         /// absent on passing steps, so pre-existing streams are unchanged).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -284,6 +298,7 @@ mod tests {
             attempts: 2,
             duration_ms: 42,
             captures: vec!["recordId".to_owned()],
+            label: None,
             fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
             detail: None,
             attempt_details: vec!["attempt 1: HTTP 404 (retried)".to_owned()],

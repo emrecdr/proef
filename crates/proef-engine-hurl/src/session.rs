@@ -622,6 +622,7 @@ impl EngineSession for HurlSession {
                     attempt_details: attempt_details.clone(),
                     reproduce_hint,
                     fragment: step.fragment.clone(),
+                    label: step.label.clone(),
                 });
                 emit_step(
                     events,
@@ -796,6 +797,7 @@ fn skipped_outcome(step: &proef_core::step::LoweredStep) -> StepOutcome {
         attempt_details: Vec::new(),
         reproduce_hint: None,
         fragment: step.fragment.clone(),
+        label: step.label.clone(),
     }
 }
 
@@ -822,6 +824,7 @@ fn emit_step(
         duration_ms,
         captures: captures.to_vec(),
         fragment: step.fragment.clone(),
+        label: step.label.clone(),
         detail: detail.map(ToOwned::to_owned),
         attempt_details: attempt_details.to_vec(),
         reproduce_hint: reproduce_hint.map(ToOwned::to_owned),

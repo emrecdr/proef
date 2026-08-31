@@ -105,7 +105,9 @@ pub struct LoweredStep {
     /// Skip guard, when configured (resolved text; the runtime skips the step
     /// per [`Guard::skips`]).
     pub when: Option<Guard>,
-    /// Pack-step entry label (events/console), when authored.
+    /// Pack-step entry label, when authored — the artifact's entry comment,
+    /// and (via [`StepOutcome::label`] and `step_finished`) every reader
+    /// downstream of the record.
     pub label: Option<String>,
     /// The fragment this step executes, qualified as `file.hurl#name`
     /// (ADR-0018); `None` for an inline `hurl:` block.
@@ -178,6 +180,15 @@ pub struct StepOutcome {
     /// where a reader is *least* able to go looking, so it is the last place
     /// provenance should drop out.
     pub fragment: Option<String>,
+    /// The pack step's authored `name:`, copied from [`LoweredStep::label`];
+    /// `None` when the step has none.
+    ///
+    /// Carried here for the same reason as `fragment` above, and answering the
+    /// neighbouring question: `fragment` says *which file this request came
+    /// from*, the label says *which step of the sentence this is*. Several
+    /// engine steps routinely share one [`StepRef`], so without the label a
+    /// reader sees one sentence repeated with different verdicts.
+    pub label: Option<String>,
 }
 
 /// Result of dispatching one [`StepBatch`] to an engine.

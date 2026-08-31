@@ -215,6 +215,7 @@ impl Redactions {
             duration_ms,
             captures,
             fragment,
+            label,
             detail,
             attempt_details,
             reproduce_hint,
@@ -240,6 +241,10 @@ impl Redactions {
             // exempted "because it can't contain one" is how that stops
             // being true later.
             fragment: fragment.as_deref().map(|text| self.apply(text)),
+            // A label resolves `${secret:X}` to the run-time placeholder
+            // `{{X}}`, never a value (`resolve`), so this cannot leak today —
+            // masked anyway, on the no-exemptions rule above.
+            label: label.as_deref().map(|text| self.apply(text)),
             detail: detail.as_deref().map(|text| self.apply(text)),
             attempt_details: attempt_details
                 .iter()
@@ -491,6 +496,23 @@ impl<W: Write + Send> ConsoleReporter<W> {
     }
 }
 
+/// A step's authored `name:` rendered for a human-facing line, or `""` when it
+/// has none.
+///
+/// One spelling for every sink — console, HTML, `JUnit`, TAP, the job summary,
+/// `explain` — so a reader who learns it on one surface reads it on all of them,
+/// and so the six cannot drift the way the truncated-totals fallback did.
+///
+/// A separator rather than the artifact's parenthetical: the trailing `(…)` on
+/// a console step line already belongs to timing, and two adjacent paren groups
+/// read as one malformed group. The artifact keeps its own spelling because a
+/// `#` comment on its own line has no such neighbour — and because the emitted
+/// bytes are hash-locked (ADR-0010), so changing them would be churn against
+/// snapshots for no reader's benefit.
+pub fn step_label(label: Option<&str>) -> String {
+    label.map(|name| format!(" › {name}")).unwrap_or_default()
+}
+
 fn glyph(status: Status) -> &'static str {
     match status {
         Status::Passed => "✓",
@@ -522,6 +544,7 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                 attempts,
                 duration_ms,
                 detail,
+                label,
                 ..
             } => {
                 if self.mode != ConsoleMode::Full {
@@ -533,11 +556,12 @@ impl<W: Write + Send> Reporter for ConsoleReporter<W> {
                     String::new()
                 };
                 let line = format!(
-                    "    {} {}:{} — {} ({duration_ms}ms{attempts_note})",
+                    "    {} {}:{} — {}{} ({duration_ms}ms{attempts_note})",
                     self.painted(*status, glyph(*status)),
                     step.file,
                     step.line,
-                    step.text
+                    step.text,
+                    step_label(label.as_deref())
                 );
                 let line = self.redactions.apply(&line);
                 // A warning or a skip with no reason is unusable — say
@@ -777,6 +801,7 @@ mod tests {
                 duration_ms: 12,
                 captures: vec!["token".to_owned()],
                 fragment: None,
+                label: None,
                 detail: None,
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
@@ -855,6 +880,92 @@ mod tests {
         assert!(
             text.contains("summary: 1 passed · 0 failed · 0 skipped"),
             "{text}"
+        );
+    }
+
+    /// The console's half of the same defect the HTML report carries: two
+    /// engine steps of one sentence share a `StepRef`, so without the label the
+    /// two lines are byte-identical apart from their glyph.
+    #[test]
+    fn the_console_names_which_step_of_a_sentence_ran() {
+        let named = |label: &str, status| Event::StepFinished {
+            scenario: Arc::from("S"),
+            engine: Arc::from("hurl"),
+            step: crate::step::StepRef {
+                file: Arc::from("f.feature"),
+                line: 9,
+                text: Arc::from("the workspace is provisioned"),
+            },
+            status,
+            attempts: 1,
+            duration_ms: 0,
+            captures: Vec::new(),
+            fragment: None,
+            label: Some(label.to_owned()),
+            detail: None,
+            attempt_details: Vec::new(),
+            reproduce_hint: None,
+        };
+        let mut out = Vec::new();
+        {
+            let mut console =
+                ConsoleReporter::new(&mut out, Redactions::default(), ConsoleMode::Full, false);
+            for event in [
+                Event::ScenarioStarted {
+                    scenario: Arc::from("S"),
+                    file: Arc::from("f.feature"),
+                    timestamp_ms: None,
+                    worker: None,
+                    phase: None,
+                    exclusive: false,
+                },
+                named("fixture warm-up probe", Status::Warned),
+                named("provision the environment", Status::Passed),
+                Event::ScenarioFinished {
+                    scenario: Arc::from("S"),
+                    file: Arc::from("f.feature"),
+                    status: Status::Passed,
+                    timestamp_ms: None,
+                    worker: None,
+                    phase: None,
+                    reason: None,
+                    tags: Vec::new(),
+                },
+            ] {
+                console.on_event(&event);
+            }
+        }
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains(
+                "f.feature:9 — the workspace is provisioned › fixture warm-up probe (0ms)"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "f.feature:9 — the workspace is provisioned › provision the environment (0ms)"
+            ),
+            "{text}"
+        );
+        // A step with no `name:` prints exactly as it always did — the field is
+        // additive on the wire and on the page.
+        let mut plain = Vec::new();
+        {
+            let mut console =
+                ConsoleReporter::new(&mut plain, Redactions::default(), ConsoleMode::Full, false);
+            for event in sample_events() {
+                console.on_event(&event);
+            }
+        }
+        let plain = String::from_utf8(plain).unwrap();
+        assert!(
+            plain.contains("✓ f.feature:3 — I log in (12ms, 2 attempts)"),
+            "{plain}"
+        );
+        assert!(
+            !plain.contains('›'),
+            "an unlabelled step gains no separator: {plain}"
         );
     }
 
@@ -1011,6 +1122,7 @@ mod tests {
                     duration_ms: 1,
                     captures: vec![format!("cap-{secret}")],
                     fragment: Some(format!("{secret}.hurl#admin.search")),
+                    label: Some(format!("step named {secret}")),
                     detail: Some(format!("boom {secret}")),
                     reproduce_hint: None,
                     attempt_details: vec![format!("earlier boom {secret}")],
@@ -1058,6 +1170,7 @@ mod tests {
                         duration_ms: 1,
                         captures: Vec::new(),
                         fragment: None,
+                        label: None,
                         detail: None,
                         attempt_details: Vec::new(),
                     reproduce_hint: None,
