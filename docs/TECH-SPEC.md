@@ -359,8 +359,8 @@ proef macros [file|dir] [--env NAME] [--format json]
 proef fragments [file|dir] [--env NAME] [--format json] [--check [--require-annotated]]
 proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
-proef explain [run-id]         proef doctor
-proef diff [base] [new] [--fail-on-regression]   # each side: run id, record dir, or events .jsonl
+proef explain [run-id] [--format json]          proef doctor [--format json]
+proef diff [base] [new] [--fail-on-regression] [--format json]   # each side: run id, record dir, or events .jsonl
 proef flaky [--format json]                      # verdicts over the retained run history
 proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]

@@ -2,8 +2,11 @@
 
 **Status:** approved; US-1…US-12 all in service (multi-engine architectural only), plus
 post-M5 work: external config/environments (ADR-0012), the v0.6–v0.8 correctness series,
-v0.9.0, and named hurl fragments (ADR-0018 — see the §3 amendment) · **Date:** 2026-07-28
-· **Owner:** Emre
+v0.9.0, named hurl fragments (ADR-0018 — see the §3 amendment), the adoption response,
+the 0.11–0.14 hardening and CI-scale series, the RF capability audit and reserved tags
+(ADR-0019/0020), and the deep-improvement waves plus round 19. `CLAUDE.md`'s Status
+block is the running ledger; the goals and non-goals below are what has not changed.
+· **Date:** 2026-07-28, status refreshed 2026-08-31 · **Owner:** Emre
 **Companion docs:** [ADRs](README.md#decision-log-adr-index) for the *why*, [TECH-SPEC](TECH-SPEC.md) for the *how*,
 [IMPLEMENTATION-PLAN](IMPLEMENTATION-PLAN.md) for the *when*.
 

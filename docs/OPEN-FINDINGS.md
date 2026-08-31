@@ -326,19 +326,25 @@ Two wave items did **not** ship, and one of them should not:
   ADR-0002** so it names this closed set as the core's minimal entry grammar,
   or to move the splicing itself behind the seam (a real change, not a
   relocation). **Needs a named decision; do not patch it piecemeal.**
-- **Reading `events.jsonl` is spread across seven files** (`exec`, `explain`,
-  `record`, `report`, `watch` in the CLI; `html`, `report` in core). The two
-  folds that actually disagreed are unified (`record::parse_record`,
-  `report::suite_totals`); what remains is duplication, not divergence, and
-  `explain --format json` now hands consumers the canonical answer rather than
+- ~~Reading `events.jsonl` is spread across seven files.~~ **Closed (#150),
+  and it was not the duplication it was filed as.** Chasing it found that the
+  256 MiB record ceiling reached two of its four readers: `explain` and
+  `report` each opened the file with a bare `read_to_string`, so neither had
+  it — `report` even used the guarded reader for the *base* record two dozen
+  lines below the raw read of the primary one. Both go through
+  `record::read_events` now, and a source scan in `stderr_hygiene` makes the
+  next reader use the same door. The folds that could disagree were already
+  unified (`record::parse_record`, `report::suite_totals`), and
+  `explain --format json` hands consumers the canonical answer rather than
   inviting an eighth reader.
 - **`captures_before` is O(steps²)** — deliberately left. It runs only when a
   `ref:`/`bind:` consumes it and is bounded by scenario size, so threading a
   running set through lowering is churn against a bound that is not tight.
-- **Redaction runs inside the reporter mutex.** The allocation cost was
-  addressed (the miss path no longer allocates, and a clean field keeps its
-  `Arc`); the structural point — that masking happens while the lock is held —
-  stands.
+- ~~Redaction runs inside the reporter mutex.~~ **Fixed (#149).** The
+  allocation cost had already been addressed (the miss path no longer
+  allocates, and a clean field keeps its `Arc`); the structural point stood
+  until the masking simply moved *above* the `lock()`. It reads the event and
+  the needle set and writes neither, so it never needed the lock at all.
 
 ### Needs a named decision (ADR question, not a patch)
 
@@ -430,7 +436,8 @@ threaded there, with an integration test per field.
   ordinary testcases, and `report` overlays the base for one whole-suite
   page. Composition over records — the record files themselves never merge
   (ADR-0008); totals and the exit code stay the rerun's own (ADR-0014).
-- **Console modes** *(shipped — #107)* — `--console full|dotted|quiet`. The
+- **Console modes** *(shipped — #107, extended #147)* — `--console
+  full|failed|dotted|quiet`. The
   OSC-8 hyperlink half did **not** ship: printed paths stay plain until a
   terminal consumer asks (the same named-consumer method as JUnit
   `<properties>`).
