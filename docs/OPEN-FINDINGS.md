@@ -259,183 +259,86 @@ report"; this section records the verdicts and what remains open.
   CLAUDE.md had claimed. The SLA gate applies the same `@quarantine`
   non-gating list as the exit code.
 
-### Open — the remaining waves (detail in the report artifact)
+### Waves 2–5 — shipped (#118–#128), audited 2026-08-31
 
-- **Wave 2, CI-sink conformance:** JUnit failure/skip detail into element
-  *content* as well as the `message` attribute (GitLab reads only content;
-  Azure maps it to stack-trace); an XML-1.0 control-char + ANSI strip as a
-  property-tested boundary (one bad response byte invalidates a whole
-  report on Jenkins/GitLab); a ~900 KB cap with deterministic truncation on
-  the GitHub summary (the 1 MiB failure mode is *silent disappearance*);
-  `::error` annotations capped at 10 with a "showing N of M" notice; a
-  pinned test that shard/rerun JUnit identities form a set (GitLab drops
-  duplicates silently); a `time`-format property; testcase `system-out`
-  `[[ATTACHMENT|path]]` for report/sidecar links (`<properties>` is a trap).
-- **Wave 3, UX:** console color (`is_terminal` exists, used once, for
-  miette only); verdict printed last; the duplicated fault/step failure
-  line; total duration + run-id echo in the summary; shell completions and
-  a man page (nothing generates either); `doctor` project checks (suite
-  resolution, `[url] base` reachability, `hurl` on PATH); selector-typo
-  did-you-mean (the correct treatment sits 40 lines away); watch separator
-  + named-failure status; HTML report anchors, failures-first, a ~30-line
-  status filter; the `--format`/`-o` split (breaking, 0.16.0 — `--output`
-  advertises `tap` on four commands that reject it).
-- **Wave 4, diagnostics:** span anchoring (`match_span` computed and
-  unused — 13 of 19 pack snapshots caret the macro name, one excerpts the
-  *previous* macro; `locate::macro_span` also matches root `bind:` keys);
-  `resolve::*` blaming the healthy feature file while never naming the
-  pack; hurl/gherkin parser errors rendered as Rust `Debug` (and gherkin's
-  `{expected:?}` tail needs sort-normalization — it is nondeterministic);
-  a suggest-or-enumerate helper for the eleven `closest().unwrap_or_default()`
-  sites; `proef.toml` errors into the diagnostic system; `Diagnostic::url()`
-  + LSP `code_description` (the catalogue is unreachable from both error
-  surfaces); help-by-default enforced by a source-scan test;
-  `unknown_placeholder` once per outline, not per Examples row.
-- **Wave 5, docs & distribution:** fixture `/search`+`/version` routes (the
-  scaffold's fastest path ends 1 pass / 2 fail; fixture-in-binary stays
-  declined); a site INSTALL page (install currently unreachable from the
-  published site) and a visitor landing; a CI recipe page (zero `runs-on`
-  in all docs; `--junit auto` documented only in design docs);
-  login-then-token and polling recipes (zero hits for either); the
-  §3.5/§3.6 duplicate-`[run]`-table paste-trap; `ref:` demonstrated in the
-  reference corpus (0 `ref:` today); README example-first + a vs-Karate
-  section (the run-under-stock-hurl property is the differentiator Karate
-  cannot match); `.sha256` sidecars (attestations + cargo-auditable already
-  ship — the research's premise was corrected); crates.io Trusted
-  Publishing; a `cargo binstall` dry-run check then documentation;
-  crates.io keywords incl. `hurl`; a ghcr image; `mise use github:` doc; an
-  MSRV statement; `llms-full.txt` as a paste-able manual (the SEO case is
-  empirically dead).
-- **Wave 6, LSP:** `lsp-types` 0.97 → `gen-lsp-types` (frozen since
-  2024-06; rust-analyzer and tower-lsp-server both moved) — **shipped**,
-  under the original name via cargo's `package =` alias, with the `url`
-  feature restoring `Uri = url::Url` and deleting the hand-rolled
-  path↔URI bridge (ADR-0017 amendment). One premise here was wrong and is
-  corrected: `lsp-types` did *not* drag `bitflags 1.x` in. That entry
-  belongs to `jiff`'s optional `defmt`, and it resolves into no build
-  tree at all (`cargo tree -i bitflags@1.3.2` finds nothing) — the swap
-  removed `fluent-uri` and `serde_repr`, not `bitflags`. The rest of the
-  wave shipped with it: the analysis cache (Q2's "no invalidation hook"
-  premise was indeed stale — `fragments_dirty` was the hook, and one
-  analysis now serves every request until an edit, measured at 10 provider
-  reads per request before and none after); quick-fix code actions built
-  on a structured `Diag::fix` rather than on parsing the message prose;
-  document symbols; hover; and the panic report — which found a gap the
-  worklist had not: only the *recompute* was guarded, so a panic in a
-  feature handler ended the server outright. Both message-loop entry
-  points are wrapped now and `window/showMessage` carries the report.
-  Two items needed no work: the Helix snippet was already in
-  `EDITORS.md`, and the VS Code `documentSelector` decision is recorded
-  there (path-based `**/*.feature`, because the ecosystem is split
-  between the `cucumber` and `feature` language ids) against the day an
-  extension is built. Zed stays deferred, with its reason stated —
-  no tree-sitter Gherkin grammar exists, which is a prerequisite rather
-  than a setting.
-- **Wave 7, features:** `@quarantine` owner/expiry as authored tag data +
-  `flaky` staleness lints + the broken-vs-flaky discrimination (a 100%-
-  failing quarantined scenario is disabled, not flaky) — **shipped**, and it
-  needed the record reader to stop dropping the `tags` the event had carried
-  since 0.15.0; a published JSON Schema for `proef.toml` — **shipped** as
-  `proef schema config`; a whitespace-only-diff note in assertion failures —
-  **shipped**, off hurl's structured `actual`/`expected` rather than its prose.
-  Still open: per-`[meta]` flaky contexts.
+**This section said these were open for a week after they landed.** The list
+exists so a finding is not re-reported once it is fixed, and it failed at
+exactly that: a re-read sent one round toward rebuilding wave 2, and repeated
+two of its claims to a reader as open work. Corrected by checking the tree for
+each item rather than trusting the entry.
 
-  Two items were validated and are **not** patches:
+| Wave | Shipped in | Spot-checked by |
+|---|---|---|
+| 2 — CI-sink conformance | #118 | `failure_detail_reaches_attribute_and_text_node_alike`, `illegal_bytes_and_ansi_never_reach_the_xml`, `an_oversized_summary_truncates_and_says_so`, `annotations_cap_at_ten_with_an_honest_notice`, `composed_identities_form_a_set`, `times_are_three_decimal_seconds` |
+| 3 — UX | #119–#122 | console `is_terminal` colour, `clap_complete`/`clap_mangen` in the archives, `doctor`'s project block, the report's `jump` nav + `data-f` filter, the `--format` / `-o` split |
+| 4 — diagnostics | #123–#125 | `suggest_or_enumerate`, `code_description`, `proef::config::*` codes, `match_span` in use |
+| 5 — docs & distribution | #126–#128 | `docs/INSTALL.md`, `.sha256` sidecars, the README comparison |
 
-  - **`retry_if` early-exit and `Retry-After`-aware backoff are blocked
-    upstream, not unscheduled.** hurl 8.0.1 has no `Retry-After` handling at
-    all (`grep -ri retry.after` over its `src/` is empty) and retries inside
-    `run_request`, called from `run_entries`
-    (`hurl-8.0.1/src/runner/hurl_file.rs`) with a fixed `retry_interval`
-    (`runner_options.rs:122`, defaulted to 1s). The one hook it exposes is
-    `EventListener::on_entry_running(current, last, retry_count)`
-    (`src/runner/event.rs:21-27`) — a `&self` notification *before* an attempt,
-    carrying no response and returning nothing, so it can neither read a
-    `Retry-After` header nor lengthen the wait. The only two routes are an
-    upstream change (extend the listener, or teach hurl the header — an
-    ADR-0003 upstream-PR candidate) or driving retries in proef, which means
-    one entry per `run_entries` call and abandons the maximal batching
-    TECH-SPEC §5 established from measurement. Neither is a patch this worklist
-    can carry.
+Two wave items did **not** ship, and one of them should not:
 
-  - **Derived-secret tracking is declined, and the code already said why.**
-    `Redactions`' doc comment scopes the needle set to "the reversible
-    transforms that actually occur at HTTP boundaries" (base64 ×4, hex ×2,
-    percent, JSON escape). The remaining gap is a *hashed* reflection, and a
-    hash of a secret is not a credential: it authenticates nothing, and against
-    a high-entropy token it is not even a useful guess-verifier. Adding hash
-    needles would buy that narrow case at the cost of a crypto dependency and a
-    permanently larger needle list, against a scope decision that was made
-    deliberately. Reopen it only with a concrete case where a reflected digest
-    was itself usable.
-- **Performance (recorded, unscheduled):** pack validation was quadratic —
-  **fixed**. Every locator scanned the whole pack file to find its macro's
-  block, so a pack of N macros scanned it N times. `locate::MacroIndex`
-  records every macro's name span and block region in one pass and the
-  locators became lookups. Re-measured on a release build over generated
-  packs: 0.03 → 0.12 → 0.49 → 1.96 s across 400/800/1600/3200 macros before
-  (4× per doubling), 0.01 → 0.01 → 0.02 → 0.03 s after (~2×), i.e. **65× at
-  3200 macros**, and 6400 macros — off the old curve at roughly 8 s — now
-  costs 0.06 s. The original note said 24.9 s at 3200; that figure did not
-  reproduce here and was probably a debug build or a heavier macro shape, so
-  the numbers above are the ones to trust. No timing assertion guards it:
-  TESTING-STRATEGY's flake rule forbids wall-clock in tests, and the
-  behaviour is pinned by the existing span snapshots instead.
-  `levenshtein` lacks the length prune — **fixed** in `closest`, where the
-  threshold is known; `levenshtein` itself stays exact for the callers that
-  want the true distance, and a case-table test pins that the prune cannot
-  change an answer.
+- **`[[ATTACHMENT|path]]` in a testcase's `system-out` — declined, with a
+  trigger.** It is a Jenkins-plugin convention: GitLab and GitHub ignore it, so
+  it buys a link for one vendor's users who also installed the JUnit
+  Attachments plugin. It would put a filesystem path inside an artifact built
+  to travel — the class of defect R19-2 had just finished removing from the
+  HTML report — and the reader's need is already met twice over, by the
+  reproduce-hint `curl` in the failure content and by the HTML report's own
+  artifact deep-links. **Trigger:** a user on Jenkins reporting that neither
+  reaches the artifact for them.
+- **`llms-full.txt`** — still unshipped, and the entry that proposed it already
+  records that the SEO case for it is empirically dead. Left as-is.
 
-  Tag-expression `eval`/`Drop` recurse on long chains — **fixed, and it was a
-  bug rather than a slow path.** `and`/`or` chains parse iteratively, which the
-  module doc offered as proof that long chains were safe; they are not, because
-  an iterative parse still builds a left-leaning tree as deep as the chain is
-  long, and `eval` and the derived `Drop` walk it recursively. Reproduced: a
-  `--tags` expression of ~20 000 `and`-joined atoms overflows the stack and
-  aborts with SIGABRT — a signal, not one of ADR-0009's four exit codes, and
-  well inside what `ARG_MAX` permits. Capped at `MAX_TOKENS = 512` in `parse`,
-  which bounds the tree and so bounds both walks. The existing test built
-  5 000 atoms and asserted success — one order of magnitude below the cliff,
-  which is why it read as reassurance.
+### Corrections to this list's own claims *(all four were stale)*
 
-  Still open: `captures_before` O(steps²) — deliberately left, since it already
-  runs only when a `ref:`/`bind:` consumes it and is bounded by scenario size
-  (tens of steps), so threading a running set through lowering would be churn
-  against a bound that is not tight; redaction runs inside the reporter mutex;
-  `bake_entry_options` triple-materializes.
-- **Architecture & test debt (recorded):** ~290 lines of hurl grammar in
-  `proef-core` vs the seam story — amend ADR-0002's "diff-empty" claim or
-  route through `StepKindSpec`; three JSONL read loops / six event folds — the
-  truncated-totals half is **fixed**, and the disagreement was worse than
-  filed: on the same truncated bytes `explain` and the HTML report differed
-  three ways, not one. The report dropped `Warned` scenarios from every column,
-  counted `[run] setup`/`teardown` into a headline its own page labels
-  "excluded from totals above", and read a pre-0.6.0 record's per-phase totals
-  under today's suite-only meaning. One `report::suite_totals` now holds the
-  rule and both call it. Still open: the remaining read loops and folds; the exclusive-tags scheduler and
-  `RecordGate` have no direct tests; `feature.rs` was the one
-  user-input parser with no fuzz target — **fixed**, and the target found a real
-  defect within a minute of first running: a parse error pointing at a
-  multi-byte character produced a span that split the codepoint (gherkin's
-  column is char-counted, so the start was right; the end added one *byte*).
-  Nothing crashed, which is why it survived — miette tolerated the span and drew
-  the caret slightly left, and the LSP's converter snaps to a boundary on its
-  own, so every consumer defended itself instead of the producer being correct.
-  The target asserts spans are in range *and* on char boundaries, which is what
-  makes it worth more than "did not panic". Related, recorded in the target
-  itself: `fuzz_tag_expr` could never have reached the stack overflow fixed
-  above — libFuzzer's default `-max_len` of 4096 bytes is about 585 chained
-  atoms and the overflow needed thousands, so a green run there was not
-  coverage of deep input. `bake_entry_options` deserves a proptest.
-  Fragment bodies swallowing the next entry's leading prose comments is
-  **fixed** — and it was filed as cosmetic, which undersold it: the swallowed
-  block reached the emitted `.hurl`, so an artifact could carry a comment
-  describing a request the file does not contain. hurl attaches the lines above
-  a request to that request, so an entry has two starts — where its lines begin
-  and where its request begins — and the scanner used one value for both roles.
-  The end of a file had the same hole. The existing property was blind to it by
-  construction: it counted request lines per fragment, and comments are not
-  requests.
+- *"the exclusive-tags scheduler and `RecordGate` have no direct tests"* —
+  **false.** `proef-core/tests/runner.rs` carries
+  `an_exclusive_scenario_never_shares_the_pool`,
+  `back_to_back_exclusive_scenarios_each_get_the_pool_alone`,
+  `cancelling_during_an_exclusive_drain_still_completes_the_run`, and — for
+  the gate — `abandoned_scenario_emits_nothing_after_run_finished`.
+- *"`bake_entry_options` deserves a proptest"* — **it has one**, in `lower.rs`.
+- *"the `--format`/`-o` split is open"* — shipped in #122.
+- *"`match_span` is computed and unused"* — it is used; the diagnostics wave
+  wired it.
+
+### Still open, verified present in the tree
+
+- **Hurl grammar in `proef-core` vs ADR-0002's diff-empty claim — measured,
+  and far smaller than filed.** The "~290 lines" in the original entry counts
+  test fixtures: hurl text inside `#[cfg(test)]`, where a core test exercising
+  the pipeline has to write *some* engine's payload. In **production** code
+  there are 19 lines, all in `lower.rs`, across four concerns:
+
+  | Concern | Form |
+  |---|---|
+  | `variable_option_line(name, value)` | builds `variable: k=v`; **public API**, and called *by* engine-hurl |
+  | fence tracking (4 loops) | entry surgery must not edit inside a ```…``` body |
+  | `is_response_line(trimmed)` | `HTTP ` / `HTTP/`, the entry boundary |
+  | `[Options]` / `[Asserts]` headers | injected by `bake_entry_options` and the `expect:` merge |
+
+  All four exist because the core performs **text surgery on entries** —
+  splicing bound options in, merging `expect:` asserts into the previous
+  request. That algorithm is hurl-shaped whether or not the literals move
+  behind a seam, which is the argument against routing them through
+  `StepKindSpec`: four more fn pointers would relocate 19 lines without making
+  the surgery engine-independent, and would leave the seam claiming a
+  generality the code does not have. The honest alternatives are to **amend
+  ADR-0002** so it names this closed set as the core's minimal entry grammar,
+  or to move the splicing itself behind the seam (a real change, not a
+  relocation). **Needs a named decision; do not patch it piecemeal.**
+- **Reading `events.jsonl` is spread across seven files** (`exec`, `explain`,
+  `record`, `report`, `watch` in the CLI; `html`, `report` in core). The two
+  folds that actually disagreed are unified (`record::parse_record`,
+  `report::suite_totals`); what remains is duplication, not divergence, and
+  `explain --format json` now hands consumers the canonical answer rather than
+  inviting an eighth reader.
+- **`captures_before` is O(steps²)** — deliberately left. It runs only when a
+  `ref:`/`bind:` consumes it and is bounded by scenario size, so threading a
+  running set through lowering is churn against a bound that is not tight.
+- **Redaction runs inside the reporter mutex.** The allocation cost was
+  addressed (the miss path no longer allocates, and a clean field keeps its
+  `Arc`); the structural point — that masking happens while the lock is held —
+  stands.
 
 ### Needs a named decision (ADR question, not a patch)
 
