@@ -346,18 +346,25 @@ pub fn sink(reporters: Vec<Box<dyn Reporter>>, redactions: Redactions) -> EventS
         // dropping events after one reporter panic would truncate the run
         // record and lose its terminal event (ADR-0008 — the JSONL stream IS
         // the record).
+        // Redact *before* taking the lock. Masking reads `redactions` and the
+        // event and writes neither, so it shares nothing the lock protects —
+        // and it is the expensive half: a scan per text field per needle, with
+        // roughly nine needles derived per secret. Held inside the critical
+        // section it serialised every scenario thread behind work none of them
+        // share; the lock now covers only the fan-out it exists for.
+        //
+        // Order is unaffected. A scenario is one thread, so its own events
+        // still reach the lock in the order it emitted them; order *across*
+        // scenarios was never guaranteed (which is why the console buffers per
+        // scenario, and why the flake rule asserts normalized order rather
+        // than raw interleaving).
+        let redacted = (!redactions.is_empty()).then(|| redactions.apply_event(event));
+        let event = redacted.as_ref().unwrap_or(event);
         let mut stack = stack
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if redactions.is_empty() {
-            for reporter in stack.iter_mut() {
-                reporter.on_event(event);
-            }
-        } else {
-            let redacted = redactions.apply_event(event);
-            for reporter in stack.iter_mut() {
-                reporter.on_event(&redacted);
-            }
+        for reporter in stack.iter_mut() {
+            reporter.on_event(event);
         }
     })
 }
@@ -1101,6 +1108,80 @@ mod tests {
         let full = render(ConsoleMode::Full);
         for line in failed.lines().filter(|l| l.contains("the ")) {
             assert!(full.contains(line), "`failed` invented a line: {line}");
+        }
+    }
+
+    /// Redaction moved out of the sink's critical section, so what the lock
+    /// still has to guarantee is worth stating: every event reaches the
+    /// reporters exactly once, redacted, and one emitter's events arrive in
+    /// the order it emitted them.
+    ///
+    /// No timing assertion — the flake rule forbids it, and the change is
+    /// justified structurally (masking shares nothing the lock protects), not
+    /// by a stopwatch. What is asserted is the part a wrong move would break.
+    #[test]
+    fn concurrent_emitters_lose_nothing_and_keep_their_own_order() {
+        struct Collect(Arc<Mutex<Vec<String>>>);
+        impl Reporter for Collect {
+            fn on_event(&mut self, event: &Event) {
+                if let Event::BatchStarted { scenario, .. } = event
+                    && let Ok(mut seen) = self.0.lock()
+                {
+                    seen.push(scenario.to_string());
+                }
+            }
+        }
+
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 40;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = sink(
+            vec![Box::new(Collect(Arc::clone(&seen)))],
+            // A non-empty set, so the redacting branch is the one exercised.
+            Redactions::new(["hunter2".to_owned()]),
+        );
+        std::thread::scope(|scope| {
+            for thread in 0..THREADS {
+                let sink = sink.clone();
+                scope.spawn(move || {
+                    for index in 0..PER_THREAD {
+                        sink.emit(&Event::BatchStarted {
+                            // The secret is present so masking really runs.
+                            scenario: Arc::from(format!("t{thread}-{index}-hunter2")),
+                            engine: Arc::from("hurl"),
+                            steps: 1,
+                        });
+                    }
+                });
+            }
+        });
+
+        let seen = seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            seen.len(),
+            THREADS * PER_THREAD,
+            "an event was lost or doubled"
+        );
+        assert!(
+            seen.iter().all(|name| !name.contains("hunter2")),
+            "the sink must redact before any reporter sees the event"
+        );
+        // Each emitter's own events, in the order it emitted them. Order
+        // *across* emitters is deliberately not asserted — it never was.
+        for thread in 0..THREADS {
+            let mine: Vec<&String> = seen
+                .iter()
+                .filter(|name| name.starts_with(&format!("t{thread}-")))
+                .collect();
+            assert_eq!(mine.len(), PER_THREAD, "thread {thread} lost an event");
+            for (index, name) in mine.iter().enumerate() {
+                assert!(
+                    name.starts_with(&format!("t{thread}-{index}-")),
+                    "thread {thread} event {index} arrived out of order: {name}"
+                );
+            }
         }
     }
 
