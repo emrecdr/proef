@@ -7,13 +7,31 @@
 //! mechanism, not two.
 //!
 //! The parser lives in the sans-IO core so selection is deterministic and
-//! fuzzable: `and`/`or` chains parse iteratively (no stack growth on long
-//! chains), `not`/parenthesis nesting is depth-capped, and every malformed input
-//! returns `Err` rather than panicking.
+//! fuzzable: `and`/`or` chains parse iteratively, `not`/parenthesis nesting is
+//! depth-capped, the token count is capped, and every malformed input returns
+//! `Err` rather than panicking.
+//!
+//! The token cap is what makes the iterative parse safe, and this module used
+//! to claim it did not need one. Parsing a chain iteratively grows no stack —
+//! but it builds a *left-leaning tree as deep as the chain is long*, and
+//! [`TagExpr::eval`] walks that tree recursively, as does the derived `Drop`.
+//! A `--tags` expression of roughly twenty thousand `and`-joined atoms
+//! therefore overflowed the stack and aborted: a signal, not one of the four
+//! exit codes ADR-0009 promises. Capping the token count bounds the tree, and
+//! so bounds both walks, at the one place every expression passes through.
 
 /// Deepest `not`/parenthesis nesting accepted — far beyond any real expression,
 /// but a hard stop so a fuzzer cannot overflow the stack.
 const MAX_DEPTH: usize = 64;
+
+/// Most tokens accepted in one expression.
+///
+/// Bounds the parsed tree, and with it the recursive `eval` and `Drop` walks.
+/// A hand-written expression is a handful of tokens; the observed overflow
+/// needed thousands, and this sits an order of magnitude below the smallest
+/// failure seen (a debug build died between 5 000 and 20 000 chained atoms,
+/// and a debug frame is the *larger* one).
+const MAX_TOKENS: usize = 512;
 
 /// A parsed `--tags` expression. Build with [`parse`]; test with [`TagExpr::eval`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +132,14 @@ pub fn parse(input: &str) -> Result<TagExpr, String> {
     let tokens = tokenize(input);
     if tokens.is_empty() {
         return Err("empty tag expression".to_owned());
+    }
+    if tokens.len() > MAX_TOKENS {
+        return Err(format!(
+            "tag expression is too large: {} tokens, limit {MAX_TOKENS} — \
+             an expression this size is generated, not written; select with \
+             fewer atoms or a glob (`@team-*`)",
+            tokens.len()
+        ));
     }
     let mut parser = Parser { tokens, pos: 0 };
     let expr = parser.parse_or(0)?;
@@ -252,7 +278,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
     fn tags(list: &[&str]) -> Vec<String> {
@@ -316,13 +342,30 @@ mod tests {
         assert!(parse(&parens).is_err());
     }
 
+    /// A long chain parses, evaluates and drops — up to the cap, and refuses
+    /// past it with a message rather than a signal.
+    ///
+    /// This test used to build **5 000** atoms and assert success, as proof
+    /// that chains parse iteratively. They do; the tree they build does not
+    /// evaluate iteratively, and `eval`/`Drop` walk it recursively. So the old
+    /// version sat one order of magnitude below a stack overflow and read as
+    /// reassurance — a debug build aborts somewhere between 5 000 and 20 000
+    /// chained atoms, and a `--tags` argument has room for far more than that.
     #[test]
-    fn long_or_chain_is_iterative() {
-        // Thousands of `or`s must parse without recursing (no stack overflow).
-        let atoms: Vec<String> = (0..5000).map(|i| format!("t{i}")).collect();
+    fn a_long_chain_works_up_to_the_cap_and_is_refused_past_it() {
+        // 256 atoms + 255 `or`s = 511 tokens, just inside the cap.
+        let atoms: Vec<String> = (0..256).map(|i| format!("t{i}")).collect();
         let expr = parse(&atoms.join(" or ")).unwrap();
-        assert!(expr.eval(&tags(&["t4999"])));
+        assert!(expr.eval(&tags(&["t255"])));
         assert!(!expr.eval(&tags(&["missing"])));
+        drop(expr);
+
+        // Past the cap: an error naming the limit, never an abort. The size
+        // that used to overflow is many times this.
+        let huge: Vec<String> = (0..MAX_TOKENS).map(|i| format!("t{i}")).collect();
+        let err = parse(&huge.join(" and ")).expect_err("past the cap");
+        assert!(err.contains("too large"), "{err}");
+        assert!(err.contains(&MAX_TOKENS.to_string()), "{err}");
     }
 
     /// Glob atoms: anchored, `*` spans, `?` is one char, and a metachar-free

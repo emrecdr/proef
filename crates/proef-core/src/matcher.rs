@@ -313,8 +313,16 @@ pub fn near_duplicate_macros<'a>(
 
 /// The candidate closest to `input` by edit distance, within the shared
 /// "did you mean" threshold. `None` when nothing is close.
+///
+/// Candidates whose length differs from `input`'s by more than the threshold
+/// are skipped without measuring: one edit changes a string's length by at most
+/// one, so their distance cannot come in under it. `levenshtein` itself stays
+/// exact — the shortcut belongs where the threshold is known, not inside a
+/// function other callers use for the true distance.
 pub fn closest<'a>(input: &str, candidates: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let input_len = input.chars().count();
     candidates
+        .filter(|c| c.chars().count().abs_diff(input_len) <= SUGGESTION_DISTANCE)
         .map(|c| (levenshtein(input, c), c))
         .filter(|(distance, _)| *distance <= SUGGESTION_DISTANCE)
         .min_by_key(|(distance, _)| *distance)
@@ -408,6 +416,42 @@ mod tests {
 
     fn params(names: &[&str]) -> Vec<String> {
         names.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    /// The length prune in `closest` must be invisible: it may only skip
+    /// candidates the threshold would have rejected anyway.
+    ///
+    /// A wrong bound here does not fail loudly — it silently drops the right
+    /// suggestion and the message falls back to enumerating, which reads as
+    /// "proef has no idea" rather than as a bug.
+    #[test]
+    fn the_length_prune_never_changes_the_answer() {
+        let unpruned = |input: &str, candidates: &[&str]| -> Option<String> {
+            candidates
+                .iter()
+                .map(|c| (levenshtein(input, c), *c))
+                .filter(|(d, _)| *d <= SUGGESTION_DISTANCE)
+                .min_by_key(|(d, _)| *d)
+                .map(|(_, c)| c.to_owned())
+        };
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "search",
+                &["serch", "research", "s", "searching", "searchings"],
+            ),
+            ("q", &["", "qq", "qqqq", "qqqqq"]),
+            // Multi-byte: the prune counts chars, and so must the distance.
+            ("café", &["cafe", "caffé", "cafés", "コーヒー"]),
+            ("x", &[]),
+            ("", &["abc", "a"]),
+        ];
+        for (input, candidates) in cases {
+            assert_eq!(
+                closest(input, candidates.iter().copied()).map(str::to_owned),
+                unpruned(input, candidates),
+                "prune changed the answer for {input:?} over {candidates:?}"
+            );
+        }
     }
 
     #[test]
