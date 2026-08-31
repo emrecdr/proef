@@ -115,24 +115,103 @@ fn banner_incomplete(html: &str) -> String {
 }
 
 /// The href prefix for artifact deep-links: a bare `artifacts` when the report
-/// sits in the run dir (the common case), else an absolute run-dir `artifacts`
-/// path so the links still resolve from wherever `-o` put the file.
+/// sits in the run dir (the common case), else a path *relative to the report*
+/// so the links resolve from wherever `-o` put the file.
+///
+/// This used to be absolute, for a real reason: a browser resolves a relative
+/// href against the HTML file's own directory, and `runs-dir` defaults to a
+/// relative `.proef-runs`, so a bare `artifacts` 404s from anywhere else. But
+/// an absolute filesystem path is the wrong repair. It resolves only on the
+/// machine that produced it — and `-o` exists to put the report somewhere it
+/// will be *published*, which is precisely where that path is dead. Worse, it
+/// names the author's home directory in the one output built to be shared:
+/// 0.13.0 scrubbed machine identity out of the run record (R12-1), and this
+/// put it straight back, twelve times over, in the HTML uploaded beside it.
+///
+/// A relative path strictly dominates. It resolves everywhere the absolute one
+/// did, *plus* wherever report and artifacts travel together with their
+/// structure intact — and in the case that matters (`-o public/report.html`
+/// inside the project, the CI shape) it names nothing outside the workspace.
+///
+/// Residual, stated rather than papered over: a report written somewhere that
+/// shares no ancestor with the run dir still names the directories between
+/// them, because that is what a correct relative path from there *is*. It is
+/// no worse than the absolute path it replaces, and that report is not one
+/// being shared.
+///
+/// Purely lexical (like the `std::path::absolute` it replaces): no filesystem
+/// access, so it stays usable after the run dir has been rotated away.
 fn artifacts_href(record_dir: &Path, out_path: &Path) -> String {
     let out_dir = crate::fsutil::parent_dir(out_path);
     if out_dir == record_dir {
-        "artifacts".to_owned()
-    } else {
-        // A browser resolves a relative href against the HTML file's own
-        // directory, and `runs-dir` defaults to a relative `.proef-runs`,
-        // so the link has to be absolute to survive `-o` pointing anywhere
-        // outside the run dir. `std::path::absolute` is purely lexical (no
-        // filesystem access), so it stays usable even after the run dir has
-        // been rotated away.
-        std::path::absolute(record_dir.join("artifacts"))
-            .unwrap_or_else(|_| record_dir.join("artifacts"))
-            .display()
-            .to_string()
+        return "artifacts".to_owned();
     }
+    let artifacts = record_dir.join("artifacts");
+    relative_from(&out_dir, &artifacts).map_or_else(
+        // No relative path exists (different Windows prefixes — a report on
+        // `D:` for a run dir on `C:`). Absolute is the only thing that can
+        // resolve at all, so it stays the fallback rather than a dead link.
+        || {
+            std::path::absolute(&artifacts)
+                .unwrap_or(artifacts)
+                .display()
+                .to_string()
+        },
+        |relative| relative.display().to_string(),
+    )
+}
+
+/// `to`, expressed relative to the directory `from`; `None` when the two share
+/// no root (distinct Windows path prefixes).
+///
+/// Lexical: `..` components are popped rather than resolved, which is wrong
+/// under symlinks and is the same trade `std::path::absolute` already makes
+/// here.
+fn relative_from(from: &Path, to: &Path) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+
+    let (from_root, from_parts) = split(from)?;
+    let (to_root, to_parts) = split(to)?;
+    if from_root != to_root {
+        return None;
+    }
+    let shared = from_parts
+        .iter()
+        .zip(&to_parts)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut out = PathBuf::new();
+    for _ in shared..from_parts.len() {
+        out.push("..");
+    }
+    for part in &to_parts[shared..] {
+        out.push(part);
+    }
+    // Same directory: a browser needs *something* to join the filename onto.
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    Some(out)
+}
+
+/// A lexically-absolute path split into its root (prefix + `/`) and its normal
+/// components, with `.` dropped and `..` popped.
+fn split(path: &Path) -> Option<(std::ffi::OsString, Vec<std::ffi::OsString>)> {
+    use std::path::Component;
+    let absolute = std::path::absolute(path).ok()?;
+    let mut root = std::ffi::OsString::new();
+    let mut parts: Vec<std::ffi::OsString> = Vec::new();
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(part) => parts.push(part.to_owned()),
+        }
+    }
+    Some((root, parts))
 }
 
 /// The base run's scenario-scoped events for suite identities the rerun did
@@ -218,22 +297,65 @@ fn banner_carried(html: &str, count: usize, base: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The CI shape — `-o` inside the project, artifacts under `.proef-runs`.
+    /// The href must resolve *and* name nothing outside the workspace: this is
+    /// the report that gets uploaded, and an absolute path here put the
+    /// author's home directory into it (undoing R12-1 for the one artifact
+    /// built to be shared).
     #[test]
-    fn an_out_of_run_dir_report_gets_an_absolute_artifacts_href() {
-        // `runs-dir` defaults to a relative `.proef-runs`, and a browser
-        // resolves a relative href against the HTML file's own directory —
-        // so a report written elsewhere needs an absolute path or every
-        // artifact link 404s while the command reports success.
+    fn an_out_of_run_dir_report_links_artifacts_relatively() {
         let record_dir = Path::new(".proef-runs/01ABC");
-        let out_path = Path::new("/tmp/elsewhere/report.html");
+        let out_path = Path::new("public/report.html");
         let href = artifacts_href(record_dir, out_path);
+        assert_eq!(href, "../.proef-runs/01ABC/artifacts");
         assert!(
-            Path::new(&href).is_absolute(),
-            "href must not be relative to the output file: {href}"
+            !Path::new(&href).is_absolute(),
+            "the href must not be absolute: {href}"
         );
-        assert!(
-            href.ends_with("artifacts"),
-            "href must point at the artifacts dir: {href}"
+
+        // And it resolves: joined onto the report's own directory (what a
+        // browser does), it lands on the real artifacts directory. Compared
+        // through `split`, which pops `..` — `std::path::absolute` deliberately
+        // does not, so the two spellings would differ as strings while naming
+        // the same directory.
+        let resolved = crate::fsutil::parent_dir(out_path).join(&href);
+        assert_eq!(split(&resolved), split(&record_dir.join("artifacts")));
+    }
+
+    /// The leak, pinned directly: whatever the href is, it must not carry an
+    /// absolute path rooted at the machine's home directory.
+    #[test]
+    fn the_artifacts_href_never_names_the_authors_home_directory() {
+        let record_dir = Path::new(".proef-runs/01ABC");
+        for out in ["public/report.html", "report.html", "out/nested/r.html"] {
+            let href = artifacts_href(record_dir, Path::new(out));
+            assert!(
+                !Path::new(&href).is_absolute(),
+                "-o {out} produced an absolute href: {href}"
+            );
+        }
+    }
+
+    #[test]
+    fn relative_from_walks_up_and_back_down() {
+        assert_eq!(
+            relative_from(Path::new("/a/b/c"), Path::new("/a/b/c/d")),
+            Some(std::path::PathBuf::from("d"))
+        );
+        assert_eq!(
+            relative_from(Path::new("/a/b/c"), Path::new("/a/x/y")),
+            Some(std::path::PathBuf::from("../../x/y"))
+        );
+        // Same directory still needs a joinable prefix.
+        assert_eq!(
+            relative_from(Path::new("/a/b"), Path::new("/a/b")),
+            Some(std::path::PathBuf::from("."))
+        );
+        // `..` is popped lexically, so an unnormalized input does not produce
+        // a path that walks up too far.
+        assert_eq!(
+            relative_from(Path::new("/a/b/../b/c"), Path::new("/a/b/c/d")),
+            Some(std::path::PathBuf::from("d"))
         );
     }
 
