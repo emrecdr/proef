@@ -8,6 +8,12 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`cargo deny` failed on a yanked transitive crate.** `rand 0.10.2` resolved
+  `chacha20 0.10.1`, which was yanked from crates.io; the lock now takes
+  `0.10.2`. Not the secret store's copy — `chacha20poly1305` pins `0.9.1`,
+  which is unaffected — so nothing about encryption changed. Found by the
+  gate, which is what it is for.
+
 - **`proef report -o` wrote the author's home directory into the file built to
   be shared.** With the report inside the run dir the artifact links are a
   bare `artifacts/…`; with `-o` pointing anywhere else they were made
