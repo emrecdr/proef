@@ -312,8 +312,16 @@ report"; this section records the verdicts and what remains open.
   itself: `fuzz_tag_expr` could never have reached the stack overflow fixed
   above — libFuzzer's default `-max_len` of 4096 bytes is about 585 chained
   atoms and the overflow needed thousands, so a green run there was not
-  coverage of deep input. `bake_entry_options` deserves a proptest;
-  fragment bodies swallow the next entry's leading prose comments.
+  coverage of deep input. `bake_entry_options` deserves a proptest.
+  Fragment bodies swallowing the next entry's leading prose comments is
+  **fixed** — and it was filed as cosmetic, which undersold it: the swallowed
+  block reached the emitted `.hurl`, so an artifact could carry a comment
+  describing a request the file does not contain. hurl attaches the lines above
+  a request to that request, so an entry has two starts — where its lines begin
+  and where its request begins — and the scanner used one value for both roles.
+  The end of a file had the same hole. The existing property was blind to it by
+  construction: it counted request lines per fragment, and comments are not
+  requests.
 
 ### Needs a named decision (ADR question, not a patch)
 

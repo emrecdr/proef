@@ -8,6 +8,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A fragment's text ran on into the comments introducing the entry below it.**
+  hurl attaches the blank and comment lines above a request to *that* request,
+  which is exactly what makes the `# @proef` binding reliable — but it also
+  means an entry has two different starts: where its lines begin and where its
+  request begins. The scanner used one value for both, ending each fragment at
+  the next entry's request line, so every comment a corpus author wrote to
+  introduce the next request was copied into the previous fragment and from
+  there into the emitted `.hurl`. An artifact could carry
+  `# Destructive. Operators only.` while containing no destructive request at
+  all, and `trim_end` could not help — a comment is not whitespace. The same
+  applied at the end of a file, where a trailing note became part of the last
+  fragment. A fragment now runs from its annotation to the end of its own
+  request and response; the gap between two entries documents the one below it
+  and belongs to neither. Nothing executed differently, because hurl permits
+  only comments and blanks between entries — which is why it survived: the only
+  damage was to what the durable record says a request is.
+
+  The property covering this asserted one request line per fragment, which is
+  blind to comments; it now also asserts that no fragment holds any of the
+  generator's inter-entry filler.
+
+
 - **`explain` and the HTML report disagreed about a truncated run's totals.**
   A record with no tail `run_finished` — a run killed mid-flight — is
   reconstructed by counting, and each surface carried its own version of that

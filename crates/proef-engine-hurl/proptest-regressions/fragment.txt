@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 46c14013461166fe970a817eb066b18de2a839b49cb16273cc95ed5828e533f2 # shrinks to entries = [("# @proef a\nGET http://example.invalid/p\nHTTP 200\n", true), ("\n# filler\nGET http://example.invalid/p\nHTTP 200\n", false)]
