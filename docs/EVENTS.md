@@ -56,6 +56,11 @@ warned`) · `attempts` (u32) · `duration_ms` (u64) · `captures` (capture
 *names* only — never values) · `fragment` (`file.hurl#name` of the named
 fragment the step ran, ADR-0018 — **only present** for a `ref:` step, so an
 inline `hurl:` block and every pre-fragment record omit the key entirely) ·
+`label` (the pack step's authored `name:`, resolved — **only present** when
+the step has one. One feature sentence commonly lowers to several engine
+steps, and they share a `step` anchor exactly; the label is what tells them
+apart, and it is the same text the emitter writes into the artifact's entry
+comment) ·
 `detail` (string, **only present** on
 failures/warnings/skips-with-reason) · `attempt_details` (array of strings —
 the messages from earlier, failed attempts of a step that ultimately passed;

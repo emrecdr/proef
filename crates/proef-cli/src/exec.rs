@@ -760,7 +760,11 @@ pub fn execute(
                         step.step.file,
                         step.step.line,
                         redactions.apply(detail),
-                        crate::render::via(step.fragment.as_deref())
+                        format!(
+                            "{}{}",
+                            proef_core::report::step_label(step.label.as_deref()),
+                            crate::render::via(step.fragment.as_deref())
+                        )
                     );
                     if let Some(hint) = &step.reproduce_hint {
                         crate::render::errln!("    curl: {}", redactions.apply(hint));

@@ -37,6 +37,7 @@ fn step(
         duration_ms,
         captures: Vec::new(),
         fragment: None,
+        label: None,
         detail: detail.map(str::to_owned),
         attempt_details: Vec::new(),
         // Failing steps carry the redacted curl in the real stream — populate
@@ -207,6 +208,7 @@ fn the_html_report_names_the_fragment_a_step_ran() {
         duration_ms: 4,
         captures: Vec::new(),
         fragment: Some("tests/hurl/admin.hurl#admin.search".to_owned()),
+        label: None,
         detail: Some("Assert status code".to_owned()),
         attempt_details: Vec::new(),
         reproduce_hint: None,
@@ -256,4 +258,78 @@ fn the_html_report_names_the_fragment_a_step_ran() {
             .contains("class=\"via\""),
         "an inline step has no fragment to name"
     );
+}
+
+/// The defect this field exists for, stated as a fixture: one feature sentence
+/// lowering to two engine steps produces two `step_finished` with an identical
+/// `StepRef` — same file, same line, same text — and previously two identical
+/// rows, one green and one red, with nothing to say which was which.
+#[test]
+fn two_engine_steps_of_one_sentence_are_told_apart_by_their_labels() {
+    let named = |label: &str, status| Event::StepFinished {
+        scenario: Arc::from("S"),
+        engine: Arc::from("http"),
+        // Deliberately identical across both events: this is the whole point.
+        step: StepRef {
+            file: Arc::from("tests/features/a.feature"),
+            line: 9,
+            text: Arc::from("the workspace is provisioned"),
+        },
+        status,
+        attempts: 1,
+        duration_ms: 4,
+        captures: Vec::new(),
+        fragment: None,
+        label: Some(label.to_owned()),
+        detail: None,
+        attempt_details: Vec::new(),
+        reproduce_hint: None,
+    };
+    let events = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("run-1"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
+            rerun_of: None,
+        },
+        named("fixture warm-up probe", Status::Warned),
+        named("provision the environment", Status::Failed),
+        finished("S", "tests/features/a.feature", Status::Failed),
+    ];
+    let html = render_html(&events, "artifacts", &std::collections::BTreeMap::new());
+    for label in ["fixture warm-up probe", "provision the environment"] {
+        assert!(
+            html.contains(&format!("<span class=\"steplabel\"> › {label}</span>")),
+            "the label must render beside the sentence it disambiguates: {html}"
+        );
+    }
+
+    // The rows are no longer byte-identical — which is the property, not the
+    // presence of the markup. Compare the two `<li>` rows directly.
+    let rows: Vec<&str> = html
+        .split("<li class=")
+        .skip(1)
+        .map(|row| row.split("</li>").next().unwrap_or(row))
+        .collect();
+    assert_eq!(rows.len(), 2, "two steps, two rows: {html}");
+    assert_ne!(rows[0], rows[1], "the two rows still read identically");
+
+    // A label carrying markup is escaped like every other authored string.
+    let hostile = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("run-1"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
+            rerun_of: None,
+        },
+        named("<script>alert(1)</script>", Status::Passed),
+        finished("S", "tests/features/a.feature", Status::Passed),
+    ];
+    let html = render_html(&hostile, "artifacts", &std::collections::BTreeMap::new());
+    assert!(!html.contains("<script>alert(1)</script>"), "{html}");
+    assert!(html.contains("&lt;script&gt;"), "{html}");
 }

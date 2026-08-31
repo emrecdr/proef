@@ -77,6 +77,7 @@ impl EngineSession for MockSession {
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
                 fragment: step.fragment.clone(),
+                label: step.label.clone(),
             })
             .collect();
         BatchResult { steps, error: None }
@@ -130,6 +131,7 @@ impl EngineSession for FailingSession {
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
                 fragment: step.fragment.clone(),
+                label: step.label.clone(),
             })
             .collect();
         BatchResult {

@@ -89,7 +89,8 @@ fn failure_detail(outcome: &ScenarioOutcome) -> Option<String> {
         .and_then(|step| {
             let detail = step.detail.as_deref()?;
             Some(format!(
-                "{detail}{}",
+                "{detail}{}{}",
+                proef_core::report::step_label(step.label.as_deref()),
                 crate::render::via(step.fragment.as_deref())
             ))
         })
@@ -123,6 +124,7 @@ mod tests {
                     attempt_details: Vec::new(),
                     reproduce_hint: None,
                     fragment: None,
+                    label: None,
                 }]
             })
             .unwrap_or_default();

@@ -27,6 +27,9 @@ struct StepRow {
     reproduce_hint: Option<String>,
     /// `file.hurl#name` when the step ran a named fragment (ADR-0018).
     fragment: Option<String>,
+    /// The pack step's authored `name:` — what tells two engine steps of one
+    /// feature sentence apart.
+    label: Option<String>,
 }
 
 /// Fold one `step_finished` into its scenario block; returns the attempts
@@ -39,6 +42,7 @@ fn push_step_row(block: &mut ScenarioBlock, event: &Event) -> u64 {
         duration_ms,
         detail,
         fragment,
+        label,
         reproduce_hint,
         ..
     } = event
@@ -54,6 +58,7 @@ fn push_step_row(block: &mut ScenarioBlock, event: &Event) -> u64 {
         detail: detail.clone(),
         reproduce_hint: reproduce_hint.clone(),
         fragment: fragment.clone(),
+        label: label.clone(),
     });
     u64::from(*attempts)
 }
@@ -392,11 +397,16 @@ fn render_block(
     for step in &block.steps {
         let _ = write!(
             html,
-            "<li class=\"{cls}\"><span class=\"glyph\">{glyph}</span> {text}\
+            "<li class=\"{cls}\"><span class=\"glyph\">{glyph}</span> {text}{label}\
              <span class=\"meta\">:{line} · {attempts}× · {ms}ms</span>",
             cls = status_class(step.status),
             glyph = status_glyph(step.status),
             text = esc(&step.text),
+            label = step
+                .label
+                .as_deref()
+                .map(|name| format!("<span class=\"steplabel\"> › {}</span>", esc(name)))
+                .unwrap_or_default(),
             line = step.line,
             attempts = step.attempts,
             ms = step.duration_ms,
@@ -705,6 +715,7 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .steps li{margin:.3rem 0}.steps .glyph{font-weight:700}\
 li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph{color:var(--skip)}li.warn .glyph{color:var(--warn)}\
 .meta{color:var(--muted);font-size:.8rem;margin-left:.4rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
+.steplabel{color:var(--muted)}\
 .track{display:block;height:4px;margin:.25rem 0 0;background:var(--line);border-radius:2px;overflow:hidden}\
 .bar{display:block;height:100%;min-width:1px;border-radius:2px}\
 .bar.pass{background:var(--pass)}.bar.fail{background:var(--fail)}.bar.skip{background:var(--skip)}.bar.warn{background:var(--warn)}\

@@ -852,9 +852,12 @@ fn run_scenario(
                 duration_ms: 0,
                 captures: Vec::new(),
                 // A step that never ran still says where it would have run
-                // from: "not run" is exactly when a reader is reconstructing
-                // what the suite was about to do.
+                // from, and which step of its sentence it was: "not run" is
+                // exactly when a reader is reconstructing what the suite was
+                // about to do — and an unreached sentence that lowered to
+                // several steps is otherwise several identical `∅` lines.
                 fragment: step.fragment.clone(),
+                label: step.label.clone(),
                 detail: Some(unreached_reason.to_owned()),
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
@@ -868,6 +871,7 @@ fn run_scenario(
                 attempt_details: Vec::new(),
                 reproduce_hint: None,
                 fragment: step.fragment.clone(),
+                label: step.label.clone(),
             });
         }
     }
