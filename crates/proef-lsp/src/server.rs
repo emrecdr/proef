@@ -190,6 +190,18 @@ struct State {
     /// three lines below has always been debounced for exactly this reason;
     /// the corpus now follows the same policy.
     fragments_dirty: bool,
+    /// The last whole-suite analysis, reused until an edit invalidates it.
+    ///
+    /// Recompute is *the* cost of every feature: completion, definition and
+    /// references each ran the full pipeline — read every pack and feature,
+    /// parse, bind, lower — and threw the result away. Between two keystrokes
+    /// nothing it reads has changed, so the second run could only produce the
+    /// first one's answer. `None` means "an edit landed since"; the next
+    /// caller rebuilds and refills this.
+    ///
+    /// It retains the suite's text for the session, which is what the fragment
+    /// corpus above already does and what the whole-suite model implies.
+    analysis: Option<Analysis>,
 }
 
 fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerError> {
@@ -198,6 +210,7 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
         published: HashSet::new(),
         fragments: read_fragments(&Documents::default(), cfg.disk.as_ref(), &cfg.kinds),
         fragments_dirty: false,
+        analysis: None,
     };
     let mut dirty_since: Option<Instant> = None;
 
@@ -238,10 +251,15 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
                 {
                     return Ok(());
                 }
-                dispatch_request(connection, cfg, &state, &req)?;
+                dispatch_request(connection, cfg, &mut state, &req)?;
             }
             Message::Notification(note) => {
                 if apply_notification(cfg, &mut state, &note) {
+                    // The overlay's bytes changed, so every cached answer was
+                    // computed from text that no longer exists. Dropped here,
+                    // at the one place that knows an edit landed, rather than
+                    // at each of the four places that read it.
+                    state.analysis = None;
                     dirty_since.get_or_insert_with(Instant::now);
                 }
             }
@@ -324,15 +342,24 @@ fn is_fragment(cfg: &ServerConfig, uri: &lsp_types::Uri) -> bool {
         .any(|support| support.claims(&name))
 }
 
-/// Builds the current [`Analysis`] from the live overlay-then-disk provider, or
-/// `None` if analysis panicked. The one recompute path: the debounced
-/// diagnostics publisher and every on-demand feature request
-/// (definition/completion/references) all call this — v1 does not cache the
-/// analysis between requests, and the pipeline is milliseconds, so
-/// recomputing per request is cheap. The `catch_unwind` guard lives here, at
-/// the one recompute call site, so every caller gets panic safety for free
-/// instead of re-wrapping it (or forgetting to).
-fn current_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
+/// The current [`Analysis`], from the cache when an edit has not invalidated it
+/// and otherwise recomputed into the cache. `None` only if analysis panicked.
+///
+/// The one read path: the debounced diagnostics publisher and every on-demand
+/// feature request (definition/completion/references) all come through here, so
+/// they share one recompute per edit rather than one each.
+fn analysis<'a>(cfg: &ServerConfig, state: &'a mut State) -> Option<&'a Analysis> {
+    if state.analysis.is_none() {
+        state.analysis = compute_analysis(cfg, state);
+    }
+    state.analysis.as_ref()
+}
+
+/// Builds an [`Analysis`] from the live overlay-then-disk provider, or `None` if
+/// analysis panicked. The `catch_unwind` guard lives here, at the one recompute
+/// call site, so every caller gets panic safety for free instead of re-wrapping
+/// it (or forgetting to).
+fn compute_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
     let inputs = RecomputeInputs {
         root: &cfg.root,
         docs: &state.docs,
@@ -366,11 +393,25 @@ fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State)
     // One rebuild per debounce window, however many fragment edits it coalesced.
     if std::mem::take(&mut state.fragments_dirty) {
         state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
+        // The corpus is an analysis input, so a rebuilt one retires whatever a
+        // request computed against the old one earlier in this same window.
+        state.analysis = None;
     }
-    let Some(analysis) = current_analysis(cfg, state) else {
+    if analysis(cfg, state).is_none() {
+        return;
+    }
+    // Split the borrow: publishing reads the analysis and writes `published`,
+    // two disjoint fields of one `&mut State`. The refill above is what makes
+    // the `Some` certain; the `else` is the pattern's cost, not a real path.
+    let State {
+        analysis: Some(current),
+        published,
+        ..
+    } = state
+    else {
         return;
     };
-    diagnostics::publish(connection, &analysis, &mut state.published);
+    diagnostics::publish(connection, current, published);
 }
 
 /// Deserialize a request's params, or produce an `InvalidParams` error Response
@@ -394,7 +435,7 @@ fn parse_params<P: serde::de::DeserializeOwned>(
 fn dispatch_request(
     connection: &Connection,
     cfg: &ServerConfig,
-    state: &State,
+    state: &mut State,
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
     use lsp_types::{
@@ -416,10 +457,10 @@ fn dispatch_request(
         // No analysis (a panicked recompute) is not an error to the client —
         // it just means we have nothing to offer this request; respond with
         // no result rather than propagating the failure.
-        let result = current_analysis(cfg, state)
+        let result = analysis(cfg, state)
             .and_then(|analysis| {
                 definition::goto(
-                    &analysis,
+                    analysis,
                     &params.text_document_position_params.text_document.uri,
                     params.text_document_position_params.position,
                 )
@@ -446,10 +487,10 @@ fn dispatch_request(
         };
         // No analysis (a panicked recompute) yields no completions, never a
         // dropped/errored response.
-        let items = current_analysis(cfg, state)
+        let items = analysis(cfg, state)
             .map(|analysis| {
                 completion::complete(
-                    &analysis,
+                    analysis,
                     &params.text_document_position_params.text_document.uri,
                     params.text_document_position_params.position,
                 )
@@ -475,10 +516,10 @@ fn dispatch_request(
         };
         // No analysis (a panicked recompute) yields no references, never a
         // dropped/errored response — mirrors definition/completion.
-        let locations = current_analysis(cfg, state)
+        let locations = analysis(cfg, state)
             .map(|analysis| {
                 references::find(
-                    &analysis,
+                    analysis,
                     &params.text_document_position_params.text_document.uri,
                     params.text_document_position_params.position,
                 )
