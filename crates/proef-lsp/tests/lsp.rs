@@ -1060,6 +1060,173 @@ fn an_analysis_is_reused_until_an_edit_retires_it() {
     shutdown(&client, server);
 }
 
+/// A typo'd `use:` target offers the quick fix that corrects it, as a real edit
+/// on the real bytes.
+///
+/// The did-you-mean already existed in the message; what an editor could not do
+/// was *apply* it. `Diag::with_fix_replacing` attaches the structured half
+/// (span + replacement) only where the edit is certain, and this asserts the
+/// whole chain: pack validation finds the typo, the fix survives into the
+/// analysis, and the action's `TextEdit` covers exactly the misspelled token.
+#[test]
+// One scenario end to end, and the length is the file's ~30 lines of
+// server-spawn boilerplate — repeated in every test here — not the assertions.
+// Splitting it would pay that setup cost twice; extracting a shared spawn
+// helper is the fix, and belongs in its own change.
+#[allow(clippy::too_many_lines)]
+fn a_misspelled_use_target_offers_the_correcting_edit() {
+    use lsp_types::{
+        CodeActionContext, CodeActionKind, CodeActionParams, CodeActionResponse, Range,
+    };
+
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    // `wrapper` uses `basse`; the loaded macro is `base`.
+    let pack_text = "macros:\n  base:\n    match: I am the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    match: the wrapper\n    steps:\n      - use: basse\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
+        files,
+    };
+
+    let kinds = vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: None,
+        options: None,
+    }];
+    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
+
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine,
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, pack_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    let at_cursor = |id: i32, line: u32, character: u32| {
+        let point = Position { line, character };
+        client
+            .sender
+            .send(Message::Request(Request {
+                id: RequestId::from(id),
+                method: "textDocument/codeAction".to_owned(),
+                params: serde_json::to_value(CodeActionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: pack_url.clone(),
+                    },
+                    range: Range {
+                        start: point,
+                        end: point,
+                    },
+                    // Empty, deliberately: the client echoes the diagnostics it
+                    // holds, and none of them can carry a fix. The analysis is
+                    // the authority, so the handler must not need this.
+                    context: CodeActionContext {
+                        diagnostics: Vec::new(),
+                        only: None,
+                        trigger_kind: None,
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                })
+                .unwrap(),
+            }))
+            .unwrap();
+        wait_for_response::<Option<Vec<CodeActionResponse>>>(&client, &RequestId::from(id))
+            .unwrap_or_default()
+    };
+
+    // "      - use: basse" is line 9; the cursor sits inside `basse` (col 15).
+    let actions = at_cursor(50, 9, 15);
+    let action = actions
+        .iter()
+        .find_map(|a| match a {
+            CodeActionResponse::CodeAction(a) => Some(a),
+            CodeActionResponse::Command(_) => None,
+        })
+        .expect("the typo offers a quick fix");
+
+    assert_eq!(action.title, "replace `basse` with `base`");
+    assert_eq!(action.kind, Some(CodeActionKind::QuickFix));
+    assert_eq!(action.is_preferred, Some(true));
+    // The action names its diagnostic — which carets the macro's *name key* on
+    // line 6, three lines above the edit. That split is the normal case, not an
+    // anomaly, and it is why a fix is found in the file rather than in the span
+    // and offered from either end.
+    let named = action
+        .diagnostics
+        .as_ref()
+        .expect("the action names the diagnostic it fixes");
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].range.start.line, 6, "caret on `wrapper:`");
+    assert_eq!(
+        named[0].code,
+        Some(lsp_types::Code::String(
+            "proef::pack::unknown_use".to_owned()
+        ))
+    );
+
+    let edits = action
+        .edit
+        .as_ref()
+        .and_then(|e| e.changes.as_ref())
+        .and_then(|c| c.get(&pack_url))
+        .expect("an edit for this very file");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "base");
+    // The edit covers `basse` and nothing else: line 9, the five columns after
+    // "      - use: ". Applying it by hand yields the corrected line, which is
+    // the only claim that matters to an author.
+    assert_eq!(edits[0].range.start.line, 9);
+    let (start, end) = (
+        edits[0].range.start.character as usize,
+        edits[0].range.end.character as usize,
+    );
+    assert_eq!((start, end), (13, 18));
+    let line = pack_text.lines().nth(9).unwrap();
+    assert_eq!(
+        format!("{}{}{}", &line[..start], edits[0].new_text, &line[end..]),
+        "      - use: base"
+    );
+
+    // The same fix is reachable from the squiggle three lines up, since that is
+    // where an author following the diagnostic actually puts the caret.
+    assert_eq!(
+        at_cursor(51, 6, 4).len(),
+        1,
+        "the fix is offered from the diagnostic too"
+    );
+
+    // A healthy line offers nothing — a quick fix that appears everywhere is
+    // noise, and `base` on line 1 is correct exactly as written.
+    let elsewhere = at_cursor(52, 1, 4);
+    assert!(
+        elsewhere.is_empty(),
+        "an unrelated line offers no fix: {elsewhere:?}"
+    );
+
+    shutdown(&client, server);
+}
+
 fn feature_text() -> String {
     "Feature: E\n  Scenario: S\n    When I serch for Jansen\n".to_owned()
 }

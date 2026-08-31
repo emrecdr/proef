@@ -6,6 +6,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **The editor can apply a "did you mean", not just print it.** Every
+  misspelled-name diagnostic that already suggested a nearest spelling now
+  carries the structured half of that suggestion — a span and a replacement —
+  and `proef lsp` serves it as a `quickfix` code action: `use:` and `ref:`
+  targets, `with:` and `bind:` keys, step kinds, Examples placeholders, and
+  data-table columns. The suggestion is computed **once** and rendered twice
+  (prose for a reader, an edit for an editor), so the message and the fix can
+  never disagree.
+
+  A fix is attached only when the edit is certain: the suggested name is near
+  enough, and the misspelling occurs exactly once, as a whole token, in the
+  diagnostic's *own* file. Each of those failing means no fix rather than an
+  approximate one — notably, a lowering error anchors on the feature step that
+  invoked a macro while the typo lives in the pack, so it finds nothing to
+  replace and offers nothing rather than editing the healthy file. The action
+  is reachable from either the diagnostic or the token, because the two are
+  regularly lines apart: a `use:` error carets the macro's name key.
+
 ### Changed
 
 - **The editor stops re-analysing the suite on every keystroke.** Completion,

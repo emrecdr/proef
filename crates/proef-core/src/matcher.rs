@@ -337,20 +337,50 @@ pub fn suggest_or_enumerate<'a>(
     input: &str,
     candidates: impl Iterator<Item = &'a str> + Clone,
     listing: Option<&str>,
-) -> String {
+) -> Suggestion {
     if let Some(close) = closest(input, candidates.clone()) {
-        return format!(" — did you mean `{close}`?");
+        return Suggestion {
+            tail: format!(" — did you mean `{close}`?"),
+            nearest: Some(close.to_owned()),
+        };
     }
     let mut known: Vec<&str> = candidates.collect();
     known.sort_unstable();
     known.dedup();
-    match known.len() {
+    let tail = match known.len() {
         0 => String::new(),
         1..=6 => format!(" (known: {})", known.join(", ")),
         n => match listing {
             Some(listing) => format!(" ({n} known — {listing})"),
             None => format!(" ({n} known)"),
         },
+    };
+    Suggestion {
+        tail,
+        nearest: None,
+    }
+}
+
+/// One "did you mean" fact in its two renderings: the prose tail a reader sees,
+/// and the nearest name an editor can apply as an edit.
+///
+/// One value rather than two calls, because the two must never disagree: a
+/// message that proposes `search` while the quick fix writes something else is
+/// worse than having no quick fix at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    /// The message tail — a nearest spelling, else the valid set, else empty.
+    pub tail: String,
+    /// The nearest candidate, when one was near enough to propose an edit.
+    /// `None` when the tail merely enumerates: there is nothing to apply.
+    pub nearest: Option<String>,
+}
+
+impl std::fmt::Display for Suggestion {
+    /// Renders the tail, so a call site can keep interpolating the value
+    /// straight into its message.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.tail)
     }
 }
 
