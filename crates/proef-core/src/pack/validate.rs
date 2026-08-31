@@ -56,10 +56,11 @@ pub(crate) fn normalize_macro(
     raw: &RawMacro,
     pack_name: &str,
     source: &PackSource,
+    index: &locate::MacroIndex<'_>,
     diags: &mut Vec<Diag>,
 ) -> Option<Macro> {
-    let span = locate::macro_span(&source.text, name);
-    let match_span = locate::match_span(&source.text, name);
+    let span = index.macro_span(name);
+    let match_span = index.match_span(name);
     let at = |diag: Diag| {
         diag.with_source(source.name.clone(), Arc::clone(&source.text))
             .maybe_span(span)
@@ -148,7 +149,7 @@ pub(crate) fn normalize_macro(
             // fix: when the counts disagree the pairing can't be trusted, so
             // every item in this macro falls back to the macro's own span
             // instead of risking an ordinal-shifted wrong line.
-            let hurl_spans = locate::expect_hurl_line_spans(&source.text, name);
+            let hurl_spans = index.expect_hurl_line_spans(name);
             let hurl_key_count = items.iter().filter(|item| item.hurl.is_some()).count();
             let spans_reliable = hurl_spans.len() == hurl_key_count;
             let mut hurl_ordinal = 0usize;
@@ -438,7 +439,18 @@ fn raw_duration_ms(value: &str) -> Option<u64> {
 /// Passes over the complete macro set: `use:` graph (4, 5), payload kinds (8),
 /// raw-block finite-retry scan (6), and engine probe validation (7).
 pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diags: &mut Vec<Diag>) {
+    // One index per pack *file*, not per macro: indexing is a whole-file pass
+    // and a file holds many macros. Locating a macro used to rescan the text
+    // per lookup, which made validation quadratic in the macro count.
+    let mut anchors: BTreeMap<&str, locate::MacroIndex<'_>> = BTreeMap::new();
     for macro_ in set.macros.values() {
+        anchors
+            .entry(macro_.pack.as_str())
+            .or_insert_with(|| locate::MacroIndex::new(&macro_.source));
+    }
+
+    for macro_ in set.macros.values() {
+        let anchors = &anchors[macro_.pack.as_str()];
         let at = |diag: Diag| {
             diag.with_source(macro_.pack.clone(), Arc::clone(&macro_.source))
                 .maybe_span(macro_.span)
@@ -479,7 +491,7 @@ pub(crate) fn run_cross_macro_passes(set: &PackSet, kinds: &[StepKindSpec], diag
                         .and_modify(|n| *n += 1)
                         .or_insert(0);
                     payload_passes(
-                        macro_, index, kind, step, payload, ordinal, kinds, &at, diags,
+                        macro_, anchors, index, kind, step, payload, ordinal, kinds, &at, diags,
                     );
                 }
             }
@@ -754,6 +766,7 @@ fn use_target_passes(
 #[allow(clippy::too_many_arguments)]
 fn payload_passes(
     macro_: &Macro,
+    anchors: &locate::MacroIndex<'_>,
     index: usize,
     kind: &str,
     step: &MacroStep,
@@ -807,6 +820,7 @@ fn payload_passes(
 
     lint_raw_options(
         macro_,
+        anchors,
         index,
         kind,
         step,
@@ -849,8 +863,7 @@ fn payload_passes(
                                 macro_.name, err.message, err.line, err.column
                             ),
                         ))
-                        .maybe_span(locate::payload_line_span(
-                            &macro_.source,
+                        .maybe_span(anchors.payload_line_span(
                             &macro_.name,
                             kind,
                             ordinal,
@@ -1038,6 +1051,7 @@ fn scan_option_values(text: &str, recognise: OptionRecogniser) -> Vec<OptionViol
 #[allow(clippy::too_many_arguments)]
 fn lint_raw_options(
     macro_: &Macro,
+    anchors: &locate::MacroIndex<'_>,
     index: usize,
     kind: &str,
     step: &MacroStep,
@@ -1058,8 +1072,7 @@ fn lint_raw_options(
                 violation.code,
                 format!("macro `{}` step {index}: {}", macro_.name, violation.detail),
             ))
-            .maybe_span(locate::payload_line_span(
-                &macro_.source,
+            .maybe_span(anchors.payload_line_span(
                 &macro_.name,
                 kind,
                 ordinal,
@@ -1093,13 +1106,7 @@ fn lint_raw_options(
                         macro_.name
                     ),
                 ))
-                .maybe_span(locate::payload_line_span(
-                    &macro_.source,
-                    &macro_.name,
-                    kind,
-                    ordinal,
-                    line_no + 1,
-                ))
+                .maybe_span(anchors.payload_line_span(&macro_.name, kind, ordinal, line_no + 1))
                 .with_help(
                     "an entry carries one policy per option — delete whichever of the two is not authoritative",
                 ),
@@ -1516,8 +1523,9 @@ mod tests {
             diag.message.contains("expect item 1"),
             "the blank item is index 1: {diag:?}"
         );
-        let macro_span =
-            crate::pack::locate::macro_span(&text, "mixed").unwrap_or_else(|| panic!("macro span"));
+        let macro_span = crate::pack::locate::MacroIndex::new(&text)
+            .macro_span("mixed")
+            .unwrap_or_else(|| panic!("macro span"));
         assert_eq!(
             diag.span,
             Some(macro_span),

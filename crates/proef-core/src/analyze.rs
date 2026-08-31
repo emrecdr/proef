@@ -345,23 +345,28 @@ fn index_fragments(packs: &PackSet) -> Vec<FragmentDef> {
 fn index_refs<T>(
     packs: &PackSet,
     pick: impl Fn(&MacroStepKind) -> Option<&str>,
-    spans_of: fn(&str, &str) -> Vec<Span>,
+    key: &str,
     make: impl Fn(&crate::pack::Macro, Span, &str) -> Option<T>,
 ) -> Vec<T> {
+    // One index per pack file, shared by every macro in it — the scan is a
+    // whole-file pass, and doing it per macro made this quadratic.
+    let mut anchors: BTreeMap<&str, crate::pack::locate::MacroIndex<'_>> = BTreeMap::new();
     let mut out = Vec::new();
     for m in packs.macros.values() {
         let MacroBody::Steps(steps) = &m.body else {
             continue;
         };
         let targets: Vec<&str> = steps.iter().filter_map(|step| pick(&step.kind)).collect();
-        // Most macros reference nothing of this kind, and the span scan walks the
-        // pack text from byte 0 to find the macro's block. The count guard below
-        // already rejects the empty case; leaving before the scan just declines to
-        // pay for it, on a path the LSP re-runs per request.
+        // Most macros reference nothing of this kind. The count guard below
+        // already rejects the empty case; leaving early also declines to build
+        // an index for a file nothing here will look up.
         if targets.is_empty() {
             continue;
         }
-        let spans = spans_of(&m.source, &m.name);
+        let index = anchors
+            .entry(m.pack.as_str())
+            .or_insert_with(|| crate::pack::locate::MacroIndex::new(&m.source));
+        let spans = index.key_line_spans(&m.name, key);
         if spans.len() != targets.len() {
             continue;
         }
@@ -383,7 +388,7 @@ fn index_fragment_refs(packs: &PackSet) -> Vec<FragmentRef> {
             MacroStepKind::Ref { target } => Some(target.as_str()),
             MacroStepKind::Use { .. } | MacroStepKind::Payload { .. } => None,
         },
-        crate::pack::locate::ref_line_spans,
+        "ref",
         |m, span, target| {
             packs.find_fragment(target).map(|fragment| FragmentRef {
                 pack: m.pack.clone(),
@@ -404,7 +409,7 @@ fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
             // fragment, not a macro, so it is not a go-to-macro target.
             MacroStepKind::Payload { .. } | MacroStepKind::Ref { .. } => None,
         },
-        crate::pack::locate::use_line_spans,
+        "use",
         |m, span, target| {
             packs.find_use_target(target).map(|target_macro| UseRef {
                 pack: m.pack.clone(),
