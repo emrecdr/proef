@@ -49,33 +49,41 @@ struct Observation {
 /// beside the observations they summarize were four fields of redundant state
 /// and a fold-body state machine, for sums a bounded slice answers directly.
 #[derive(Default)]
-struct History(Vec<Observation>);
+struct History {
+    runs: Vec<Observation>,
+    /// The scenario carried `@quarantine` in at least one observed run.
+    ///
+    /// Per scenario rather than per run because that is the question being
+    /// asked — "is this one hidden?" — and a tag added midway through the
+    /// window still means every failure since has been invisible.
+    quarantined: bool,
+}
 
 impl History {
     fn observed(&self) -> usize {
-        self.0.len()
+        self.runs.len()
     }
 
     fn fails(&self) -> usize {
-        self.0.iter().filter(|o| o.failed).count()
+        self.runs.iter().filter(|o| o.failed).count()
     }
 
     /// Consecutive observed runs whose verdict differs — the flap count.
     fn transitions(&self) -> usize {
-        self.0
+        self.runs
             .windows(2)
             .filter(|w| w[0].failed != w[1].failed)
             .count()
     }
 
     fn pass_on_retry(&self) -> usize {
-        self.0.iter().filter(|o| !o.failed && o.retried).count()
+        self.runs.iter().filter(|o| !o.failed && o.retried).count()
     }
 
     /// Nearest-rank p95 of the observed durations (`sla::percentile`, the
     /// crate's one implementation of the statistic).
     fn p95_ms(&self) -> u64 {
-        let mut sorted: Vec<u64> = self.0.iter().map(|o| o.duration_ms).collect();
+        let mut sorted: Vec<u64> = self.runs.iter().map(|o| o.duration_ms).collect();
         sorted.sort_unstable();
         crate::sla::percentile(&sorted, 95).unwrap_or(0)
     }
@@ -84,6 +92,20 @@ impl History {
     /// than fail-rate is the load-bearing choice: F,F,P,P is a fix that stuck
     /// (one transition), not a flake — fail-rate cannot tell those apart.
     fn verdict(&self) -> Verdict {
+        // Quarantine is asked first because it changes what a result *means*,
+        // not just how urgent it is. A quarantined scenario's failures gate
+        // nothing, so nobody is looking at them: always-failing under
+        // quarantine is a test that has been switched off and left in the
+        // suite, which is the failure mode quarantine itself is prone to and
+        // the one no pass/fail history can show.
+        if self.quarantined && self.observed() >= 2 {
+            if self.fails() == self.observed() {
+                return Verdict::Disabled;
+            }
+            if self.fails() == 0 && self.pass_on_retry() == 0 {
+                return Verdict::Recovered;
+            }
+        }
         if self.transitions() >= 2 {
             Verdict::Flaky
         } else if self.pass_on_retry() > 0 {
@@ -102,12 +124,16 @@ impl History {
 /// listing sorts by this, worst first.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Verdict {
+    /// Quarantined and failing every observed run — switched off, not flaky.
+    Disabled,
     /// Verdict flapped between runs: the quarantine candidate.
     Flaky,
     /// Green, but only ever after retries — one backoff change from red.
     Latent,
     /// Failed in every observed run: broken, not flaky.
     Broken,
+    /// Quarantined but green throughout the window — the tag can come off.
+    Recovered,
     /// Seen in fewer than two runs — no history to judge yet.
     New,
     Healthy,
@@ -116,9 +142,11 @@ enum Verdict {
 impl Verdict {
     fn word(self) -> &'static str {
         match self {
+            Self::Disabled => "DISABLED — quarantined and failing every run",
             Self::Flaky => "FLAKY — quarantine candidate (@quarantine)",
             Self::Latent => "passes only on retry (latent)",
             Self::Broken => "always failing (broken, not flaky)",
+            Self::Recovered => "green throughout — the @quarantine can come off",
             Self::New => "new — not enough history",
             Self::Healthy => "healthy",
         }
@@ -127,9 +155,11 @@ impl Verdict {
     /// The machine spelling: the stable first word, not the human hint.
     fn key(self) -> &'static str {
         match self {
+            Self::Disabled => "disabled",
             Self::Flaky => "flaky",
             Self::Latent => "latent",
             Self::Broken => "broken",
+            Self::Recovered => "recovered",
             Self::New => "new",
             Self::Healthy => "healthy",
         }
@@ -173,7 +203,12 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
                 // a run that never reached it — neither is stability evidence.
                 continue;
             }
-            histories.entry(key).or_default().0.push(Observation {
+            let history = histories.entry(key).or_default();
+            history.quarantined |= run
+                .tags
+                .iter()
+                .any(|tag| tag == crate::front::reserved::QUARANTINE);
+            history.runs.push(Observation {
                 failed: run.status == Status::Failed,
                 retried: run.steps.values().any(|s| s.attempts > 1),
                 duration_ms: run
@@ -221,6 +256,7 @@ pub fn flaky(runs_root: &Path, output_json: bool) -> ExitCode {
                 "transitions": h.transitions(),
                 "pass_on_retry": h.pass_on_retry(),
                 "p95_ms": h.p95_ms(),
+                "quarantined": h.quarantined,
                 "verdict": h.verdict().key(),
             });
             crate::render::outln!("{object}");
@@ -270,6 +306,29 @@ fn render_table(rows: &[(Key, History)], runs: usize, runs_root: &Path) {
         crate::render::outln!(
             "\n{flagged} scenario(s) flagged — tag a flapper `@quarantine` to keep it \
              running without gating the exit code while it is fixed"
+        );
+    }
+    // The other end of the same pipeline. Quarantine is a holding pen, and the
+    // two ways out of it are the two things this can say: it never recovered,
+    // or it did.
+    let disabled = rows
+        .iter()
+        .filter(|(_, h)| h.verdict() == Verdict::Disabled)
+        .count();
+    if disabled > 0 {
+        crate::render::outln!(
+            "{disabled} quarantined scenario(s) failed every run — nothing is watching \
+             them fail; fix or delete rather than leave them switched on and hidden"
+        );
+    }
+    let recovered = rows
+        .iter()
+        .filter(|(_, h)| h.verdict() == Verdict::Recovered)
+        .count();
+    if recovered > 0 {
+        crate::render::outln!(
+            "{recovered} quarantined scenario(s) were green throughout — drop the \
+             `@quarantine` so they gate again"
         );
     }
 }

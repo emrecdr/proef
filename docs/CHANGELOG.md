@@ -8,6 +8,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`proef flaky` audits quarantine, which nothing else could.** A
+  `@quarantine` scenario's failures gate nothing by design, so no exit code, no
+  summary and no CI job reports them — which makes the tag's own failure mode
+  invisible: a quarantined scenario failing *every* run has been switched off
+  and left in the suite. It now reads `DISABLED` rather than sharing the
+  `broken` verdict with untagged always-failures, which wrongly implies someone
+  is watching. The opposite case gets its own verdict too: green throughout the
+  window is `recovered`, a tag that outlived its problem and is now suppressing
+  the next real regression. Both print what to do, and `--format json` carries
+  `quarantined` plus the verdict key so a scheduled job can gate on either.
+
+  This needed the record reader to stop dropping data it was already given:
+  `scenario_finished` has carried `tags` since 0.15.0, but `ScenarioRun` never
+  parsed them, leaving every record consumer tag-blind.
+
+
 - **Document symbols and hover.** A feature outlines to its scenarios (with
   their tags), a pack to its macros (with the pattern each matches) — the
   vocabulary chosen by what discovery found in the file, never by its

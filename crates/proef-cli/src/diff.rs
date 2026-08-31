@@ -376,6 +376,7 @@ mod tests {
             ScenarioRun {
                 status: Status::Passed,
                 reason: None,
+                tags: Vec::new(),
                 steps: step_map,
                 phase: None,
             },
@@ -411,6 +412,7 @@ mod tests {
                 ScenarioRun {
                     status,
                     reason: None,
+                    tags: Vec::new(),
                     steps: BTreeMap::new(),
                     phase: None,
                 },

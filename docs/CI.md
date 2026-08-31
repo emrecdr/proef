@@ -79,3 +79,9 @@ for the composed result, never a false green.
 Keep a few records (`[run] keep-runs` in `proef.toml` sets the rotation) and
 `proef flaky` renders verdicts over them — flapping, passes-only-on-retry,
 always-failing — from the same records CI already produced.
+
+It also audits `@quarantine` itself, which nothing else can: a quarantined
+scenario failing every run is `DISABLED` (switched off — its failures gate
+nothing, so no job ever reports them), and one green throughout is `recovered`
+(the tag can come off). `--format json` carries `quarantined` and the verdict
+key, so a scheduled job can gate on either without parsing the table.

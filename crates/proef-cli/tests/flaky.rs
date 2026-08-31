@@ -23,9 +23,26 @@ fn proef(cwd: &Path) -> Command {
 /// One scenario's rows in one record: a step (carrying attempts/duration) and
 /// the scenario verdict.
 fn scenario_events(name: &str, status: &str, attempts: u32) -> String {
+    tagged_scenario_events(name, status, attempts, &[])
+}
+
+/// The same, with the scenario's accumulated tags — what `@quarantine`
+/// verdicts read.
+fn tagged_scenario_events(name: &str, status: &str, attempts: u32, tags: &[&str]) -> String {
+    let tags = if tags.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#","tags":[{}]"#,
+            tags.iter()
+                .map(|t| format!("\"{t}\""))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
     format!(
         r#"{{"event":"step_finished","scenario":"{name}","engine":"hurl","step":{{"file":"f.feature","line":3,"text":"the step runs"}},"status":"{status}","attempts":{attempts},"duration_ms":5,"captures":[]}}
-{{"event":"scenario_finished","scenario":"{name}","file":"f.feature","status":"{status}"}}
+{{"event":"scenario_finished","scenario":"{name}","file":"f.feature","status":"{status}"{tags}}}
 "#
     )
 }
@@ -181,4 +198,78 @@ fn fewer_than_two_runs_is_a_user_error() {
     let assert = proef(cwd.path()).args(["flaky"]).assert().code(2);
     let err = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(err.contains("need at least two runs"), "{err}");
+}
+
+/// Quarantine's own failure mode: a tagged scenario that fails every run is
+/// *switched off*, not flaky — and nothing else in the tool can say so.
+///
+/// Its failures gate nothing by design, so no exit code, no summary and no CI
+/// job ever reports them. Without the tag in view `flaky` called it "broken"
+/// alongside untagged always-failures, which reads as "someone will notice
+/// this" — and for a quarantined scenario, nobody will. The other direction
+/// matters as much: a quarantined scenario that has gone green is a tag
+/// nobody removed, still suppressing the next real regression.
+#[test]
+fn a_quarantined_scenario_is_told_apart_from_a_merely_broken_one() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
+    for n in 1..=3 {
+        let body = format!(
+            "{}{}{}",
+            // Quarantined and never passing: hidden, not flaky.
+            tagged_scenario_events("hidden", "failed", 1, &["quarantine"]),
+            // Quarantined and green throughout: the tag outlived the problem.
+            tagged_scenario_events("cured", "passed", 1, &["quarantine", "slow"]),
+            // Untagged and always failing: broken, and visible.
+            scenario_events("broken", "failed", 1),
+        );
+        write_run(cwd.path(), n, &body, false);
+    }
+
+    let assert = proef(cwd.path()).args(["flaky"]).assert().code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let row = |name: &str| -> String {
+        out.lines()
+            .find(|l| l.contains(&format!(":: {name}")))
+            .unwrap_or_else(|| panic!("no row for {name}:\n{out}"))
+            .to_owned()
+    };
+
+    assert!(
+        row("hidden").contains("DISABLED"),
+        "a quarantined always-failure is switched off, not broken: {out}"
+    );
+    assert!(
+        row("broken").contains("broken, not flaky"),
+        "an untagged always-failure keeps its own verdict: {out}"
+    );
+    assert!(
+        row("cured").contains("the @quarantine can come off"),
+        "a quarantined scenario that stopped failing should lose the tag: {out}"
+    );
+    // Both hand-offs name what to do, since "DISABLED" alone is a label.
+    assert!(out.contains("nothing is watching them fail"), "{out}");
+    assert!(out.contains("drop the `@quarantine`"), "{out}");
+
+    // The machine surface carries the fact the verdict turns on, so a CI job
+    // can gate on it without parsing the table.
+    let assert = proef(cwd.path())
+        .args(["flaky", "--format", "json"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let rows: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("each line is one JSON object"))
+        .collect();
+    let row = |name: &str| -> &serde_json::Value {
+        rows.iter()
+            .find(|r| r["scenario"] == name)
+            .unwrap_or_else(|| panic!("no row for {name}"))
+    };
+    assert_eq!(row("hidden")["verdict"], "disabled");
+    assert_eq!(row("hidden")["quarantined"], true);
+    assert_eq!(row("cured")["verdict"], "recovered");
+    assert_eq!(row("broken")["verdict"], "broken");
+    assert_eq!(row("broken")["quarantined"], false);
 }
