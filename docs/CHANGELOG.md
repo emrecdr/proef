@@ -8,6 +8,53 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **`cargo deny` failed on a yanked transitive crate.** `rand 0.10.2` resolved
+  `chacha20 0.10.1`, which was yanked from crates.io; the lock now takes
+  `0.10.2`. Not the secret store's copy — `chacha20poly1305` pins `0.9.1`,
+  which is unaffected — so nothing about encryption changed. Found by the
+  gate, which is what it is for.
+
+- **`proef report -o` wrote the author's home directory into the file built to
+  be shared.** With the report inside the run dir the artifact links are a
+  bare `artifacts/…`; with `-o` pointing anywhere else they were made
+  *absolute*, which resolves only on the machine that produced them — and `-o`
+  exists to put the report somewhere it will be published, which is exactly
+  where that path is dead. 0.13.0 scrubbed machine identity out of the run
+  record (R12-1); this put it back, twelve times over, in the HTML uploaded
+  beside it. The href is now relative to the report, which resolves everywhere
+  the absolute one did *plus* wherever report and artifacts travel together,
+  and in the CI shape (`-o public/report.html`) names nothing outside the
+  workspace. The href is built from path *components* joined with `/`, not
+  from `Path::display` — Windows renders `\`, which is not a separator in a
+  URL, so a Windows-generated report's links would have been dead either way
+  (the absolute path it replaces had the same flaw). A report written somewhere
+  sharing no ancestor with the run dir
+  still names the directories between them — that is what a correct relative
+  path from there is, and it is no worse than what it replaces.
+
+- **The report's `--skip` colour failed WCAG AA, and every status pill failed
+  it in dark mode.** `--skip` was the one palette token the dark block did not
+  redefine: a grey chosen against `#0d1117` (5.48:1 there) left carrying white
+  text on white at **3.45:1**, against a 4.5:1 threshold — on the status a
+  reader scans for after an interrupted run. It is now `#59636e` (6.11:1).
+
+  Writing the guard rather than the fix found a second defect nobody had
+  measured: `.pill` painted `color:#fff` on the status colour, and the dark
+  palette's colours are tuned as *text* on a dark ground, so all four dark
+  pills sat between 2.52:1 and 3.45:1. The pill foreground is now a palette
+  token — white on light, the page ground on dark — putting all four between
+  5.48:1 and 7.5:1. A test asserts the ratio rather than the hex, so a future
+  palette change is free to move a colour and not free to move it below AA,
+  and a second test pins that both palettes define the same token set (the
+  absence that caused this).
+
+- **The HTML report had one heading and no outline.** The timeline carried an
+  `<h2>`; the tag table and the scenario list — the body of the page — had
+  none, so there was nothing to navigate by and no anchor to link a section
+  with. Both gained one, sharing the class the timeline already used (renamed
+  from `.timeline-h` to `.section-h`, since it now serves three). Pinned
+  structurally, so a section added without a heading fails the test.
+
 - **A step's `name:` label reached the artifact and nothing else.** A macro
   with more than one step turns one feature sentence into several engine
   steps, and they share a `StepRef` exactly — same file, same line, same

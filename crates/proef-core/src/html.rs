@@ -238,6 +238,9 @@ pub fn render_html(
     render_filter_bar(&mut html);
     render_tag_table(&mut html, blocks, tag_links);
     render_timeline(&mut html, blocks);
+    if !blocks.is_empty() {
+        html.push_str("<h2 class=\"section-h\" id=\"scenarios\">Scenarios</h2>\n");
+    }
     for block in blocks {
         render_block(&mut html, block, artifacts_href, failed);
     }
@@ -537,7 +540,8 @@ fn render_tag_table(
         return;
     }
     html.push_str(
-        "<table class=\"tags\">\n<thead><tr><th>tag</th><th>passed</th>\
+        "<h2 class=\"section-h\" id=\"by-tag\">By tag</h2>\n\
+         <table class=\"tags\">\n<thead><tr><th>tag</th><th>passed</th>\
          <th>failed</th><th>skipped</th><th>time</th></tr></thead>\n<tbody>\n",
     );
     for (tag, (passed, failed, skipped, ms)) in rows {
@@ -596,7 +600,7 @@ fn render_timeline(html: &mut String, blocks: &[ScenarioBlock]) {
 
     let _ = writeln!(
         html,
-        "<h2 class=\"timeline-h\">Timeline <span class=\"count\">{max_end}ms</span></h2>\n\
+        "<h2 class=\"section-h\">Timeline <span class=\"count\">{max_end}ms</span></h2>\n\
          <div class=\"timeline\">"
     );
     for worker in &workers {
@@ -686,8 +690,8 @@ fn esc(text: &str) -> String {
 /// Inlined stylesheet — the report is a single self-contained file (no external
 /// requests), light/dark aware for a local artifact.
 const STYLE: &str = "\
-:root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#e2e2e2;--pass:#1a7f37;--fail:#cf222e;--skip:#8a8a8a;--warn:#9a6700;--card:#f6f8fa}\
-@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--pass:#3fb950;--fail:#f85149;--skip:#8a8a8a;--warn:#d29922;--card:#161b22}}\
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#e2e2e2;--pass:#1a7f37;--fail:#cf222e;--skip:#59636e;--warn:#9a6700;--card:#f6f8fa;--pill-fg:#fff}\
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#9aa4af;--line:#30363d;--pass:#3fb950;--fail:#f85149;--skip:#8a8a8a;--warn:#d29922;--card:#161b22;--pill-fg:#0d1117}}\
 *{box-sizing:border-box}body{margin:0;padding:2rem;max-width:60rem;margin:0 auto;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}\
 h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}\
 .incomplete-banner{color:var(--warn);font-weight:600;margin:0 0 1rem}\
@@ -703,7 +707,7 @@ h1{font-size:1.4rem;font-weight:600}code{font-family:ui-monospace,SFMono-Regular
 .filter button{border:1px solid var(--line,#ccc);background:transparent;color:inherit;border-radius:4px;padding:.1rem .6rem;margin-right:.3rem;cursor:pointer;font:inherit}\
 .filter button.on{font-weight:700;border-color:currentColor}\
 .scenario.gone{display:none}\
-.pill{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.1rem .5rem;border-radius:4px;color:#fff}\
+.pill{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.1rem .5rem;border-radius:4px;color:var(--pill-fg)}\
 .pill.pass{background:var(--pass)}.pill.fail{background:var(--fail)}.pill.skip{background:var(--skip)}.pill.warn{background:var(--warn)}\
 .loc{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85rem}\
 .artifact{margin-left:auto;font-size:.85rem;color:var(--muted)}\
@@ -719,7 +723,7 @@ li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph
 .track{display:block;height:4px;margin:.25rem 0 0;background:var(--line);border-radius:2px;overflow:hidden}\
 .bar{display:block;height:100%;min-width:1px;border-radius:2px}\
 .bar.pass{background:var(--pass)}.bar.fail{background:var(--fail)}.bar.skip{background:var(--skip)}.bar.warn{background:var(--warn)}\
-.timeline-h{font-size:1.05rem;font-weight:600;margin:1.5rem 0 .5rem}\
+.section-h{font-size:1.05rem;font-weight:600;margin:1.5rem 0 .5rem}\
 .timeline{margin:0 0 1.5rem}\
 .lane{display:flex;align-items:center;gap:.5rem;margin:.25rem 0}\
 .lane-label{color:var(--muted);font-size:.75rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:5rem;text-align:right}\
@@ -729,3 +733,123 @@ li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph
 .detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}\
 .via{color:var(--muted);font-size:.78rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:.3rem 0 0}\
 ";
+
+#[cfg(test)]
+mod style_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::STYLE;
+
+    /// Relative luminance, WCAG 2.1 §relative-luminance.
+    fn luminance(hex: &str) -> f64 {
+        let channel = |s: &str| {
+            let v = f64::from(u8::from_str_radix(s, 16).unwrap()) / 255.0;
+            if v <= 0.040_45 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(&hex[1..3]) + 0.7152 * channel(&hex[3..5]) + 0.0722 * channel(&hex[5..7])
+    }
+
+    fn contrast(a: &str, b: &str) -> f64 {
+        let (first, second) = (luminance(a), luminance(b));
+        let (lighter, darker) = (first.max(second), first.min(second));
+        (lighter + 0.05) / (darker + 0.05)
+    }
+
+    /// Every `--token:#rrggbb` in one `{…}` block, with `#rgb` expanded.
+    fn tokens(block: &str) -> std::collections::BTreeMap<String, String> {
+        let mut out = std::collections::BTreeMap::new();
+        // Braces separate declarations as far as this scan is concerned: the
+        // first `--token` in a block is glued to its selector (`:root{--bg:…`),
+        // and splitting on `;` alone silently drops it — which it did, leaving
+        // `--bg` absent from *both* palettes and the contrast assertion
+        // comparing against nothing.
+        let flattened = block.replace(['{', '}'], ";");
+        for decl in flattened.split(';') {
+            let Some((name, value)) = decl.split_once(':') else {
+                continue;
+            };
+            let Some(name) = name.trim().strip_prefix("--") else {
+                continue;
+            };
+            let value = value.trim();
+            if !value.starts_with('#') {
+                continue;
+            }
+            let full = if value.len() == 4 {
+                let mut s = String::from("#");
+                for ch in value[1..].chars() {
+                    s.push(ch);
+                    s.push(ch);
+                }
+                s
+            } else {
+                value.to_owned()
+            };
+            if full.len() == 7 {
+                out.insert(name.to_owned(), full);
+            }
+        }
+        out
+    }
+
+    /// The two palettes: the bare `:root` block and the one inside the
+    /// `prefers-color-scheme: dark` media query.
+    fn palettes() -> (
+        std::collections::BTreeMap<String, String>,
+        std::collections::BTreeMap<String, String>,
+    ) {
+        let (light, rest) = STYLE.split_once("@media").unwrap();
+        (tokens(light), tokens(rest))
+    }
+
+    /// A status colour a reader cannot resolve against its own ground is a
+    /// status the report does not actually communicate.
+    ///
+    /// `--skip` failed this at 3.45:1 for exactly one reason: it was the single
+    /// token the dark block did not redefine, so a grey chosen against
+    /// `#0d1117` was left carrying `.pill.skip`'s white text on white. The
+    /// ratio is asserted rather than the hex, so a future palette change is
+    /// free to move the colour and not free to move it below the threshold.
+    #[test]
+    fn every_status_colour_meets_wcag_aa_against_its_own_background() {
+        const AA: f64 = 4.5;
+        let (light, dark) = palettes();
+        for (name, palette) in [("light", &light), ("dark", &dark)] {
+            let bg = palette.get("bg").unwrap();
+            for token in ["pass", "fail", "skip", "warn", "muted"] {
+                let colour = palette.get(token).unwrap();
+                let ratio = contrast(colour, bg);
+                assert!(
+                    ratio >= AA,
+                    "{name}: --{token} ({colour}) on --bg ({bg}) is {ratio:.2}:1, below AA {AA}:1"
+                );
+            }
+            // `.pill.*` paints white text on the status colour, at .72rem bold
+            // — not large text, so the same threshold applies.
+            let pill_fg = palette.get("pill-fg").unwrap();
+            for token in ["pass", "fail", "skip", "warn"] {
+                let colour = palette.get(token).unwrap();
+                let ratio = contrast(pill_fg, colour);
+                assert!(
+                    ratio >= AA,
+                    "{name}: .pill.{token} is {pill_fg} on {colour} at {ratio:.2}:1, below AA {AA}:1"
+                );
+            }
+        }
+    }
+
+    /// Both palettes must define the same token set: `--skip` failing above was
+    /// the visible symptom of it being *absent* from the dark block and
+    /// silently inheriting a value tuned for the other ground.
+    #[test]
+    fn both_palettes_define_the_same_tokens() {
+        let (light, dark) = palettes();
+        let light_names: Vec<&String> = light.keys().collect();
+        let dark_names: Vec<&String> = dark.keys().collect();
+        assert_eq!(light_names, dark_names, "a token is missing from a palette");
+    }
+}

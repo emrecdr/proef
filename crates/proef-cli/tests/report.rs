@@ -260,6 +260,73 @@ fn the_html_report_names_the_fragment_a_step_ran() {
     );
 }
 
+/// Every section a reader can see must be a section a reader can *navigate*:
+/// the timeline already carried an `<h2>`, the tag table and the scenario list
+/// were rendered with no heading at all, so the document had one heading and no
+/// outline. Pinned structurally, so a section added without a heading fails
+/// here rather than shipping.
+#[test]
+fn each_rendered_section_carries_a_heading() {
+    // Timing (for the timeline) and a tag (for the rollup) at once — the only
+    // fixture in this file that renders all three sections together.
+    let events = vec![
+        Event::RunStarted {
+            schema: EVENT_SCHEMA_VERSION,
+            run_id: Arc::from("h"),
+            env: None,
+            metadata: std::collections::BTreeMap::new(),
+            shuffled: false,
+            rerun_of: None,
+        },
+        Event::ScenarioStarted {
+            scenario: Arc::from("A"),
+            file: Arc::from("a.feature"),
+            timestamp_ms: Some(0),
+            worker: Some(0),
+            phase: None,
+            exclusive: false,
+        },
+        step("a.feature", 3, "a step", "A", Status::Passed, 1, 20, None),
+        Event::ScenarioFinished {
+            scenario: Arc::from("A"),
+            file: Arc::from("a.feature"),
+            status: Status::Passed,
+            timestamp_ms: Some(40),
+            worker: Some(0),
+            phase: None,
+            reason: None,
+            tags: vec!["smoke".to_owned()],
+        },
+        Event::RunFinished {
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: false,
+        },
+    ];
+    let html = render_html(&events, "artifacts", &std::collections::BTreeMap::new());
+    for (section, heading) in [
+        ("<table class=\"tags\">", "id=\"by-tag\""),
+        ("<details class=\"scenario", "id=\"scenarios\""),
+        ("class=\"timeline\"", ">Timeline "),
+    ] {
+        assert!(
+            html.contains(section),
+            "fixture must render `{section}`: {html}"
+        );
+        assert!(
+            html.contains(heading),
+            "the `{section}` section has no heading: {html}"
+        );
+    }
+    assert_eq!(html.matches("<h1").count(), 1, "{html}");
+    assert_eq!(
+        html.matches("<h2").count(),
+        3,
+        "one heading per section, no level skipped: {html}"
+    );
+}
+
 /// The defect this field exists for, stated as a fixture: one feature sentence
 /// lowering to two engine steps produces two `step_finished` with an identical
 /// `StepRef` — same file, same line, same text — and previously two identical
