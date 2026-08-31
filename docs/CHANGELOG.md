@@ -6,6 +6,30 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **The LSP's type layer moved to the maintained generator**: `lsp-types`
+  0.97 (unmaintained since; the crate that shipped its own `fluent-uri`
+  `Uri` newtype) is replaced by `gen-lsp-types` 0.11 under the same
+  `lsp_types::` name — rust-analyzer's own aliasing pattern, so every
+  `use` path is unchanged. Its `url` feature aliases `Uri` to `url::Url`,
+  which the embedded hurl engine already pulls in, so the swap adds **no
+  new crate** and drops three (`lsp-types`, `fluent-uri`, `serde_repr`).
+  `Url::from_file_path`/`to_file_path` are the native-path bridge
+  `documents.rs` had to hand-roll under 0.97 — drive letters, segment
+  joining, percent-encoding, ~90 lines — so the bridge is now a wrapper
+  that only pins the source-name identity rule. Behaviour visible to an
+  editor is unchanged; the one difference is what counts as a malformed
+  URI (`url` percent-encodes a raw space where `fluent-uri` rejected it),
+  and request dispatch now compares a method *enum* rather than strings,
+  so an unknown method lands in `Custom` instead of matching nothing.
+
+  Breaking (library): `proef_core::report::percent_encode` is private.
+  It was public solely so `proef-lsp` could encode URI path segments
+  against the identical unreserved set; that hand-rolled encoder is gone,
+  and redaction needles — its only remaining caller — live in the same
+  module.
+
 ### Added
 
 - **README answers the comparison a prospect actually runs**: a "When

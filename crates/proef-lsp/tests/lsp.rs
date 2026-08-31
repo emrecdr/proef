@@ -13,10 +13,10 @@ use std::time::Duration;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::{
-    DidOpenTextDocumentParams, GotoDefinitionParams, GotoDefinitionResponse, InitializeParams,
-    InitializedParams, Location, PartialResultParams, Position, PublishDiagnosticsParams,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Uri,
-    WorkDoneProgressParams,
+    Definition, DefinitionParams, DefinitionResponse, DidOpenTextDocumentParams, InitializeParams,
+    InitializedParams, LanguageKind, Location, PartialResultParams, Position,
+    PublishDiagnosticsParams, TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
+    Uri, WorkDoneProgressParams,
 };
 use proef_core::engine::StepKindSpec;
 use proef_core::provider::{ProviderError, SourceProvider};
@@ -114,7 +114,7 @@ fn open(client: &Connection, url: &Uri, text: &str) {
             params: serde_json::to_value(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
                     uri: url.clone(),
-                    language_id: "gherkin".to_owned(),
+                    language_id: LanguageKind::Custom("gherkin".into()),
                     version: 1,
                     text: text.to_owned(),
                 },
@@ -261,7 +261,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
     let params = wait_for_diagnostics(&client, &url);
     assert!(
         params.diagnostics.iter().any(|d| matches!(
-            &d.code, Some(lsp_types::NumberOrString::String(c)) if c == "proef::bind::unbound_step")),
+            &d.code, Some(lsp_types::Code::String(c)) if c == "proef::bind::unbound_step")),
         "expected unbound_step, got {:?}",
         params.diagnostics
     );
@@ -329,7 +329,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
         .send(Message::Request(Request {
             id: RequestId::from(10),
             method: "textDocument/definition".to_owned(),
-            params: serde_json::to_value(GotoDefinitionParams {
+            params: serde_json::to_value(DefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier { uri: url.clone() },
                     position: Position {
@@ -344,11 +344,11 @@ fn definition_on_a_step_jumps_to_the_macro() {
         }))
         .unwrap();
 
-    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let loc = wait_for_response::<DefinitionResponse>(&client, &RequestId::from(10));
     let target: Location = match loc {
-        GotoDefinitionResponse::Scalar(l) => l,
-        GotoDefinitionResponse::Array(mut v) => v.remove(0),
-        GotoDefinitionResponse::Link(links) => {
+        DefinitionResponse::Definition(Definition::Location(l)) => l,
+        DefinitionResponse::Definition(Definition::LocationList(mut v)) => v.remove(0),
+        DefinitionResponse::DefinitionLinkList(links) => {
             panic!("unexpected definition response: {links:?}")
         }
     };
@@ -411,7 +411,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         .send(Message::Request(Request {
             id: RequestId::from(10),
             method: "textDocument/definition".to_owned(),
-            params: serde_json::to_value(GotoDefinitionParams {
+            params: serde_json::to_value(DefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier {
                         uri: pack_url.clone(),
@@ -428,11 +428,11 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         }))
         .unwrap();
 
-    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let loc = wait_for_response::<DefinitionResponse>(&client, &RequestId::from(10));
     let target: Location = match loc {
-        GotoDefinitionResponse::Scalar(l) => l,
-        GotoDefinitionResponse::Array(mut v) => v.remove(0),
-        GotoDefinitionResponse::Link(links) => {
+        DefinitionResponse::Definition(Definition::Location(l)) => l,
+        DefinitionResponse::Definition(Definition::LocationList(mut v)) => v.remove(0),
+        DefinitionResponse::DefinitionLinkList(links) => {
             panic!("unexpected definition response: {links:?}")
         }
     };
@@ -522,7 +522,7 @@ fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
         .send(Message::Request(Request {
             id: RequestId::from(10),
             method: "textDocument/definition".to_owned(),
-            params: serde_json::to_value(GotoDefinitionParams {
+            params: serde_json::to_value(DefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier {
                         uri: pack_url.clone(),
@@ -539,11 +539,11 @@ fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
         }))
         .unwrap();
 
-    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let loc = wait_for_response::<DefinitionResponse>(&client, &RequestId::from(10));
     let target: Location = match loc {
-        GotoDefinitionResponse::Scalar(l) => l,
-        GotoDefinitionResponse::Array(mut v) => v.remove(0),
-        GotoDefinitionResponse::Link(links) => {
+        DefinitionResponse::Definition(Definition::Location(l)) => l,
+        DefinitionResponse::Definition(Definition::LocationList(mut v)) => v.remove(0),
+        DefinitionResponse::DefinitionLinkList(links) => {
             panic!("unexpected definition response: {links:?}")
         }
     };
@@ -611,7 +611,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
         .send(Message::Request(Request {
             id: RequestId::from(10),
             method: "textDocument/definition".to_owned(),
-            params: serde_json::to_value(GotoDefinitionParams {
+            params: serde_json::to_value(DefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier { uri: url.clone() },
                     position: Position {
@@ -626,11 +626,11 @@ fn definition_on_a_step_lands_on_the_match_line() {
         }))
         .unwrap();
 
-    let loc = wait_for_response::<GotoDefinitionResponse>(&client, &RequestId::from(10));
+    let loc = wait_for_response::<DefinitionResponse>(&client, &RequestId::from(10));
     let target: Location = match loc {
-        GotoDefinitionResponse::Scalar(l) => l,
-        GotoDefinitionResponse::Array(mut v) => v.remove(0),
-        GotoDefinitionResponse::Link(links) => {
+        DefinitionResponse::Definition(Definition::Location(l)) => l,
+        DefinitionResponse::Definition(Definition::LocationList(mut v)) => v.remove(0),
+        DefinitionResponse::DefinitionLinkList(links) => {
             panic!("unexpected definition response: {links:?}")
         }
     };
@@ -699,7 +699,7 @@ fn completion_offers_macro_pattern_snippets() {
             id: RequestId::from(20),
             method: "textDocument/completion".to_owned(),
             params: serde_json::to_value(CompletionParams {
-                text_document_position: TextDocumentPositionParams {
+                text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier { uri: url.clone() },
                     position: Position {
                         line: 2,
@@ -716,14 +716,14 @@ fn completion_offers_macro_pattern_snippets() {
 
     let resp = wait_for_response::<CompletionResponse>(&client, &RequestId::from(20));
     let items = match resp {
-        CompletionResponse::Array(v) => v,
-        CompletionResponse::List(l) => l.items,
+        CompletionResponse::CompletionItemList(v) => v,
+        CompletionResponse::CompletionList(l) => l.items,
     };
     let greet = items
         .iter()
         .find(|i| i.label.contains("greet") || i.label.contains("I greet"))
         .expect("greet completion offered");
-    assert_eq!(greet.insert_text_format, Some(InsertTextFormat::SNIPPET));
+    assert_eq!(greet.insert_text_format, Some(InsertTextFormat::Snippet));
     assert!(
         greet.insert_text.as_ref().unwrap().contains("${1:"),
         "capture becomes a tabstop"
@@ -807,7 +807,7 @@ fn references_lists_every_step_bound_to_the_macro() {
             id: RequestId::from(30),
             method: "textDocument/references".to_owned(),
             params: serde_json::to_value(ReferenceParams {
-                text_document_position: TextDocumentPositionParams {
+                text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier { uri: url1.clone() },
                     position: Position {
                         line: 2,
@@ -855,15 +855,17 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
     });
     init(&client);
 
-    // A definition request whose URI carries a raw space — lsp_types::Uri parses
-    // through fluent_uri, which rejects it, so params deserialization fails.
+    // A definition request whose URI has no scheme — `lsp_types::Uri` is
+    // `url::Url`, which rejects a relative reference with no base, so params
+    // deserialization fails. (A raw space would *not* do: url percent-encodes
+    // it and parses happily.)
     client
         .sender
         .send(Message::Request(Request {
             id: RequestId::from(10),
             method: "textDocument/definition".to_owned(),
             params: serde_json::json!({
-                "textDocument": { "uri": "file:///a b" },
+                "textDocument": { "uri": "not-a-uri" },
                 "position": { "line": 0, "character": 0 }
             }),
         }))
@@ -885,7 +887,7 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
         .send(Message::Request(Request {
             id: RequestId::from(11),
             method: "textDocument/definition".to_owned(),
-            params: serde_json::to_value(GotoDefinitionParams {
+            params: serde_json::to_value(DefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier {
                         uri: name_to_url(&native_abs("suite/none.feature")).unwrap(),
@@ -901,7 +903,7 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
             .unwrap(),
         }))
         .unwrap();
-    let alive: Option<GotoDefinitionResponse> = wait_for_response(&client, &RequestId::from(11));
+    let alive: Option<DefinitionResponse> = wait_for_response(&client, &RequestId::from(11));
     assert!(
         alive.is_none(),
         "no binding exists, so a null result — but the server answered"
@@ -1000,7 +1002,7 @@ fn completion_inside_bind_offers_the_fragments_variables() {
             id: RequestId::from(30),
             method: "textDocument/completion".to_owned(),
             params: serde_json::to_value(CompletionParams {
-                text_document_position: TextDocumentPositionParams {
+                text_document_position_params: TextDocumentPositionParams {
                     text_document: TextDocumentIdentifier {
                         uri: pack_url.clone(),
                     },
@@ -1019,8 +1021,8 @@ fn completion_inside_bind_offers_the_fragments_variables() {
 
     let resp = wait_for_response::<CompletionResponse>(&client, &RequestId::from(30));
     let items = match resp {
-        CompletionResponse::Array(v) => v,
-        CompletionResponse::List(l) => l.items,
+        CompletionResponse::CompletionItemList(v) => v,
+        CompletionResponse::CompletionList(l) => l.items,
     };
     let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
     assert!(

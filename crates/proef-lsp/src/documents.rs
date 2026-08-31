@@ -3,17 +3,15 @@
 //! This is the LSP's IO edge: open buffers live here, disk is the fallback.
 //! `proef-core` never touches either — it sees only the `SourceProvider` trait.
 //!
-//! `lsp-types` 0.97 dropped the `url`-crate-backed `Url` alias in favor of its
-//! own RFC-3986 `Uri` (a `fluent_uri::Uri<String>` newtype, spec-correct about
-//! case and percent-encoding where `url::Url` normalized too eagerly). There is
-//! no `Uri::from_file_path`/`to_file_path` helper, so [`url_to_name`] and
-//! [`name_to_url`] hand-roll that bridge for the native filesystem paths a
-//! workspace produces — plain `/`-rooted paths on Unix, drive-prefixed
-//! `C:\…` paths on Windows — so the names round-trip and match what the disk
-//! provider renders from a real `PathBuf`.
+//! `gen-lsp-types` with its `url` feature aliases `Uri` to `url::Url`, whose
+//! `from_file_path`/`to_file_path` are the native-path bridge — drive letters,
+//! percent-decoding and all. [`url_to_name`] and [`name_to_url`] wrap them
+//! only to keep the pipeline's identity rule in one place: a source name is
+//! the file's native path as a string, and a non-`file:` URI falls back to its
+//! own text so it stays stable and comparable.
 
 use std::collections::HashMap;
-use std::path::{Component, Path, Prefix};
+use std::path::Path;
 use std::sync::Arc;
 
 use lsp_types::Uri;
@@ -22,109 +20,20 @@ use proef_core::provider::{ProviderError, SourceProvider};
 /// A source name is a file's path rendered as a string — the same identity
 /// `Diag.source_name` and `PackSource.name` already use across the pipeline.
 pub fn url_to_name(url: &Uri) -> String {
-    if !url.scheme().is_some_and(|s| s.eq_lowercase("file")) {
+    if url.scheme() != "file" {
         return url.as_str().to_owned();
     }
-    let segments: Vec<String> = url
-        .path()
-        .segments()
-        .map(|segment| segment.decode().into_string_lossy().into_owned())
-        .collect();
-    join_native(&segments)
-}
-
-/// Joins decoded `file://` path segments into a Unix-native source name: each
-/// segment prefixed with `/`, an empty path collapsing to the root `/`. This is
-/// the byte-for-byte behavior the bridge has always had on Unix.
-#[cfg(not(windows))]
-fn join_native(segments: &[String]) -> String {
-    let mut name = String::new();
-    for segment in segments {
-        name.push('/');
-        name.push_str(segment);
-    }
-    if name.is_empty() {
-        name.push('/');
-    }
-    name
-}
-
-/// Joins decoded `file://` path segments into a Windows-native source name. A
-/// leading drive segment (`C:`) rebuilds the native `C:\seg\seg` form with no
-/// separator before the drive; anything else (UNC, drive-less) falls back to a
-/// best-effort `\`-joined path so the string is at least stable and comparable.
-#[cfg(windows)]
-fn join_native(segments: &[String]) -> String {
-    match segments.split_first() {
-        Some((drive, rest)) if is_drive(drive) => {
-            let mut name = drive.clone();
-            for segment in rest {
-                name.push('\\');
-                name.push_str(segment);
-            }
-            name
-        }
-        _ => {
-            let mut name = String::new();
-            for segment in segments {
-                name.push('\\');
-                name.push_str(segment);
-            }
-            name
-        }
-    }
-}
-
-/// True for a bare drive segment like `C:` — an ascii letter followed by a colon.
-#[cfg(windows)]
-fn is_drive(segment: &str) -> bool {
-    let bytes = segment.as_bytes();
-    bytes.len() == 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+    url.to_file_path().map_or_else(
+        |()| url.as_str().to_owned(),
+        |path| path.to_string_lossy().into_owned(),
+    )
 }
 
 /// Inverse of [`url_to_name`] for a filesystem path; `None` if it is not an
 /// absolute path we can form a `file://` URI from.
 pub fn name_to_url(name: &str) -> Option<Uri> {
-    let path = Path::new(name);
-    if !path.is_absolute() {
-        return None;
-    }
-    let mut raw = String::from("file://");
-    for component in path.components() {
-        match component {
-            Component::Normal(seg) => {
-                raw.push('/');
-                raw.push_str(&proef_core::report::percent_encode(&seg.to_string_lossy()));
-            }
-            Component::Prefix(prefix) => match prefix.kind() {
-                // A real drive renders with a bare colon (`file:///C:/…`) — the
-                // form LSP clients emit and the only one that round-trips back
-                // through `Path::is_absolute` on Windows. Other prefix kinds
-                // (UNC, device namespaces) have no such convention, so keep the
-                // safe percent-encoded form.
-                Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
-                    raw.push('/');
-                    raw.push(letter as char);
-                    raw.push(':');
-                }
-                _ => {
-                    raw.push('/');
-                    raw.push_str(&proef_core::report::percent_encode(
-                        &prefix.as_os_str().to_string_lossy(),
-                    ));
-                }
-            },
-            Component::RootDir | Component::CurDir | Component::ParentDir => {}
-        }
-    }
-    raw.parse().ok()
+    Uri::from_file_path(Path::new(name)).ok()
 }
-
-// Path segments are percent-encoded by `proef_core::report::percent_encode` —
-// the same RFC 3986 unreserved set redaction needles use; this file carried a
-// byte-identical copy until the two were folded. Over-encoding is always safe
-// here: [`url_to_name`] decodes with `EStr::decode`, the exact inverse
-// regardless of how conservatively we encoded.
 
 /// Open-buffer text keyed by *source name* (`url_to_name` of the document URI) —
 /// the same identity the rest of the pipeline uses. Keying by the decoded name
@@ -291,10 +200,11 @@ mod tests {
         );
     }
 
-    // A path segment may legally contain sub-delims like `(`; lsp_types::Uri Eq
-    // compares raw strings, so a raw-Uri-keyed overlay missed when the client left
-    // `(` bare but name_to_url percent-encoded it. Keying by source name (which is
-    // decoded) makes the encoding irrelevant — the open buffer is always found.
+    // A path segment may legally contain sub-delims like `(`, bare or
+    // percent-encoded — the client's choice. Uri equality compares serialized
+    // text, so a raw-Uri-keyed overlay missed whenever the client's encoding
+    // differed from name_to_url's. Keying by source name (which is decoded)
+    // makes the encoding irrelevant — the open buffer is always found.
     #[test]
     fn overlay_finds_open_buffer_for_paths_with_sub_delims() {
         struct DiskStub;
@@ -314,14 +224,13 @@ mod tests {
         }
 
         let mut docs = Documents::default();
-        // A client (e.g. Neovim) opens the doc with the sub-delim left BARE — legal
-        // and common. name_to_url percent-encodes it, so pre-fix the raw-Uri-keyed
-        // overlay (keyed by the client's bare form) missed read()'s re-derived
-        // encoded form.
+        // The client opens the doc with the sub-delim percent-ENCODED — legal,
+        // and the opposite of `name_to_url`'s spelling (url::Url leaves `(`
+        // bare), so a raw-Uri-keyed overlay would miss read()'s re-derived form.
         let u = name_to_url(&native_abs("s/a(b.feature"))
             .unwrap()
             .as_str()
-            .replace("%28", "(")
+            .replace('(', "%28")
             .parse::<Uri>()
             .unwrap();
         docs.open(u, "in editor".to_owned());
