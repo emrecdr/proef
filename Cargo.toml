@@ -15,7 +15,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT OR Apache-2.0"
@@ -25,9 +25,9 @@ publish = false
 
 [workspace.dependencies]
 # intra-workspace (version required for publish; all crates release in lockstep)
-proef-core = { path = "crates/proef-core", version = "0.15.0" }
-proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.15.0" }
-proef-lsp = { path = "crates/proef-lsp", version = "0.15.0" }
+proef-core = { path = "crates/proef-core", version = "0.16.0" }
+proef-engine-hurl = { path = "crates/proef-engine-hurl", version = "0.16.0" }
+proef-lsp = { path = "crates/proef-lsp", version = "0.16.0" }
 lsp-server = "0.10"
 lsp-types = { version = "0.11", package = "gen-lsp-types", features = ["url"] }
 # lsp-server's own channel crate; we match its `RecvTimeoutError` for the
