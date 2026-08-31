@@ -200,15 +200,23 @@ report"; this section records the verdicts and what remains open.
   corrected: `lsp-types` did *not* drag `bitflags 1.x` in. That entry
   belongs to `jiff`'s optional `defmt`, and it resolves into no build
   tree at all (`cargo tree -i bitflags@1.3.2` finds nothing) — the swap
-  removed `fluent-uri` and `serde_repr`, not `bitflags`. Still open: the
-  analysis cache (Q2's "no invalidation hook"
-  premise is stale — `fragments_dirty` is the hook); quick-fix code
-  actions from existing did-you-means; document symbols; hover; a panic
-  hook with `window/showMessage` (ruff's server pattern independently
-  validates the `outln!` ban); a documented Helix snippet; if a VS Code
-  extension is built, a path-based `documentSelector` (the ecosystem is
-  split on the `.feature` language id); defer Zed (tree-sitter grammar
-  prerequisite).
+  removed `fluent-uri` and `serde_repr`, not `bitflags`. The rest of the
+  wave shipped with it: the analysis cache (Q2's "no invalidation hook"
+  premise was indeed stale — `fragments_dirty` was the hook, and one
+  analysis now serves every request until an edit, measured at 10 provider
+  reads per request before and none after); quick-fix code actions built
+  on a structured `Diag::fix` rather than on parsing the message prose;
+  document symbols; hover; and the panic report — which found a gap the
+  worklist had not: only the *recompute* was guarded, so a panic in a
+  feature handler ended the server outright. Both message-loop entry
+  points are wrapped now and `window/showMessage` carries the report.
+  Two items needed no work: the Helix snippet was already in
+  `EDITORS.md`, and the VS Code `documentSelector` decision is recorded
+  there (path-based `**/*.feature`, because the ecosystem is split
+  between the `cucumber` and `feature` language ids) against the day an
+  extension is built. Zed stays deferred, with its reason stated —
+  no tree-sitter Gherkin grammar exists, which is a prerequisite rather
+  than a setting.
 - **Wave 7, features:** `@quarantine` owner/expiry as authored tag data +
   `flaky` staleness lints + the broken-vs-flaky discrimination (a 100%-
   failing quarantined scenario is disabled, not flaky); `retry_if`

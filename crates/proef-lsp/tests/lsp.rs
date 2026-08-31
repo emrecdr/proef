@@ -110,6 +110,102 @@ fn fake_scan(
     })
 }
 
+/// Spawns the server over an in-memory connection and returns the client end
+/// with its join handle.
+///
+/// Every test needs the same `ServerConfig` and differs only in its provider and
+/// its step kinds, so only those are parameters. The root is always `/suite`:
+/// discovery is the provider's own concern (`recompute` explicitly ignores the
+/// root), and every provider here is a fake that answers from a map.
+fn spawn(
+    disk: impl SourceProvider + Send + 'static,
+    kinds: Vec<StepKindSpec>,
+) -> (Connection, std::thread::JoinHandle<()>) {
+    let (server_conn, client) = Connection::memory();
+    let server = std::thread::spawn(move || {
+        run(ServerConfig {
+            transport: Transport::InMemory(server_conn),
+            root: PathBuf::from("/suite"),
+            disk: Box::new(disk),
+            kinds,
+            kind_to_engine: BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]),
+            env: BTreeMap::new(),
+            config_vars: BTreeMap::new(),
+            debounce: Duration::ZERO,
+            resolve_root: None,
+        })
+        .unwrap();
+    });
+    (client, server)
+}
+
+/// The `hurl` step kind with no engine behind it — enough for a pack to load
+/// without an `unknown_step_kind` diagnostic, which is all most tests need.
+fn hurl_kinds() -> Vec<StepKindSpec> {
+    vec![StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: None,
+        options: None,
+    }]
+}
+
+/// The same kind, claiming `.hurl` fragments through [`fake_scan`] — for the
+/// tests that exercise `ref:` and `bind:`.
+fn hurl_kinds_with_fragments() -> Vec<StepKindSpec> {
+    vec![StepKindSpec {
+        fragments: Some(proef_core::engine::FragmentSupport {
+            ext: "hurl",
+            scan: fake_scan,
+            template_reads: |_| Vec::new(),
+        }),
+        ..hurl_kinds().remove(0)
+    }]
+}
+
+/// A `textDocument/codeAction` probe for one document: ask at a cursor point,
+/// get the actions back. Returned as a closure so a test reads as a sequence of
+/// cursor positions, which is the only thing that varies between them.
+fn code_action_probe<'a>(
+    client: &'a Connection,
+    url: &'a Uri,
+) -> impl Fn(i32, u32, u32) -> Vec<lsp_types::CodeActionResponse> + 'a {
+    move |id: i32, line: u32, character: u32| {
+        let point = Position { line, character };
+        client
+            .sender
+            .send(Message::Request(Request {
+                id: RequestId::from(id),
+                method: "textDocument/codeAction".to_owned(),
+                params: serde_json::to_value(lsp_types::CodeActionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    range: lsp_types::Range {
+                        start: point,
+                        end: point,
+                    },
+                    // Empty, deliberately: the client echoes the diagnostics it
+                    // holds, and none of them can carry a fix. The analysis is
+                    // the authority, so the handler must not need this.
+                    context: lsp_types::CodeActionContext {
+                        diagnostics: Vec::new(),
+                        only: None,
+                        trigger_kind: None,
+                    },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                })
+                .unwrap(),
+            }))
+            .unwrap();
+        wait_for_response::<Option<Vec<lsp_types::CodeActionResponse>>>(
+            client,
+            &RequestId::from(id),
+        )
+        .unwrap_or_default()
+    }
+}
+
 fn init(client: &Connection) {
     client
         .sender
@@ -252,30 +348,7 @@ fn open_unbound_step_publishes_the_expected_diagnostic() {
     // pack loads without an `unknown_step_kind` diagnostic on it; the feature
     // step here is deliberately left unbound by the `serch`/`search` typo in
     // `feature_text()`, independent of kind registration.
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
 
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
@@ -316,30 +389,7 @@ fn definition_on_a_step_jumps_to_the_macro() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
     open(&client, &url, feature_text);
@@ -399,30 +449,7 @@ fn definition_on_a_use_line_jumps_to_the_target_macro() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let pack_url = name_to_url(&pack_name).unwrap();
     open(&client, &pack_url, pack_text);
@@ -498,34 +525,7 @@ fn definition_on_a_ref_line_jumps_into_the_fragment_file() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: Some(proef_core::engine::FragmentSupport {
-            ext: "hurl",
-            scan: fake_scan,
-            template_reads: |_| Vec::new(),
-        }),
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds_with_fragments());
     init(&client);
     let pack_url = name_to_url(&pack_name).unwrap();
     open(&client, &pack_url, pack_text);
@@ -600,30 +600,7 @@ fn definition_on_a_step_lands_on_the_match_line() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
     open(&client, &url, feature_text);
@@ -687,30 +664,7 @@ fn completion_offers_macro_pattern_snippets() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
     open(&client, &url, feature_text);
@@ -795,30 +749,7 @@ fn references_lists_every_step_bound_to_the_macro() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let url1 = name_to_url(&f1).unwrap();
     open(&client, &url1, t1);
@@ -862,21 +793,7 @@ fn malformed_request_params_are_rejected_without_killing_the_server() {
         fragments: Vec::new(),
         files: BTreeMap::new(),
     };
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/"),
-            disk: Box::new(disk),
-            kinds: Vec::new(),
-            kind_to_engine: BTreeMap::new(),
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, Vec::new());
     init(&client);
 
     // A definition request whose URI has no scheme — `lsp_types::Uri` is
@@ -970,30 +887,7 @@ fn an_analysis_is_reused_until_an_edit_retires_it() {
         reads: Arc::clone(&reads),
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds());
     init(&client);
     let url = name_to_url(&feature_name).unwrap();
     open(&client, &url, feature_text);
@@ -1069,92 +963,12 @@ fn an_analysis_is_reused_until_an_edit_retires_it() {
 /// whole chain: pack validation finds the typo, the fix survives into the
 /// analysis, and the action's `TextEdit` covers exactly the misspelled token.
 #[test]
-// One scenario end to end, and the length is the file's ~30 lines of
-// server-spawn boilerplate — repeated in every test here — not the assertions.
-// Splitting it would pay that setup cost twice; extracting a shared spawn
-// helper is the fix, and belongs in its own change.
-#[allow(clippy::too_many_lines)]
 fn a_misspelled_use_target_offers_the_correcting_edit() {
-    use lsp_types::{
-        CodeActionContext, CodeActionKind, CodeActionParams, CodeActionResponse, Range,
-    };
+    use lsp_types::{CodeActionKind, CodeActionResponse};
 
-    let feature_name = native_abs("suite/f.feature");
-    let pack_name = native_abs("suite/packs/p.yaml");
-    // `wrapper` uses `basse`; the loaded macro is `base`.
-    let pack_text = "macros:\n  base:\n    match: I am the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    match: the wrapper\n    steps:\n      - use: basse\n";
-    let mut files = BTreeMap::new();
-    files.insert(feature_name.clone(), Arc::from(feature_text()));
-    files.insert(pack_name.clone(), Arc::from(pack_text));
-    let disk = FakeDisk {
-        features: vec![feature_name.clone()],
-        packs: vec![pack_name.clone()],
-        fragments: Vec::new(),
-        files,
-    };
+    let (client, server, pack_url) = a_pack_with_a_typo();
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: None,
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
-    init(&client);
-    let pack_url = name_to_url(&pack_name).unwrap();
-    open(&client, &pack_url, pack_text);
-    let _ = wait_for_any_diagnostics(&client);
-
-    let at_cursor = |id: i32, line: u32, character: u32| {
-        let point = Position { line, character };
-        client
-            .sender
-            .send(Message::Request(Request {
-                id: RequestId::from(id),
-                method: "textDocument/codeAction".to_owned(),
-                params: serde_json::to_value(CodeActionParams {
-                    text_document: TextDocumentIdentifier {
-                        uri: pack_url.clone(),
-                    },
-                    range: Range {
-                        start: point,
-                        end: point,
-                    },
-                    // Empty, deliberately: the client echoes the diagnostics it
-                    // holds, and none of them can carry a fix. The analysis is
-                    // the authority, so the handler must not need this.
-                    context: CodeActionContext {
-                        diagnostics: Vec::new(),
-                        only: None,
-                        trigger_kind: None,
-                    },
-                    work_done_progress_params: WorkDoneProgressParams::default(),
-                    partial_result_params: PartialResultParams::default(),
-                })
-                .unwrap(),
-            }))
-            .unwrap();
-        wait_for_response::<Option<Vec<CodeActionResponse>>>(&client, &RequestId::from(id))
-            .unwrap_or_default()
-    };
-
+    let at_cursor = code_action_probe(&client, &pack_url);
     // "      - use: basse" is line 9; the cursor sits inside `basse` (col 15).
     let actions = at_cursor(50, 9, 15);
     let action = actions
@@ -1202,20 +1016,29 @@ fn a_misspelled_use_target_offers_the_correcting_edit() {
         edits[0].range.end.character as usize,
     );
     assert_eq!((start, end), (13, 18));
-    let line = pack_text.lines().nth(9).unwrap();
+    let line = TYPO_PACK.lines().nth(9).unwrap();
     assert_eq!(
         format!("{}{}{}", &line[..start], edits[0].new_text, &line[end..]),
         "      - use: base"
     );
 
-    // The same fix is reachable from the squiggle three lines up, since that is
-    // where an author following the diagnostic actually puts the caret.
-    assert_eq!(
-        at_cursor(51, 6, 4).len(),
-        1,
-        "the fix is offered from the diagnostic too"
-    );
+    shutdown(&client, server);
+}
 
+/// The same fix is reachable from the squiggle *and* from the token, and from
+/// nowhere else.
+///
+/// The two are three lines apart here — the diagnostic carets `wrapper:`, the
+/// typo is in the step below — and an author arrives at one or the other
+/// depending on whether they followed the squiggle or just finished typing.
+/// Offering at only one end hides the fix from half of them.
+#[test]
+fn a_quick_fix_is_reachable_from_the_diagnostic_and_from_the_token() {
+    let (client, server, pack_url) = a_pack_with_a_typo();
+    let at_cursor = code_action_probe(&client, &pack_url);
+
+    assert_eq!(at_cursor(50, 9, 15).len(), 1, "from the token");
+    assert_eq!(at_cursor(51, 6, 4).len(), 1, "from the diagnostic");
     // A healthy line offers nothing — a quick fix that appears everywhere is
     // noise, and `base` on line 1 is correct exactly as written.
     let elsewhere = at_cursor(52, 1, 4);
@@ -1223,6 +1046,222 @@ fn a_misspelled_use_target_offers_the_correcting_edit() {
         elsewhere.is_empty(),
         "an unrelated line offers no fix: {elsewhere:?}"
     );
+
+    shutdown(&client, server);
+}
+
+/// The suite both quick-fix tests run against: a pack whose `wrapper` macro
+/// says `use: basse` while the loaded macro is `base`.
+fn a_pack_with_a_typo() -> (Connection, std::thread::JoinHandle<()>, Uri) {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text()));
+    files.insert(pack_name.clone(), Arc::from(TYPO_PACK));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
+        files,
+    };
+    let (client, server) = spawn(disk, hurl_kinds());
+    init(&client);
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &pack_url, TYPO_PACK);
+    let _ = wait_for_any_diagnostics(&client);
+    (client, server, pack_url)
+}
+
+/// `wrapper` uses `basse`; the loaded macro is `base`.
+const TYPO_PACK: &str = "macros:\n  base:\n    match: I am the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    match: the wrapper\n    steps:\n      - use: basse\n";
+
+/// A feature outlines to its scenarios, a pack to its macros — and a hover on
+/// a bound step names the macro without leaving the line.
+///
+/// Both read the same analysis the other features do, so this asserts the two
+/// vocabularies land on the right file kinds and that hover resolves through
+/// the binding index rather than by re-parsing text.
+#[test]
+fn a_file_outlines_to_its_own_vocabulary_and_a_step_hovers_to_its_macro() {
+    use lsp_types::{
+        Contents, DocumentSymbolParams, DocumentSymbolResponse, Hover, HoverParams, SymbolKind,
+    };
+
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    let feature_text = "@smoke\nFeature: F\n  Scenario: greets a person\n    When I greet Sam\n  Scenario: greets nobody\n    When I greet Mia\n";
+    let pack_text = "macros:\n  greet:\n    params: [who]\n    match: \"I greet {who}\"\n    steps:\n      - hurl: |\n          GET http://x\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
+        files,
+    };
+
+    let (client, server) = spawn(disk, hurl_kinds());
+    init(&client);
+    let feature_url = name_to_url(&feature_name).unwrap();
+    let pack_url = name_to_url(&pack_name).unwrap();
+    open(&client, &feature_url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    let outline = |id: i32, url: &Uri| {
+        client
+            .sender
+            .send(Message::Request(Request {
+                id: RequestId::from(id),
+                method: "textDocument/documentSymbol".to_owned(),
+                params: serde_json::to_value(DocumentSymbolParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    partial_result_params: PartialResultParams::default(),
+                })
+                .unwrap(),
+            }))
+            .unwrap();
+        match wait_for_response::<Option<DocumentSymbolResponse>>(&client, &RequestId::from(id)) {
+            Some(DocumentSymbolResponse::DocumentSymbolList(v)) => v,
+            other => panic!("expected a symbol list, got {other:?}"),
+        }
+    };
+
+    // A feature outlines to its scenarios, in authored order, on their headers.
+    let scenarios = outline(60, &feature_url);
+    let names: Vec<&str> = scenarios.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["greets a person", "greets nobody"]);
+    assert_eq!(scenarios[0].kind, SymbolKind::Method);
+    assert_eq!(scenarios[0].range.start.line, 2, "the `Scenario:` header");
+    // Feature-level tags accumulate onto every scenario, and an outline is
+    // where `@skip`/`@slow` earn their glance.
+    assert_eq!(scenarios[0].detail.as_deref(), Some("@smoke"));
+
+    // A pack outlines to its macros, detailed by the pattern they match.
+    let macros = outline(61, &pack_url);
+    assert_eq!(macros.len(), 1);
+    assert_eq!(macros[0].name, "greet");
+    assert_eq!(macros[0].kind, SymbolKind::Function);
+    assert_eq!(macros[0].detail.as_deref(), Some("I greet {who}"));
+
+    // Hover on the bound step names the macro, its pack, its pattern and params.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(62),
+            method: "textDocument/hover".to_owned(),
+            params: serde_json::to_value(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier {
+                        uri: feature_url.clone(),
+                    },
+                    position: Position {
+                        line: 3,
+                        character: 9,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+    let hover: Hover = wait_for_response::<Option<Hover>>(&client, &RequestId::from(62))
+        .expect("a bound step hovers");
+    let Contents::MarkupContent(markup) = hover.contents else {
+        panic!("expected markup contents");
+    };
+    assert!(markup.value.contains("`greet`"), "{}", markup.value);
+    assert!(markup.value.contains("I greet {who}"), "{}", markup.value);
+    assert!(markup.value.contains("`who`"), "{}", markup.value);
+    // The highlighted range is the step, not a guessed word boundary.
+    assert_eq!(hover.range.map(|r| r.start.line), Some(3));
+
+    shutdown(&client, server);
+}
+
+/// A step bound to a **built-in** macro hovers, even though it has nowhere to
+/// jump to.
+///
+/// `EDITORS.md` has always said built-ins have no jump target — their pack is
+/// embedded in the binary, so there is no file to open. Hover is not bound by
+/// that: the macro is in the analysis like any other, so its pattern and params
+/// are answerable in place. This pins the difference, because the docs now
+/// claim it.
+#[test]
+fn a_built_in_macro_hovers_even_though_it_cannot_be_jumped_to() {
+    use lsp_types::{Contents, Hover, HoverParams};
+
+    let feature_name = native_abs("suite/f.feature");
+    let feature_text = "Feature: F\n  Scenario: S\n    Then the response status is 200\n";
+    let mut files = BTreeMap::new();
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: Vec::new(),
+        fragments: Vec::new(),
+        files,
+    };
+
+    let (client, server) = spawn(disk, hurl_kinds());
+    init(&client);
+    let url = name_to_url(&feature_name).unwrap();
+    open(&client, &url, feature_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(70),
+            method: "textDocument/hover".to_owned(),
+            params: serde_json::to_value(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 12,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let hover: Hover = wait_for_response::<Option<Hover>>(&client, &RequestId::from(70))
+        .expect("a step bound to a built-in still hovers");
+    let Contents::MarkupContent(markup) = hover.contents else {
+        panic!("expected markup contents");
+    };
+    assert!(markup.value.contains("expectStatus"), "{}", markup.value);
+    assert!(
+        markup.value.contains("builtin:"),
+        "the pack is named as built-in, which is why there is no jump: {}",
+        markup.value
+    );
+
+    // And the jump genuinely is unavailable — `builtin:core.yaml` is no path.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(71),
+            method: "textDocument/definition".to_owned(),
+            params: serde_json::to_value(DefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: url.clone() },
+                    position: Position {
+                        line: 2,
+                        character: 12,
+                    },
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+    let jump: Option<DefinitionResponse> = wait_for_response(&client, &RequestId::from(71));
+    assert!(jump.is_none(), "a built-in has no file to open: {jump:?}");
 
     shutdown(&client, server);
 }
@@ -1276,34 +1315,7 @@ fn completion_inside_bind_offers_the_fragments_variables() {
         files,
     };
 
-    let kinds = vec![StepKindSpec {
-        prefix: "hurl",
-        schema: "true",
-        validate: None,
-        fragments: Some(proef_core::engine::FragmentSupport {
-            ext: "hurl",
-            scan: fake_scan,
-            template_reads: |_| Vec::new(),
-        }),
-        options: None,
-    }];
-    let kind_to_engine = BTreeMap::from([("hurl".to_owned(), "hurl".to_owned())]);
-
-    let (server_conn, client) = Connection::memory();
-    let server = std::thread::spawn(move || {
-        run(ServerConfig {
-            transport: Transport::InMemory(server_conn),
-            root: PathBuf::from("/suite"),
-            disk: Box::new(disk),
-            kinds,
-            kind_to_engine,
-            env: BTreeMap::new(),
-            config_vars: BTreeMap::new(),
-            debounce: Duration::ZERO,
-            resolve_root: None,
-        })
-        .unwrap();
-    });
+    let (client, server) = spawn(disk, hurl_kinds_with_fragments());
     init(&client);
     let pack_url = name_to_url(&pack_name).unwrap();
     open(&client, &pack_url, pack_text);

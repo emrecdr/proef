@@ -8,6 +8,28 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Document symbols and hover.** A feature outlines to its scenarios (with
+  their tags), a pack to its macros (with the pattern each matches) — the
+  vocabulary chosen by what discovery found in the file, never by its
+  extension. Hover answers the question go-to-definition charges a round trip
+  for: what a step binds, what a `use:` targets, what a `ref:` resolves to and
+  which of its variables still need a `bind:`. Every fact is read from the same
+  analysis the diagnostics come from, so a hover cannot contradict the squiggle
+  on its own line. `SuiteAnalysis` gains a `scenarios` index, taken from the
+  parse rather than from binding — an outline that hid exactly the scenarios you
+  are debugging would be worse than no outline.
+
+- **A panic no longer ends the editor session silently.** Only the recompute was
+  guarded, so a panic inside completion, definition or references escaped the
+  message loop and killed the server — leaving an editor that shows nothing,
+  which reads as "proef has no opinion here" rather than as a failure. Both
+  entry points (a request, the debounced recompute) now wrap everything they do,
+  the request is *answered* with `InternalError` rather than dropped, and the
+  user is told once per suite state through `window/showMessage` — the channel
+  an editor surfaces, unlike the stderr line that was the only report before.
+  The next edit clears the report, because whether the new state also fails is
+  news.
+
 - **The editor can apply a "did you mean", not just print it.** Every
   misspelled-name diagnostic that already suggested a nearest spelling now
   carries the structured half of that suggestion — a span and a replacement —
@@ -25,6 +47,16 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   replace and offers nothing rather than editing the healthy file. The action
   is reachable from either the diagnostic or the token, because the two are
   regularly lines apart: a `use:` error carets the macro's name key.
+
+### Fixed
+
+- **EDITORS.md no longer under-promises on built-in macros.** It said the
+  `expect*` family has "no jump target and no hover"; the first half is true and
+  structural (their pack is compiled into the binary, so there is no file to
+  open), the second is not — a built-in is in the analysis like any other macro,
+  so hover answers with its pattern and params and names the pack as `builtin:…`,
+  which is exactly *why* the jump is unavailable. Pinned by a test, since the
+  page now claims it.
 
 ### Changed
 

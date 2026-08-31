@@ -17,6 +17,14 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
   (`[Options] variable:`) is left out: it needs no `bind:`, and binding it would
   be refused as `option_declared_twice`.
 - **Find-references** — every step across the suite that a given macro binds.
+- **Document symbols** — a feature outlines to its scenarios (tagged ones
+  showing their tags), a pack to its macros (detailed by the pattern each
+  matches). Which vocabulary applies is decided by what discovery found in the
+  file, not by its extension.
+- **Hover** — the macro a step binds, or a `use:` targets, with its pack,
+  pattern and params; on a `ref:`, the fragment's file and the variables still
+  needing a `bind:`. Every fact comes from the same analysis the diagnostics
+  do, so a hover can never contradict the squiggle on the same line.
 - **Quick fixes** — a misspelled name that already earned a "did you mean"
   becomes an applicable edit: `use:` and `ref:` targets, `with:` and `bind:`
   keys, step kinds, Examples placeholders, and data-table columns. A fix is
@@ -32,6 +40,17 @@ in (its working directory), discovering every `.feature` file and every
 `packs/*.yaml` / `packs/*.yml` macro pack beneath that root — the same
 resolution `proef test` uses, so the two never diverge. Launch your editor from
 the project root (or configure the server's root/working directory to it).
+
+## When analysis fails
+
+A panic inside analysis or a feature never ends the server. proef reports it
+once through `window/showMessage` — the channel an editor actually surfaces —
+and keeps serving; the next edit retries, and reports again only if the new
+state also fails. A server that died would show *nothing*, which reads as "proef
+has no opinion about this file" rather than as the failure it is.
+
+Running `proef lsp` by hand also prints the panic to stderr, which is where the
+detail lives.
 
 ## Naming the config: `--config`
 
@@ -138,10 +157,12 @@ This is the first release of the language server. Known boundaries:
   `PROEF_ENV`), **restart the server** to pick up the change; until then those
   references analyze against the old (or, if the file could not be loaded at
   startup, an empty) scope and may warn.
-- **Built-in macros have no jump target and no hover.** The `expect*` family
-  lives in a pack compiled into the binary, not a file on disk, so there is
-  nothing for go-to-definition to open. `proef macros` lists them with the
-  sentence each binds, which is the answer that question usually wants.
+- **Built-in macros have no jump target.** The `expect*` family lives in a pack
+  compiled into the binary, not a file on disk, so there is nothing for
+  go-to-definition to open. Hover still answers — the macro is in the analysis
+  like any other, and reports its pack as `builtin:…`, which is *why* the jump
+  is unavailable. `proef macros` lists the whole family with the sentence each
+  binds.
 - **Completion ranking is best-effort.** All of the suite's macros are offered;
   ranking is a lightweight edit-distance heuristic. Full context-aware ranking is
   a follow-up.
@@ -152,6 +173,19 @@ This is the first release of the language server. Known boundaries:
 - **No VS Code extension yet.** v1 is a server-only generic-LSP binary. It works
   with any editor that speaks generic LSP (Neovim, Helix, Emacs, Sublime LSP, …);
   a VS Code wrapper is a possible follow-up.
+
+  If one is built, its `documentSelector` must match on **path**
+  (`{ scheme: "file", pattern: "**/*.feature" }`), not on a language id. The
+  ecosystem is split — the two established Gherkin extensions register
+  `cucumber` and `feature` respectively — so a selector naming either id
+  attaches for some users and silently does nothing for the rest. The table
+  under [File types served](#file-types-served) is that split; a path selector
+  is the only thing all of it has in common.
+
+- **No Zed support.** Zed binds language servers to languages it has a
+  tree-sitter grammar for, and there is no Gherkin grammar in it. That grammar
+  is a prerequisite, not a configuration step, so Zed waits on work outside this
+  repository.
 - **Overlay lookup can still miss if the suite root is reached through a
   symlink.** The root is deliberately left uncanonicalized (canonicalizing
   would resolve symlinks and desync source names from the client's document

@@ -17,7 +17,9 @@ use proef_core::provider::SourceProvider;
 
 use crate::analysis::{Analysis, RecomputeInputs, read_fragments, recompute};
 use crate::documents::Documents;
-use crate::features::{code_action, completion, definition, diagnostics, references};
+use crate::features::{
+    code_action, completion, definition, diagnostics, hover, references, symbols,
+};
 
 /// How the server talks to its client.
 pub enum Transport {
@@ -92,7 +94,8 @@ impl std::error::Error for ServerError {}
 fn capabilities() -> ServerCapabilities {
     use lsp_types::{
         CodeActionKind, CodeActionOptions, CodeActionProvider, CompletionOptions,
-        DefinitionProvider, ReferencesProvider, TextDocumentSync, TextDocumentSyncKind,
+        DefinitionProvider, DocumentSymbolProvider, HoverProvider, ReferencesProvider,
+        TextDocumentSync, TextDocumentSyncKind,
     };
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSync::Kind(TextDocumentSyncKind::Full)),
@@ -106,6 +109,8 @@ fn capabilities() -> ServerCapabilities {
             code_action_kinds: Some(vec![CodeActionKind::QuickFix]),
             ..CodeActionOptions::default()
         })),
+        document_symbol_provider: Some(DocumentSymbolProvider::Bool(true)),
+        hover_provider: Some(HoverProvider::Bool(true)),
         ..Default::default()
     }
 }
@@ -209,6 +214,13 @@ struct State {
     /// It retains the suite's text for the session, which is what the fragment
     /// corpus above already does and what the whole-suite model implies.
     analysis: Option<Analysis>,
+    /// A panic has already been reported for the current suite state.
+    ///
+    /// Without it the report repeats per request: a panicked analysis is not
+    /// cached, so the next keystroke retries, panics again, and tells the user
+    /// again. Cleared by the next edit, because that is a *different* state and
+    /// whether it still panics is news.
+    panic_reported: bool,
 }
 
 fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerError> {
@@ -218,6 +230,7 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
         fragments: read_fragments(&Documents::default(), cfg.disk.as_ref(), &cfg.kinds),
         fragments_dirty: false,
         analysis: None,
+        panic_reported: false,
     };
     let mut dirty_since: Option<Instant> = None;
 
@@ -267,6 +280,7 @@ fn main_loop(connection: &Connection, cfg: &ServerConfig) -> Result<(), ServerEr
                     // at the one place that knows an edit landed, rather than
                     // at each of the four places that read it.
                     state.analysis = None;
+                    state.panic_reported = false;
                     dirty_since.get_or_insert_with(Instant::now);
                 }
             }
@@ -355,18 +369,26 @@ fn is_fragment(cfg: &ServerConfig, uri: &lsp_types::Uri) -> bool {
 /// The one read path: the debounced diagnostics publisher and every on-demand
 /// feature request (definition/completion/references) all come through here, so
 /// they share one recompute per edit rather than one each.
-fn analysis<'a>(cfg: &ServerConfig, state: &'a mut State) -> Option<&'a Analysis> {
+fn analysis<'a>(cfg: &ServerConfig, state: &'a mut State) -> &'a Analysis {
     if state.analysis.is_none() {
-        state.analysis = compute_analysis(cfg, state);
+        state.analysis = Some(compute_analysis(cfg, state));
     }
-    state.analysis.as_ref()
+    // Just filled, so the `unwrap_or_else` arm is unreachable; it exists because
+    // library code does not `expect`.
+    state
+        .analysis
+        .as_ref()
+        .unwrap_or_else(|| unreachable!("the analysis was just computed"))
 }
 
-/// Builds an [`Analysis`] from the live overlay-then-disk provider, or `None` if
-/// analysis panicked. The `catch_unwind` guard lives here, at the one recompute
-/// call site, so every caller gets panic safety for free instead of re-wrapping
-/// it (or forgetting to).
-fn compute_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
+/// Builds an [`Analysis`] from the live overlay-then-disk provider.
+///
+/// No panic guard of its own: the two places a panic must not escape are the
+/// message loop's entry points — a request and the debounced recompute — and
+/// both wrap everything they do, not just this. Guarding here as well would
+/// have meant two mechanisms for one job, and the narrower one missed the
+/// feature handlers entirely.
+fn compute_analysis(cfg: &ServerConfig, state: &State) -> Analysis {
     let inputs = RecomputeInputs {
         root: &cfg.root,
         docs: &state.docs,
@@ -377,48 +399,94 @@ fn compute_analysis(cfg: &ServerConfig, state: &State) -> Option<Analysis> {
         env: &cfg.env,
         config_vars: &cfg.config_vars,
     };
-    // A panic inside analysis must never take the server down: catch it, tell
-    // the caller there is nothing new, and let the next edit retry.
-    if let Ok(analysis) =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| recompute(&inputs)))
-    {
-        return Some(analysis);
+    recompute(&inputs)
+}
+
+/// Run `work`, surviving a panic inside it and telling the user once.
+///
+/// A panic must not take the server down — an editor whose language server died
+/// shows nothing at all, which reads to the user as "proef has no opinion about
+/// this file" rather than as a failure. Reporting it is the other half: a server
+/// that silently answers nothing is indistinguishable from a healthy one with
+/// nothing to say.
+///
+/// `window/showMessage` is that report, because stderr is not a channel a user
+/// running an editor ever sees. The stderr line stays for whoever runs
+/// `proef lsp` by hand, and goes through `writeln!` rather than the `eprintln`
+/// macro for the reason this whole function exists: that macro panics when its
+/// write fails, and a closed stderr would turn the recovery into a second
+/// failure. (Naming it without its `!` is deliberate — `stderr_hygiene` scans
+/// these sources for the spelling that would be a call.)
+fn guarded<T>(
+    connection: &Connection,
+    state: &mut State,
+    what: &str,
+    work: impl FnOnce(&mut State) -> T,
+) -> Option<T> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(state))) {
+        Ok(value) => Some(value),
+        Err(payload) => {
+            let detail = panic_detail(&payload);
+            let _ = writeln!(std::io::stderr(), "proef-lsp: {what} panicked: {detail}");
+            if !std::mem::replace(&mut state.panic_reported, true) {
+                let params = lsp_types::ShowMessageParams {
+                    kind: lsp_types::MessageType::Error,
+                    message: format!(
+                        "proef: {what} failed ({detail}). Analysis is paused for this \
+                         edit — the next change retries."
+                    ),
+                };
+                if let Ok(value) = serde_json::to_value(params) {
+                    let _ =
+                        connection
+                            .sender
+                            .send(Message::Notification(lsp_server::Notification {
+                                method: "window/showMessage".to_owned(),
+                                params: value,
+                            }));
+                }
+            }
+            None
+        }
     }
-    // The recovery notice must not become the failure it reports: the
-    // `eprintln` macro panics when its write fails, and a closed stderr is EPIPE
-    // (Rust ignores SIGPIPE) — which would take down the very server this
-    // `catch_unwind` exists to keep alive. Swallow the write error; stderr is
-    // the only channel here, so there is nowhere left to report it.
-    let _ = writeln!(
-        std::io::stderr(),
-        "proef-lsp: suite analysis panicked; keeping previous state"
-    );
-    None
+}
+
+/// The human-readable half of a panic payload, which is a `&str` or a `String`
+/// for every panic Rust's own macros raise. Anything else is reported as
+/// unknown rather than debug-printed: `Box<dyn Any>` has no useful `Debug`.
+fn panic_detail(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
 }
 
 fn run_recompute(connection: &Connection, cfg: &ServerConfig, state: &mut State) {
-    // One rebuild per debounce window, however many fragment edits it coalesced.
-    if std::mem::take(&mut state.fragments_dirty) {
-        state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
-        // The corpus is an analysis input, so a rebuilt one retires whatever a
-        // request computed against the old one earlier in this same window.
-        state.analysis = None;
-    }
-    if analysis(cfg, state).is_none() {
-        return;
-    }
-    // Split the borrow: publishing reads the analysis and writes `published`,
-    // two disjoint fields of one `&mut State`. The refill above is what makes
-    // the `Some` certain; the `else` is the pattern's cost, not a real path.
-    let State {
-        analysis: Some(current),
-        published,
-        ..
-    } = state
-    else {
-        return;
-    };
-    diagnostics::publish(connection, current, published);
+    guarded(connection, state, "suite analysis", |state| {
+        // One rebuild per debounce window, however many fragment edits it
+        // coalesced.
+        if std::mem::take(&mut state.fragments_dirty) {
+            state.fragments = read_fragments(&state.docs, cfg.disk.as_ref(), &cfg.kinds);
+            // The corpus is an analysis input, so a rebuilt one retires whatever
+            // a request computed against the old one earlier in this window.
+            state.analysis = None;
+        }
+        analysis(cfg, state);
+        // Split the borrow: publishing reads the analysis and writes
+        // `published`, two disjoint fields of one `&mut State`. The refill above
+        // is what makes the `Some` certain; the `else` is the pattern's cost,
+        // not a real path.
+        let State {
+            analysis: Some(current),
+            published,
+            ..
+        } = state
+        else {
+            return;
+        };
+        diagnostics::publish(connection, current, published);
+    });
 }
 
 /// Deserialize a request's params, or produce an `InvalidParams` error Response
@@ -442,18 +510,16 @@ fn parse_params<P: serde::de::DeserializeOwned>(
 /// Answer one request: deserialize its params, hand them to `handle` together
 /// with the current analysis, and send whatever it returns.
 ///
-/// Every feature shares this shape, including the two ways a request can come
-/// to nothing. Malformed params are *answered* with `InvalidParams` rather than
-/// propagated, so one bad request never takes the server down. And a `None`
-/// analysis — a recompute that panicked — is not an error to the client either:
-/// it means we have nothing to offer *this* request, so `handle` decides what
-/// empty looks like for its own feature and the client gets a normal response.
+/// Every feature shares this shape, including the ways a request can fail
+/// without ending the server: malformed params are *answered* with
+/// `InvalidParams`, and a panic anywhere inside — analysis or the handler — is
+/// answered with `InternalError` after telling the user what happened.
 fn answer<P, R>(
     connection: &Connection,
     cfg: &ServerConfig,
     state: &mut State,
     req: &lsp_server::Request,
-    handle: impl FnOnce(Option<&Analysis>, P) -> R,
+    handle: impl FnOnce(&Analysis, P) -> R,
 ) -> Result<(), ServerError>
 where
     P: serde::de::DeserializeOwned,
@@ -461,7 +527,21 @@ where
 {
     let resp = match parse_params::<P>(req) {
         Ok(params) => {
-            lsp_server::Response::new_ok(req.id.clone(), handle(analysis(cfg, state), params))
+            // The whole answer is guarded, not just the analysis: a panic in a
+            // feature handler used to escape the loop and end the server, since
+            // only the recompute was ever wrapped.
+            match guarded(connection, state, &req.method, |state| {
+                handle(analysis(cfg, state), params)
+            }) {
+                Some(result) => lsp_server::Response::new_ok(req.id.clone(), result),
+                // Answered, not dropped: a client that never hears back waits
+                // forever, which is a worse failure than the panic.
+                None => lsp_server::Response::new_err(
+                    req.id.clone(),
+                    lsp_server::ErrorCode::InternalError as i32,
+                    format!("{} failed; see the message proef sent", req.method),
+                ),
+            }
         }
         Err(invalid) => invalid,
     };
@@ -478,8 +558,8 @@ fn dispatch_request(
     req: &lsp_server::Request,
 ) -> Result<(), ServerError> {
     use lsp_types::{
-        CodeActionRequest, CompletionRequest, DefinitionRequest, LspRequestMethod,
-        ReferencesRequest, Request as _,
+        CodeActionRequest, CompletionRequest, DefinitionRequest, DocumentSymbolRequest,
+        HoverRequest, LspRequestMethod, ReferencesRequest, Request as _,
     };
 
     let method = LspRequestMethod::from(req.method.as_str());
@@ -492,13 +572,11 @@ fn dispatch_request(
             req,
             |analysis, params: lsp_types::DefinitionParams| {
                 let at = params.text_document_position_params;
-                analysis
-                    .and_then(|a| definition::goto(a, &at.text_document.uri, at.position))
-                    .map(|location| {
-                        lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(
-                            location,
-                        ))
-                    })
+                definition::goto(analysis, &at.text_document.uri, at.position).map(|location| {
+                    lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(
+                        location,
+                    ))
+                })
             },
         );
     }
@@ -511,9 +589,7 @@ fn dispatch_request(
             req,
             |analysis, params: lsp_types::CompletionParams| {
                 let at = params.text_document_position_params;
-                let items = analysis
-                    .map(|a| completion::complete(a, &at.text_document.uri, at.position))
-                    .unwrap_or_default();
+                let items = completion::complete(analysis, &at.text_document.uri, at.position);
                 Some(lsp_types::CompletionResponse::CompletionItemList(items))
             },
         );
@@ -527,11 +603,11 @@ fn dispatch_request(
             req,
             |analysis, params: lsp_types::ReferenceParams| {
                 let at = params.text_document_position_params;
-                Some(
-                    analysis
-                        .map(|a| references::find(a, &at.text_document.uri, at.position))
-                        .unwrap_or_default(),
-                )
+                Some(references::find(
+                    analysis,
+                    &at.text_document.uri,
+                    at.position,
+                ))
             },
         );
     }
@@ -543,11 +619,36 @@ fn dispatch_request(
             state,
             req,
             |analysis, params: lsp_types::CodeActionParams| {
-                Some(
-                    analysis
-                        .map(|a| code_action::actions(a, &params.text_document.uri, params.range))
-                        .unwrap_or_default(),
-                )
+                Some(code_action::actions(
+                    analysis,
+                    &params.text_document.uri,
+                    params.range,
+                ))
+            },
+        );
+    }
+
+    if method == DocumentSymbolRequest::METHOD {
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::DocumentSymbolParams| {
+                symbols::outline(analysis, &params.text_document.uri)
+            },
+        );
+    }
+
+    if method == HoverRequest::METHOD {
+        return answer(
+            connection,
+            cfg,
+            state,
+            req,
+            |analysis, params: lsp_types::HoverParams| {
+                let at = params.text_document_position_params;
+                hover::hover(analysis, &at.text_document.uri, at.position)
             },
         );
     }
