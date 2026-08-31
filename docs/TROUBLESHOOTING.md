@@ -43,6 +43,21 @@ value available. Fix: `proef secret set NAME` (or `export
 PROEF_SECRET_<NAME>=…`). In CI, see
 [AUTHORING — Secrets in CI](AUTHORING.md#secrets-in-ci).
 
+**An assertion fails on values that look identical** — they differ only in
+whitespace, and proef says so:
+
+```
+Assert failure (f--s.hurl:9: actual: string <ok> expected: string <ok >)
+  [whitespace only — actual: string·<ok>, expected: string·<ok·>]
+```
+
+The bracketed note appears only when the two values differ *solely* in
+whitespace, and repeats them with every whitespace character drawn: `·` for a
+space, `\t` / `\r` / `\n` for the usual escapes, and `\u{a0}` for the exotic
+ones — a non-breaking space pasted out of a browser being the classic. Usual
+causes: a trailing space in the expectation, a CRLF fixture leaking `\r` into a
+body, or a tab where the author typed spaces.
+
 **"unknown environment `<name>`"** — `--env <name>` (or `PROEF_ENV`) names an
 environment `proef.toml` doesn't define; the error lists the known ones. Fix the
 name or add the `[env.<name>]` section. Exit 2.
