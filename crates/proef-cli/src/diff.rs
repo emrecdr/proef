@@ -28,6 +28,7 @@ pub fn diff(
     base: Option<&str>,
     new: Option<&str>,
     fail_on_regression: bool,
+    machine: bool,
 ) -> ExitCode {
     let (base_dir, new_dir) = match resolve_pair(runs_root, base, new) {
         Ok(pair) => pair,
@@ -51,8 +52,10 @@ pub fn diff(
         }
     };
 
-    incomplete_banner("base", &base_dir, base_rec.completion);
-    incomplete_banner("new", &new_dir, new_rec.completion);
+    if !machine {
+        incomplete_banner("base", &base_dir, base_rec.completion);
+        incomplete_banner("new", &new_dir, new_rec.completion);
+    }
 
     // Suite scenarios only. A `[run] setup`/`teardown` failure is a cleanup
     // fault (`test` exits 3), not a test regression (exit 1) — blending them
@@ -69,7 +72,7 @@ pub fn diff(
         suite_only(&new_rec.scenarios),
     );
     let phases_skipped = new_rec.scenarios.len() - new_suite.len();
-    if phases_skipped > 0 {
+    if phases_skipped > 0 && !machine {
         crate::render::outln!(
             "note: {phases_skipped} setup/teardown scenario(s) excluded — a cleanup fault is not a test regression"
         );
@@ -88,16 +91,22 @@ pub fn diff(
             new_rec.env.as_deref().unwrap_or("none")
         );
     }
-    for (key, new_value) in &new_rec.metadata {
-        match base_rec.metadata.get(key) {
-            Some(base_value) if base_value != new_value => {
-                crate::render::outln!("meta {key}: {base_value} → {new_value}");
+    if !machine {
+        for (key, new_value) in &new_rec.metadata {
+            match base_rec.metadata.get(key) {
+                Some(base_value) if base_value != new_value => {
+                    crate::render::outln!("meta {key}: {base_value} → {new_value}");
+                }
+                None => crate::render::outln!("meta {key}: (absent) → {new_value}"),
+                _ => {}
             }
-            None => crate::render::outln!("meta {key}: (absent) → {new_value}"),
-            _ => {}
         }
+        report.render(&base_dir, &new_dir);
+    } else if let Err(code) =
+        report.render_json(&base_dir, &new_dir, (&base_rec, &new_rec), phases_skipped)
+    {
+        return code;
     }
-    report.render(&base_dir, &new_dir);
 
     if fail_on_regression {
         // An incomplete/cancelled NEW run cannot certify "no regressions".
@@ -271,6 +280,74 @@ impl Report {
                 "    ⏱ {}  {base_ms}ms → {new_ms}ms (+{delta}ms)",
                 label(key)
             ));
+        }
+    }
+
+    /// The same comparison as one JSON object on stdout.
+    ///
+    /// Mirrors `render` bucket for bucket. `flaky` and `slower` stay the
+    /// rendered sentences rather than becoming structured rows: they *are*
+    /// prose in the prose output, and inventing a richer shape here would put
+    /// two different answers behind one command.
+    fn render_json(
+        &self,
+        base_dir: &Path,
+        new_dir: &Path,
+        records: (&record::Record, &record::Record),
+        phases_skipped: usize,
+    ) -> Result<(), ExitCode> {
+        let (base_rec, new_rec) = records;
+        let pair = |key: &Key| serde_json::json!({"file": key.0, "scenario": key.1});
+        let body = serde_json::json!({
+            "base": {
+                "run_id": run_name(base_dir),
+                "env": base_rec.env,
+                "complete": base_rec.completion == record::RunCompletion::Completed,
+            },
+            "new": {
+                "run_id": run_name(new_dir),
+                "env": new_rec.env,
+                "complete": new_rec.completion == record::RunCompletion::Completed,
+            },
+            "phases_excluded": phases_skipped,
+            "regressed": self.regressed.iter().map(pair).collect::<Vec<_>>(),
+            "fixed": self.fixed.iter().map(pair).collect::<Vec<_>>(),
+            "still_failing": self.still_failing.iter().map(pair).collect::<Vec<_>>(),
+            "now_skipped": self
+                .now_skipped
+                .iter()
+                .map(|(key, was_failing)| {
+                    serde_json::json!({
+                        "file": key.0,
+                        "scenario": key.1,
+                        "was_failing": was_failing,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "added": self
+                .added
+                .iter()
+                .map(|(key, status)| {
+                    serde_json::json!({
+                        "file": key.0,
+                        "scenario": key.1,
+                        "status": status_word(*status),
+                    })
+                })
+                .collect::<Vec<_>>(),
+            "removed": self.removed.iter().map(pair).collect::<Vec<_>>(),
+            "flaky": self.flaky,
+            "slower": self.slower,
+        });
+        match serde_json::to_string_pretty(&body) {
+            Ok(text) => {
+                crate::render::outln!("{text}");
+                Ok(())
+            }
+            Err(err) => {
+                crate::render::errln!("error: cannot render the comparison as JSON: {err}");
+                Err(ExitCode::SystemError)
+            }
         }
     }
 

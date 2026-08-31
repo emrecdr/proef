@@ -104,6 +104,120 @@ compile gate.
 
 ---
 
+## Ingested — round 19 (2026-08-31), validated claim-by-claim
+
+Five confirmed defects, all shipped; five checks that cleared; four external
+triggers re-tested. The round's shape: the heavily-audited paths (scheduler,
+record gate, outline expansion, the shard×shuffle×rerun composition) were
+probed and found correctly defended, so the yield came from **what the output
+surfaces contain** rather than from what the core computes.
+
+### R19-1 — a step's `name:` reached the artifact and nothing else *(shipped)*
+
+A macro with more than one step turns one feature sentence into several engine
+steps sharing a `StepRef` exactly. The emitter always wrote the authored
+`name:` into the artifact's entry comment; `StepRef` never carried it, so the
+console, HTML report, `JUnit`, TAP, the job summary and `explain` printed the
+same sentence once per step with only the status glyph between a warning and
+the failure beside it. In a fresh reference run, **17 of 44 step identities
+were duplicates**, and the pinned event snapshot was *encoding* the defect —
+three byte-identical `step_finished` for `the cookie session is exercised`.
+
+Fixed by mirroring `fragment` (`StepOutcome` + `step_finished`), not by
+extending `StepRef`: several engine steps share one `StepRef`, so the label
+belongs to the engine step. Additive on the wire; schema stays 1. Retires two
+untrue claims — `AUTHORING.md`'s "they anchor artifacts, events, and failure
+output" and `LoweredStep::label`'s own "(events/console)". Same class as
+`reproduce_hint` in the R18 wave: computed all along, printed all along,
+dropped by the record.
+
+### R19-2 — `report -o` wrote the machine into the shared file *(shipped)*
+
+Absolute artifact hrefs, 12 per report, naming the author's home directory —
+in the one output built to be uploaded. 0.13.0 scrubbed machine identity from
+the *record* (R12-1) and the record is clean; the HTML put it back. The
+absolute path was deliberate and pinned by a test, but it resolves only on the
+machine that produced it, which is exactly where `-o` output is not read. A
+relative href strictly dominates. **Windows CI then caught a second half the
+local gate could not**: the href was built with `Path::display`, and `\` is
+not a separator in a URL, so a Windows-generated report's links were dead
+either way — it is now built from components joined with `/`. The known
+macOS-only-gate hazard, paid again.
+
+### R19-4 — one palette token failed WCAG AA, and every dark pill did *(shipped)*
+
+`--skip` was the single token the dark block does not redefine: a grey chosen
+against `#0d1117` left carrying white text on white at 3.45:1. Writing the
+*guard* rather than the fix found the larger one — `.pill` painted `color:#fff`
+on status colours the dark palette tunes as text on a dark ground, so all four
+dark pills sat between 2.52:1 and 3.45:1. The pill foreground is a token now.
+Tests assert the *ratio*, not the hex, and that both palettes define the same
+token set (the absence that caused it).
+
+### R19-5 — the report had one heading and no outline *(shipped, narrower than filed)*
+
+Filed as "no headings at all"; **the timeline already had an `<h2>`** — the
+first inventory ran against a record with no timing, so the timeline never
+rendered. Corrected before implementing: only the tag table and the scenario
+list lacked one. Both gained one, sharing the class the timeline already used.
+
+### R19-3 — the three post-run commands had no machine output *(shipped)*
+
+`explain`, `diff` and `doctor`. A run directory carries no structured summary,
+so anything analysing a run it did not launch had to fold `events.jsonl`
+itself — the fold proef's own two copies disagreed on three ways. Each object
+mirrors its prose field for field; `doctor` had to start collecting its checks
+before rendering them, so JSON is a second rendering rather than a second walk.
+
+### Cleared — checked, not defects (do not re-raise as omissions)
+
+- `RecordGate`'s `(file, name)` identity is safe: `feature.rs`'s `dedup_names`
+  guarantees uniqueness feature-wide and its doc names this consumer.
+- Duplicate step rows are not a counting bug — the record keys steps by
+  `(text, occurrence ordinal)`. Only the surfaces were blind (R19-1).
+- Report keyboard focus is intact: no `:focus` rules, but no `outline:none`
+  either, so native rings survive on button/anchor/summary.
+- The tag table is a real `<table>`; it renders no rows only when a run
+  carries no tags.
+- crates.io showing no `homepage` for 0.14.0 is publish lag — the field landed
+  after that release was cut (verified by ancestry), and appears on the next
+  publish. `documentation` is still unset: for a binary crate that falls back
+  to a docs.rs library page rather than the book, worth setting deliberately.
+
+### External triggers re-tested 2026-08-31 — all four hold
+
+- **OpenTelemetry export stays a non-goal.** OTel graduated CNCF (2026-05), so
+  the umbrella argument weakened, but the attributes that would carry a test
+  run — `test.case.name`, `test.case.result.status`, `test.suite.name`,
+  `test.suite.run.status` — are **all still Development** stability. PRD §3's
+  stated reason is current as written; only the re-check date moves.
+- **CTRF stays declined.** Still community-adoption phase; Microsoft's test
+  platform has a discussion issue, not an implementation. Trigger unfired.
+- **Both sacred pins are correct.** hurl 8.0.1 is the latest release
+  (2026-04-29) — no 8.1, no 9.0. Rust 1.97.1 is right under the written
+  policy: stable is 1.98.0 (2026-08-18) and `channel-rust-1.98.1.toml` 404s,
+  so the point release the policy waits for does not exist yet. R18-2's
+  refutation survives contact with the calendar.
+- **An MCP server is declined, with a named trigger.** The largest ecosystem
+  shift since the last research round — Playwright, Cypress, BrowserStack,
+  Maestro and ReportPortal all ship one, and Claude Code / Cursor / Windsurf
+  consume them natively. They shipped MCP because their primary surface is a
+  GUI or a cloud API and an agent had no other way in. proef is CLI-first with
+  `--format json` and a pinned four-code exit contract: an agent already has a
+  complete interface, and a second one is a second way to do one thing. The
+  only real gap an agent hit was R19-3, now closed. **Trigger:** a concrete
+  agent workflow that `--format json` plus exit codes cannot express. Recorded
+  so `proef lsp`'s precedent is not read as an open door.
+
+### Noted, not filed
+
+`stderr_hygiene`'s malformed-plural scan matches the literal `(y)` anywhere in
+a non-comment source line, so any code with a single-character `y` parameter
+false-positives (`x.max(y)` did). The guard's intent is user-facing strings;
+scanning all code is broader than that. Left alone — it is working as a guard
+and tightening it to string literals is more risk than the trap is worth — but
+the next author to trip it should know why.
+
 ## Ingested — the deep improvement report (2026-08-25), validated claim-by-claim
 
 A twelve-stream self-audit plus competitive/ecosystem research (five code

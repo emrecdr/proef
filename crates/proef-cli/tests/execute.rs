@@ -2296,6 +2296,123 @@ fn explain_summarizes_the_latest_run() {
     assert!(stdout.contains("case.feature:4"), "{stdout}");
 }
 
+/// The three post-run commands speak JSON, and the object says the same thing
+/// the prose does.
+///
+/// A run directory is `artifacts/ + events.jsonl + run.log` with no structured
+/// summary, so anything analysing a run it did not launch had to fold the
+/// events itself — the fold proef's own two copies disagreed on three ways.
+/// These assertions are on the *agreement*, not merely on the JSON parsing.
+#[test]
+fn the_post_run_commands_speak_json_and_agree_with_their_prose() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: doomed\n    When the health endpoint is checked\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  health:\n    match: the health endpoint is checked\n    steps:\n      - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n",
+    )
+    .unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+
+    // --- explain -------------------------------------------------------
+    let prose = proef_in(cwd.path(), &fixture)
+        .arg("explain")
+        .assert()
+        .code(0);
+    let prose = String::from_utf8_lossy(&prose.get_output().stdout).into_owned();
+    let machine = proef_in(cwd.path(), &fixture)
+        .args(["explain", "--format", "json"])
+        .assert()
+        .code(0);
+    let json: serde_json::Value =
+        serde_json::from_slice(&machine.get_output().stdout).expect("explain emits valid JSON");
+    assert_eq!(json["failed"], 1, "{json}");
+    assert_eq!(json["passed"], 0, "{json}");
+    assert_eq!(json["complete"], true, "{json}");
+    // The totals in the object are the ones in the sentence.
+    assert!(
+        prose.contains(&format!(
+            "{} passed · {} failed · {} skipped",
+            json["passed"], json["failed"], json["skipped"]
+        )),
+        "prose and JSON totals disagree:\n{prose}\n{json}"
+    );
+    // The failure the prose names is the failure the object carries.
+    let failures = json["failures"].as_array().expect("failures is an array");
+    assert_eq!(failures.len(), 1, "{json}");
+    assert_eq!(failures[0]["scenario"], "doomed", "{json}");
+    assert!(
+        failures[0]["detail"].as_array().is_some_and(|lines| lines
+            .iter()
+            .any(|l| l.as_str().is_some_and(|s| s.contains("case.feature:4")))),
+        "{json}"
+    );
+
+    // --- doctor --------------------------------------------------------
+    let machine = proef_in(cwd.path(), &fixture)
+        .args(["doctor", "--format", "json"])
+        .assert();
+    let json: serde_json::Value =
+        serde_json::from_slice(&machine.get_output().stdout).expect("doctor emits valid JSON");
+    let checks = json["checks"].as_array().expect("checks is an array");
+    assert!(
+        checks.iter().any(|c| c["section"] == "engine:hurl"),
+        "{json}"
+    );
+    assert!(checks.iter().any(|c| c["section"] == "project"), "{json}");
+    // Every check carries the four fields a consumer selects on.
+    for check in checks {
+        for field in ["section", "name", "status", "detail"] {
+            assert!(check[field].is_string(), "{field} missing from {check}");
+        }
+    }
+    // The exit code in the body is the code the process exits with — the same
+    // contract `test --format json` keeps.
+    let code = machine.get_output().status.code().unwrap_or(-1);
+    assert_eq!(json["exit_code"], code, "{json}");
+
+    // --- diff ----------------------------------------------------------
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    let machine = proef_in(cwd.path(), &fixture)
+        .args(["diff", "--format", "json"])
+        .assert()
+        .code(0);
+    let json: serde_json::Value =
+        serde_json::from_slice(&machine.get_output().stdout).expect("diff emits valid JSON");
+    assert_eq!(
+        json["still_failing"].as_array().map(Vec::len),
+        Some(1),
+        "failing in both runs: {json}"
+    );
+    assert_eq!(
+        json["regressed"].as_array().map(Vec::len),
+        Some(0),
+        "{json}"
+    );
+    for bucket in [
+        "fixed",
+        "added",
+        "removed",
+        "now_skipped",
+        "flaky",
+        "slower",
+    ] {
+        assert!(json[bucket].is_array(), "{bucket} missing from {json}");
+    }
+}
+
 /// The `cargo test` invocation that drives the harness's own test target — one
 /// place that knows the crate and target names, so a rename is not something to
 /// find twice.
