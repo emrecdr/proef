@@ -185,6 +185,22 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **Secret redaction no longer runs inside the reporter mutex.** The sink
+  masked each event while holding the lock that fans it out to the reporters,
+  so every scenario thread queued behind work none of them share — and masking
+  is the expensive half, a scan per text field per needle with roughly nine
+  needles derived per secret. It reads the event and the needle set and writes
+  neither, so it never needed the lock; the critical section now covers only
+  the fan-out it exists for.
+
+  Order is unaffected and the tests say why: a scenario is one thread, so its
+  own events still reach the lock in the order it emitted them, and order
+  *across* scenarios was never guaranteed. A new test emits from eight threads
+  at once and asserts nothing is lost or doubled, everything arrives redacted,
+  and each emitter's own events keep their order. No timing assertion — the
+  flake rule forbids one, and the change is justified structurally rather than
+  by a stopwatch.
+
 - **Pack validation is linear in the macro count, not quadratic.** Every
   span locator scanned the whole pack file to find its macro's block, so
   validating N macros scanned the file N times. A single indexing pass
