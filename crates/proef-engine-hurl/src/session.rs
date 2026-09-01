@@ -64,7 +64,7 @@ impl HurlSession {
             redactions: proef_core::report::Redactions::new(ctx.secrets.values().cloned()),
             secrets: Arc::clone(&ctx.secrets),
             secret_bindings: Arc::clone(&ctx.secret_bindings),
-            http: ctx.http,
+            http: ctx.http.clone(),
             file_root: ctx.file_root.clone(),
             scenario: Arc::clone(&ctx.scenario),
             parsed: None,
@@ -157,6 +157,34 @@ impl HurlSession {
             builder.follow_location(hurl::http::FollowLocation::Follow(
                 hurl::http::CredentialForwarding::default(),
             ));
+        }
+        // Environment options (`[http]` / `[env.<name>.http]`). Each is applied
+        // only when the project actually set it, so an unset key leaves hurl's
+        // own default in place rather than this engine restating it — one less
+        // constant to drift from upstream on the next pin bump.
+        if let Some(max) = self.http.max_redirs {
+            builder.max_redirect(Count::Finite(max));
+        }
+        if self.http.insecure {
+            builder.insecure(true);
+        }
+        if self.http.proxy.is_some() {
+            builder.proxy(self.http.proxy.clone());
+        }
+        if self.http.no_proxy.is_some() {
+            builder.no_proxy(self.http.no_proxy.clone());
+        }
+        if self.http.cacert.is_some() {
+            builder.cacert_file(self.http.cacert.clone());
+        }
+        if self.http.client_cert.is_some() {
+            builder.client_cert_file(self.http.client_cert.clone());
+        }
+        if self.http.client_key.is_some() {
+            builder.client_key_file(self.http.client_key.clone());
+        }
+        if self.http.user_agent.is_some() {
+            builder.user_agent(self.http.user_agent.clone());
         }
         if let Some(path) = &self.cookie_file
             && path.exists()
@@ -1131,6 +1159,107 @@ fn ast_duration(duration: &hurl_core::ast::Duration) -> Duration {
         Some(DurationUnit::Second) => Duration::from_secs(value),
         Some(DurationUnit::Minute) => Duration::from_secs(value.saturating_mul(60)),
         Some(DurationUnit::Hour) => Duration::from_secs(value.saturating_mul(3600)),
+    }
+}
+
+#[cfg(test)]
+mod http_option_tests {
+    #![allow(clippy::expect_used, clippy::unwrap_used)]
+
+    use std::sync::Arc;
+
+    use proef_core::engine::{ArtifactRef, HttpDefaults, ScenarioCtx};
+
+    use super::HurlSession;
+
+    /// hurl's `RunnerOptions` keeps every field private, so the assertion runs
+    /// over its `Debug` rendering. That is deliberate rather than a compromise:
+    /// the bug this test exists to catch is a *mis-wire* — `cacert` reaching
+    /// `client_cert_file`, say — and only a per-field assertion sees it. A test
+    /// that merely proved "some options were set" would pass on the swap.
+    fn options_debug(http: HttpDefaults) -> String {
+        let ctx = ScenarioCtx {
+            run_id: Arc::from("test-run"),
+            scenario: Arc::from("a scenario"),
+            artifact: Some(ArtifactRef {
+                slug: Arc::from("s"),
+                text: Arc::from("GET http://example.invalid\nHTTP 200\n"),
+                map: Arc::new(proef_core::emit::SidecarMap {
+                    schema: 1,
+                    entries: Vec::new(),
+                }),
+            }),
+            secrets: Arc::default(),
+            secret_bindings: Arc::default(),
+            http,
+            file_root: None,
+        };
+        let session = HurlSession::open(&ctx).expect("an artifact was provided");
+        format!("{:?}", session.runner_options())
+    }
+
+    #[test]
+    fn each_environment_option_reaches_its_own_hurl_field() {
+        let debug = options_debug(HttpDefaults {
+            insecure: true,
+            max_redirs: Some(7),
+            proxy: Some("http://proxy.invalid:3128".to_owned()),
+            no_proxy: Some("localhost,.internal".to_owned()),
+            cacert: Some("/ca/bundle.pem".to_owned()),
+            client_cert: Some("/mtls/client.crt".to_owned()),
+            client_key: Some("/mtls/client.key".to_owned()),
+            user_agent: Some("proef-suite/1".to_owned()),
+            ..HttpDefaults::default()
+        });
+        for (field, value) in [
+            ("insecure", "true"),
+            ("max_redirect", "Finite(7)"),
+            ("proxy", "\"http://proxy.invalid:3128\""),
+            ("no_proxy", "\"localhost,.internal\""),
+            ("cacert_file", "\"/ca/bundle.pem\""),
+            ("client_cert_file", "\"/mtls/client.crt\""),
+            ("client_key_file", "\"/mtls/client.key\""),
+            ("user_agent", "\"proef-suite/1\""),
+        ] {
+            assert!(
+                debug.contains(&format!("{field}: {value}"))
+                    || debug.contains(&format!("{field}: Some({value})")),
+                "{field} did not carry {value} — options were: {debug}"
+            );
+        }
+    }
+
+    /// The byte-identity promise for projects that set none of this: an
+    /// untouched `HttpDefaults` must build exactly what it built before these
+    /// options existed, so adding the knobs cannot have moved anyone's run.
+    #[test]
+    fn an_unset_option_leaves_the_engine_default_alone() {
+        let debug = options_debug(HttpDefaults::default());
+        for absent in [
+            "proxy: Some(",
+            "no_proxy: Some(",
+            "cacert_file: Some(",
+            "client_cert_file: Some(",
+            "client_key_file: Some(",
+            "user_agent: Some(",
+        ] {
+            assert!(
+                !debug.contains(absent),
+                "an unset option was still applied: {absent} in {debug}"
+            );
+        }
+        assert!(
+            debug.contains("insecure: false"),
+            "verification must stay on by default: {debug}"
+        );
+    }
+
+    /// `HttpDefaults::default()` is hand-written precisely because a derive
+    /// would make this zero, and libcurl reads a zero timeout as *no timeout* —
+    /// silently converting ADR-0007's budget into an unbounded wait.
+    #[test]
+    fn the_default_timeout_is_thirty_seconds_not_zero() {
+        assert_eq!(HttpDefaults::default().timeout_ms, 30_000);
     }
 }
 

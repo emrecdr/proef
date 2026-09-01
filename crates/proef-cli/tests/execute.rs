@@ -1045,6 +1045,60 @@ fn console_modes_are_presentation_only() {
     assert!(out.contains("summary: 2 passed"), "{out}");
 }
 
+/// `[http] insecure` is the one environment option whose *absence of an effect*
+/// is the danger: with verification off a suite goes green without proving what
+/// green normally proves, and the run record carries no config by design — so
+/// the warning is the entire audit trail. It must reach stderr, name the profile
+/// that set it, and leave stdout (the machine surface) untouched.
+///
+/// The fixture speaks plain HTTP (ADR-0011), so nothing here exercises TLS. That
+/// is the point: the warning is keyed on the *setting*, not on whether a
+/// certificate happened to be presented, because a suite pointed at an HTTPS
+/// host tomorrow must not start skipping verification silently today.
+#[test]
+fn insecure_warns_on_stderr_and_names_the_profile() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}\n[env.staging.http]\ninsecure = true\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    let warned = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--env", "staging"])
+        .assert()
+        .code(0);
+    let stderr = String::from_utf8_lossy(&warned.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("insecure") && stderr.contains("[env.staging.http]"),
+        "the warning must name the profile that set it: {stderr}"
+    );
+    assert!(
+        !String::from_utf8_lossy(&warned.get_output().stdout).contains("insecure"),
+        "the warning belongs on stderr; stdout is the machine surface"
+    );
+
+    // The same project without the environment selected must stay silent —
+    // an environment-scoped setting that warned unconditionally would train
+    // everyone to ignore the one line that matters.
+    let quiet = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+    assert!(
+        !String::from_utf8_lossy(&quiet.get_output().stderr).contains("insecure"),
+        "the base profile never set insecure, so nothing should warn"
+    );
+}
+
 /// The authored skip, end to end (R18 wave-2): a `@skip`-tagged scenario is
 /// parked visibly — counted in every total, reasoned in every sink — and an
 /// all-skipped suite exits 0 (deliberate, versioned, visible in review is

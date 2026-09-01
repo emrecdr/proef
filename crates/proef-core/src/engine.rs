@@ -438,19 +438,73 @@ pub fn secret_variables<'a>(
 
 /// Batch-level HTTP defaults (per-entry `[Options]` in artifacts override them
 /// — clone-then-override, verified TECH-SPEC §5).
-#[derive(Debug, Clone, Copy)]
+///
+/// These are the settings that describe an *environment* rather than a test:
+/// which CA to trust, which proxy to traverse, which client certificate to
+/// present. That is why they live in `[http]`/`[env.<name>.http]` and not in a
+/// pack — staging and production differ here, and the same suite must run
+/// against both without editing a macro.
+///
+/// Every path-valued field arrives **already resolved** by the CLI: core reads
+/// no filesystem and applies no path semantics (ADR-0012, and the one-path rule
+/// — a path written in `proef.toml` resolves against the config's directory).
+/// `None` on any option means *do not call the engine's setter at all*, so an
+/// unset field leaves the engine's own default untouched.
+#[derive(Debug, Clone)]
 pub struct HttpDefaults {
     /// Per-request timeout in milliseconds (clamped default — ADR-0007).
     pub timeout_ms: u64,
     /// Follow redirects.
     pub follow_location: bool,
+    /// Maximum redirects to follow. `None` leaves the engine's own ceiling.
+    ///
+    /// `usize` rather than `u32` so the engine hands it to hurl's `Count`
+    /// without a cast — a cast here would be lossless in practice and still
+    /// need a clippy suppression to say so.
+    pub max_redirs: Option<usize>,
+    /// Skip TLS certificate verification.
+    ///
+    /// Deliberately blunt, deliberately loud: the CLI prints a warning naming
+    /// the active environment whenever this is on, because a green run that
+    /// never verified a certificate is not the same result as a green run that
+    /// did, and nothing else on the page would say so.
+    pub insecure: bool,
+    /// Proxy URL (`http://host:port`, curl's `--proxy`).
+    pub proxy: Option<String>,
+    /// Hosts that bypass the proxy — curl's `NO_PROXY` comma-separated form.
+    pub no_proxy: Option<String>,
+    /// CA bundle to trust instead of the system store. Already resolved.
+    pub cacert: Option<String>,
+    /// Client certificate for mTLS. Already resolved.
+    pub client_cert: Option<String>,
+    /// Client private key for mTLS. Already resolved.
+    pub client_key: Option<String>,
+    /// `User-Agent` sent with every request — how a server tells test traffic
+    /// from real traffic, which is why it is an environment setting.
+    pub user_agent: Option<String>,
 }
 
 impl Default for HttpDefaults {
+    /// The builtin defaults, which `[http]` and `[env.<name>.http]` then merge
+    /// over. Written by hand rather than derived: `timeout_ms` is **30 s, not
+    /// zero**, and a derive would silently make it zero — which libcurl reads as
+    /// *no timeout at all*, turning ADR-0007's budget into an unbounded wait at
+    /// every one of this type's existing `default()` call sites.
+    ///
+    /// Every option added since defaults to unset, so a project with no `[http]`
+    /// table runs byte-identically to one built before they existed.
     fn default() -> Self {
         Self {
             timeout_ms: 30_000,
             follow_location: false,
+            max_redirs: None,
+            insecure: false,
+            proxy: None,
+            no_proxy: None,
+            cacert: None,
+            client_cert: None,
+            client_key: None,
+            user_agent: None,
         }
     }
 }

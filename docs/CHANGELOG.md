@@ -6,6 +6,50 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`[http]` now carries the settings that describe an environment: TLS, proxy
+  and mTLS.** The table exposed two of hurl's runner options — `timeout-ms` and
+  `follow-location` — while the embedded engine has supported the rest all
+  along; `TECH-SPEC.md:235` even listed `insecure` among what `RunnerOptions`
+  carries. So a suite that had to run against staging's self-signed certificate,
+  or through a corporate proxy, or against an mTLS-protected API, could not say
+  so anywhere: the only route was repeating an `[Options]` block inside every
+  macro's raw hurl, which defeats environment profiles exactly where they are
+  most useful, since these settings *are* the difference between environments.
+
+  Eight new keys — `insecure`, `proxy`, `no-proxy`, `cacert`, `client-cert`,
+  `client-key`, `max-redirs`, `user-agent` — each merging field-wise through the
+  existing `[http]` < `[env.<name>.http]` chain, so a staging profile turns
+  verification off without production inheriting it. No new concept: only more
+  of one that already worked.
+
+  Three deliberate edges. **`insecure = true` warns on every run**, naming the
+  profile that set it — a suite that goes green without verifying a certificate
+  has not proved what a green suite normally proves, and since the run record
+  carries no config by design, the warning is the entire audit trail. **A
+  `client-key` without a `client-cert` is exit 2** rather than a pass-through:
+  libcurl accepts the pair and then presents nothing, so the failure would
+  otherwise surface at the *server* as an authentication error naming nothing
+  about the cause. And **credentials are excluded on purpose** — there is no
+  `user` or `netrc` key, because a password belongs in the secret store where it
+  is encrypted at rest and masked out of every sink.
+
+  The three path-valued keys resolve against `proef.toml`, the one-path rule
+  every other config path follows; core still reads no filesystem and receives
+  them already resolved (ADR-0012). Each option is applied to hurl's builder
+  only when actually set, so a project with no `[http]` table runs
+  byte-identically to one built before the keys existed — pinned by a test.
+  Per-entry `[Options]` still override all of them except `user-agent`, for
+  which hurl has no per-entry option at all; that exception is documented rather
+  than papered over.
+
+  Breaking (library): `proef_core::engine::HttpDefaults` gains eight fields and
+  **loses `Copy`** — it now carries `String`s. `Default` stays hand-written, and
+  the reason is now stated in the type: a derive would make `timeout_ms` zero,
+  which libcurl reads as *no timeout at all*, silently converting ADR-0007's
+  budget into an unbounded wait at every existing `default()` call site.
+
 ### Changed
 
 - **ADR-0002 now names the core's hurl entry grammar, and a guard keeps it
