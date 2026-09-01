@@ -8,6 +8,40 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **Every diagnostic code is now named by a test, and a guard keeps it that
+  way.** `DIAGNOSTICS.md` calls codes "a contract: they never change meaning".
+  Twenty-three of seventy-five had nothing holding them to it — reachable in
+  production, documented, exercised by nothing at all: not a seeded corpus
+  directory, not a unit test, not even an assertion on their message text. They
+  existed only at their definition site.
+
+  The catalogue itself was found *exactly* honest — 75 codes defined, 75
+  documented, and its corpus column matched disk in both directions with zero
+  drift. The gap was never documentation; it was that a documented promise had
+  no enforcement.
+
+  Nineteen new tests close it, each reaching its code through a real path rather
+  than constructing the diagnostic directly. Two of them exercise guards that
+  are unreachable in normal operation and were therefore the most valuable to
+  test: `lower::kind_unrouted` fires only when the engine registry and pack
+  validation disagree, so the test makes them disagree on purpose; and
+  `lower::expansion_too_deep` sits behind pack validation's identical depth
+  limit, so the test bypasses validation with `load_collecting` — the only way
+  to hand lowering a graph validation would have stopped, and therefore the only
+  way to prove the second line of defence is still there.
+
+  Two codes are exempted by name, with reasons recorded in the guard:
+  `source::unreadable` and `config::unreadable` need a file the process may stat
+  but not read, a permissions state CI runners do not reproduce because they run
+  as root. The guard also checks its own exemption list, failing if an exempted
+  code is deleted or renamed — an exemption that outlives its code silently
+  excuses nothing.
+
+  The guard joins the four in `source_guards.rs` and is mutation-verified:
+  rewriting one test to match a code by *suffix* instead of naming it turns the
+  guard red, which is the point — a test that matches the prose pins the
+  wording, and only one that names the code pins the contract.
+
 - **`[http]` now carries the settings that describe an environment: TLS, proxy
   and mTLS.** The table exposed two of hurl's runner options — `timeout-ms` and
   `follow-location` — while the embedded engine has supported the rest all

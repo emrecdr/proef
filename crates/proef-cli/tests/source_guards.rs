@@ -21,6 +21,13 @@
 //! 4. **No unsanctioned hurl grammar in `proef-core`** — the engine syntax the
 //!    core may write or recognise is the closed set ADR-0002's amendment
 //!    names, and this pins it.
+//! 5. **No untested diagnostic code.** `DIAGNOSTICS.md` calls codes "a
+//!    contract: they never change meaning", and a contract with nothing holding
+//!    it to it is a wish. Twenty-three of seventy-five were in that state when
+//!    this guard was written — reachable in production, named in the docs,
+//!    exercised by nothing. The rendered form is where the risk sits: round 19
+//!    found a caret on the wrong token and parser prose coming from the wrong
+//!    layer, neither of which a type checker can see.
 //!
 //! These live in `tests/` rather than a `#[cfg(test)] mod` inside `src/` for a
 //! correctness reason, not a stylistic one: a source-scanning assertion placed
@@ -483,6 +490,124 @@ fn hurl_grammar_in_core_is_the_closed_set_the_adr_names() {
             gone
         ),
     );
+}
+
+/// Codes this guard exempts, each with the reason it cannot be reached from a
+/// test without building something larger than the code is worth.
+///
+/// Deliberately tiny, and deliberately *named* rather than pattern-matched: an
+/// exemption list that grows by wildcard stops being an exemption list.
+const UNREACHABLE_FROM_A_TEST: &[(&str, &str)] = &[
+    (
+        "proef::source::unreadable",
+        "needs a file the process may stat but not read — a permissions state \
+         CI runners do not reproduce (root reads everything)",
+    ),
+    (
+        "proef::config::unreadable",
+        "same permissions state, for proef.toml",
+    ),
+];
+
+/// Every diagnostic code carries a test that names it.
+///
+/// "Named by a test" rather than "asserted in some way", because the code
+/// string is the part `DIAGNOSTICS.md` promises never changes meaning. A test
+/// that matches on the rendered prose pins the wording; only one that names the
+/// code pins the contract — and prose is expected to improve.
+///
+/// Two things count as covering a code: a seeded directory under
+/// `tests/errors/<area>__<name>/`, which the corpus driver dry-runs so the
+/// *rendered* diagnostic is exercised end to end, or the literal code string
+/// appearing anywhere under a `#[cfg(test)]` module or a `tests/` directory.
+#[test]
+fn every_diagnostic_code_is_named_by_a_test() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("workspace root")
+        .to_path_buf();
+    let crates = root.join("crates");
+    let mut files = Vec::new();
+    rust_sources(&crates, &mut files);
+
+    let mut defined: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut test_corpus = String::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("readable source");
+        // A path component, so `crates/proef-cli/tests/…` matches while a
+        // module named `tests.rs` would not be mistaken for one.
+        let is_integration_test = path
+            .components()
+            .any(|part| part.as_os_str() == std::ffi::OsStr::new("tests"));
+        if is_integration_test {
+            test_corpus.push_str(&text);
+            continue;
+        }
+        let production = production_text(&text);
+        test_corpus.push_str(&text[production.len()..]);
+        for literal in string_literals(production) {
+            if literal.starts_with("proef::") && literal.matches("::").count() == 2 {
+                defined
+                    .entry(literal.to_owned())
+                    .or_insert_with(|| path.clone());
+            }
+        }
+    }
+    assert!(
+        defined.len() > 60,
+        "the scan found only {} codes — the extractor broke, not the codebase",
+        defined.len()
+    );
+
+    let seeded: BTreeSet<String> = std::fs::read_dir(root.join("tests/errors"))
+        .expect("the seeded corpus")
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .map(|entry| {
+            format!(
+                "proef::{}",
+                entry.file_name().to_string_lossy().replacen("__", "::", 1)
+            )
+        })
+        .collect();
+
+    let exempt: BTreeMap<&str, &str> = UNREACHABLE_FROM_A_TEST.iter().copied().collect();
+    let mut uncovered = Vec::new();
+    for (code, defined_at) in &defined {
+        if exempt.contains_key(code.as_str())
+            || seeded.contains(code)
+            || test_corpus.contains(&format!("\"{code}\""))
+        {
+            continue;
+        }
+        uncovered.push(format!(
+            "  {code}\n      defined at {}",
+            defined_at
+                .strip_prefix(&root)
+                .unwrap_or(defined_at)
+                .display()
+        ));
+    }
+    assert!(
+        uncovered.is_empty(),
+        "{} diagnostic code(s) are reachable in production and exercised by \
+         nothing.\n\n{}\n\nCover each one by naming it in an assertion, or by \
+         seeding tests/errors/<area>__<name>/ when the rendered output is what \
+         matters. If a code genuinely cannot be reached from a test, add it to \
+         UNREACHABLE_FROM_A_TEST with the reason.",
+        uncovered.len(),
+        uncovered.join("\n")
+    );
+
+    // The exemption list is itself drift-prone: a code deleted or renamed
+    // upstream would leave a stale entry silently excusing nothing.
+    for (code, _) in UNREACHABLE_FROM_A_TEST {
+        assert!(
+            defined.contains_key(*code),
+            "{code} is exempted but no longer defined — drop the exemption"
+        );
+    }
 }
 
 /// The part of `text` before its trailing `#[cfg(test)]` module.

@@ -683,4 +683,34 @@ mod tests {
             }
         }
     }
+
+    /// Both brace problems, by code.
+    ///
+    /// `pattern_problems` is the only gate between an authored `match:` line
+    /// and a runtime matcher, so a problem it stops naming becomes a pattern
+    /// that silently never binds — the failure this project has spent three
+    /// rounds eliminating elsewhere.
+    #[test]
+    fn stray_and_empty_braces_are_reported_by_code() {
+        let stray = pattern_problems("the operator opens } a record", &params(&[]));
+        assert!(
+            stray
+                .iter()
+                .any(|p| p.code() == "proef::pack::pattern_braces"),
+            "an unescaped brace must be named: {stray:?}"
+        );
+
+        let empty = pattern_problems("the operator opens {} records", &params(&[]));
+        assert!(
+            empty
+                .iter()
+                .any(|p| p.code() == "proef::pack::pattern_empty_capture"),
+            "an empty capture must be named: {empty:?}"
+        );
+
+        // A well-formed pattern raises neither — otherwise the two assertions
+        // above would pass on a function that reports everything.
+        let good = pattern_problems("the operator opens {kind} records", &params(&["kind"]));
+        assert!(good.is_empty(), "a valid pattern raises nothing: {good:?}");
+    }
 }

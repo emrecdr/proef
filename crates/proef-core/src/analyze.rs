@@ -877,4 +877,63 @@ mod tests {
     fn provider_text(p: &MemProvider, name: &str) -> String {
         p.read(name).expect("provider source").to_string()
     }
+
+    /// The last line of defence on ADR-0010: the emitted bytes *are* the
+    /// executed input, so an artifact that does not parse is a bug proef must
+    /// report about itself rather than hand to the engine and let fail as a
+    /// runtime error with no author-facing location.
+    ///
+    /// Reached with a validator that rejects — which is what a real engine's
+    /// parser does when the emitter has produced something malformed, and the
+    /// only way to exercise the path without first breaking the emitter.
+    #[test]
+    fn an_artifact_the_engine_cannot_parse_is_reported_against_the_emitter() {
+        fn reject(_text: &str) -> Result<(), crate::engine::PayloadProbeError> {
+            Err(crate::engine::PayloadProbeError {
+                line: 1,
+                column: 1,
+                message: "malformed entry".into(),
+            })
+        }
+        const REJECTING: &[StepKindSpec] = &[StepKindSpec {
+            prefix: "hurl",
+            schema: "true",
+            validate: Some(reject),
+            fragments: None,
+            options: None,
+        }];
+
+        let mut files = BTreeMap::new();
+        files.insert(
+            "packs/p.yaml".to_owned(),
+            Arc::from(
+                "macros:\n  greet:\n    match: I greet Sam\n    steps:\n      - hurl: |\n          GET http://x\n          HTTP 200\n",
+            ),
+        );
+        files.insert(
+            "f.feature".to_owned(),
+            Arc::from("Feature: F\n  Scenario: S\n    When I greet Sam\n"),
+        );
+        let provider = MemProvider {
+            features: vec!["f.feature".to_owned()],
+            packs: vec!["packs/p.yaml".to_owned()],
+            fragments: Vec::new(),
+            files,
+        };
+        let empty = BTreeMap::new();
+        let mut ctx = ctx_over(&provider, &empty);
+        ctx.kinds = REJECTING;
+        let analysis = analyze_suite(&ctx);
+
+        let codes: Vec<&str> = analysis
+            .diagnostics
+            .values()
+            .flatten()
+            .map(|d| d.code)
+            .collect();
+        assert!(
+            codes.contains(&"proef::emit::invalid_artifact"),
+            "a rejected artifact must be reported: {codes:?}"
+        );
+    }
 }

@@ -2253,3 +2253,182 @@ mod tests {
         );
     }
 }
+
+/// Every pack-validation code this module can reach, exercised by name.
+///
+/// `DIAGNOSTICS.md` calls a code "a contract: they never change meaning". Ten of
+/// this module's codes had nothing holding them to that — reachable in
+/// production, documented, exercised by nothing — and a diagnostic nobody
+/// triggers is a diagnostic nobody has read. The table is deliberately one test
+/// per code rather than one big assertion, so a failure names the contract that
+/// broke instead of "some code went missing".
+#[cfg(test)]
+mod diagnostic_code_coverage {
+    #![allow(clippy::unwrap_used)]
+
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+
+    use crate::diag::FrontError;
+    use crate::engine::{PayloadProbeError, StepKindSpec};
+    use crate::pack::{self, FragmentCorpus, PackSource};
+
+    /// Accepts anything: these tests are about *pack shape*, and a rejecting
+    /// validator would add a `payload_invalid` to every case and make each
+    /// assertion read as "the code is in there somewhere" for the wrong reason.
+    // The signature is dictated by `StepKindSpec::validate`, so the `Result`
+    // is not this function's choice to make.
+    #[allow(clippy::unnecessary_wraps)]
+    fn accept(_text: &str) -> Result<(), PayloadProbeError> {
+        Ok(())
+    }
+
+    const KINDS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: Some(accept),
+        fragments: None,
+        options: None,
+    }];
+
+    /// The codes a pack raises when loaded. Errors and warnings alike — a
+    /// warning is as much a contract as an error, and `docstring_unused` is one.
+    fn codes(pack_text: &str) -> Vec<(String, String)> {
+        let source = PackSource {
+            name: "p.yaml".into(),
+            text: Arc::from(pack_text),
+        };
+        match pack::load(&[source], &FragmentCorpus::empty(), KINDS) {
+            Err(FrontError::Diagnostics(diags)) => diags
+                .iter()
+                .map(|d| (d.code.to_string(), d.message.clone()))
+                .collect(),
+            Err(other) => panic!("expected diagnostics, got {other:?}"),
+            Ok(_) => Vec::new(),
+        }
+    }
+
+    /// Failure prints the messages, not just the codes: a fixture that stopped
+    /// reaching the code it targets usually stopped being valid at all, and the
+    /// message is what says which.
+    #[track_caller]
+    fn assert_raises(code: &str, pack_text: &str) {
+        let raised = codes(pack_text);
+        assert!(
+            raised.iter().any(|(c, _)| c == code),
+            "expected {code}, got:\n{}",
+            raised
+                .iter()
+                .map(|(c, m)| format!("  {c}: {m}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+
+    #[test]
+    fn a_macro_with_both_steps_and_expect_is_refused() {
+        assert_raises(
+            "proef::pack::steps_and_expect",
+            // `expect:` items take `status`/`hurl` by schema, not an arbitrary
+            // payload kind — so this fixture uses `status:` rather than `alt:`.
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - alt: |\n          x\n    expect:\n      - status: 200\n",
+        );
+    }
+
+    #[test]
+    fn a_macro_with_neither_steps_nor_expect_is_refused() {
+        assert_raises(
+            "proef::pack::empty_macro",
+            "macros:\n  m:\n    match: a sentence\n",
+        );
+    }
+
+    #[test]
+    fn a_step_with_no_body_of_any_kind_is_refused() {
+        assert_raises(
+            "proef::pack::empty_step",
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - name: nothing here\n",
+        );
+    }
+
+    #[test]
+    fn a_step_with_two_payload_keys_is_refused() {
+        assert_raises(
+            "proef::pack::multiple_payloads",
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - alt: |\n          x\n        \
+             other: |\n          y\n",
+        );
+    }
+
+    /// `global` is the only promotion target (ADR-0005). A typo here would
+    /// otherwise read as a capture that silently never promotes.
+    #[test]
+    fn a_save_as_target_other_than_global_is_refused() {
+        assert_raises(
+            "proef::pack::bad_save_target",
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - alt: |\n          x\n        \
+             saveAs:\n          token: session\n",
+        );
+    }
+
+    #[test]
+    fn a_use_step_carrying_step_modifiers_is_refused() {
+        assert_raises(
+            "proef::pack::use_with_modifiers",
+            "macros:\n  target:\n    match: the target sentence\n    steps:\n      - alt: |\n          x\n  m:\n    match: a sentence\n    steps:\n      - use: target\n        optional: true\n",
+        );
+    }
+
+    #[test]
+    fn a_use_step_that_also_carries_a_payload_is_refused() {
+        assert_raises(
+            "proef::pack::use_with_payload",
+            "macros:\n  target:\n    match: the target sentence\n    steps:\n      - alt: |\n          x\n  m:\n    match: a sentence\n    steps:\n      - use: target\n        alt: |\n          y\n",
+        );
+    }
+
+    /// `with:` supplies a `use:` target's params. On a `ref:` step it reads as
+    /// if it would bind the fragment — which is `bind:`'s job — so the silent
+    /// version of this mistake is values that simply never arrive.
+    #[test]
+    fn a_with_block_without_a_use_is_refused() {
+        assert_raises(
+            "proef::pack::with_without_use",
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - ref: some.fragment\n        \
+             with:\n          k: v\n",
+        );
+    }
+
+    /// The depth limit is a real ceiling, not a stack-overflow guess: the walk
+    /// is memoized, so the diagnostic has to be raised deliberately.
+    #[test]
+    fn a_use_chain_past_the_depth_limit_is_refused() {
+        let depth = super::MAX_USE_DEPTH + 2;
+        let mut pack = String::from("macros:\n");
+        for level in 0..=depth {
+            let _ = write!(
+                pack,
+                "  m{level}:\n    match: sentence number {level}\n    steps:\n"
+            );
+            if level == depth {
+                pack.push_str("      - alt: |\n          x\n");
+            } else {
+                let _ = writeln!(pack, "      - use: m{}", level + 1);
+            }
+        }
+        assert_raises("proef::pack::use_too_deep", &pack);
+    }
+
+    /// Pass 7 probe-lowers each payload before the engine ever sees it. Probe
+    /// mode tolerates anything that *might* resolve later — unknown vars, env,
+    /// globals — and still refuses what can never resolve: an unknown
+    /// namespace is a typo at authoring time, not a value that arrives at run
+    /// time, so the pack must not load.
+    #[test]
+    fn a_payload_reference_that_can_never_resolve_is_refused() {
+        assert_raises(
+            "proef::pack::bad_reference",
+            "macros:\n  m:\n    match: a sentence\n    steps:\n      - alt: |\n          GET /x/${nosuchns:key}\n",
+        );
+    }
+}

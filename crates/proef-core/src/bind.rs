@@ -438,4 +438,23 @@ mod tests {
         // The unbound step surfaces its diagnostic rather than aborting the feature.
         assert!(diags.iter().any(|d| d.code == "proef::bind::unbound_step"));
     }
+
+    /// A docstring the macro never declared is *dropped*, and a dropped body is
+    /// the quietest possible failure — the request goes out without it and the
+    /// server answers something plausible. The warning is the only signal.
+    #[test]
+    fn a_docstring_no_param_receives_is_warned_about() {
+        let feature = make_feature(
+            "    When I search for \"Acme\"\n      \"\"\"\n      a body nothing reads\n      \"\"\"\n",
+        );
+        // `bind` drops the diagnostics on success, and this one is a warning —
+        // so the collecting form is the only place it is observable at all,
+        // which is a fair description of why it had no test.
+        let (_scenarios, diags) = bind_collect(&feature, &packs());
+        let diags: Vec<&str> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            diags.contains(&"proef::bind::docstring_unused"),
+            "the dropped docstring must be named: {diags:?}"
+        );
+    }
 }
