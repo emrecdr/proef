@@ -6,6 +6,37 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **ADR-0002 now names the core's hurl entry grammar, and a guard keeps it
+  closed.** "Adding an engine leaves `proef-core` diff-empty" was true of
+  engine-*types* and never of engine-*syntax*: the core does text surgery on
+  entries — splicing `[Options]` in, merging an `expect:` block's asserts into
+  the previous entry — so it has to find an entry boundary in text hurl will
+  later parse. The worklist carried the gap for two rounds as "~290 lines of
+  hurl grammar in core", a figure that counted `#[cfg(test)]` fixtures.
+
+  Measured: thirteen literals over nineteen production lines in three files.
+  Seven the core *writes*, four it *recognises* to find a boundary, two that
+  are proef's own syntax and only look like hurl's. The four boundary
+  recognisers are already one shared `pub(crate)` set.
+
+  The amendment sanctions that set and closes it. Deferred with a named
+  trigger — a second engine being scheduled — is moving the written half behind
+  the seam, where the *reading* half already lives:
+  `StepKindSpec::options` exists precisely so an engine's option spellings stay
+  out of the core, and it covers recognising them only, so `retry:`,
+  `retry-interval:`, `delay:` and `variable:` are still core literals. Until a
+  second engine exists that migration relocates seven literals that exactly one
+  implementation will ever supply, at the cost of a public-API break.
+
+  `crates/proef-cli/tests/source_guards.rs` (renamed from `stderr_hygiene.rs`,
+  which had not been only about stderr for two rules now) pins the set: a new
+  token, or an existing one spreading to another core module, fails the test
+  and names both remedies. A claim of this shape decays the moment it is only
+  prose — this one already had, by an order of magnitude, in the direction that
+  made it look worse than it is.
+
 ## [0.16.0] - 2026-08-31 (the surfaces tell the truth: an eight-wave improvement programme, and the round that found what it missed)
 
 > Supersedes **0.15.0**, which was cut (`release: v0.15.0`, 2026-08-25) but never

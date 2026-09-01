@@ -415,7 +415,7 @@ fn compute_analysis(cfg: &ServerConfig, state: &State) -> Analysis {
 /// `proef lsp` by hand, and goes through `writeln!` rather than the `eprintln`
 /// macro for the reason this whole function exists: that macro panics when its
 /// write fails, and a closed stderr would turn the recovery into a second
-/// failure. (Naming it without its `!` is deliberate — `stderr_hygiene` scans
+/// failure. (Naming it without its `!` is deliberate — `source_guards` scans
 /// these sources for the spelling that would be a call.)
 fn guarded<T>(
     connection: &Connection,
