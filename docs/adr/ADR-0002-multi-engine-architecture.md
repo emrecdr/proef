@@ -85,21 +85,36 @@ literals without making the algorithm engine-independent.
 
 ### The measurement
 
-Nineteen production lines, across three files (`lower.rs`, `emit.rs`,
-`pack/validate.rs`) — **not** the "~290 lines, all in `lower.rs`" the worklist
-recorded. That figure counted `#[cfg(test)]` fixtures, where a core test
-exercising the pipeline necessarily writes *some* engine's payload. The vocabulary
-is thirteen distinct literals in three groups:
+Not the "~290 lines, all in `lower.rs`" the worklist recorded — that figure
+counted `#[cfg(test)]` fixtures, where a core test exercising the pipeline
+necessarily writes *some* engine's payload. The vocabulary is **twelve** distinct
+literals across four files:
 
 | Group | Tokens | Where |
 |---|---|---|
 | **written** — the core generates this hurl | `[Options]`, `[Asserts]`, `HTTP *`, `variable:`, `retry:`, `retry-interval:`, `delay:` | `lower.rs` |
 | **recognised** — read to find an entry boundary | ` ``` ` (body fence), `HTTP` / `HTTP ` / `HTTP/` | `lower.rs`, `emit.rs`, `pack/validate.rs` |
-| **not hurl** — proef's own pack syntax | `secret:`, `use:` | `lower.rs`, `pack/validate.rs` |
+| **quoted** — a hurl snippet shown to an author | `HTTP 200` | `bind.rs` |
 
 The four boundary recognisers (`is_method_line`, `is_section_header`,
 `is_response_line`, `is_header_line`) are already one canonical `pub(crate)` set
-shared by all three files. That half is done.
+shared by three of those files. That half is done.
+
+The third group is the one this measurement nearly missed, and it is worth
+naming why. `bind.rs` renders a did-you-mean help string for an author whose
+sentence bound no macro, and that string contains a small hurl example. It
+generates nothing and parses nothing, but it *is* engine syntax living in the
+core, and it drifts like any other copy. The guard's first version could not see
+it — the literal spans lines, and a per-line scan discards a run that never
+closes — while this amendment claimed the set was closed. Multi-line literals
+are where a *larger* piece of engine syntax would naturally be written, so the
+blind spot sat exactly where the risk is highest. The guard now lexes whole
+files.
+
+proef's own pack keys (`macros:`, `match:`, `secret:`, `steps:`, `use:`) are
+shaped like option lines and are excluded by name rather than listed as
+sanctioned rows: an inventory that is a third exceptions stops reading as a
+closed set.
 
 ### The asymmetry this exposes
 
@@ -115,10 +130,13 @@ literals, so the same rule still lives at two altitudes, in the other direction.
    outside it, or an existing token appearing in another core module, is a
    defect against this ADR.
 2. It is pinned by `crates/proef-cli/tests/source_guards.rs`
-   (`hurl_grammar_in_core_is_the_closed_set_the_adr_names`), which fails on both
-   growth and relocation and sends the author back here. A claim of this shape
-   decays the moment it is only prose — this one already had, by an order of
-   magnitude and in the direction that made it look worse than it is.
+   (`hurl_grammar_in_core_is_the_closed_set_the_adr_names`), which lexes every
+   production literal in `proef-core` and fails on growth, on relocation to
+   another core module, and on shrinkage — then sends the author back here. A
+   claim of this shape decays the moment it is only prose. This one already had,
+   twice: once by an order of magnitude in the count, and once in this very
+   section, which asserted a closed set while the guard behind it could not read
+   a multi-line literal.
 3. Migrating the **written** group behind the seam (an emitter beside
    `StepKindSpec::options`) is **deferred, not rejected**. It buys nothing today:
    hurl is the only engine and no other is scheduled, so the migration would add

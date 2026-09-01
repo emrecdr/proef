@@ -16,10 +16,17 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   later parse. The worklist carried the gap for two rounds as "~290 lines of
   hurl grammar in core", a figure that counted `#[cfg(test)]` fixtures.
 
-  Measured: thirteen literals over nineteen production lines in three files.
-  Seven the core *writes*, four it *recognises* to find a boundary, two that
-  are proef's own syntax and only look like hurl's. The four boundary
-  recognisers are already one shared `pub(crate)` set.
+  Measured: twelve literals across four files. Seven the core *writes*, four it
+  *recognises* to find a boundary, and one it *quotes* — a hurl snippet inside
+  a did-you-mean help string in `bind.rs`, which generates nothing and parses
+  nothing but drifts like any other copy. The four boundary recognisers are
+  already one shared `pub(crate)` set. proef's own pack keys are shaped like
+  option lines and are excluded by name rather than listed as sanctioned rows.
+
+  The guard lexes whole files. The first version scanned line by line and so
+  could not see a literal that spans lines — which is where a *larger* piece of
+  engine syntax would naturally be written, and where the one entry above that
+  nobody had counted was in fact sitting.
 
   The amendment sanctions that set and closes it. Deferred with a named
   trigger — a second engine being scheduled — is moving the written half behind
