@@ -352,18 +352,67 @@ Two wave items did **not** ship, and one of them should not:
   until the masking simply moved *above* the `lock()`. It reads the event and
   the needle set and writes neither, so it never needed the lock at all.
 
-### Needs a named decision (ADR question, not a patch)
+### Analysed 2026-09-01 — none of the three was an ADR question
 
-GitHub-summary permalinks to failing lines (reading `GITHUB_SHA` sink-
-locally vs ADR-0020's harvested-vs-handed-over boundary) · a Chrome-trace
-export of the scheduling timeline (a second rendering of what the HTML
-timeline already shows — one-way test) · templated report output paths (vs
-the one-path rule).
+This section carried three items as charter questions needing a new or
+amended ADR. Checked against the tree, **none of them needs one**, and two
+had the wrong governing principle attached. Each entry below states the
+verdict and the evidence; the decision to act is a one-word answer, not a
+design exercise.
 
-The only-failed console was on this list until #147 shipped it as
-`--console failed` — a fourth mode on the existing flag, which is what the
-entry asked for. Two of the four items this section carried had already been
-decided; check the tree before re-raising the rest.
+- **GitHub-summary permalinks to failing lines** — *build it; ADR-0020 is
+  untouched.* The entry assumed the commit must come from `GITHUB_SHA`,
+  which §1 forbids by name. It need not, on two counts. First, a link to
+  the failing line **already ships**: `github_annotations`
+  (`ci_reports.rs:363`, live at `exec.rs:1444`) emits `::error
+  file=…,line=…::` per failing scenario, and `--sarif` (`sarif.rs`) carries
+  `startLine`. GitHub resolves both against the commit the job checked out —
+  proef never reads a SHA to make that work. The residual gap is narrow: the
+  *job-summary tables* are inert text where the annotations are linked.
+  Second, closing that gap needs only two mechanisms that are already
+  accepted and already shipped — `[tag-links]` (`config.rs`, glob → URL
+  template with `{tag}` substituted, applied by the HTML tag table and the
+  GitHub summary, documented as *"base config only — a link is a project
+  fact, not an environment one"*), and ADR-0020 §1's own worked example,
+  `--meta commit=$(git rev-parse HEAD)`. A `[source-links]` table over
+  `{file}`/`{line}`/`{commit}`, with the commit **handed over** as metadata,
+  sits inside both rules unchanged. §1 forbids proef *harvesting* the
+  variable; it does not forbid a user handing it over — that is precisely
+  the distinction the ADR was written to draw. It also serves GitLab,
+  Bitbucket and self-hosted forges, which a `GITHUB_SHA` read never would.
+
+- **Chrome-trace export of the scheduling timeline** — *decline; the filed
+  reason is false and the conclusion survives on a different one.* "A second
+  rendering of what the HTML timeline already shows" is wrong:
+  `render_timeline` (`html.rs:583`) draws one bar per **scenario** per worker
+  lane, while a trace's whole value is step-level nesting and zoom, which the
+  report does not have. The correct reason to decline is that the JSONL
+  record already carries every step's start and end (ADR-0015 injected
+  timestamps), so a trace is a short transform of data proef publishes in
+  full — and a second export format for already-published data is what one
+  canonical mechanism forbids. No consumer has asked, which is the same
+  CTRF/TAP-14 discipline applied above. **Action:** document the conversion
+  recipe instead of building an exporter. **Trigger:** someone who has run
+  the transform and hit something it cannot express.
+
+- **Templated report output paths** — *decline; the one-path rule was the
+  wrong lens.* That rule governs the resolution **base** (a path in
+  `proef.toml` resolves against the config's directory, a flag against the
+  cwd); templating touches neither, so the two never conflicted. The
+  governing principle is ADR-0020 §1's axis again: `-o
+  "reports/$RUN_ID/index.html"` is shell interpolation the caller already
+  controls, and asking proef to interpolate it is asking proef to own a value
+  that is already handed over. Per-run *records* also already have their
+  mechanism — `[run] runs-dir` plus `keep-runs` rotation (`config.rs:101-111`),
+  deliberately project-wide so there is one record store and one policy — so a
+  second per-run path scheme would be the duplicate, not the gap.
+
+The pattern is now consistent enough to be worth stating: **an item filed as
+a charter question is usually an item whose governing principle was guessed.**
+The only-failed console sat here until #147 shipped it as `--console failed`,
+a fourth mode on the existing flag — exactly what the entry asked for and no
+ADR at all. Two more had already been decided. Check the tree and name the
+actual principle before filing the next one.
 
 ### Declined — do not re-raise
 
