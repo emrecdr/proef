@@ -233,27 +233,27 @@ const CORE_ENGINE_GRAMMAR: &[(&str, &str, &[&str])] = &[
 /// inventory above reads the same as the source it pins. Char literals are
 /// invisible to this — `'"'` never opens a run, because the scan only toggles
 /// on an unescaped `"`.
-fn string_literals(line: &str) -> Vec<String> {
+fn string_literals(line: &str) -> Vec<&str> {
     let mut out = Vec::new();
-    let mut current: Option<String> = None;
+    let mut open: Option<usize> = None;
     let mut escaped = false;
-    for ch in line.chars() {
-        match &mut current {
-            Some(buffer) => {
+    for (index, ch) in line.char_indices() {
+        match open {
+            // Slicing, not copying: a literal's raw text is contiguous in the
+            // line precisely because escapes stay unprocessed, so the borrow
+            // and the "as written" requirement are the same decision.
+            Some(start) => {
                 if escaped {
-                    buffer.push(ch);
                     escaped = false;
                 } else if ch == '\\' {
-                    buffer.push(ch);
                     escaped = true;
                 } else if ch == '"' {
-                    out.push(std::mem::take(buffer));
-                    current = None;
-                } else {
-                    buffer.push(ch);
+                    out.push(&line[start..index]);
+                    open = None;
                 }
             }
-            None if ch == '"' => current = Some(String::new()),
+            // `"` is one byte, so the content starts at the next index.
+            None if ch == '"' => open = Some(index + 1),
             None => {}
         }
     }
@@ -274,10 +274,12 @@ fn engine_grammar_kind(literal: &str) -> Option<&'static str> {
     if literal == "HTTP" || literal.starts_with("HTTP ") || literal.starts_with("HTTP/") {
         return Some("http");
     }
-    if let Some(rest) = literal.strip_prefix('[') {
-        let name = rest.trim_end_matches(']');
-        if rest.len() > name.len()
-            && name.starts_with(|c: char| c.is_ascii_uppercase())
+    if let Some(name) = literal
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        // Exactly one closing bracket, which is what a hurl section header has.
+        if name.starts_with(|c: char| c.is_ascii_uppercase())
             && name.chars().all(|c| c.is_ascii_alphabetic())
         {
             return Some("section");
@@ -334,14 +336,17 @@ fn hurl_grammar_in_core_is_the_closed_set_the_adr_names() {
             .join("/");
         let text = std::fs::read_to_string(file).expect("readable source file");
         for line in production_lines(&text) {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.starts_with('*') {
+            // Comments only. An earlier draft also skipped lines opening with
+            // `*`, for block-comment continuations — of which `proef-core` has
+            // none, while it does have seven `*deref = …` statements the guard
+            // was silently dropping from the scan.
+            if line.trim_start().starts_with("//") {
                 continue;
             }
             for literal in string_literals(line) {
-                if let Some(kind) = engine_grammar_kind(&literal) {
+                if let Some(kind) = engine_grammar_kind(literal) {
                     found
-                        .entry((kind, literal))
+                        .entry((kind, literal.to_owned()))
                         .or_default()
                         .insert(relative.clone());
                 }
