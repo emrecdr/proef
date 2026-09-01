@@ -196,6 +196,16 @@ fn a_run_record_is_only_ever_opened_by_the_reader_that_bounds_it() {
     );
 }
 
+/// proef's own pack keys, which the structural test cannot tell from an
+/// engine's option line — they are `key:` or `key: value` like any other.
+///
+/// Named and excluded rather than listed in the sanctioned set below. Absorbing
+/// them as rows would have grown the "known non-hurl" share of the inventory to
+/// a third of it, and an inventory that is mostly exceptions stops reading as a
+/// closed set. None of these is a hurl option name, so the exclusion cannot
+/// wave a real one through.
+const PROEF_OWN_KEYS: &[&str] = &["macros", "match", "secret", "steps", "use"];
+
 /// Every engine-syntax literal `proef-core` is permitted to carry, and the
 /// files permitted to carry it. Sorted; the test compares whole sets.
 ///
@@ -208,56 +218,133 @@ fn a_run_record_is_only_ever_opened_by_the_reader_that_bounds_it() {
 ///   them only.
 /// - **recognised** — the core reads this to find an entry boundary before
 ///   performing text surgery (the fence, and the `HTTP` response line).
-/// - **not hurl at all** — `secret:` and `use:` are proef's own pack syntax.
-///   Listed because the scan cannot tell them apart by shape, and an
-///   unexplained exclusion is how a real entry gets waved through later.
+///
+/// `bind.rs`'s row is neither: it is a hurl snippet inside a did-you-mean help
+/// string, shown to an author whose sentence bound no macro. It generates
+/// nothing and parses nothing — but it is engine syntax in the core, it drifts
+/// like any other copy, and the first version of this guard could not see it.
+/// proef's own pack keys are excluded by [`PROEF_OWN_KEYS`] rather than listed
+/// here.
 const CORE_ENGINE_GRAMMAR: &[(&str, &str, &[&str])] = &[
     ("fence", "```", &["emit.rs", "lower.rs", "pack/validate.rs"]),
     ("http", "HTTP", &["lower.rs"]),
+    ("http", "HTTP 200", &["bind.rs"]),
     ("http", "HTTP ", &["lower.rs"]),
     ("http", "HTTP *", &["lower.rs"]),
     ("http", "HTTP/", &["lower.rs"]),
     ("option", "delay: {delay_ms}ms", &["lower.rs"]),
     ("option", "retry-interval: {}ms", &["lower.rs"]),
     ("option", "retry: {}", &["lower.rs"]),
-    ("option", "secret:", &["lower.rs"]),
-    ("option", "use:", &["pack/validate.rs"]),
     ("option", r#"variable: {name}=\"{}\""#, &["lower.rs"]),
     ("section", "[Asserts]", &["lower.rs"]),
     ("section", "[Options]", &["lower.rs"]),
 ];
 
-/// The double-quoted literals on one line of Rust source, as written.
+/// Every string literal in `text`, as written, skipping comments and char
+/// literals.
 ///
-/// Escapes are returned unprocessed (`\"` stays two characters), so the pinned
-/// inventory above reads the same as the source it pins. Char literals are
-/// invisible to this — `'"'` never opens a run, because the scan only toggles
-/// on an unescaped `"`.
-fn string_literals(line: &str) -> Vec<String> {
+/// A small Rust lexer rather than a per-line heuristic, because the per-line
+/// version had a blind spot exactly where the risk is highest: a literal
+/// spanning lines (`"…\` continued, or a raw string) never closed on its own
+/// line, so the scan discarded it. `bind.rs` carries a did-you-mean help
+/// string containing a whole hurl snippet — `GET …` and `HTTP 200` — and the
+/// first version of this guard could not see it while ADR-0002's amendment
+/// claimed the set was closed. A bigger chunk of engine syntax is *more*
+/// likely to be written as a multi-line literal, not less.
+///
+/// Escapes stay unprocessed, so a returned slice reads exactly as the source
+/// does and the pinned inventory can be compared to it verbatim.
+fn string_literals(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
     let mut out = Vec::new();
-    let mut current: Option<String> = None;
-    let mut escaped = false;
-    for ch in line.chars() {
-        match &mut current {
-            Some(buffer) => {
-                if escaped {
-                    buffer.push(ch);
-                    escaped = false;
-                } else if ch == '\\' {
-                    buffer.push(ch);
-                    escaped = true;
-                } else if ch == '"' {
-                    out.push(std::mem::take(buffer));
-                    current = None;
-                } else {
-                    buffer.push(ch);
-                }
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            // Line comment.
+            b'/' if bytes.get(i + 1) == Some(&b'/') => {
+                i += match text[i..].find('\n') {
+                    Some(offset) => offset + 1,
+                    None => break,
+                };
             }
-            None if ch == '"' => current = Some(String::new()),
-            None => {}
+            // Block comment. Rust nests them, so count depth.
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                let (mut depth, mut j) = (1usize, i + 2);
+                while j + 1 < bytes.len() && depth > 0 {
+                    match (bytes[j], bytes[j + 1]) {
+                        (b'/', b'*') => (depth, j) = (depth + 1, j + 2),
+                        (b'*', b'/') => (depth, j) = (depth - 1, j + 2),
+                        _ => j += 1,
+                    }
+                }
+                i = j;
+            }
+            // Char literal (`'x'`, `'\''`) or a lifetime (`&'a str`) — the
+            // difference matters, because `'"'` would otherwise open a run
+            // and desynchronise everything after it. `bind.rs` has one.
+            b'\'' => {
+                let width = if bytes.get(i + 1) == Some(&b'\\') {
+                    3
+                } else {
+                    2
+                };
+                i += if bytes.get(i + width) == Some(&b'\'') {
+                    width + 1
+                } else {
+                    1 // a lifetime
+                };
+            }
+            // Raw string: `r"…"`, `r#"…"#`, `r##"…"##`.
+            b'r' if matches!(bytes.get(i + 1), Some(b'"' | b'#')) => {
+                let mut j = i + 1;
+                while bytes.get(j) == Some(&b'#') {
+                    j += 1;
+                }
+                if bytes.get(j) != Some(&b'"') {
+                    i += 1;
+                    continue;
+                }
+                let terminator = format!("\"{}", "#".repeat(j - i - 1));
+                let body = j + 1;
+                let close = text[body..]
+                    .find(&terminator)
+                    .map_or(bytes.len(), |offset| body + offset);
+                out.push(&text[body..close]);
+                i = close + terminator.len();
+            }
+            b'"' => {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b'"' {
+                    j += if bytes[j] == b'\\' { 2 } else { 1 };
+                }
+                out.push(&text[i + 1..j.min(bytes.len())]);
+                i = j + 1;
+            }
+            _ => i += 1,
         }
     }
     out
+}
+
+/// The candidate grammar lines inside one literal.
+///
+/// A multi-line literal carries its lines two ways — a real newline in a raw
+/// string, and the two-character `\n` escape in an ordinary one — and both
+/// have to be split for the same reason: the token being looked for is a
+/// *line* of hurl, not the whole literal.
+fn literal_lines(literal: &str) -> Vec<&str> {
+    // A single-line literal *is* the token, verbatim — trimming it would erase
+    // a significant edge, and two of the pinned entries have one (`"HTTP "`
+    // and `"HTTP/"` are prefix tests, distinct from the bare `"HTTP"`).
+    // Indentation is only noise when it came from laying the source out.
+    if !literal.contains('\n') && !literal.contains("\\n") {
+        return vec![literal];
+    }
+    literal
+        .split("\\n")
+        .flat_map(|part| part.split('\n'))
+        .map(str::trim)
+        .collect()
 }
 
 /// Which engine-grammar shape this literal is, if any.
@@ -274,10 +361,12 @@ fn engine_grammar_kind(literal: &str) -> Option<&'static str> {
     if literal == "HTTP" || literal.starts_with("HTTP ") || literal.starts_with("HTTP/") {
         return Some("http");
     }
-    if let Some(rest) = literal.strip_prefix('[') {
-        let name = rest.trim_end_matches(']');
-        if rest.len() > name.len()
-            && name.starts_with(|c: char| c.is_ascii_uppercase())
+    if let Some(name) = literal
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    {
+        // Exactly one closing bracket, which is what a hurl section header has.
+        if name.starts_with(|c: char| c.is_ascii_uppercase())
             && name.chars().all(|c| c.is_ascii_alphabetic())
         {
             return Some("section");
@@ -286,11 +375,14 @@ fn engine_grammar_kind(literal: &str) -> Option<&'static str> {
     if let Some((key, rest)) = literal.split_once(':') {
         let keyed = key.starts_with(|c: char| c.is_ascii_lowercase())
             && key.chars().all(|c| c.is_ascii_lowercase() || c == '-');
+        // A hurl `[Options]` value is a scalar, never a sentence. Requiring a
+        // single token is what keeps prose out: `"internal: step kind `{}` is
+        // not claimed by any registered engine"` is a diagnostic, not grammar.
         let valued = rest.is_empty()
             || rest
                 .strip_prefix(' ')
-                .is_some_and(|value| !value.starts_with(' ') && !value.is_empty());
-        if keyed && valued {
+                .is_some_and(|value| !value.is_empty() && !value.contains(' '));
+        if keyed && valued && !PROEF_OWN_KEYS.contains(&key) {
             return Some("option");
         }
     }
@@ -333,15 +425,13 @@ fn hurl_grammar_in_core_is_the_closed_set_the_adr_names() {
             .collect::<Vec<_>>()
             .join("/");
         let text = std::fs::read_to_string(file).expect("readable source file");
-        for line in production_lines(&text) {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") || trimmed.starts_with('*') {
-                continue;
-            }
-            for literal in string_literals(line) {
-                if let Some(kind) = engine_grammar_kind(&literal) {
+        // One lexed pass over the production half. The lexer knows what a
+        // comment is, so nothing here has to guess from a line prefix.
+        for literal in string_literals(production_text(&text)) {
+            for line in literal_lines(literal) {
+                if let Some(kind) = engine_grammar_kind(line) {
                     found
-                        .entry((kind, literal))
+                        .entry((kind, line.to_owned()))
                         .or_default()
                         .insert(relative.clone());
                 }
@@ -395,19 +485,15 @@ fn hurl_grammar_in_core_is_the_closed_set_the_adr_names() {
     );
 }
 
-/// The lines of `text` outside its trailing `#[cfg(test)]` module.
+/// The part of `text` before its trailing `#[cfg(test)]` module.
 ///
 /// A test fixture writing hurl is not the core knowing hurl — a core test that
 /// exercises the pipeline has to supply *some* engine's payload. Conflating
 /// the two is what produced the worklist's order-of-magnitude overcount.
-fn production_lines(text: &str) -> impl Iterator<Item = &str> {
-    let lines: Vec<&str> = text.lines().collect();
+fn production_text(text: &str) -> &str {
     // Column 0 and `mod` on the next line: the crate's test modules are all
     // written that way, and requiring both keeps a nested `#[cfg(test)] fn`
     // *inside* a test module (`tags.rs` has one) from truncating early.
-    let end = lines
-        .windows(2)
-        .position(|pair| pair[0] == "#[cfg(test)]" && pair[1].starts_with("mod "))
-        .unwrap_or(lines.len());
-    lines.into_iter().take(end)
+    text.find("\n#[cfg(test)]\nmod ")
+        .map_or(text, |offset| &text[..offset])
 }
