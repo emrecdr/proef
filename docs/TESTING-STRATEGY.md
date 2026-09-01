@@ -163,3 +163,26 @@ bit-deterministic by construction. Integration layer: fixture delays are token-d
 (visibility timestamps), not sleep-raced; retry tests assert attempt *counts*, wall time
 only as generous upper bounds; parallel tests assert on Normalized event order, never
 raw interleaving. Any test needing "now" receives it as a parameter.
+
+## 6. Complexity claims are asserted as ratios, never as benchmarks
+
+A published performance claim is a claim like any other, and this project has now
+watched four separate ones decay in prose. The guard for a *shape* claim — "linear
+in the macro count", "~2× per doubling" — is a **ratio between two input sizes**,
+not a stopwatch against a threshold:
+
+- A ratio tests what was actually promised. The claim is a shape; a shape is a ratio.
+- A ratio survives a shared runner. Load inflates both measurements together and
+  cancels out, where an absolute threshold has to be loosened until it means nothing.
+- The separation is wide enough to be safe. `validation_cost_stays_linear_in_the_macro_count`
+  observes ~2.05× against a bound of 3.0; restoring the pre-#138 quadratic shape
+  measures 4.01×. Take the **minimum** of several samples — scheduler noise only ever
+  adds, so the fastest observation is the closest to the work actually done — and
+  assert the smaller load was slow enough to time at all, or the ratio is meaningless.
+
+Benchmark frameworks were considered and are deliberately absent. `iai-callgrind`
+is the right tool for gating in CI, because instruction counts ignore runner noise
+entirely — but it needs valgrind, making it a gate the maintainer cannot reproduce
+on macOS. `criterion` and `divan` measure wall time, which is the same noise regime
+as the ratio test while also adding a dependency tree to a workspace that audits
+every edge.

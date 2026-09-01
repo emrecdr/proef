@@ -8,6 +8,30 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **The linear-validation claim is now a test, not a sentence.** #138 made pack
+  validation linear and recorded the result as a shape: *"the curve changed
+  shape — 4× per doubling before, ~2× after"*. That number lived only in the
+  changelog, where nothing could re-run it — so a future span locator scanning
+  the whole pack file again would have restored the quadratic behaviour
+  silently, a regression that costs seconds rather than correctness and which no
+  gate measured.
+
+  The guard asserts the **ratio** between 1000 and 2000 macros, because the
+  claim *is* a ratio. It observes ~2.05× against a bound of 3.0; mutating
+  `locate::MacroIndex` to re-index per lookup — the exact pre-#138 shape —
+  measures **4.01×**, matching the changelog's own prediction of 4× and turning
+  a 0.4-second test into a 73-second one. The failure message names the cause
+  rather than reporting a number.
+
+  A ratio rather than a benchmark, for a reason now written into
+  `TESTING-STRATEGY.md` §6: load on a shared runner inflates both measurements
+  together and cancels, where an absolute threshold has to be loosened until it
+  means nothing. `iai-callgrind` would be the better CI gate — instruction
+  counts ignore runner noise entirely — but it needs valgrind, so it would be a
+  gate the maintainer cannot reproduce on macOS; `criterion` and `divan` sit in
+  the same noise regime as this test while adding a dependency tree to a
+  workspace that audits every edge. No new dependency was added.
+
 - **Every diagnostic code is now named by a test, and a guard keeps it that
   way.** `DIAGNOSTICS.md` calls codes "a contract: they never change meaning".
   Twenty-three of seventy-five had nothing holding them to it — reachable in

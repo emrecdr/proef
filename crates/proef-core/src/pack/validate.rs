@@ -2432,3 +2432,108 @@ mod diagnostic_code_coverage {
         );
     }
 }
+
+/// The published complexity claim, kept honest.
+///
+/// #138 made pack validation linear in the macro count and the changelog states
+/// the result as a *shape*: "the curve changed shape — 4× per doubling before,
+/// ~2× after". That number lived only in prose, which is where this project has
+/// now watched four separate claims decay. Nothing prevented a future span
+/// locator from scanning the whole file again and quietly restoring the
+/// quadratic behaviour, because a regression there costs seconds rather than
+/// correctness and no gate measures seconds.
+///
+/// **Why a ratio and not a benchmark.** The claim *is* a ratio, so asserting one
+/// tests the thing that was promised rather than a proxy for it. A ratio is also
+/// the only timing assertion that survives a shared CI runner: load inflates
+/// both measurements together and cancels, where an absolute threshold would
+/// have to be set so loose it stopped meaning anything. `TESTING-STRATEGY.md`
+/// §5 permits wall time "only as generous upper bounds", and this is one — the
+/// observed value is ~2.05 against a bound of 3.0, while quadratic is 4.0.
+///
+/// Criterion, divan and iai-callgrind were all considered and rejected.
+/// iai-callgrind is the right tool for gating in CI — instruction counts are
+/// immune to runner noise — but it needs valgrind, so it would be a gate the
+/// maintainer cannot reproduce on macOS. The other two measure wall time, which
+/// puts them in the same noise regime as this test while also adding a
+/// dependency tree to a workspace that audits every edge.
+#[cfg(test)]
+mod complexity {
+    #![allow(clippy::unwrap_used)]
+
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use crate::engine::{PayloadProbeError, StepKindSpec};
+    use crate::pack::{self, FragmentCorpus, PackSource};
+
+    #[allow(clippy::unnecessary_wraps)] // signature fixed by StepKindSpec::validate
+    fn accept(_text: &str) -> Result<(), PayloadProbeError> {
+        Ok(())
+    }
+
+    const KINDS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "alt",
+        schema: "true",
+        validate: Some(accept),
+        fragments: None,
+        options: None,
+    }];
+
+    /// A pack of `n` independent macros — no `use:` edges, so the graph passes
+    /// are trivial and what is being measured is the per-macro span locating
+    /// that #138 changed.
+    fn pack_of(n: usize) -> String {
+        let mut text = String::from("macros:\n");
+        for i in 0..n {
+            let _ = write!(
+                text,
+                "  m{i}:\n    match: sentence number {i}\n    steps:\n      - alt: |\n          GET /x\n"
+            );
+        }
+        text
+    }
+
+    /// Best of five. The minimum is the right statistic for a timing sample:
+    /// scheduler noise only ever *adds*, so the fastest observation is the one
+    /// closest to the work actually done.
+    fn best_load(text: &str) -> Duration {
+        let mut best = Duration::MAX;
+        for _ in 0..5 {
+            let source = PackSource {
+                name: "p.yaml".into(),
+                text: Arc::from(text),
+            };
+            let start = Instant::now();
+            let loaded = pack::load(&[source], &FragmentCorpus::empty(), KINDS);
+            best = best.min(start.elapsed());
+            assert!(loaded.is_ok(), "the generated pack must be valid");
+        }
+        best
+    }
+
+    #[test]
+    fn validation_cost_stays_linear_in_the_macro_count() {
+        let single = best_load(&pack_of(1_000));
+        let double = best_load(&pack_of(2_000));
+
+        // Guard against a degenerate measurement making the ratio meaningless:
+        // if the smaller load is too fast to time, the assertion below would
+        // pass on anything.
+        assert!(
+            single >= Duration::from_millis(2),
+            "1000 macros loaded in {single:?} — too fast to compare; raise the sizes"
+        );
+
+        let ratio = double.as_secs_f64() / single.as_secs_f64();
+        assert!(
+            ratio < 3.0,
+            "doubling the macro count cost {ratio:.2}× ({single:?} → {double:?}). \
+             Linear is ~2× and quadratic is ~4×, so this is the span-locating \
+             regression #138 fixed: every locator scanning the whole pack file \
+             to find its own macro's block. Check `locate::MacroIndex` is still \
+             built once and read, not rebuilt or bypassed."
+        );
+    }
+}
