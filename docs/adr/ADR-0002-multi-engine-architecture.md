@@ -1,6 +1,7 @@
 # ADR-0002 — Multi-engine core: factory/session seam, step-kind routing, batching
 
-**Status:** Accepted · **Date:** 2026-07-28
+**Status:** Accepted · **Date:** 2026-07-28 (amended 2026-09-01 — the core's entry
+grammar is a named closed set; see the Amendment below)
 
 ## Context
 
@@ -64,3 +65,72 @@ generics — fights `dyn`, ownership shape gives most of the safety.
 follows the tech spec: the step kind **and** the engine id are `hurl`, so
 "a step's kind names its engine" holds verbatim. Read `http:` in the Decision
 above as `hurl:`. Other kind prefixes remain reserved for a future non-hurl engine as written.
+
+## Amendment — the core's entry grammar is a named closed set
+
+**2026-09-01 · Accepted.** "Core stays free of engine-specific types" is true and
+stays true. "Core stays free of engine-specific *syntax*" was never true, and the
+worklist carried the gap for two rounds without resolving it. This amendment
+states the real boundary and makes it enforceable.
+
+### Why the core knows any hurl at all
+
+The core performs **text surgery on entries**: `bake_entry_options` splices an
+`[Options]` block into each entry after its header block, and an `expect:` macro
+merges asserts into the *previous* request entry (ADR-0004). Both operations have
+to find an entry boundary in text the engine will later parse. That is structural,
+not incidental — the surgery is what the pack format is built on — so a boundary
+recogniser has to live somewhere, and pushing it behind the seam would move the
+literals without making the algorithm engine-independent.
+
+### The measurement
+
+Nineteen production lines, across three files (`lower.rs`, `emit.rs`,
+`pack/validate.rs`) — **not** the "~290 lines, all in `lower.rs`" the worklist
+recorded. That figure counted `#[cfg(test)]` fixtures, where a core test
+exercising the pipeline necessarily writes *some* engine's payload. The vocabulary
+is thirteen distinct literals in three groups:
+
+| Group | Tokens | Where |
+|---|---|---|
+| **written** — the core generates this hurl | `[Options]`, `[Asserts]`, `HTTP *`, `variable:`, `retry:`, `retry-interval:`, `delay:` | `lower.rs` |
+| **recognised** — read to find an entry boundary | ` ``` ` (body fence), `HTTP` / `HTTP ` / `HTTP/` | `lower.rs`, `emit.rs`, `pack/validate.rs` |
+| **not hurl** — proef's own pack syntax | `secret:`, `use:` | `lower.rs`, `pack/validate.rs` |
+
+The four boundary recognisers (`is_method_line`, `is_section_header`,
+`is_response_line`, `is_header_line`) are already one canonical `pub(crate)` set
+shared by all three files. That half is done.
+
+### The asymmetry this exposes
+
+`StepKindSpec::options` exists, in its own words, as "the seam that keeps option
+*spellings* out of `proef-core`" — added because matching `"retry-interval:"` as a
+literal meant "one rule lived at two altitudes." It covers **recognising** options.
+The core still **writes** `retry:`, `retry-interval:`, `delay:` and `variable:` as
+literals, so the same rule still lives at two altitudes, in the other direction.
+
+### Decision
+
+1. The set above is the **sanctioned** core entry grammar. It is closed: a token
+   outside it, or an existing token appearing in another core module, is a
+   defect against this ADR.
+2. It is pinned by `crates/proef-cli/tests/source_guards.rs`
+   (`hurl_grammar_in_core_is_the_closed_set_the_adr_names`), which fails on both
+   growth and relocation and sends the author back here. A claim of this shape
+   decays the moment it is only prose — this one already had, by an order of
+   magnitude and in the direction that made it look worse than it is.
+3. Migrating the **written** group behind the seam (an emitter beside
+   `StepKindSpec::options`) is **deferred, not rejected**. It buys nothing today:
+   hurl is the only engine and no other is scheduled, so the migration would add
+   a fn pointer, a trait obligation and a public-API break to relocate seven
+   literals that exactly one implementation will ever supply. **Trigger:** a
+   second engine being scheduled. That is also when ADR-0002's acceptance test
+   — a new engine lands with zero `proef-core` diff — first has anything to say
+   about them; until then it is unfalsifiable here either way.
+
+### Consequences
+
+The acceptance test is narrowed on the record: a second engine lands with zero
+`proef-core` diff **except** the written group, which is a known, enumerated,
+guarded debt with a named trigger rather than an open question. Anyone reaching
+for new hurl syntax in the core hits a failing test that names both remedies.

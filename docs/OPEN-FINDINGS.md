@@ -211,7 +211,7 @@ before rendering them, so JSON is a second rendering rather than a second walk.
 
 ### Noted, not filed
 
-`stderr_hygiene`'s malformed-plural scan matches the literal `(y)` anywhere in
+`source_guards`' malformed-plural scan matches the literal `(y)` anywhere in
 a non-comment source line, so any code with a single-character `y` parameter
 false-positives (`x.max(y)` did). The guard's intent is user-facing strings;
 scanning all code is broader than that. Left alone — it is working as a guard
@@ -301,38 +301,44 @@ Two wave items did **not** ship, and one of them should not:
 - *"`match_span` is computed and unused"* — it is used; the diagnostics wave
   wired it.
 
-### Still open, verified present in the tree
+### Verified against the tree (each entry says whether it is open or closed)
 
-- **Hurl grammar in `proef-core` vs ADR-0002's diff-empty claim — measured,
-  and far smaller than filed.** The "~290 lines" in the original entry counts
-  test fixtures: hurl text inside `#[cfg(test)]`, where a core test exercising
-  the pipeline has to write *some* engine's payload. In **production** code
-  there are 19 lines, all in `lower.rs`, across four concerns:
+- ~~Hurl grammar in `proef-core` vs ADR-0002's diff-empty claim.~~ **Closed
+  (2026-09-01) by an ADR-0002 amendment plus a guard — and this entry was wrong
+  three times over.** "~290 lines" counted `#[cfg(test)]` fixtures; the
+  correction to "19 lines, all in `lower.rs`, four concerns" fixed the count and
+  kept two errors. It is 19 lines across **three** files — `lower.rs`, `emit.rs`
+  and `pack/validate.rs` — and the four "concerns" mostly are not concerns:
+  `is_method_line`, `is_section_header`, `is_response_line` and `is_header_line`
+  are already one canonical `pub(crate)` set that all three files share.
 
-  | Concern | Form |
-  |---|---|
-  | `variable_option_line(name, value)` | builds `variable: k=v`; **public API**, and called *by* engine-hurl |
-  | fence tracking (4 loops) | entry surgery must not edit inside a ```…``` body |
-  | `is_response_line(trimmed)` | `HTTP ` / `HTTP/`, the entry boundary |
-  | `[Options]` / `[Asserts]` headers | injected by `bake_entry_options` and the `expect:` merge |
+  What the entry missed entirely is the finding: **the seam already solved this
+  once, on the reading side.** `StepKindSpec::options` exists, in its own words,
+  as "the seam that keeps option *spellings* out of `proef-core`" — added
+  because matching `"retry-interval:"` as a literal meant "one rule lived at two
+  altitudes." It covers recognising options. The core still *writes* `retry:`,
+  `retry-interval:`, `delay:` and `variable:` as literals, so the same rule
+  still lives at two altitudes, in the other direction. That, not the line
+  count, is the actual asymmetry.
 
-  All four exist because the core performs **text surgery on entries** —
-  splicing bound options in, merging `expect:` asserts into the previous
-  request. That algorithm is hurl-shaped whether or not the literals move
-  behind a seam, which is the argument against routing them through
-  `StepKindSpec`: four more fn pointers would relocate 19 lines without making
-  the surgery engine-independent, and would leave the seam claiming a
-  generality the code does not have. The honest alternatives are to **amend
-  ADR-0002** so it names this closed set as the core's minimal entry grammar,
-  or to move the splicing itself behind the seam (a real change, not a
-  relocation). **Needs a named decision; do not patch it piecemeal.**
+  Resolved as: the thirteen-token vocabulary is **sanctioned and closed** on the
+  ADR record, pinned by `source_guards::hurl_grammar_in_core_is_the_closed_set_the_adr_names`
+  (which fails on growth *and* on an existing token spreading to another core
+  module, and names both remedies in the failure). Moving the written half
+  behind the seam is deferred with a named trigger — a second engine being
+  scheduled — because until then it relocates seven literals that exactly one
+  implementation will ever supply, at the cost of a public-API break.
+
+  The meta-lesson, and the fifth instance of it this programme: **a claim that
+  lives only in prose decays, and decays in whichever direction makes the
+  writer's point.** Every wrong version of this entry overstated the problem.
 - ~~Reading `events.jsonl` is spread across seven files.~~ **Closed (#150),
   and it was not the duplication it was filed as.** Chasing it found that the
   256 MiB record ceiling reached two of its four readers: `explain` and
   `report` each opened the file with a bare `read_to_string`, so neither had
   it — `report` even used the guarded reader for the *base* record two dozen
   lines below the raw read of the primary one. Both go through
-  `record::read_events` now, and a source scan in `stderr_hygiene` makes the
+  `record::read_events` now, and a source scan in `source_guards` makes the
   next reader use the same door. The folds that could disagree were already
   unified (`record::parse_record`, `report::suite_totals`), and
   `explain --format json` hands consumers the canonical answer rather than
@@ -351,9 +357,13 @@ Two wave items did **not** ship, and one of them should not:
 GitHub-summary permalinks to failing lines (reading `GITHUB_SHA` sink-
 locally vs ADR-0020's harvested-vs-handed-over boundary) · a Chrome-trace
 export of the scheduling timeline (a second rendering of what the HTML
-timeline already shows — one-way test) · an only-failed console extension
-(must extend `--console`, never a parallel flag) · templated report output
-paths (vs the one-path rule).
+timeline already shows — one-way test) · templated report output paths (vs
+the one-path rule).
+
+The only-failed console was on this list until #147 shipped it as
+`--console failed` — a fourth mode on the existing flag, which is what the
+entry asked for. Two of the four items this section carried had already been
+decided; check the tree before re-raising the rest.
 
 ### Declined — do not re-raise
 
