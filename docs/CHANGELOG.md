@@ -299,6 +299,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A disk filling *mid-run* now reaches the exit code.** A stdout that was
+  already broken at start has failed loudly since the correctness series — but
+  the human report's own writes go through the console reporter, which
+  swallows write errors (a reporter cannot report its own channel dying), so a
+  disk filling *during* the run truncated the report while the run still
+  exited by its verdict. The `Tee` under the reporter is the last place the
+  failure is visible; it now latches the same stdout-failure flag `outln!`
+  uses, and the exit funnel turns lost output into exit 3. Same closed-pipe
+  exemption as ever — `proef … | head` is the reader ending the pipeline, not
+  a failure — and a stderr console (machine mode) does not claim stdout
+  failed. Pinned by a three-case test, mutation-checked.
+
 - **The complexity guard added moments earlier was itself flaky, and now runs
   alone.** It shipped in the ordinary suite on the reasoning that a *ratio*
   cancels out runner load. Measurement disagreed on its second full-suite run:
