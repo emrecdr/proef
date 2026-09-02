@@ -884,7 +884,7 @@ pub fn execute(
         );
 
         // CI reports (US-8): JUnit XML + GitHub job summary.
-        let junit_failed = write_ci_reports(
+        let reports_failed = write_ci_reports(
             &Verdict {
                 summary: &summary,
                 teardown: teardown_summary.as_ref(),
@@ -950,7 +950,7 @@ pub fn execute(
         // already been printed, so `--format json` reported an `exit_code` the
         // process then exited past — a body that disagrees with its own program is
         // worse than no body, because a consumer has no way to notice.
-        let exit = if junit_failed {
+        let exit = if reports_failed {
             ExitCode::SystemError
         } else {
             exit
@@ -1498,7 +1498,7 @@ fn write_ci_reports(
         ctrf,
         started_at,
     } = sinks;
-    let mut junit_failed = false;
+    let mut reports_failed = false;
     // Beside JUnit, deliberately inside this function: the two sinks must
     // describe one truth on every path that reaches CI — including the
     // setup-abort paths (R12-3), where a job gating on either file must not
@@ -1518,7 +1518,7 @@ fn write_ci_reports(
             Ok(()) => crate::render::errln!("ctrf report: {}", path.display()),
             Err(message) => {
                 crate::render::errln!("error: {message}");
-                junit_failed = true;
+                reports_failed = true;
             }
         }
     }
@@ -1543,7 +1543,7 @@ fn write_ci_reports(
             Err(message) => {
                 // A CI job gating on this file must not see exit 0.
                 crate::render::errln!("error: {message}");
-                junit_failed = true;
+                reports_failed = true;
             }
         }
     }
@@ -1557,7 +1557,7 @@ fn write_ci_reports(
             crate::render::outln!("{}", annotations.trim_end());
         }
     }
-    junit_failed
+    reports_failed
 }
 
 /// Classify a setup/teardown summary: `None` when every scenario passed, else

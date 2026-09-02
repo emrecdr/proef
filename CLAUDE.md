@@ -357,6 +357,21 @@ build requirement).
       twice or not at all while reporting green. And the HTML report finally
       answers "what is slowest", with the share of run time it accounts for.
       Breaking (library): `HttpDefaults` gains eight fields and loses `Copy`
+- [x] the 2026-09 survey wave — a check-the-world round (upstream releases,
+      standards movement, the worklist itself), validated then implemented:
+      `[http] cookie-store = false` (hurl 8.0's `--no-cookie-store`; the one
+      `[http]` key with no per-entry `[Options]` spelling at all, and proef is
+      structurally immune to hurl's own on→off handle FIXME because clients
+      are per-batch); `--ctrf` (CTRF JSON off the same fold as JUnit —
+      quarantine parity per ADR-0019, flaky passes carry real
+      `retryAttempts`); a disk filling *mid-run* reaches exit 3 (the deferred
+      v0.6–v0.8 console-latch item, to its own written design);
+      `emit::feature_stem`/`artifact_slug` define naming once (Q6 closed
+      structurally; Q2 found already closed by the #146 cache). Validated as
+      needing nothing: the hurl 8.0.1 pin is current, Rust 1.98.1 does not
+      exist yet (policy adopts at `x.y.1`), notify 9 is still RC, and release
+      engineering already ships attestations/tap/binstall. Breaking (library):
+      `HttpDefaults` gains `cookie_store`
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.
