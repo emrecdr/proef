@@ -1342,9 +1342,9 @@ Recorded as decisions, so they are not rediscovered as fresh ideas.
 
 ## Open — correctness
 
-Q2 is the remaining Tier 1 branch. Q5 and Q4 shipped in #26.
+Q2 was the remaining Tier 1 branch (Q5 and Q4 shipped in #26); it closed with the #146 analysis cache — see below.
 
-### Q2 — the walk still happens twice per request *(remainder)*
+### Q2 — the walk still happens twice per request *(closed 2026-09-02)*
 
 **Shipped in #27:** the walk skips `target/`, `node_modules/`, `vendor/` and
 dot-directories, is depth-bounded, and no longer aborts the whole discovery on
@@ -1354,13 +1354,19 @@ announces — `workspaceFolders`, else `rootUri`, else the previous
 config-then-cwd resolution — so an editor launched outside the project no longer
 analyses the wrong tree.
 
-**Still open.** `analyze.rs` discovers packs and features with two independent
-walks, on every completion/definition/references request, and completion
-requests are not debounced. The excludes cut what each walk costs; they do not
-stop it happening twice. Halving it means either caching per analysis pass or a
-combined discovery call — both need a way to invalidate, which the
-`SourceProvider` trait has no hook for today. Purely a cost item now that the
-root is correct: no wrong answers depend on it.
+**Closed 2026-09-02 — by the #146 analysis cache, which this entry predated.**
+The premise ("on every completion/definition/references request") is no longer
+true: every request handler reads one cached `Analysis` through the single
+read path (`server.rs` — "the debounced diagnostics publisher and every
+on-demand feature go through here; they share one recompute per edit rather
+than one each"), edits mark the suite dirty behind a debounce, and the
+fragment corpus is held across recomputes ("called when a fragment file
+changes, never per request" — `analysis.rs`). The invalidation hook this entry
+said `SourceProvider` lacked turned out not to be needed: the whole analysis
+is invalidated on any edit, which at this suite scale (tens of small files,
+milliseconds per recompute) beats maintaining an incremental index — the
+module doc says so in as many words. The *two* walks inside one recompute
+remain, and are now a per-edit cost too small to file.
 
 ### P5 — watch: the atomic-save half *(remainder)*
 
@@ -1690,7 +1696,7 @@ interpretive" and it is; `report.html`, which the inventory genuinely omitted, w
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
 | P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
 | Q1 | ~~structured payloads unreachable~~ *(premise false 2026-08-23: they parse, validate through the engine seam, lower and skip the hurl emitter — pinned by tests; `EngineLowering` was a review's name, never a symbol)* — what survives: no *registered* engine claims a structured kind, so the path runs only under test fixtures |
-| Q6 | `html.rs` re-derives the emitter slug (the event schema carries no slug field); `exec.rs`'s own comment forbids exactly this. Four `file_stem()` sites — correct today, future-drift risk |
+| Q6 | ~~`html.rs` re-derives the emitter slug; four `file_stem()` sites~~ *(closed 2026-09-02 — the count was exactly right, four production sites, and the fix is structural rather than descriptive: `emit::feature_stem` and `emit::artifact_slug` are now the one definition of each, called by the emitter's own caller, the dispatcher's spec naming, the report's anchors/artifact links, and the editor analysis. The other premise had gone stale the other way: `ScenarioOutcome.artifact_slug` has carried the emitter's naming to runtime consumers since round 19, so "the schema carries no slug" no longer forced anyone to re-derive)* |
 
 ---
 

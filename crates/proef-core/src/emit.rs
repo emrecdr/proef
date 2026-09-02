@@ -75,10 +75,38 @@ pub struct FeatureAnchor {
     pub text: String,
 }
 
+/// A feature file's stem, as artifact naming uses it: the final component
+/// without its extension, `"feature"` when the path yields none.
+///
+/// Defined once, here, because the emitter owns naming (ADR-0010) — and
+/// because this expression used to exist four times (the emitter's caller,
+/// the dispatcher's spec naming, the HTML report's anchors, the editor's
+/// analysis), four chances for the fallback or the semantics to drift apart.
+/// Every consumer of "the stem of this feature file" calls this.
+#[must_use]
+pub fn feature_stem(path: &str) -> String {
+    std::path::Path::new(path).file_stem().map_or_else(
+        || "feature".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    )
+}
+
+/// The artifact slug for one scenario: `<feature-stem>--<scenario-slug>`.
+///
+/// The composition, not just the pieces: `slugify` and [`feature_stem`] were
+/// already shared, but the `--` join was written once here and once in the
+/// HTML report's anchor builder — and the report's links to artifact files
+/// only resolve because both sides derive the same name. One function makes
+/// that agreement structural rather than coincidental.
+#[must_use]
+pub fn artifact_slug(feature_stem: &str, scenario: &str) -> String {
+    format!("{}--{}", slugify(feature_stem), slugify(scenario))
+}
+
 /// Emit one scenario's artifact set. `None` when the scenario lowers to no
 /// hurl entries (nothing to hand to the engine or the backend team).
 pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Option<Artifact> {
-    let slug = format!("{}--{}", slugify(feature_stem), slugify(&scenario.name));
+    let slug = artifact_slug(feature_stem, &scenario.name);
     let has_vars = !scenario.globals.is_empty() || !scenario.secrets.is_empty();
 
     let mut steps: Vec<(usize, usize, &crate::step::LoweredStep)> = Vec::new();
