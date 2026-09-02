@@ -49,8 +49,14 @@ pub fn holds_a_record(dir: &Path) -> bool {
 /// so lexical order *was* time order — until a custom-id directory joined the
 /// set and sorted by its first letter.
 pub fn all_runs(runs_root: &Path) -> Vec<PathBuf> {
-    // Decorated so each directory is timed once: `sort_by_key` would call the
-    // key function O(n log n) times, and `began_at`'s fallback arm is a `stat`.
+    // Decorated, and sorted on the whole `(time, path)` pair, so that equal
+    // times break by **name** rather than by whatever order the filesystem
+    // handed back. Ties are ordinary, not exotic: two uuid-v7 ids minted in the
+    // same millisecond tie exactly, and coarse mtimes make custom-id runs tie
+    // routinely. `sort_by_cached_key` would also time each directory once — the
+    // decoration's other motive — but it is merely *stable*, so it would leave
+    // those ties in `read_dir` order and make the ordering
+    // filesystem-dependent. The cheaper-looking rewrite is the wrong one.
     //
     // No `is_dir()` first: `holds_a_record` already answers it — a plain file
     // `foo` cannot have `foo/events.jsonl` under it — so the extra probe was a
@@ -732,8 +738,13 @@ pub fn carried_outcomes(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use super::*;
+    use proef_core::event::Event;
+    use proef_core::step::{Status, StepRef};
+    use std::sync::Arc;
+
     #[test]
-    fn only_hyphenated_uuid_dirs_count_as_run_ids() {
+    fn only_hyphenated_uuid_dirs_are_rotatable() {
         // Rotation deletes the oldest run-shaped directories beyond the
         // retention limit, and the runs dir can point somewhere shared — so
         // "run-shaped" must mean the hyphenated form proef actually writes,
@@ -745,11 +756,45 @@ mod tests {
         ));
         assert!(!is_rotatable("{0198f3c1-0000-7000-8000-00000000001a}"));
         assert!(!is_rotatable("cache-abc"));
+        // Deliberately *not* the discovery test (ADR-0021): `cache-abc` above
+        // is undeletable, not undiscoverable. A `--run-id`-named directory
+        // holding a record is a run — which is the question `holds_a_record`
+        // answers, and the reason these are two predicates.
     }
-    use super::*;
-    use proef_core::event::Event;
-    use proef_core::step::{Status, StepRef};
-    use std::sync::Arc;
+
+    #[test]
+    fn runs_that_began_at_the_same_moment_still_order_deterministically() {
+        // uuid-v7 embeds milliseconds, so ids minted inside one millisecond
+        // carry an identical time — these share a timestamp prefix and differ
+        // only past the variant, so every one of them ties. `all_runs` breaks
+        // that tie by name; a `sort_by_cached_key` rewrite would leave it to
+        // `read_dir`, i.e. to the filesystem, i.e. flaky rather than wrong.
+        //
+        // Enough of them to *see* it: directory order is a hash/B-tree walk on
+        // APFS and ext4, and at three entries it can coincide with sorted order
+        // by luck — which is a test reporting a guard it does not have.
+        // Twenty-four, created in descending order, does not coincide there.
+        let tmp = tempfile::tempdir().unwrap();
+        let ids: Vec<String> = (0..24u8)
+            .map(|n| format!("0198f3c1-0000-7000-8000-0000000000{n:02x}"))
+            .collect();
+        for id in ids.iter().rev() {
+            let dir = tmp.path().join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("events.jsonl"), "").unwrap();
+        }
+        // Where it cannot bite, stated rather than asserted: NTFS keys its
+        // directory B+ tree on the filename, so Windows enumerates in name
+        // order and the assertion below holds trivially there. That is a
+        // platform limit, not a failure — asserting the premise would turn the
+        // Windows job red for a filesystem behaving correctly, and printing a
+        // note would be swallowed, since a passing test's stdout is captured.
+        let found: Vec<String> = all_runs(tmp.path())
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(found, ids, "equal timestamps must order by name");
+    }
 
     /// Write `events` as one JSON object per line into `<dir>/events.jsonl`.
     fn write_events(dir: &Path, events: &[Event]) {
