@@ -254,7 +254,8 @@ pub(crate) fn first_reference(text: &str) -> Option<(&str, usize, usize)> {
 /// thing no generic YAML grammar can do, because `${…}` and `{{…}}` are both
 /// just characters in a block scalar to it. The escape rule is the subtle part
 /// — `$${` is a literal `${` and must not light up — which is exactly why this
-/// walks [`first_reference`] rather than letting a consumer write its own scan:
+/// walks the resolver's own `first_reference` rather than letting a consumer
+/// write its own scan (not linked: that scanner is deliberately crate-private):
 /// a second implementation of that rule would drift, and the drift would show
 /// as an editor confidently colouring text proef treats as literal.
 ///
