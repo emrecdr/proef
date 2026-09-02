@@ -1561,6 +1561,8 @@ pub proef_core::runner::ScenarioOutcome::reason: core::option::Option<alloc::syn
 pub proef_core::runner::ScenarioOutcome::status: proef_core::step::Status
 pub proef_core::runner::ScenarioOutcome::steps: alloc::vec::Vec<proef_core::step::StepOutcome>
 pub proef_core::runner::ScenarioOutcome::tags: alloc::sync::Arc<[alloc::string::String]>
+impl proef_core::runner::ScenarioOutcome
+pub fn proef_core::runner::ScenarioOutcome::cost(&self) -> core::time::Duration
 impl core::fmt::Debug for proef_core::runner::ScenarioOutcome
 pub fn proef_core::runner::ScenarioOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Freeze for proef_core::runner::ScenarioOutcome

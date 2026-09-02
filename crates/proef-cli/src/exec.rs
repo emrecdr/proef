@@ -858,6 +858,21 @@ pub fn execute(
                 rerun_base.as_ref().map_or("?", |(id, _)| id.as_str())
             );
         }
+        // The weights a *later* run's `--shard-weights` reads — a suite only
+        // becomes worth balancing once it has run at least once. Written here,
+        // at the one site where `summary` is the *suite's*, and deliberately
+        // not beside the CI reports below: `write_ci_reports` is also reached
+        // from the two setup-abort paths, whose summary describes the setup
+        // phase. Timings naming setup scenarios would be worse than no file at
+        // all — those identities never appear in a suite run, so they would
+        // absorb bucket load on behalf of scenarios that never run and skew the
+        // very split the flag exists to balance. Best-effort: a failure to
+        // write timings must never change a run's verdict.
+        write_or_warn(
+            &run_dir.join("timings.json"),
+            crate::timings::render(&summary),
+        );
+
         // CI reports (US-8): JUnit XML + GitHub job summary.
         let junit_failed = write_ci_reports(
             &Verdict {
@@ -1454,15 +1469,6 @@ fn write_ci_reports(
     redactions: &proef_core::report::Redactions,
     machine_stdout: bool,
 ) -> bool {
-    // Always written, whatever else this run produced: it is the input a *later*
-    // run's `--shard-weights` reads, and a suite only becomes worth balancing
-    // once it has run at least once. Best-effort — a failure to write timings
-    // must never change a run's verdict, so `write_or_warn` says so and moves on.
-    write_or_warn(
-        &run_dir.join("timings.json"),
-        crate::timings::render(verdict.summary),
-    );
-
     let mut junit_failed = false;
     let junit_path = match junit {
         Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {

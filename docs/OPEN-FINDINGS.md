@@ -322,7 +322,9 @@ Two wave items did **not** ship, and one of them should not:
   Scenarios would run twice or not at all, and the suite would still report
   green. Nothing about that failure announces itself.
 
-  Shipped shape: every run writes a small `timings.json` into its run directory,
+  Shipped shape: every run that reaches its suite writes a small `timings.json`
+  into its run directory (an aborted setup has no suite to weigh, and writing
+  its own scenarios would skew the next split with identities that never run),
   CI archives that one file, and each matrix job points `--shard-weights` at the
   same copy — so the split is a pure function of (selected scenarios, that
   file). Weighted scenarios are placed longest-first; unweighted ones fall back

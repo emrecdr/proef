@@ -46,11 +46,7 @@ pub fn write_junit(
         let mut suite = TestSuite::new(file);
         let mut suite_time = std::time::Duration::ZERO;
         for outcome in outcomes().filter(|o| o.file.as_ref() == file) {
-            suite_time += outcome
-                .steps
-                .iter()
-                .map(|s| s.duration)
-                .sum::<std::time::Duration>();
+            suite_time += outcome.cost();
             suite.add_test_case(test_case(
                 outcome,
                 non_gating.iter().any(|(file, name)| {
@@ -208,7 +204,7 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     // quick-junit does not model it, so it rides the extra-attribute map.
     case.extra
         .insert("file".into(), outcome.file.as_ref().into());
-    case.set_time(outcome.steps.iter().map(|s| s.duration).sum());
+    case.set_time(outcome.cost());
     // Honest flaky reporting: a scenario that passed only after retries records
     // the attempt count instead of looking identical to a clean pass.
     if let Some(attempts) = flaky_pass_attempts(outcome) {

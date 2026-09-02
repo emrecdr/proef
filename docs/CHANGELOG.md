@@ -32,9 +32,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   assigns by a frozen hash, which guarantees that adding one scenario never
   re-buckets the others but cannot balance by *time* — and a CI matrix finishes
   when its slowest shard does, so a count-split routinely leaves runners idle.
-  Every run now writes a small `timings.json` into its run directory; CI
-  archives that one file and each matrix job points `--shard-weights` at the
-  same copy.
+  Every run that reaches its suite now writes a small `timings.json` into its
+  run directory; CI archives that one file and each matrix job points
+  `--shard-weights` at the same copy.
 
   **The obvious design is silently wrong, and the module says so at length.**
   proef already retains records carrying every step's duration, so "weight by
@@ -65,6 +65,29 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   silently would hand back the unbalanced split the flag was passed to avoid.
 
 ### Changed
+
+- **"What a scenario costs" is defined once, as `ScenarioOutcome::cost`.** The
+  sum of a scenario's step durations was computed in three places on the same
+  type — `JUnit`'s per-suite time, `JUnit`'s per-case time, and the new
+  `timings.json` weights — plus a fourth over the record-fold shape in the HTML
+  report. Four surfaces free to drift apart about a number they are supposed to
+  agree on, and the argument for summing steps rather than taking a wall-clock
+  span was written out twice.
+
+  Now a method on the type that owns the steps, with the rationale stated there
+  and referenced from the rest. The one behaviour change is a fidelity gain: the
+  weights file used to truncate *each step* to whole milliseconds before summing
+  and now truncates the sum, so its numbers agree with the times `JUnit` has
+  always reported. Additive to the library surface.
+
+- **A run whose setup aborted no longer leaves shard weights behind.**
+  `timings.json` was written from inside the CI-report block, which a setup
+  abort also reaches — with the *setup phase's* summary. The file that came out
+  named setup scenarios, and a weights file naming them is worse than no file:
+  those identities never appear in a suite run, so they absorb bucket load on
+  behalf of scenarios that never run and skew the very split `--shard-weights`
+  exists to balance, silently. The write moved to the one site where the summary
+  is the suite's, pinned by a test that reproduces the old file.
 
 - **`lower.rs` stops threading the same three values through twelve
   functions.** `out`, `refs` and `sinks` travelled as separate parameters

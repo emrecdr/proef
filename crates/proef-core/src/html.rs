@@ -645,12 +645,12 @@ const SLOWEST_SHOWN: usize = 8;
 /// workers were busy, never *which* scenarios to attack. Every number needed was
 /// already in the fold.
 ///
-/// Cost is the **sum of a scenario's step durations**, the same definition
-/// `timings.json` uses for shard weights — one notion of "what a scenario
-/// costs" across the whole tool. Deliberately not the scenario's wall-clock
-/// span, which includes time spent waiting for a worker: that is a property of
-/// how the run was scheduled, not of the scenario, and it is not something the
-/// reader can go and fix.
+/// Cost is [`ScenarioOutcome::cost`](crate::runner::ScenarioOutcome::cost) —
+/// the sum of a scenario's step durations, which is also what `JUnit`'s times
+/// and `timings.json`'s shard weights report, so no two surfaces disagree about
+/// what a scenario costs. It is summed again here rather than called because a
+/// report is folded from a *record*, not from live outcomes: `ScenarioBlock`
+/// carries the same durations in the record's own shape.
 ///
 /// The share is the actionable half. "These three are 71% of the suite" is a
 /// decision; a list of durations is homework.

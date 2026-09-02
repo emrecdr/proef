@@ -58,9 +58,9 @@ The pieces:
 ## Balancing the matrix by duration
 
 A hash split balances by **count**, and a matrix finishes when its slowest shard
-does — so one long scenario can leave three runners idle. Every run writes a
-small `timings.json` into its run directory; archive it once and hand it to the
-next run's matrix:
+does — so one long scenario can leave three runners idle. Every run that reaches
+its suite writes a small `timings.json` into its run directory; archive it once
+and hand it to the next run's matrix:
 
 ```yaml
       - name: Run the suite

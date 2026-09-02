@@ -172,8 +172,9 @@ one test never re-buckets the others. What it cannot do is balance by **time** â
 and a CI matrix finishes when its slowest shard finishes, so a count-balanced
 split routinely leaves runners idle.
 
-Every run writes `timings.json` into its run directory. Archive that one file and
-hand it to the next run's matrix:
+Every run that reaches its suite writes `timings.json` into its run directory (a
+run whose `[run] setup` aborted has no suite to weigh, and writes none). Archive
+that one file and hand it to the next run's matrix:
 
 ```yaml
 # each matrix job, all reading the same archived file

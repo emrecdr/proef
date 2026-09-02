@@ -3880,3 +3880,54 @@ fn a_run_writes_the_timings_sidecar_it_will_later_read() {
         "a duration in milliseconds: {text}"
     );
 }
+
+/// …but a run that never got a suite must not leave weights behind.
+///
+/// A setup abort still writes the CI reports (R12-3), from the *setup phase's*
+/// summary. Timings written on that path would name setup scenarios — and a
+/// weights file naming them is worse than no file at all: those identities
+/// never appear in a suite run, so they absorb bucket load on behalf of
+/// scenarios that never run, skewing the very split `--shard-weights` exists to
+/// balance. Nothing about that announces itself; the matrix just runs unevenly
+/// while reporting green.
+#[test]
+fn an_aborted_setup_leaves_no_weights_naming_its_own_scenarios() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(2);
+
+    let timings = latest_run_dir(cwd.path()).join("timings.json");
+    assert!(
+        !timings.exists(),
+        "a run whose setup aborted has no suite to weigh: {}",
+        std::fs::read_to_string(&timings).unwrap_or_default()
+    );
+}

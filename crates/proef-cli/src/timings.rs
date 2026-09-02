@@ -19,9 +19,15 @@
 //! announces itself.
 //!
 //! So the weights are one file, named explicitly, shared by every job: proef
-//! writes `timings.json` into each run directory, CI archives that one file, and
-//! each matrix job points `--shard-weights` at the same copy. The assignment is
-//! then a pure function of (selected scenarios, that file).
+//! writes `timings.json` into the run directory of every run that reaches its
+//! suite, CI archives that one file, and each matrix job points
+//! `--shard-weights` at the same copy. The assignment is then a pure function of
+//! (selected scenarios, that file).
+//!
+//! A run whose `[run] setup` aborted writes none — it has no suite to weigh, and
+//! a file naming *setup* scenarios would be worse than none at all: those
+//! identities never appear in a suite run, so they would absorb bucket load on
+//! behalf of scenarios that never run.
 //!
 //! # What the split gives up, and what it keeps
 //!
@@ -45,12 +51,13 @@ use proef_core::runner::RunSummary;
 /// reader that does not recognise the version refuses rather than guesses.
 const TIMINGS_SCHEMA: u32 = 1;
 
-/// One scenario's measured cost: the sum of its steps' durations.
+/// Each scenario's measured cost in milliseconds, keyed by `(file, scenario)`.
 ///
-/// The sum rather than a wall-clock span, deliberately. The span includes time
-/// the scenario spent waiting for a worker, which is a property of the *run's*
-/// scheduling and not of the scenario — feeding it back into the next split
-/// would let one crowded run's queueing distort the next one's balance.
+/// Cost is [`ScenarioOutcome::cost`](proef_core::runner::ScenarioOutcome::cost)
+/// — the sum of a scenario's step durations rather than its wall-clock span,
+/// which is where that choice is argued. The same definition backs `JUnit`'s
+/// times and the HTML report's "Slowest" ranking, so a weights file can never
+/// disagree with a report about what a scenario costs.
 pub type Weights = BTreeMap<(String, String), u64>;
 
 /// Render the sidecar for a finished run.
@@ -60,26 +67,25 @@ pub type Weights = BTreeMap<(String, String), u64>;
 /// disagree about what a scenario *is*.
 #[must_use]
 pub fn render(summary: &RunSummary) -> String {
-    let mut rows: Vec<serde_json::Value> = Vec::new();
-    for outcome in &summary.outcomes {
-        let ms: u64 = outcome
-            .steps
-            .iter()
-            .map(|step| u64::try_from(step.duration.as_millis()).unwrap_or(u64::MAX))
-            .sum();
-        rows.push(serde_json::json!({
-            "file": outcome.file.as_ref(),
-            "scenario": outcome.name.as_ref(),
-            "ms": ms,
-        }));
-    }
-    // Sorted by identity, not by completion order: the file is an input to a
-    // deterministic split, and two runs of the same suite should differ only
-    // where the measurements did.
-    rows.sort_by(|a, b| {
-        (a["file"].as_str(), a["scenario"].as_str())
-            .cmp(&(b["file"].as_str(), b["scenario"].as_str()))
-    });
+    // Built as the very `Weights` map `read` returns, which buys two things: the
+    // writer and the reader cannot drift apart about the shape, and rows come
+    // out ordered by identity rather than by completion order without a sort —
+    // the file is an input to a deterministic split, so two runs of the same
+    // suite must differ only where the measurements did.
+    let weights: Weights = summary
+        .outcomes
+        .iter()
+        .map(|outcome| {
+            let ms = u64::try_from(outcome.cost().as_millis()).unwrap_or(u64::MAX);
+            ((outcome.file.to_string(), outcome.name.to_string()), ms)
+        })
+        .collect();
+    let rows: Vec<serde_json::Value> = weights
+        .iter()
+        .map(|((file, scenario), ms)| {
+            serde_json::json!({ "file": file, "scenario": scenario, "ms": ms })
+        })
+        .collect();
     let body = serde_json::json!({ "schema": TIMINGS_SCHEMA, "scenarios": rows });
     format!(
         "{}\n",
