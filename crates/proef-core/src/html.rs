@@ -238,6 +238,7 @@ pub fn render_html(
     render_filter_bar(&mut html);
     render_tag_table(&mut html, blocks, tag_links);
     render_timeline(&mut html, blocks);
+    render_slowest(&mut html, blocks);
     if !blocks.is_empty() {
         html.push_str("<h2 class=\"section-h\" id=\"scenarios\">Scenarios</h2>\n");
     }
@@ -631,6 +632,76 @@ fn render_timeline(html: &mut String, blocks: &[ScenarioBlock]) {
     html.push_str("</div>\n");
 }
 
+/// How many scenarios the "slowest" section lists at most.
+///
+/// Small on purpose. The section answers "what should I attack first", and a
+/// ranking long enough to need scrolling has stopped answering it.
+const SLOWEST_SHOWN: usize = 8;
+
+/// The slowest scenarios, ranked, with the share of run time they account for.
+///
+/// After "what failed", this is the question a test report is most often asked,
+/// and until now the page could not answer it: the timeline showed *that*
+/// workers were busy, never *which* scenarios to attack. Every number needed was
+/// already in the fold.
+///
+/// Cost is the **sum of a scenario's step durations**, the same definition
+/// `timings.json` uses for shard weights — one notion of "what a scenario
+/// costs" across the whole tool. Deliberately not the scenario's wall-clock
+/// span, which includes time spent waiting for a worker: that is a property of
+/// how the run was scheduled, not of the scenario, and it is not something the
+/// reader can go and fix.
+///
+/// The share is the actionable half. "These three are 71% of the suite" is a
+/// decision; a list of durations is homework.
+fn render_slowest(html: &mut String, blocks: &[ScenarioBlock]) {
+    let mut ranked: Vec<(u64, &ScenarioBlock)> = blocks
+        .iter()
+        .map(|block| {
+            let ms = block.steps.iter().map(|step| step.duration_ms).sum::<u64>();
+            (ms, block)
+        })
+        .filter(|(ms, _)| *ms > 0)
+        .collect();
+    // Fewer than two timed scenarios cannot be ranked against each other, and a
+    // "slowest" list of one is just that scenario's row repeated.
+    if ranked.len() < 2 {
+        return;
+    }
+    // Slowest first; ties by identity so the order is a function of the record
+    // rather than of fold order.
+    ranked.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| (&a.1.file, &a.1.name).cmp(&(&b.1.file, &b.1.name)))
+    });
+
+    let total: u64 = ranked.iter().map(|(ms, _)| *ms).sum();
+    let shown = ranked.len().min(SLOWEST_SHOWN);
+    let covered: u64 = ranked.iter().take(shown).map(|(ms, _)| *ms).sum();
+    let slowest = ranked.first().map_or(1, |(ms, _)| *ms).max(1);
+
+    let _ = write!(
+        html,
+        "<h2 class=\"section-h\" id=\"slowest\">Slowest <span class=\"count\">\
+         {shown} of {} · {}% of run time</span></h2>\n<ol class=\"slow\">\n",
+        ranked.len(),
+        pct(covered, total)
+    );
+    for (ms, block) in ranked.iter().take(shown) {
+        let width = pct(*ms, slowest);
+        let _ = writeln!(
+            html,
+            "<li><a href=\"#s-{slug}\">{name}</a>\
+             <span class=\"slow-bar\"><span class=\"bar {cls}\" style=\"width:{width}%\"></span></span>\
+             <span class=\"slow-ms\">{ms} ms</span></li>",
+            slug = block_slug(block),
+            name = esc(&block.name),
+            cls = status_class(block.status.unwrap_or(Status::Passed)),
+        );
+    }
+    html.push_str("</ol>\n");
+}
+
 /// `n / total` as a percentage string with one decimal place, using integer
 /// math only (no lossy float cast). `total` must be non-zero (callers guard).
 fn pct(n: u64, total: u64) -> String {
@@ -730,6 +801,12 @@ li.pass .glyph{color:var(--pass)}li.fail .glyph{color:var(--fail)}li.skip .glyph
 .lane-track{position:relative;flex:1;height:1rem;background:var(--card);border:1px solid var(--line);border-radius:3px}\
 .tbar{position:absolute;top:1px;height:calc(100% - 2px);min-width:2px;border-radius:2px;opacity:.9}\
 .tbar.pass{background:var(--pass)}.tbar.fail{background:var(--fail)}.tbar.skip{background:var(--skip)}.tbar.warn{background:var(--warn)}\
+ol.slow{list-style:none;counter-reset:s;margin:0 0 1.5rem;padding:0}\
+ol.slow li{counter-increment:s;display:flex;align-items:center;gap:.6rem;margin:.3rem 0;font-size:.9rem}\
+ol.slow li::before{content:counter(s);color:var(--muted);font-size:.75rem;min-width:1.2rem;text-align:right;font-variant-numeric:tabular-nums}\
+ol.slow a{color:inherit;flex:0 1 auto;max-width:22rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}\
+.slow-bar{flex:1;min-width:3rem;height:.55rem;background:var(--card);border:1px solid var(--line);border-radius:3px;overflow:hidden}\
+.slow-ms{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;font-variant-numeric:tabular-nums;min-width:5rem;text-align:right}\
 .detail{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:.5rem .7rem;margin:.4rem 0 0;white-space:pre-wrap;font-size:.82rem;overflow-x:auto}\
 .via{color:var(--muted);font-size:.78rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:.3rem 0 0}\
 ";
@@ -851,5 +928,93 @@ mod style_tests {
         let light_names: Vec<&String> = light.keys().collect();
         let dark_names: Vec<&String> = dark.keys().collect();
         assert_eq!(light_names, dark_names, "a token is missing from a palette");
+    }
+}
+
+#[cfg(test)]
+mod slowest_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{ScenarioBlock, StepRow, render_slowest};
+    use crate::step::Status;
+
+    fn block(name: &str, durations: &[u64]) -> ScenarioBlock {
+        ScenarioBlock {
+            file: "f.feature".to_owned(),
+            name: name.to_owned(),
+            status: Some(Status::Passed),
+            steps: durations
+                .iter()
+                .map(|ms| StepRow {
+                    line: 1,
+                    text: "a step".to_owned(),
+                    status: Status::Passed,
+                    attempts: 1,
+                    duration_ms: *ms,
+                    detail: None,
+                    reproduce_hint: None,
+                    fragment: None,
+                    label: None,
+                })
+                .collect(),
+            ..ScenarioBlock::default()
+        }
+    }
+
+    fn render(blocks: &[ScenarioBlock]) -> String {
+        let mut html = String::new();
+        render_slowest(&mut html, blocks);
+        html
+    }
+
+    /// The question the section exists to answer: slowest first, by the *sum*
+    /// of a scenario's steps, each row linking to its own block.
+    #[test]
+    fn scenarios_are_ranked_slowest_first_by_total_step_time() {
+        let html = render(&[
+            block("quick", &[10]),
+            block("heavy", &[400, 600]),
+            block("middling", &[200]),
+        ]);
+        let order: Vec<&str> = ["heavy", "middling", "quick"]
+            .into_iter()
+            .filter(|name| html.contains(*name))
+            .collect();
+        assert_eq!(order, vec!["heavy", "middling", "quick"]);
+        let (first, second) = (html.find("heavy").unwrap(), html.find("middling").unwrap());
+        assert!(first < second, "slowest first: {html}");
+        assert!(
+            html.contains("1000 ms"),
+            "steps are summed, not maxed: {html}"
+        );
+        assert!(
+            html.contains("href=\"#s-f--heavy\""),
+            "rows link to blocks: {html}"
+        );
+    }
+
+    /// The actionable half. A reader deciding where to spend an afternoon needs
+    /// the *share*, not a column of durations.
+    #[test]
+    fn the_heading_reports_the_share_of_run_time_covered() {
+        // 900 of 1000 ms sit in the two listed scenarios.
+        let html = render(&[block("a", &[600]), block("b", &[300]), block("c", &[100])]);
+        assert!(html.contains("100.0% of run time"), "all three fit: {html}");
+        assert!(html.contains("3 of 3"), "{html}");
+    }
+
+    /// Nothing to rank means no section — an empty ranking is noise, and a
+    /// single row is that scenario's own block repeated.
+    #[test]
+    fn a_run_with_nothing_to_compare_renders_no_section() {
+        assert!(render(&[]).is_empty(), "no scenarios");
+        assert!(
+            render(&[block("only", &[5])]).is_empty(),
+            "one timed scenario"
+        );
+        assert!(
+            render(&[block("a", &[0]), block("b", &[0])]).is_empty(),
+            "an untimed record (no injected durations) has nothing to rank"
+        );
     }
 }

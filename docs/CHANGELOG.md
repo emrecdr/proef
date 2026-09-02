@@ -8,6 +8,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **The HTML report answers "what is slowest".** After "what failed", it is the
+  question a test report is most often asked, and the page could not answer it:
+  the timeline showed *that* workers were busy, never *which* scenarios to
+  attack. Every number needed was already in the fold.
+
+  A ranked section, slowest first, each row linking to its own block, with the
+  heading reporting the **share of run time the listed scenarios account for** —
+  "3 of 40 · 71% of run time" is a decision, where a column of durations is
+  homework. Capped at eight: a ranking long enough to scroll has stopped
+  answering the question.
+
+  Cost is the **sum of a scenario's step durations**, the same definition
+  `timings.json` uses for shard weights — one notion of what a scenario costs
+  across the whole tool. Not the wall-clock span, which includes time waiting
+  for a worker: a property of how the run was scheduled, and not something the
+  reader can go and fix.
+
+  Absent when there is nothing to rank — fewer than two timed scenarios, or a
+  record with no injected durations at all.
+
 - **`--shard-weights` balances a shard matrix by measured duration.** `--shard`
   assigns by a frozen hash, which guarantees that adding one scenario never
   re-buckets the others but cannot balance by *time* — and a CI matrix finishes
