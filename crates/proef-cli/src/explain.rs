@@ -260,6 +260,7 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             attempts,
             detail,
             fragment,
+            label,
             reproduce_hint,
             ..
         } = event
@@ -292,8 +293,11 @@ fn failure_detail(events: &[Event]) -> BTreeMap<(String, String), Vec<String>> {
             .entry((step.file.to_string(), scenario.to_string()))
             .or_default()
             .push(format!(
-                "  ✗ {}:{} — {} ({attempts} attempt(s)){why}{via}{reproduce}",
-                step.file, step.line, step.text
+                "  ✗ {}:{} — {}{} ({attempts} attempt(s)){why}{via}{reproduce}",
+                step.file,
+                step.line,
+                step.text,
+                proef_core::report::step_label(label.as_deref())
             ));
     }
     failures

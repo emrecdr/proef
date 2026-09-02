@@ -221,7 +221,7 @@ build requirement).
       leaves the skeleton alone, pinned by properties; a truncated record counts its
       warned scenarios; AUTHORING gains the validation-error catalogue and the
       outline-into-docstring pattern). Breaking: `secret set --value` → `--stdin`;
-      `macros --output json` `pattern` is `string|null`
+      `macros --format json` `pattern` is `string|null`
 - [x] named hurl fragments (ADR-0018) — a step may `ref:` one `# @proef <name>` entry of
       a real `.hurl` file, values supplied by `bind:` at pack/macro/step scope; the file
       stays valid hurl, so the same bytes run under stock `hurl` and under proef (pinned

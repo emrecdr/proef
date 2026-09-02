@@ -48,41 +48,76 @@ pub fn report(
     // out loud.
     let mut events = events;
     let mut carried_note: Option<usize> = None;
-    if let Some(base_id) = &rec.rerun_of {
-        // `rerun_of` is a string read out of a record file, and records
-        // travel — joined unvalidated, a crafted `"../../elsewhere"` steered
-        // this read outside the runs root and spliced a foreign file's events
-        // into the rendered page. A run id is a single path component,
-        // whatever its spelling (uuid or a user-chosen `--run-id`).
-        let escapes_runs_root = std::path::Path::new(base_id).file_name()
-            != Some(std::ffi::OsStr::new(base_id.as_str()));
-        if escapes_runs_root {
+    // Followed **transitively**: fix → rerun → fix → rerun is the workflow
+    // this feature exists for, and reading only the immediate base dropped
+    // everything from before it. A three-deep chain rendered two scenarios of
+    // a thirteen-scenario suite, with no banner saying so, while `docs/CI.md`
+    // promises "one report stands for the composed result".
+    //
+    // `seen` is not defensive dressing: `rerun_of` is a string read out of a
+    // record file, and a record travels — a cycle (crafted, or a run id
+    // reused) would otherwise splice for ever.
+    let mut base_id = rec.rerun_of.clone();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut carried_total = 0usize;
+    let mut oldest_base: Option<String> = None;
+    while let Some(id) = base_id.take() {
+        if !seen.insert(id.clone()) {
             crate::render::errln!(
-                "note: base run id `{base_id}` in the record is not a directory name — \
-                 rendering the re-run subset only"
+                "note: base run id `{id}` repeats in the rerun chain — stopping there"
             );
-        } else {
-            match crate::record::read_events(&runs_root.join(base_id)) {
-                Ok(base_events) => {
-                    let carried = carried_scenario_events(&base_events, &rec);
-                    if !carried.is_empty() {
-                        carried_note = Some(count_carried(&carried));
-                        events.splice(1..1, carried);
-                    }
-                }
-                Err(_) => {
-                    crate::render::errln!(
-                        "note: base run {base_id} is no longer on disk — rendering the re-run subset only"
-                    );
-                }
-            }
+            break;
         }
+        // `rerun_of` is joined onto the runs root, so a crafted
+        // `"../../elsewhere"` would steer this read outside it and splice a
+        // foreign file's events into the page. A run id is a single path
+        // component, whatever its spelling (uuid or a user-chosen `--run-id`).
+        if std::path::Path::new(&id).file_name() != Some(std::ffi::OsStr::new(id.as_str())) {
+            crate::render::errln!(
+                "note: base run id `{id}` in the record is not a directory name — \
+                 rendering without it"
+            );
+            break;
+        }
+        let Ok(base_events) = crate::record::read_events(&runs_root.join(&id)) else {
+            crate::render::errln!(
+                "note: base run {id} is no longer on disk — rendering without it"
+            );
+            break;
+        };
+        // Re-parsed against the *composed* stream so far, so a scenario
+        // already carried from a newer base is not carried again from an
+        // older one: the newest verdict wins, which is what a merged view
+        // means.
+        let composed = crate::record::parse_record(&events);
+        let carried = carried_scenario_events(&base_events, &composed);
+        if !carried.is_empty() {
+            carried_total += count_carried(&carried);
+            events.splice(1..1, carried);
+        }
+        oldest_base = Some(id);
+        base_id = crate::record::parse_record(&base_events).rerun_of;
+    }
+    if carried_total > 0 {
+        carried_note = Some(carried_total);
+        // The tail totals belong to the **re-run**, and this stream is no
+        // longer the re-run: the page below lists the composed suite. Left in
+        // place they won the headline, so one page read `2 passed · 0 failed`
+        // above a tag table summing to eight and a sibling `JUnit` saying
+        // `tests="8"`. Dropping them makes the headline count the scenarios
+        // actually rendered — no number is invented, one is declined.
+        //
+        // Safe because this vector is already a derived, in-memory
+        // composition, not the record: the record file keeps its own tail
+        // untouched (ADR-0008), and `rec.completion` — read before any of
+        // this — still drives the incomplete banner.
+        events.retain(|event| !matches!(event, Event::RunFinished { .. }));
     }
     let out_path = output.map_or_else(|| record_dir.join("report.html"), Path::to_path_buf);
     let href = artifacts_href(&record_dir, &out_path);
     let mut html = proef_core::html::render_html(&events, &href, tag_links);
     if let Some(count) = carried_note {
-        html = banner_carried(&html, count, rec.rerun_of.as_deref().unwrap_or("?"));
+        html = banner_carried(&html, count, oldest_base.as_deref().unwrap_or("?"));
     }
     if rec.completion == RunCompletion::Incomplete {
         html = banner_incomplete(&html);

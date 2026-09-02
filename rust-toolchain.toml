@@ -1,4 +1,5 @@
 [toolchain]
-# Policy: always latest stable (TECH-SPEC §15). Bump deliberately; MSRV follows upstream hurl.
+# Policy: latest stable, adopted at its x.y.1 point release (TECH-SPEC §15).
+# Bump deliberately; MSRV follows upstream hurl.
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]

@@ -75,38 +75,58 @@ pub struct FeatureAnchor {
     pub text: String,
 }
 
-/// A feature file's stem, as artifact naming uses it: the final component
-/// without its extension, `"feature"` when the path yields none.
+/// The artifact slug for one scenario: `<feature-path>--<scenario>`, slugified.
 ///
-/// Defined once, here, because the emitter owns naming (ADR-0010) — and
-/// because this expression used to exist four times (the emitter's caller,
-/// the dispatcher's spec naming, the HTML report's anchors, the editor's
-/// analysis), four chances for the fallback or the semantics to drift apart.
-/// Every consumer of "the stem of this feature file" calls this.
-#[must_use]
-pub fn feature_stem(path: &str) -> String {
-    std::path::Path::new(path).file_stem().map_or_else(
-        || "feature".to_owned(),
-        |stem| stem.to_string_lossy().into_owned(),
-    )
-}
-
-/// The artifact slug for one scenario: `<feature-stem>--<scenario-slug>`.
+/// `feature_file` is the feature's **portable, suite-relative name** — the one
+/// the naming boundary produces and the record carries
+/// (`features/sub/x.feature`), never a path off the running machine. That is
+/// load-bearing twice: an absolute path here would write the author's home
+/// directory into every artifact name, and a bare *stem* here loses scenarios.
 ///
-/// The composition, not just the pieces: `slugify` and [`feature_stem`] were
-/// already shared, but the `--` join was written once here and once in the
-/// HTML report's anchor builder — and the report's links to artifact files
-/// only resolve because both sides derive the same name. One function makes
-/// that agreement structural rather than coincidental.
+/// The whole path, not its stem, because the stem is not unique. Two files
+/// named `x.feature` in different directories, each with a `same name`
+/// scenario, both slugged to `x--same-name` — so the second artifact
+/// **overwrote the first** while the CLI reported writing two. Silent loss of
+/// the hand-off ADR-0010 calls a contract, and the project already treats
+/// same-named scenarios across files as real: that is what `--scenario-file`
+/// exists for.
+///
+/// Path-derived rather than disambiguated-on-collision, deliberately. A
+/// counter or hash appended only when two names clash would make one
+/// scenario's artifact name depend on whether some *other* file exists, so
+/// adding a feature would rename an unrelated artifact — the same instability
+/// `--shard`'s frozen hash exists to avoid. Deriving from the path keeps a
+/// name a function of that scenario alone.
+///
+/// One function, so the agreement is structural: the emitter writes these
+/// files and the HTML report links to them, and the links resolve only
+/// because both sides derive the same name.
 #[must_use]
-pub fn artifact_slug(feature_stem: &str, scenario: &str) -> String {
-    format!("{}--{}", slugify(feature_stem), slugify(scenario))
+pub fn artifact_slug(feature_file: &str, scenario: &str) -> String {
+    let path = std::path::Path::new(feature_file);
+    // The extension is dropped so the ubiquitous `.feature` is not in every
+    // name; everything before it is kept, separators and all, and slugified.
+    let base = path.file_stem().map_or_else(String::new, |stem| {
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map_or_else(
+                || stem.to_string_lossy().into_owned(),
+                |parent| parent.join(stem).to_string_lossy().into_owned(),
+            )
+    });
+    let base = slugify(&base);
+    let base = if base.is_empty() {
+        "feature".to_owned()
+    } else {
+        base
+    };
+    format!("{base}--{}", slugify(scenario))
 }
 
 /// Emit one scenario's artifact set. `None` when the scenario lowers to no
 /// hurl entries (nothing to hand to the engine or the backend team).
-pub fn emit(scenario: &LoweredScenario, feature_stem: &str, world: &World) -> Option<Artifact> {
-    let slug = artifact_slug(feature_stem, &scenario.name);
+pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Option<Artifact> {
+    let slug = artifact_slug(feature_file, &scenario.name);
     let has_vars = !scenario.globals.is_empty() || !scenario.secrets.is_empty();
 
     let mut steps: Vec<(usize, usize, &crate::step::LoweredStep)> = Vec::new();
@@ -465,6 +485,31 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    /// **Two scenarios must never claim one artifact name.** Same stem, same
+    /// scenario, different directories used to slug identically, so the second
+    /// artifact silently overwrote the first while the CLI counted two — the
+    /// hand-off ADR-0010 calls a contract, losing a scenario without a word.
+    #[test]
+    fn a_scenario_is_named_by_its_path_not_its_stem() {
+        let a = artifact_slug("features/x.feature", "same name");
+        let b = artifact_slug("features/sub/x.feature", "same name");
+        assert_ne!(a, b, "same stem in different directories must not collide");
+        assert_eq!(a, "features-x--same-name");
+        assert_eq!(b, "features-sub-x--same-name");
+        // The extension is not in the name: every feature carries it, so it
+        // would be noise in every artifact filename.
+        assert!(!a.contains("feature-feature"), "{a}");
+    }
+
+    /// A path with no directory still names cleanly, and a path that yields no
+    /// stem at all falls back rather than producing a bare `--scenario`.
+    #[test]
+    fn artifact_names_degrade_gracefully() {
+        assert_eq!(artifact_slug("x.feature", "s"), "x--s");
+        assert_eq!(artifact_slug("", "s"), "feature--s");
+        assert_eq!(artifact_slug("/", "s"), "feature--s");
+    }
     use crate::engine::EngineId;
     use crate::step::{LoweredStep, StepBatch, StepKindId, StepRef};
     use crate::world::{GlobalStore, Value};

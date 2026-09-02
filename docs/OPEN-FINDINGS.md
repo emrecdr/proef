@@ -29,6 +29,87 @@ was re-checked against `main` on **2026-08-10**.
 
 ---
 
+## Ingested — validation round 19 (2026-09-02), validated claim-by-claim
+
+An external round against v0.15.0+v0.16.0 (66 commits). Every finding was
+reproduced against the tree before being acted on, and the round's own
+correction of two earlier rounds (the Rust pin) is accepted — see below.
+
+**Shipped: the P1 and all eight P2s.** `--rerun` on a truncated record (a
+silent green over a suite that never ran); the artifact slug collision
+(ADR-0010, silent overwrite); `diff`'s phantom "now skipped (was passing)";
+the tab exempted from the control-character guard; the unreachable `Warned`
+scenario status and its four dead consumers; rerun composition (headline vs
+page, and a non-transitive overlay); `--shard-weights`' zero pileup; the two
+ADR-0020 §5 metadata consumers that never received any; and the ADR-0002
+grammar guard's blind shapes — which, once taught method lines, surfaced
+exactly the token the report predicted.
+
+**Two P2 sub-claims declined, with reasons:**
+
+- **Header lines in the grammar guard.** The report names method *and* header
+  lines as undetectable. Method lines were taught and found a real token.
+  Header lines were not: no instance exists in core today, and the only
+  workable heuristic (a Capitalized key with a colon) fires on ordinary
+  diagnostic prose. Trigger to revisit: the first header literal that appears
+  in core — at which point it should be pinned by hand rather than by pattern.
+
+- **`production_text` truncation was latent, not active.** The report calls it
+  "already the shape of `html.rs` and `pack/validate.rs`". Checked: both do
+  carry a second `#[cfg(test)] mod`, but neither has production code after one,
+  so nothing was actually unscanned. Fixed anyway (the scan now excises every
+  test module) because it was one edit away from real.
+
+### P3s — shipped
+
+`.cargo/audit.toml`'s stale quick-xml ignores (it claimed to mirror
+`deny.toml`, which had deliberately removed them — the lockfile is on the
+patched 0.41.0 line, so the nightly job was suppressing for no reason, *and*
+would have silenced any new advisory against that line); `explain` dropping a
+step's authored `name:` while `step_label`'s own doc enumerates `explain`
+among its six readers; the HTML "Slowest" section counting `[run]` phases into
+"% of run time" while the tag table on the same page excludes them (ADR-0014);
+the toolchain policy stated correctly in `RELEASING.md`/`CLAUDE.md` but not in
+the normative spec that `rust-toolchain.toml` cites as its authority; and five
+stale `--output json` spellings in documents describing current behaviour,
+now guarded — narrowly, by an allowlist of present-tense docs, because
+`CHANGELOG`/`RELEASING`/this file quote the flag as it really was.
+
+### P3 — open, because the fix is a design decision
+
+- **`--run-id` records are invisible to `latest`, `flaky`, `diff` and
+  `--rerun`.** `record::all_runs` filters on `fsutil::is_run_id`, which
+  requires a 36-character uuid, so a `--run-id pr` directory (which
+  TROUBLESHOOTING demonstrates) is never enumerated.
+
+  **Do not "just widen it".** `rotate_runs` consumes the same predicate and
+  says so in its own words — *"`all_runs` is the one answer to what is a run
+  record here"* — and its narrowness is what keeps rotation from deleting user
+  content under `runs-dir = "."`. Broadening the shared predicate broadens
+  **deletion**. The two uses have opposite risk profiles: discovery is unsafe
+  when narrow, rotation is unsafe when broad.
+
+  So the fix is to *split* them, which contradicts an explicit design
+  statement and therefore wants a decision on the record. A safe discovery
+  predicate exists (a directory containing `events.jsonl` cannot be mistaken
+  for `target/` and deletes nothing), but ordering does not come free:
+  `all_runs` documents that uuid-v7 names sort chronologically, so lexical
+  order *is* time order — a `pr` directory breaks that, and `latest` would
+  need mtime or the record's own `run_started`. CONFIG.md documents the
+  rotation consequence of custom ids; it does not document the invisibility.
+  That gap is real either way.
+
+### Corrections this round made to earlier ones *(accepted)*
+
+Rounds 17 and 18 reported the 1.97.1 pin as "overdue". It was not: R18-2
+changed the policy to *latest stable adopted at its `x.y.1` point release*,
+and 1.98.1 does not exist yet. The round is right that the remaining defect is
+documentary, and right about where — the correction had reached
+`RELEASING.md` and `CLAUDE.md` but not TECH-SPEC §15, which
+`rust-toolchain.toml` names as its authority. Fixed in all four places.
+
+---
+
 ## Ingested — the 2026-09-02 survey (internal), validated then implemented
 
 A deliberate check-the-world round: repo state against upstream releases,
@@ -1672,7 +1753,7 @@ form.
 
 ### D1 — no first-class requirement traceability
 
-**Verified.** `flows --output json` prints one object per scenario
+**Verified.** `flows --format json` prints one object per scenario
 (`main.rs:128-137`), which with tags like `@FRD-3.1-create` gets most of the way.
 Almost certainly a **documented recipe rather than a feature** — proef should not
 learn what a requirement is — but the recipe does not exist, so every team

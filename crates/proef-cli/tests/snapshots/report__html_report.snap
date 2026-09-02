@@ -13,7 +13,7 @@ expression: "render_html(&events, \"artifacts\",\n&[(\"501_*\".to_owned(), \"htt
 <body>
 <h1>proef run <code>report-0001</code></h1>
 <p class="summary"><span class="count pass">1 passed</span> <span class="count fail">1 failed</span> <span class="count skip">0 skipped</span> <span class="steps">2 steps · 3 attempts</span></p>
-<nav class="jump">failed: <a href="#s-502-login--login-rejects-a-bad-password">Login rejects a bad password</a></nav>
+<nav class="jump">failed: <a href="#s-tests-features-502-login--login-rejects-a-bad-password">Login rejects a bad password</a></nav>
 <div class="filter">show: <button class="on" data-f="all">all</button><button data-f="fail">failed</button><button data-f="skip">skipped</button><button data-f="warn">warned</button></div>
 <h2 class="section-h" id="by-tag">By tag</h2>
 <table class="tags">
@@ -25,18 +25,18 @@ expression: "render_html(&events, \"artifacts\",\n&[(\"501_*\".to_owned(), \"htt
 </table>
 <h2 class="section-h" id="slowest">Slowest <span class="count">2 of 2 · 100.0% of run time</span></h2>
 <ol class="slow">
-<li><a href="#s-502-login--login-rejects-a-bad-password">Login rejects a bad password</a><span class="slow-bar"><span class="bar fail" style="width:100.0%"></span></span><span class="slow-ms">120 ms</span></li>
-<li><a href="#s-501-search--search-admin-guest">Search &lt;admin&gt; &amp; guest</a><span class="slow-bar"><span class="bar pass" style="width:33.3%"></span></span><span class="slow-ms">40 ms</span></li>
+<li><a href="#s-tests-features-502-login--login-rejects-a-bad-password">Login rejects a bad password</a><span class="slow-bar"><span class="bar fail" style="width:100.0%"></span></span><span class="slow-ms">120 ms</span></li>
+<li><a href="#s-tests-features-501-search--search-admin-guest">Search &lt;admin&gt; &amp; guest</a><span class="slow-bar"><span class="bar pass" style="width:33.3%"></span></span><span class="slow-ms">40 ms</span></li>
 </ol>
 <h2 class="section-h" id="scenarios">Scenarios</h2>
-<details class="scenario pass" id="s-501-search--search-admin-guest">
-<summary><span class="pill pass">passed</span> <span class="loc">tests/features/501_search.feature</span> Search &lt;admin&gt; &amp; guest <a class="artifact" href="artifacts/501-search--search-admin-guest.hurl">artifact</a></summary>
+<details class="scenario pass" id="s-tests-features-501-search--search-admin-guest">
+<summary><span class="pill pass">passed</span> <span class="loc">tests/features/501_search.feature</span> Search &lt;admin&gt; &amp; guest <a class="artifact" href="artifacts/tests-features-501-search--search-admin-guest.hurl">artifact</a></summary>
 <ol class="steps">
 <li class="pass"><span class="glyph">✓</span> the admin searches for &quot;Jansen&quot;<span class="meta">:6 · 1× · 40ms</span><span class="track"><span class="bar pass" style="margin-left:0.0%;width:100.0%"></span></span></li>
 </ol>
 </details>
-<details class="scenario fail" id="s-502-login--login-rejects-a-bad-password" open>
-<summary><span class="pill fail">failed</span> <span class="loc">tests/features/502_login.feature</span> Login rejects a bad password <a class="artifact" href="artifacts/502-login--login-rejects-a-bad-password.hurl">artifact</a></summary>
+<details class="scenario fail" id="s-tests-features-502-login--login-rejects-a-bad-password" open>
+<summary><span class="pill fail">failed</span> <span class="loc">tests/features/502_login.feature</span> Login rejects a bad password <a class="artifact" href="artifacts/tests-features-502-login--login-rejects-a-bad-password.hurl">artifact</a></summary>
 <ol class="steps">
 <li class="fail"><span class="glyph">✗</span> the guest logs in<span class="meta">:4 · 2× · 120ms</span><span class="track"><span class="bar fail" style="margin-left:0.0%;width:100.0%"></span></span><pre class="detail">assert failure: expected HTTP 401 but was 200
   at 502-login--login-rejects-a-bad-password.hurl:9</pre><pre class="detail">reproduce: curl the-guest-logs-in</pre></li>

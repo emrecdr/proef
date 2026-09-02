@@ -42,7 +42,7 @@ door.
    `run_id`, the bool plus the id reproduces an order exactly (deferred out
    of `--shuffle`'s own change so `run_started` moved once, not twice).
 5. **Metadata reaches the record, `explain`, `diff`, the HTML report, the
-   GitHub summary and the `--output json` body — and nothing else.** Never
+   GitHub summary and the `--format json` body — and nothing else.** Never
    artifacts (`.hurl` bytes stay identical across checkouts and commits —
    ADR-0010, R12-2); not TAP (no slot a consumer reads); not JUnit
    `<properties>` (GitLab ignores them, Jenkins reads them only behind a

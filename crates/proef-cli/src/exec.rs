@@ -313,7 +313,13 @@ pub fn execute(
             )
         });
         match crate::record::rerun_candidates(&dir) {
-            Ok(candidates) if candidates.scenarios.is_empty() => {
+            // "No failures" is only a safe reading of a record that *finished*.
+            // A truncated base names nothing about the work it never reached,
+            // so this early exit is exactly where a killed run used to report
+            // success over a suite that never ran — the filter decides instead.
+            Ok(candidates)
+                if candidates.scenarios.is_empty() && !candidates.filter.base_truncated() =>
+            {
                 crate::render::outln!("nothing to rerun — the last run has no failed scenarios");
                 return ExitCode::Success;
             }
@@ -328,7 +334,14 @@ pub fn execute(
                         candidates.never_ran
                     );
                 }
-                Some(candidates.scenarios)
+                if candidates.filter.base_truncated() {
+                    crate::render::errln!(
+                        "warning: the last run has no run_finished — it was truncated (killed, \
+                         out of memory, out of disk). It cannot say what it never reached, so \
+                         every scenario it did not finish is being rerun."
+                    );
+                }
+                Some(candidates.filter)
             }
             Err(err) => {
                 crate::render::errln!("error: {err}");
@@ -507,6 +520,7 @@ pub fn execute(
                                 non_gating: &[],
                                 carried: &[],
                                 tag_links: &config.tag_links,
+                                metadata,
                             },
                             &front.run_id,
                             sinks,
@@ -538,6 +552,7 @@ pub fn execute(
                                 non_gating: &[],
                                 carried: &[],
                                 tag_links: &config.tag_links,
+                                metadata,
                             },
                             &front.run_id,
                             sinks,
@@ -560,7 +575,7 @@ pub fn execute(
             exclusive_tags.as_ref(),
             scenario_filter,
             scenario_file_filter,
-            rerun_set.as_deref(),
+            rerun_set.as_ref(),
             &artifacts_dir,
         );
         // `--shard I/N` — applied AFTER every other filter, so a shard is always
@@ -891,6 +906,7 @@ pub fn execute(
                 non_gating: &non_gating,
                 carried: &carried,
                 tag_links: &config.tag_links,
+                metadata,
             },
             &front.run_id,
             sinks,
@@ -1469,6 +1485,9 @@ struct Verdict<'a> {
     carried: &'a [runner::ScenarioOutcome],
     /// `[tag-links]` — the GitHub summary links matching tags.
     tag_links: &'a std::collections::BTreeMap<String, String>,
+    /// Explicit run metadata (ADR-0020 §5 names the GitHub summary among the
+    /// surfaces it must reach). Handed over by the user, never harvested.
+    metadata: &'a std::collections::BTreeMap<String, String>,
 }
 
 /// The optional CI report destinations, and the clock they share — one value
@@ -1547,7 +1566,13 @@ fn write_ci_reports(
             }
         }
     }
-    crate::ci_reports::write_github_summary(verdict.summary, verdict.tag_links, run_id, redactions);
+    crate::ci_reports::write_github_summary(
+        verdict.summary,
+        verdict.tag_links,
+        run_id,
+        verdict.metadata,
+        redactions,
+    );
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--format json`) owns stdout.
@@ -1678,7 +1703,7 @@ fn build_specs(
     exclusive: Option<&proef_core::tags::TagExpr>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
-    rerun_set: Option<&[(String, String)]>,
+    rerun_set: Option<&crate::record::RerunFilter>,
     artifacts_dir: &Path,
 ) -> Vec<ScenarioSpec> {
     let mut specs = Vec::new();
@@ -1693,7 +1718,7 @@ fn build_specs(
         }
         let file_arc: Arc<str> = Arc::from(feature.file.path.as_str());
         let feature_arc = Arc::new(feature.file.clone());
-        let stem: Arc<str> = Arc::from(proef_core::emit::feature_stem(&feature.file.path).as_str());
+        let stem: Arc<str> = Arc::from(feature.file.path.as_str());
         for scenario in &feature.scenarios {
             if !front::tag_selected(&scenario.lowered.tags, tags) {
                 continue;
@@ -1703,13 +1728,12 @@ fn build_specs(
             {
                 continue;
             }
-            // `--rerun`: keep only scenarios that failed in the prior run, keyed
-            // on the run-wide (file, name) identity.
+            // `--rerun`: keep what the base record says to run, keyed on the
+            // run-wide (file, name) identity. Not always a list — a truncated
+            // base cannot name the work it missed, so the filter owns that
+            // distinction rather than restating it here.
             if let Some(rerun) = rerun_set
-                && !rerun.iter().any(|(file, name)| {
-                    file.as_str() == feature.file.path.as_str()
-                        && name.as_str() == scenario.lowered.name.as_str()
-                })
+                && !rerun.keeps(feature.file.path.as_str(), scenario.lowered.name.as_str())
             {
                 continue;
             }

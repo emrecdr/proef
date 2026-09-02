@@ -359,7 +359,6 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::SidecarMap
 pub const proef_core::emit::MAP_SCHEMA_VERSION: u32
 pub fn proef_core::emit::artifact_slug(&str, &str) -> alloc::string::String
 pub fn proef_core::emit::emit(&proef_core::lower::LoweredScenario, &str, &proef_core::world::World) -> core::option::Option<proef_core::emit::Artifact>
-pub fn proef_core::emit::feature_stem(&str) -> alloc::string::String
 pub fn proef_core::emit::file_references(&str) -> alloc::vec::Vec<alloc::string::String>
 pub fn proef_core::emit::slugify(&str) -> alloc::string::String
 pub mod proef_core::engine

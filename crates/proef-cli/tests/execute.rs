@@ -1086,6 +1086,81 @@ fn a_rerun_carries_the_bases_scenarios_into_junit_and_the_report() {
         "the banner says what was composed: {}",
         &html[..400]
     );
+    // The headline counts the page, not the re-run subset. Leaving the
+    // re-run's own tail totals in charge printed `0 passed · 1 failed` above
+    // a page listing three scenarios and a sibling JUnit saying the same
+    // three — one page disagreeing with itself.
+    assert!(
+        html.contains("2 passed") && html.contains("1 failed"),
+        "the merged page's headline must count the merged suite: {html}"
+    );
+}
+
+/// …and a **rerun of a rerun** still stands for the whole suite.
+///
+/// `docs/CI.md` promises "one report stands for the composed result", and the
+/// overlay read only the *immediate* base — so the ordinary
+/// fix → rerun → fix → rerun loop, which is the workflow the feature exists
+/// for, silently dropped everything from before the last link. No banner said
+/// so; the page just got smaller.
+#[test]
+fn a_rerun_of_a_rerun_still_covers_the_whole_suite() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: alpha\n    When the suite probes health\n  \
+         Scenario: beta\n    When the first flake settles\n  \
+         Scenario: gamma\n    When the second flake settles\n",
+    )
+    .unwrap();
+    let pack = |beta: u16, gamma: u16| {
+        format!(
+            "{PROBE_PACK}  first:\n    match: the first flake settles\n    steps:\n      \
+             - hurl: |\n          GET ${{url:base}}/health\n          HTTP {beta}\n  \
+             second:\n    match: the second flake settles\n    steps:\n      \
+             - hurl: |\n          GET ${{url:base}}/health\n          HTTP {gamma}\n"
+        )
+    };
+    let pack_path = cwd.path().join("suite/packs/p.yaml");
+
+    // Base: alpha passes, beta and gamma fail.
+    std::fs::write(&pack_path, pack(500, 500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    // Rerun 1: fix beta; gamma still fails. Carries alpha.
+    std::fs::write(&pack_path, pack(200, 500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(1);
+    // Rerun 2: fix gamma. Its immediate base carried alpha, so only a
+    // transitive walk reaches alpha at all.
+    std::fs::write(&pack_path, pack(200, 200)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun", "--junit", "final.xml"])
+        .assert()
+        .code(0);
+
+    proef_in(cwd.path(), &fixture)
+        .args(["report", "-o", "merged.html"])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(cwd.path().join("merged.html")).unwrap();
+    for name in ["alpha", "beta", "gamma"] {
+        assert!(
+            html.contains(name),
+            "a two-deep rerun chain must still cover the suite ({name}): {html}"
+        );
+    }
+    assert!(
+        html.contains("3 passed"),
+        "the headline counts the whole composed suite: {html}"
+    );
 }
 
 /// `--console dotted` prints one glyph per scenario and `--console quiet`
@@ -2329,6 +2404,143 @@ fn rerun_after_a_max_fail_stop_continues_the_never_ran_tail() {
     assert!(
         rendered.contains("3 passed") && !rendered.contains("note: the last run was cancelled"),
         "a completed base keeps the old semantics, without the partial-run note: {rendered}"
+    );
+}
+
+/// `--rerun` on a **truncated** base runs everything the record cannot prove
+/// finished — the same class as the cancelled case above, and the one CI
+/// actually hits.
+///
+/// A cancelled run records its skipped tail, so a list works. A run that was
+/// *killed* — SIGKILL, OOM, a full disk, a container eviction — writes no tail
+/// `RunFinished` and its unreached scenarios are simply **absent**, because
+/// `Record::scenarios` is built from `scenario_finished` events alone. So the
+/// old list-shaped question ("what did the record say failed?") answered
+/// "nothing", and `--rerun` exited 0 having executed no scenario at all, over a
+/// suite that never ran. `explain` saw the truncation the whole time; `--rerun`
+/// did not.
+#[test]
+fn rerun_on_a_truncated_record_runs_what_it_cannot_prove_finished() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    let mut feature = String::from("Feature: F\n");
+    for i in 0..4 {
+        use std::fmt::Write as _;
+        let _ = write!(
+            feature,
+            "  Scenario: case {i}\n    When the suite probes health\n"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), &feature).unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+
+    // Truncate the record the way a killed process leaves it: a head, some
+    // partial scenario traffic, and no `run_finished`.
+    let events = latest_run_dir(cwd.path()).join("events.jsonl");
+    let text = std::fs::read_to_string(&events).unwrap();
+    let mut head = text.lines().take(3).collect::<Vec<_>>().join("\n");
+    head.push('\n');
+    assert!(
+        !head.contains("run_finished"),
+        "the fixture for this test must not carry a tail event"
+    );
+    std::fs::write(&events, head).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(0);
+    let rendered = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        rendered.contains("4 passed"),
+        "every scenario the truncated record could not prove finished must run: {rendered}"
+    );
+    assert!(
+        !rendered.contains("nothing to rerun"),
+        "'no failures' is only a safe reading of a record that finished: {rendered}"
+    );
+    assert!(
+        rendered.contains("truncated"),
+        "the reader must be told why the whole suite is being rerun: {rendered}"
+    );
+}
+
+/// A run in which an `optional:` step really failed must not print exactly
+/// what a spotless run prints.
+///
+/// `ConsoleMode::Failed`'s own doc comment states the requirement, and the
+/// `Warned` arm implementing it was **unreachable**: a scenario's aggregate
+/// status was only ever `Failed | Skipped | Passed`, so a real optional
+/// failure was invisible under `--console failed`, showed a `.` rather than a
+/// `w` under `--console dotted`, and left the HTML report's warned count and
+/// filter button permanently empty. Steps carried `Warned`; scenarios never
+/// did. Promoting the aggregate changes what the run *says*, never whether it
+/// gates — `Warned` counts as passing in the exit code, the totals and JUnit.
+#[test]
+fn a_warned_run_does_not_print_like_a_spotless_one() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: warns\n    When the optional probe misfires\n  \
+         Scenario: clean\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  warns:\n    match: the optional probe misfires\n    steps:\n      \
+         - name: an optional step that really fails\n        optional: true\n        hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 500\n  \
+         clean:\n    match: the suite probes health\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let shown = |scenario: &str| {
+        let assert = proef_in(cwd.path(), &fixture)
+            .args([
+                "test",
+                "suite",
+                "--console",
+                "failed",
+                "--scenario",
+                scenario,
+            ])
+            .assert()
+            .code(0);
+        String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+    };
+    let warned = shown("warns");
+    let clean = shown("clean");
+    assert_ne!(
+        warned.contains("scenario warns"),
+        clean.contains("scenario clean"),
+        "the warned run must show its tree where the clean one shows nothing"
+    );
+    assert!(
+        warned.contains("scenario warns"),
+        "an optional step that really failed must reach the console: {warned}"
+    );
+
+    // …and the dotted glyph the docs promise is reachable too.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--console", "dotted"])
+        .assert()
+        .code(0);
+    let dotted = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        dotted.contains('w'),
+        "a warned scenario is a `w`, not a `.`: {dotted}"
     );
 }
 

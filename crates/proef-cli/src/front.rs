@@ -235,13 +235,12 @@ pub fn run(
             world: &world,
             mode,
         };
-        let feature_stem = emit::feature_stem(&feature_path.display().to_string());
         let mut scenarios = Vec::new();
         for scenario in bound {
             match lower::lower(&scenario, &ctx) {
                 Ok(lowered) => {
                     warnings.extend(lowered.warnings.iter().cloned());
-                    let artifact = emit::emit(&lowered, &feature_stem, &world);
+                    let artifact = emit::emit(&lowered, &display, &world);
                     if let Some(artifact) = &artifact {
                         validate_artifact(artifact, &lowered, &kinds, &mut diags);
                     }

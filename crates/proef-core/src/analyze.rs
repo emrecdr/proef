@@ -293,8 +293,7 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
                     out.push_diags(name, lowered.warnings.iter().cloned());
                     // Emit + artifact validation is executed for its diagnostics
                     // only; the artifact text is discarded.
-                    let stem = emit::feature_stem(name);
-                    if let Some(artifact) = emit::emit(&lowered, &stem, &world) {
+                    if let Some(artifact) = emit::emit(&lowered, name, &world) {
                         let mut diags = Vec::new();
                         validate_artifact(&artifact, &lowered, ctx.kinds, &mut diags);
                         out.push_diags(name, diags);

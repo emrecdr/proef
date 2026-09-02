@@ -1,4 +1,15 @@
-# cargo-audit configuration. Mirrors deny.toml's advisory ignores — see the
-# justification there (quick-xml parse-side advisories; we only serialize).
+# cargo-audit configuration (the nightly job; `cargo deny` gates PRs).
+#
+# **No advisory ignores, deliberately.** This file used to carry the quick-xml
+# pair (RUSTSEC-2026-0194/0195) with a comment saying it mirrored `deny.toml` —
+# and it kept them after `deny.toml` removed them, so the claim was false and
+# the nightly job was suppressing advisories the PR gate was not. Worse, the
+# reason had expired: `quick-junit` 0.7 bumped to `quick-xml` 0.41, the patched
+# line, which the lockfile is on. A stale ignore also silences any *new*
+# advisory filed against that line, which is the whole cost of leaving one in.
+#
+# If an ignore is ever needed here, it belongs in `deny.toml` too, with its
+# expiry named — and both must be re-checked at every dependency bump that
+# could satisfy it.
 [advisories]
-ignore = ["RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
+ignore = []

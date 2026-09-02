@@ -198,7 +198,8 @@ fn a_fragment_artifact_is_snapshot_locked() {
         .assert()
         .code(0);
 
-    let artifact = std::fs::read_to_string(dir.path().join("out/a--s.hurl")).unwrap();
+    let artifact =
+        std::fs::read_to_string(dir.path().join("out/tests-features-a--s.hurl")).unwrap();
     insta::assert_snapshot!("fragment_artifact", artifact);
 }
 
@@ -708,7 +709,8 @@ fn a_neighbours_prose_never_reaches_the_artifact() {
         .assert()
         .code(0);
 
-    let artifact = std::fs::read_to_string(dir.path().join("out/a--s.hurl")).unwrap();
+    let artifact =
+        std::fs::read_to_string(dir.path().join("out/tests-features-a--s.hurl")).unwrap();
     assert!(
         !artifact.contains("Destructive"),
         "the comment introducing the next entry belongs to that entry: {artifact}"

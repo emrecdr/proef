@@ -318,7 +318,12 @@ fn resolve_bindings(
             // so a lone `\r` (a value read off a CRLF file) passed both gates
             // and produced exactly the late, mis-blamed failure this check
             // exists to prevent.
-            if resolved.chars().any(|c| c.is_control() && c != '\t') {
+            // Tab included, deliberately: it is a control character hurl's
+            // `variable:` grammar rejects like any other (the value parser
+            // ends the template and reports "expecting 'variable value'"), so
+            // exempting it sent exactly one character down the late,
+            // mis-blamed path this guard was written to close.
+            if resolved.chars().any(char::is_control) {
                 emit.sinks.errors.push(
                     at(Diag::error(
                         "proef::lower::multiline_bind",
@@ -2425,6 +2430,33 @@ mod tests {
             .find(|d| d.code == "proef::lower::multiline_bind")
             .unwrap_or_else(|| panic!("expected multiline_bind in {err:?}"));
         assert!(diag.message.contains("body"), "{}", diag.message);
+    }
+
+    /// …and every control character counts, **tab included**.
+    ///
+    /// The guard exempted `\t`, which hurl's `variable:` grammar rejects like
+    /// any other control character — its value parser ends the template and
+    /// reports "expecting 'variable value'". So exactly one character kept
+    /// taking the late path this check exists to close, dying as
+    /// `emit::invalid_artifact` against generated text rather than as a
+    /// refusal naming the author's own binding.
+    #[test]
+    fn a_control_character_in_a_binding_is_refused_tab_included() {
+        for (label, escaped) in [("tab", "\\t"), ("carriage return", "\\r")] {
+            let diags = lower_fragments(
+                &format!(
+                    "macros:\n  m:\n    match: it runs\n    steps:\n      - ref: first\n        bind:\n          u: \"http://x{escaped}y\"\n"
+                ),
+                "@first\n?u\n",
+            )
+            .expect_err("a control character in a binding cannot reach the entry");
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.code == "proef::lower::multiline_bind"),
+                "a {label} must be refused by name at lower time, not by the emitter: {diags:?}"
+            );
+        }
     }
 
     /// hurl's `[Options] variable:` assigns into one shared set rather than
