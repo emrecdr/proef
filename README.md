@@ -300,8 +300,9 @@ pure prose:
 - **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path,
   `fragments` = the `.hurl` corpus root scanned for `ref:` targets) and
   `[http]` — the settings that describe an *environment* rather than a test:
-  `timeout-ms`, `follow-location`/`max-redirs`, `user-agent`, and the TLS and
-  proxy surface (`insecure`, `cacert`, `client-cert`/`client-key` for mTLS,
+  `timeout-ms`, `follow-location`/`max-redirs`, `user-agent`, `cookie-store`
+  (`false` proves a stateless API by refusing to carry a session), and the TLS
+  and proxy surface (`insecure`, `cacert`, `client-cert`/`client-key` for mTLS,
   `proxy`/`no-proxy`). Credentials stay out on purpose — a password belongs in
   the secret store.
 - **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /

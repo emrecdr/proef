@@ -186,7 +186,15 @@ impl HurlSession {
         if self.http.user_agent.is_some() {
             builder.user_agent(self.http.user_agent.clone());
         }
-        if let Some(path) = &self.cookie_file
+        // With the store off, hurl never enables curl's cookie engine — and a
+        // `cookie_input_file` is read *only when enabling it*, so injecting one
+        // here would be silently ignored rather than an error. Skip it so the
+        // intent is explicit. (hurl's own FIXME about disabling the engine on a
+        // reused handle does not reach us: `run_entries` builds its client per
+        // call — TECH-SPEC §5 — so a handle never transitions on → off.)
+        if !self.http.cookie_store {
+            builder.use_cookie_store(false);
+        } else if let Some(path) = &self.cookie_file
             && path.exists()
         {
             builder.cookie_input_file(Some(path.display().to_string()));
@@ -364,13 +372,17 @@ impl EngineSession for HurlSession {
                 &mut logger,
             );
 
-            // Chain state for the next call (TECH-SPEC §5).
+            // Chain state for the next call (TECH-SPEC §5). No cookie file
+            // when the store is off: there is nothing to carry (the engine
+            // collected no cookies), and the next batch would not read one.
             self.chained = Some(result.variables.clone());
-            if let Err(err) = write_cookie_file(
-                &mut self.cookie_dir,
-                &mut self.cookie_file,
-                &result.cookie_store.to_netscape(),
-            ) {
+            if self.http.cookie_store
+                && let Err(err) = write_cookie_file(
+                    &mut self.cookie_dir,
+                    &mut self.cookie_file,
+                    &result.cookie_store.to_netscape(),
+                )
+            {
                 // A broken cookie chain would run later requests against
                 // stale session state and blame the resulting assert
                 // failures on the app under test — stop the batch instead.
@@ -1220,6 +1232,7 @@ mod http_option_tests {
             ("client_cert_file", "\"/mtls/client.crt\""),
             ("client_key_file", "\"/mtls/client.key\""),
             ("user_agent", "\"proef-suite/1\""),
+            ("use_cookie_store", "true"),
         ] {
             assert!(
                 debug.contains(&format!("{field}: {value}"))
@@ -1251,6 +1264,25 @@ mod http_option_tests {
         assert!(
             debug.contains("insecure: false"),
             "verification must stay on by default: {debug}"
+        );
+        assert!(
+            debug.contains("use_cookie_store: true"),
+            "the cookie store must stay on by default: {debug}"
+        );
+    }
+
+    /// `[http] cookie-store = false` must reach hurl's own switch — and it is
+    /// the one option here with **no per-entry `[Options]` spelling at all**
+    /// (`OptionKind` has no cookie variant), so this seam is its only route.
+    #[test]
+    fn a_disabled_cookie_store_reaches_the_engine() {
+        let debug = options_debug(HttpDefaults {
+            cookie_store: false,
+            ..HttpDefaults::default()
+        });
+        assert!(
+            debug.contains("use_cookie_store: false"),
+            "cookie-store = false did not reach hurl: {debug}"
         );
     }
 
