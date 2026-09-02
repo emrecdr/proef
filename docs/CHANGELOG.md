@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
+Each release groups its entries under **one** heading per kind, in the order
+Added · Changed · Fixed, with `Breaking` / `Internal` / `Documentation` after
+them where a release used those. Three shipped releases carried the same
+heading two or more times — a release cuts by *moving* `[Unreleased]` wholesale
+(`RELEASING.md`), so whatever shape it had at the time shipped verbatim.
+Regrouping preserved every entry and its order within its kind.
+
 ## [Unreleased]
 
 ### Added
@@ -506,29 +513,9 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   section of the changelog exists to record.
 
 ## [0.16.0] - 2026-08-31 (the surfaces tell the truth: an eight-wave improvement programme, and the round that found what it missed)
-
 > Supersedes **0.15.0**, which was cut (`release: v0.15.0`, 2026-08-25) but never
 > tagged or published — its changes are all here, and crates.io goes 0.14.0 →
 > 0.16.0 with nothing skipped.
-
-### Fixed
-
-- **The record-size ceiling reached two of its four readers.** 0.13.0 bounded
-  the run-record read at 256 MiB because records travel — `diff` reads a
-  downloaded baseline, `flaky` reads every retained run — and the read, the
-  line split and the parsed `Vec<Event>` are resident at once, so a corrupt or
-  hostile file was an OOM rather than an error. The bound lives in
-  `record::read_events`, and `explain` and `report` each opened
-  `events.jsonl` with a bare `read_to_string` instead, so neither had it.
-  `report` even used the guarded reader for the *base* record two dozen lines
-  below the raw read of the primary one.
-
-  Both now go through `read_events`, which returns the parsed events — exactly
-  the read-once/parse-once its own comment asked for. A source-scanning test
-  makes the next reader go through the same door, the shape this project
-  already uses for the raw-print and malformed-plural rules: a guard added in
-  one place and left for the next call site to rediscover is how it went
-  missing the first time.
 
 ### Added
 
@@ -569,7 +556,337 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   something *did* fail print exactly what a spotless one prints. A fourth
   value on the existing flag rather than a new one.
 
+- **`proef flaky --by <key>` splits flakiness by run context.** `--by env`, or
+  any `[meta]`/`--meta` key (`--by runner`), folds the history per context
+  instead of pooling it. A scenario that flaps in one environment and is solid
+  in another is not flaky but *context-dependent* — the fix is in the
+  environment, not the test — and a merged history cannot reach that
+  conclusion, because pooled failures and passes look exactly like one flapping
+  test. The command names the scenarios whose verdict changes with where they
+  ran, which is the finding the flag exists for. A run that never set the key
+  becomes its own `(unset)` bucket rather than being folded in with runs that
+  did; the context also rides in `--format json`. Reads the `env`/`metadata`
+  provenance the record has carried since ADR-0020 — no new recorded field.
+
+
+- **`proef schema config` publishes the `proef.toml` JSON Schema.** TOML
+  language servers (Taplo, tombi) validate against JSON Schema, so one file
+  buys completion, hover documentation and typo detection in the config —
+  before a run rather than after one. Generated from the same Rust model that
+  parses the file, so it describes keys as they are *written* (`runs-dir`, not
+  `runs_dir`) and inherits `deny_unknown_fields`, making an editor refuse
+  exactly what proef refuses. `proef schema` keeps printing the pack schema, so
+  one command answers "what may I write in this file?" for both authored
+  formats rather than two verbs answering it once each.
+
+
+- **An assertion that fails on values looking identical now says why.** When
+  the actual and expected values differ *solely* in whitespace, the failure
+  carries a note repeating both with every whitespace character drawn — `·` for
+  a space, `\t`/`\r`/`\n` for the usual escapes, `\u{a0}` for the exotic ones.
+  hurl's own message was already correct; the defect was simply invisible, so a
+  trailing space, a CRLF fixture leaking `\r`, or a non-breaking space pasted
+  out of a browser read as "the tool is wrong". Taken from hurl's structured
+  `actual`/`expected` rather than parsed back out of its prose, and emitted per
+  error so it sits beside the values it explains; silent whenever the
+  difference is already visible.
+
+
+- **`proef flaky` audits quarantine, which nothing else could.** A
+  `@quarantine` scenario's failures gate nothing by design, so no exit code, no
+  summary and no CI job reports them — which makes the tag's own failure mode
+  invisible: a quarantined scenario failing *every* run has been switched off
+  and left in the suite. It now reads `DISABLED` rather than sharing the
+  `broken` verdict with untagged always-failures, which wrongly implies someone
+  is watching. The opposite case gets its own verdict too: green throughout the
+  window is `recovered`, a tag that outlived its problem and is now suppressing
+  the next real regression. Both print what to do, and `--format json` carries
+  `quarantined` plus the verdict key so a scheduled job can gate on either.
+
+  This needed the record reader to stop dropping data it was already given:
+  `scenario_finished` has carried `tags` since 0.15.0, but `ScenarioRun` never
+  parsed them, leaving every record consumer tag-blind.
+
+
+- **Document symbols and hover.** A feature outlines to its scenarios (with
+  their tags), a pack to its macros (with the pattern each matches) — the
+  vocabulary chosen by what discovery found in the file, never by its
+  extension. Hover answers the question go-to-definition charges a round trip
+  for: what a step binds, what a `use:` targets, what a `ref:` resolves to and
+  which of its variables still need a `bind:`. Every fact is read from the same
+  analysis the diagnostics come from, so a hover cannot contradict the squiggle
+  on its own line. `SuiteAnalysis` gains a `scenarios` index, taken from the
+  parse rather than from binding — an outline that hid exactly the scenarios you
+  are debugging would be worse than no outline.
+
+- **A panic no longer ends the editor session silently.** Only the recompute was
+  guarded, so a panic inside completion, definition or references escaped the
+  message loop and killed the server — leaving an editor that shows nothing,
+  which reads as "proef has no opinion here" rather than as a failure. Both
+  entry points (a request, the debounced recompute) now wrap everything they do,
+  the request is *answered* with `InternalError` rather than dropped, and the
+  user is told once per suite state through `window/showMessage` — the channel
+  an editor surfaces, unlike the stderr line that was the only report before.
+  The next edit clears the report, because whether the new state also fails is
+  news.
+
+- **The editor can apply a "did you mean", not just print it.** Every
+  misspelled-name diagnostic that already suggested a nearest spelling now
+  carries the structured half of that suggestion — a span and a replacement —
+  and `proef lsp` serves it as a `quickfix` code action: `use:` and `ref:`
+  targets, `with:` and `bind:` keys, step kinds, Examples placeholders, and
+  data-table columns. The suggestion is computed **once** and rendered twice
+  (prose for a reader, an edit for an editor), so the message and the fix can
+  never disagree.
+
+  A fix is attached only when the edit is certain: the suggested name is near
+  enough, and the misspelling occurs exactly once, as a whole token, in the
+  diagnostic's *own* file. Each of those failing means no fix rather than an
+  approximate one — notably, a lowering error anchors on the feature step that
+  invoked a macro while the typo lives in the pack, so it finds nothing to
+  replace and offers nothing rather than editing the healthy file. The action
+  is reachable from either the diagnostic or the token, because the two are
+  regularly lines apart: a `use:` error carets the macro's name key.
+
+- **README answers the comparison a prospect actually runs**: a "When
+  something else fits better" section maps raw `hurl` (the exit stays open
+  in both directions), Karate (choose it for embedded JS and whole-body
+  fuzzy matching — the two mechanisms proef deliberately refuses; choose
+  proef for one binary, deterministic reproduction, and files that run
+  with no framework at all), and Postman/Bruno-class clients. The
+  quick-start also points at `proef init` as the start that demonstrates
+  the `ref:` body form — `tests/features/` is deliberately fragment-free
+  (the reference corpus is config-independent by design, and
+  `[run] fragments` is a config key; the runnable `ref:` demo lives in
+  the scaffold, pinned green against the fixture).
+
+- **The docs site can get a visitor to a binary, and CI to a green
+  workflow.** New [Installing](INSTALL.md) page — install lived only in
+  the repo README, outside the published site's source, so the site's
+  first step sent visitors back to GitHub — and a new [CI](CI.md) page
+  with the paste-ready workflow the docs never had (zero `runs-on` blocks
+  existed anywhere): install, secrets via `PROEF_SECRET_*`, `--junit
+  auto`, a `--shard` matrix, `--meta` provenance, the `diff
+  --fail-on-regression` baseline gate, `--rerun` continuation, and
+  `flaky` over retained records. Nav reordered visitor-first (Installing →
+  Getting started → Writing scenarios).
+- **AUTHORING gains the three recipes every real suite needs**:
+  login-then-use-the-token (the docs' most-asked absent question — zero
+  "login" hits existed), waiting for an eventually-consistent result
+  (finite `retry:` as the polling primitive, and why it must be finite),
+  and test-data seeding/cleanup across its three scopes (`Background:`,
+  `[run] setup`/`teardown`, `saveAs: global`).
+
+- **Every release archive ships a `.sha256` sidecar** (basename inside, so
+  `sha256sum -c` works from a download directory). Attestation covers the
+  provenance story for `gh` users; the sidecar covers everyone who
+  installs with `curl` — the half that was missing against the
+  ripgrep/uv/starship baseline.
+
+- **A broken `proef.toml` is a located diagnostic, not a bare sentence.**
+  The file is edited as often as any pack, and it was the one authored
+  input whose errors carried no code, no source excerpt and no caret —
+  while `pack::yaml` had all three for the structurally identical failure.
+  New codes `proef::config::toml` (with toml's own error span under the
+  caret) and `proef::config::unreadable`, in the catalogue (73 → 75) and
+  pinned by an integration test; `proef lsp`'s boot warning and `doctor`'s
+  config row carry the same message.
+- **Five help-less refusals gained their missing action.**
+  `feature::parse` (the shape of a feature file, and the most common way
+  one stops parsing), `bind::ambiguous_step` (make one pattern more
+  specific or retire the duplicate), `bind::table_conflict` (one source
+  per param), `pack::use_cycle` (pull shared steps into a third macro),
+  and the raw `retry: -1` message now says *why* infinite retries are
+  refused (hurl cannot be interrupted mid-call) and what to write instead
+  — it used to cite "ADR-0007", an internal document id with no in-band
+  route to it.
+
+- **A miss below the did-you-mean threshold names the valid set instead of
+  going silent.** All eleven suggestion sites ended
+  `closest(…).unwrap_or_default()` — when nothing was near, the tail
+  vanished, and `unknown_step_kind` said "not claimed by any registered
+  engine" about a registry with exactly **one** member it never named. One
+  `matcher::suggest_or_enumerate` now serves every site: the nearest
+  spelling when one is near, else the set verbatim (small), else a count
+  with the command that lists it (`(9 known — `proef macros` lists
+  them)`). `unknown_fake`, `unknown_variable` and `missing_config_var`
+  carry the same rendered tail through their typed errors.
+- **`unknown_placeholder` fires once per authored defect, not once per
+  Examples row** — a 500-row outline with one typo'd `<column>` pushed 500
+  byte-identical diagnostics at one span (the console collapsed them;
+  SARIF, one-result-per-site by design, did not). It also now names the
+  header's columns.
+- **Every rendered error links the diagnostics catalogue.** The stable
+  codes were greppable and led nowhere — the catalogue was linked from
+  every doc and reachable from no error. `Rendered` implements
+  `Diagnostic::url()` and the LSP sets `code_description`, so editors show
+  a clickable link on the code; on a terminal miette renders an OSC-8
+  hyperlink, and into a pipe or snapshot the URL prints as plain text
+  beside the code (links ride the same TTY/`NO_COLOR` gate as color — an
+  escape sequence a non-terminal sink must never see).
+- **Pack diagnostics point at the defect, not the macro's name.** Every
+  pattern-family and `defaults:` error anchored on the macro-*name* span —
+  thirteen of the nineteen seeded pack snapshots underlined `login:` while
+  the broken `{rol}` sat on a line outside the excerpt (one excerpted the
+  *previous* macro). The `match:`-line span was computed since the pass was
+  written and never reached a diagnostic; it does now, with the name span
+  as fallback. `locate::macro_span` also stopped matching pack-root
+  `bind:` entries (a macro sharing a name with a bind key anchored every
+  diagnostic on the config line).
+- **Parser errors speak hurl's and gherkin's prose, not Rust's.** A pack
+  author was shown `ResponseSectionName { name: "Wrong" }` and
+  `Method { name: "" }` — `{:?}` of internal enums from crates they never
+  heard of. All three engine sites now render through hurl's own
+  `DisplaySourceError` ("the section is not valid. Valid values are
+  Captures or Asserts"), and gherkin's expectation-set tail is
+  sort-normalized: it renders from a `HashSet`, so the same broken file
+  printed two different messages across processes (observed live) —
+  breaking snapshot determinism and the duplicate-collapse alike. Pinned.
+- **A `resolve::*` error names the pack it lives in.** The span is the
+  feature step (the invocation), but `${nope}` is written in a pack YAML
+  the message never named — the reader was sent to a healthy `.feature`
+  line while the sick file stayed anonymous. Every resolve error now
+  carries `(pack <file>)`.
+
+- **The HTML report is triageable, linkable, and filterable.** Every
+  scenario block carries an `id="s-<slug>"` anchor (the same `stem--name`
+  slug as its artifact, so the two cannot disagree) — a failure is now a
+  URL a colleague can be handed. A "failed:" jump rail under the summary
+  links straight to each failing block (blocks keep completion order — the
+  rail is how a reader skips the green between failures), and a
+  status-filter bar (all/failed/skipped/warned) toggles block visibility
+  through a ~15-line inline script: progressive enhancement over classes
+  the blocks already carry, no framework, still one self-contained file.
+  Snapshot reviewed deliberately.
+- **`--watch` reads like an inner loop.** A visual rule with a rerun
+  counter separates iterations (twenty edits used to stack twenty trees
+  with nothing marking where the current one begins), and the post-run
+  line says the verdict in words ("failures — details above") instead of
+  an exit number to decode.
+
+- **Shell completions and a man page**, generated by the binary itself:
+  hidden `proef completions <shell>` (bash/zsh/fish/powershell/elvish) and
+  `proef man` subcommands, and every release archive now carries
+  `completions/` plus `proef.1` — generated during packaging by the exact
+  artifact they ship beside, so they can never drift from it.
+- **`--env` is global**, like `--config`: `proef --env staging test` and
+  `proef test --env staging` both work — five commands read the profile,
+  and the position-sensitive spelling was a lesson nobody needed.
+- **`doctor` examines the project, not just the engine**: suite resolution
+  (feature-file count, or the failure), `hurl` on PATH (a warning when
+  absent — the engine is embedded, but ADR-0018's stock-replay promise and
+  the emitted `# replay:` hints need the binary), and runs-dir writability
+  (probed with cleanup — the first-run `create_dir_all` failure was
+  invisible to the one command whose job is diagnosis).
+- **A typo'd `--tags`/`--scenario` names the nearest real spelling.** The
+  refusal held every scenario name and tag at the moment it printed "check
+  --tags/--scenario" and used none of them; it now suggests the closest
+  name and tag (glob atoms excepted — a glob selecting nothing is a fact,
+  not a typo) and points at `proef flows`, the treatment
+  `[run] exclusive-tags` always had.
+- **`proef fragments` says *why* a listing is empty** when no
+  `[run] fragments` root is configured — previously indistinguishable from
+  a configured-but-empty corpus, though the reader's next move differs.
+
+- **The console speaks in color, and every run ends on its identity.** The
+  status vocabulary (`✓`/`✗`/`∅`/`⚠`, the dotted glyphs, the summary's
+  verdict half) is ANSI-colored on a terminal — `NO_COLOR`, a dumb TERM, or
+  a non-terminal stream turns it off, and the `run.log` mirror strips the
+  paint either way (content verbatim, paint never). Color is paint on
+  identical bytes: the record, the exit code and every text assertion see
+  the same output. Each run's final stderr line is now
+  `run <id> · <seconds>s` — the run id is the reproduction key `--shard`,
+  `--shuffle` and `${fake:…}` all hang off, and it previously printed only
+  at the top of the scrollback; a red run's trailer adds the
+  `proef explain` pointer. Wall-clock stays console-only, never entering
+  the record.
+
+### Changed
+
+- **Secret redaction no longer runs inside the reporter mutex.** The sink
+  masked each event while holding the lock that fans it out to the reporters,
+  so every scenario thread queued behind work none of them share — and masking
+  is the expensive half, a scan per text field per needle with roughly nine
+  needles derived per secret. It reads the event and the needle set and writes
+  neither, so it never needed the lock; the critical section now covers only
+  the fan-out it exists for.
+
+  Order is unaffected and the tests say why: a scenario is one thread, so its
+  own events still reach the lock in the order it emitted them, and order
+  *across* scenarios was never guaranteed. A new test emits from eight threads
+  at once and asserts nothing is lost or doubled, everything arrives redacted,
+  and each emitter's own events keep their order. No timing assertion — the
+  flake rule forbids one, and the change is justified structurally rather than
+  by a stopwatch.
+
+- **Pack validation is linear in the macro count, not quadratic.** Every
+  span locator scanned the whole pack file to find its macro's block, so
+  validating N macros scanned the file N times. A single indexing pass
+  (`locate::MacroIndex`) records each macro's name span and block region, and
+  the locators became lookups into it. Measured on a release build over
+  generated packs: 3200 macros went from **1.96 s to 0.03 s** (~65×), and the
+  curve changed shape — 4× per doubling before, ~2× after — so 6400 macros now
+  cost 0.06 s where the old scaling predicts ~8 s.
+
+  It also fixes an inconsistency the split readers hid: `macro_span` accepted a
+  quoted `"macro name":` header while the region scan behind every other
+  locator accepted only the bare form, so a quoted macro got a caret on its
+  name and silently no span for its `match:`, `use:`, `ref:` or payload lines.
+  One reader now gives one answer.
+
+- **The editor stops re-analysing the suite on every keystroke.** Completion,
+  go-to-definition and find-references each ran the whole pipeline from
+  scratch — read every pack and feature off the provider, parse, bind, lower —
+  and threw the result away; between two keystrokes none of those inputs have
+  changed, so the second run could only reproduce the first one's answer. The
+  server now holds the analysis and drops it exactly where an edit lands (the
+  same notification path that already marks the suite dirty), so one recompute
+  serves the debounced diagnostics publish *and* every request until the next
+  edit. Measured on the two-file test suite: 10 provider reads per request
+  before, none between edits after — pinned by a read-counting provider rather
+  than by timing, per the flake rule.
+
+
+- **The LSP's type layer moved to the maintained generator**: `lsp-types`
+  0.97 (unmaintained since; the crate that shipped its own `fluent-uri`
+  `Uri` newtype) is replaced by `gen-lsp-types` 0.11 under the same
+  `lsp_types::` name — rust-analyzer's own aliasing pattern, so every
+  `use` path is unchanged. Its `url` feature aliases `Uri` to `url::Url`,
+  which the embedded hurl engine already pulls in, so the swap adds **no
+  new crate** and drops three (`lsp-types`, `fluent-uri`, `serde_repr`).
+  `Url::from_file_path`/`to_file_path` are the native-path bridge
+  `documents.rs` had to hand-roll under 0.97 — drive letters, segment
+  joining, percent-encoding, ~90 lines — so the bridge is now a wrapper
+  that only pins the source-name identity rule. Behaviour visible to an
+  editor is unchanged; the one difference is what counts as a malformed
+  URI (`url` percent-encodes a raw space where `fluent-uri` rejected it),
+  and request dispatch now compares a method *enum* rather than strings,
+  so an unknown method lands in `Custom` instead of matching nothing.
+
+  Breaking (library): `proef_core::report::percent_encode` is private.
+  It was public solely so `proef-lsp` could encode URI path segments
+  against the identical unreserved set; that hand-rolled encoder is gone,
+  and redaction needles — its only remaining caller — live in the same
+  module.
+
 ### Fixed
+
+- **The record-size ceiling reached two of its four readers.** 0.13.0 bounded
+  the run-record read at 256 MiB because records travel — `diff` reads a
+  downloaded baseline, `flaky` reads every retained run — and the read, the
+  line split and the parsed `Vec<Event>` are resident at once, so a corrupt or
+  hostile file was an OOM rather than an error. The bound lives in
+  `record::read_events`, and `explain` and `report` each opened
+  `events.jsonl` with a bare `read_to_string` instead, so neither had it.
+  `report` even used the guarded reader for the *base* record two dozen lines
+  below the raw read of the primary one.
+
+  Both now go through `read_events`, which returns the parsed events — exactly
+  the read-once/parse-once its own comment asked for. A source-scanning test
+  makes the next reader go through the same door, the shape this project
+  already uses for the raw-print and malformed-plural rules: a guard added in
+  one place and left for the next call site to rediscover is how it went
+  missing the first time.
 
 - **`cargo deny` failed on a yanked transitive crate.** `rand 0.10.2` resolved
   `chacha20 0.10.1`, which was yanked from crates.io; the lock now takes
@@ -707,135 +1024,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   (The test that was meant to cover this built 5 000 atoms and asserted
   success — one order of magnitude below the cliff.)
 
-### Changed
-
-- **Secret redaction no longer runs inside the reporter mutex.** The sink
-  masked each event while holding the lock that fans it out to the reporters,
-  so every scenario thread queued behind work none of them share — and masking
-  is the expensive half, a scan per text field per needle with roughly nine
-  needles derived per secret. It reads the event and the needle set and writes
-  neither, so it never needed the lock; the critical section now covers only
-  the fan-out it exists for.
-
-  Order is unaffected and the tests say why: a scenario is one thread, so its
-  own events still reach the lock in the order it emitted them, and order
-  *across* scenarios was never guaranteed. A new test emits from eight threads
-  at once and asserts nothing is lost or doubled, everything arrives redacted,
-  and each emitter's own events keep their order. No timing assertion — the
-  flake rule forbids one, and the change is justified structurally rather than
-  by a stopwatch.
-
-- **Pack validation is linear in the macro count, not quadratic.** Every
-  span locator scanned the whole pack file to find its macro's block, so
-  validating N macros scanned the file N times. A single indexing pass
-  (`locate::MacroIndex`) records each macro's name span and block region, and
-  the locators became lookups into it. Measured on a release build over
-  generated packs: 3200 macros went from **1.96 s to 0.03 s** (~65×), and the
-  curve changed shape — 4× per doubling before, ~2× after — so 6400 macros now
-  cost 0.06 s where the old scaling predicts ~8 s.
-
-  It also fixes an inconsistency the split readers hid: `macro_span` accepted a
-  quoted `"macro name":` header while the region scan behind every other
-  locator accepted only the bare form, so a quoted macro got a caret on its
-  name and silently no span for its `match:`, `use:`, `ref:` or payload lines.
-  One reader now gives one answer.
-
-### Added
-
-- **`proef flaky --by <key>` splits flakiness by run context.** `--by env`, or
-  any `[meta]`/`--meta` key (`--by runner`), folds the history per context
-  instead of pooling it. A scenario that flaps in one environment and is solid
-  in another is not flaky but *context-dependent* — the fix is in the
-  environment, not the test — and a merged history cannot reach that
-  conclusion, because pooled failures and passes look exactly like one flapping
-  test. The command names the scenarios whose verdict changes with where they
-  ran, which is the finding the flag exists for. A run that never set the key
-  becomes its own `(unset)` bucket rather than being folded in with runs that
-  did; the context also rides in `--format json`. Reads the `env`/`metadata`
-  provenance the record has carried since ADR-0020 — no new recorded field.
-
-
-- **`proef schema config` publishes the `proef.toml` JSON Schema.** TOML
-  language servers (Taplo, tombi) validate against JSON Schema, so one file
-  buys completion, hover documentation and typo detection in the config —
-  before a run rather than after one. Generated from the same Rust model that
-  parses the file, so it describes keys as they are *written* (`runs-dir`, not
-  `runs_dir`) and inherits `deny_unknown_fields`, making an editor refuse
-  exactly what proef refuses. `proef schema` keeps printing the pack schema, so
-  one command answers "what may I write in this file?" for both authored
-  formats rather than two verbs answering it once each.
-
-
-- **An assertion that fails on values looking identical now says why.** When
-  the actual and expected values differ *solely* in whitespace, the failure
-  carries a note repeating both with every whitespace character drawn — `·` for
-  a space, `\t`/`\r`/`\n` for the usual escapes, `\u{a0}` for the exotic ones.
-  hurl's own message was already correct; the defect was simply invisible, so a
-  trailing space, a CRLF fixture leaking `\r`, or a non-breaking space pasted
-  out of a browser read as "the tool is wrong". Taken from hurl's structured
-  `actual`/`expected` rather than parsed back out of its prose, and emitted per
-  error so it sits beside the values it explains; silent whenever the
-  difference is already visible.
-
-
-- **`proef flaky` audits quarantine, which nothing else could.** A
-  `@quarantine` scenario's failures gate nothing by design, so no exit code, no
-  summary and no CI job reports them — which makes the tag's own failure mode
-  invisible: a quarantined scenario failing *every* run has been switched off
-  and left in the suite. It now reads `DISABLED` rather than sharing the
-  `broken` verdict with untagged always-failures, which wrongly implies someone
-  is watching. The opposite case gets its own verdict too: green throughout the
-  window is `recovered`, a tag that outlived its problem and is now suppressing
-  the next real regression. Both print what to do, and `--format json` carries
-  `quarantined` plus the verdict key so a scheduled job can gate on either.
-
-  This needed the record reader to stop dropping data it was already given:
-  `scenario_finished` has carried `tags` since 0.15.0, but `ScenarioRun` never
-  parsed them, leaving every record consumer tag-blind.
-
-
-- **Document symbols and hover.** A feature outlines to its scenarios (with
-  their tags), a pack to its macros (with the pattern each matches) — the
-  vocabulary chosen by what discovery found in the file, never by its
-  extension. Hover answers the question go-to-definition charges a round trip
-  for: what a step binds, what a `use:` targets, what a `ref:` resolves to and
-  which of its variables still need a `bind:`. Every fact is read from the same
-  analysis the diagnostics come from, so a hover cannot contradict the squiggle
-  on its own line. `SuiteAnalysis` gains a `scenarios` index, taken from the
-  parse rather than from binding — an outline that hid exactly the scenarios you
-  are debugging would be worse than no outline.
-
-- **A panic no longer ends the editor session silently.** Only the recompute was
-  guarded, so a panic inside completion, definition or references escaped the
-  message loop and killed the server — leaving an editor that shows nothing,
-  which reads as "proef has no opinion here" rather than as a failure. Both
-  entry points (a request, the debounced recompute) now wrap everything they do,
-  the request is *answered* with `InternalError` rather than dropped, and the
-  user is told once per suite state through `window/showMessage` — the channel
-  an editor surfaces, unlike the stderr line that was the only report before.
-  The next edit clears the report, because whether the new state also fails is
-  news.
-
-- **The editor can apply a "did you mean", not just print it.** Every
-  misspelled-name diagnostic that already suggested a nearest spelling now
-  carries the structured half of that suggestion — a span and a replacement —
-  and `proef lsp` serves it as a `quickfix` code action: `use:` and `ref:`
-  targets, `with:` and `bind:` keys, step kinds, Examples placeholders, and
-  data-table columns. The suggestion is computed **once** and rendered twice
-  (prose for a reader, an edit for an editor), so the message and the fix can
-  never disagree.
-
-  A fix is attached only when the edit is certain: the suggested name is near
-  enough, and the misspelling occurs exactly once, as a whole token, in the
-  diagnostic's *own* file. Each of those failing means no fix rather than an
-  approximate one — notably, a lowering error anchors on the feature step that
-  invoked a macro while the typo lives in the pack, so it finds nothing to
-  replace and offers nothing rather than editing the healthy file. The action
-  is reachable from either the diagnostic or the token, because the two are
-  regularly lines apart: a `use:` error carets the macro's name key.
-
-### Fixed
-
 - **EDITORS.md no longer under-promises on built-in macros.** It said the
   `expect*` family has "no jump target and no hover"; the first half is true and
   structural (their pack is compiled into the binary, so there is no file to
@@ -843,76 +1031,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   so hover answers with its pattern and params and names the pack as `builtin:…`,
   which is exactly *why* the jump is unavailable. Pinned by a test, since the
   page now claims it.
-
-### Changed
-
-- **The editor stops re-analysing the suite on every keystroke.** Completion,
-  go-to-definition and find-references each ran the whole pipeline from
-  scratch — read every pack and feature off the provider, parse, bind, lower —
-  and threw the result away; between two keystrokes none of those inputs have
-  changed, so the second run could only reproduce the first one's answer. The
-  server now holds the analysis and drops it exactly where an edit lands (the
-  same notification path that already marks the suite dirty), so one recompute
-  serves the debounced diagnostics publish *and* every request until the next
-  edit. Measured on the two-file test suite: 10 provider reads per request
-  before, none between edits after — pinned by a read-counting provider rather
-  than by timing, per the flake rule.
-
-
-- **The LSP's type layer moved to the maintained generator**: `lsp-types`
-  0.97 (unmaintained since; the crate that shipped its own `fluent-uri`
-  `Uri` newtype) is replaced by `gen-lsp-types` 0.11 under the same
-  `lsp_types::` name — rust-analyzer's own aliasing pattern, so every
-  `use` path is unchanged. Its `url` feature aliases `Uri` to `url::Url`,
-  which the embedded hurl engine already pulls in, so the swap adds **no
-  new crate** and drops three (`lsp-types`, `fluent-uri`, `serde_repr`).
-  `Url::from_file_path`/`to_file_path` are the native-path bridge
-  `documents.rs` had to hand-roll under 0.97 — drive letters, segment
-  joining, percent-encoding, ~90 lines — so the bridge is now a wrapper
-  that only pins the source-name identity rule. Behaviour visible to an
-  editor is unchanged; the one difference is what counts as a malformed
-  URI (`url` percent-encodes a raw space where `fluent-uri` rejected it),
-  and request dispatch now compares a method *enum* rather than strings,
-  so an unknown method lands in `Custom` instead of matching nothing.
-
-  Breaking (library): `proef_core::report::percent_encode` is private.
-  It was public solely so `proef-lsp` could encode URI path segments
-  against the identical unreserved set; that hand-rolled encoder is gone,
-  and redaction needles — its only remaining caller — live in the same
-  module.
-
-### Added
-
-- **README answers the comparison a prospect actually runs**: a "When
-  something else fits better" section maps raw `hurl` (the exit stays open
-  in both directions), Karate (choose it for embedded JS and whole-body
-  fuzzy matching — the two mechanisms proef deliberately refuses; choose
-  proef for one binary, deterministic reproduction, and files that run
-  with no framework at all), and Postman/Bruno-class clients. The
-  quick-start also points at `proef init` as the start that demonstrates
-  the `ref:` body form — `tests/features/` is deliberately fragment-free
-  (the reference corpus is config-independent by design, and
-  `[run] fragments` is a config key; the runnable `ref:` demo lives in
-  the scaffold, pinned green against the fixture).
-
-- **The docs site can get a visitor to a binary, and CI to a green
-  workflow.** New [Installing](INSTALL.md) page — install lived only in
-  the repo README, outside the published site's source, so the site's
-  first step sent visitors back to GitHub — and a new [CI](CI.md) page
-  with the paste-ready workflow the docs never had (zero `runs-on` blocks
-  existed anywhere): install, secrets via `PROEF_SECRET_*`, `--junit
-  auto`, a `--shard` matrix, `--meta` provenance, the `diff
-  --fail-on-regression` baseline gate, `--rerun` continuation, and
-  `flaky` over retained records. Nav reordered visitor-first (Installing →
-  Getting started → Writing scenarios).
-- **AUTHORING gains the three recipes every real suite needs**:
-  login-then-use-the-token (the docs' most-asked absent question — zero
-  "login" hits existed), waiting for an eventually-consistent result
-  (finite `retry:` as the polling primitive, and why it must be finite),
-  and test-data seeding/cleanup across its three scopes (`Background:`,
-  `[run] setup`/`teardown`, `saveAs: global`).
-
-### Fixed
 
 - **The tutorial's `ref:` invitation no longer self-destructs.** §3.6
   showed a second `[run]` table that, pasted beside §3.5's, was a TOML
@@ -930,136 +1048,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   exist now, the whole path is pinned by an integration test, and the
   scaffold's `ref:` fragment thereby executes against a live endpoint —
   the body form's first runnable demonstration.
-
-### Added
-
-- **Every release archive ships a `.sha256` sidecar** (basename inside, so
-  `sha256sum -c` works from a download directory). Attestation covers the
-  provenance story for `gh` users; the sidecar covers everyone who
-  installs with `curl` — the half that was missing against the
-  ripgrep/uv/starship baseline.
-
-- **A broken `proef.toml` is a located diagnostic, not a bare sentence.**
-  The file is edited as often as any pack, and it was the one authored
-  input whose errors carried no code, no source excerpt and no caret —
-  while `pack::yaml` had all three for the structurally identical failure.
-  New codes `proef::config::toml` (with toml's own error span under the
-  caret) and `proef::config::unreadable`, in the catalogue (73 → 75) and
-  pinned by an integration test; `proef lsp`'s boot warning and `doctor`'s
-  config row carry the same message.
-- **Five help-less refusals gained their missing action.**
-  `feature::parse` (the shape of a feature file, and the most common way
-  one stops parsing), `bind::ambiguous_step` (make one pattern more
-  specific or retire the duplicate), `bind::table_conflict` (one source
-  per param), `pack::use_cycle` (pull shared steps into a third macro),
-  and the raw `retry: -1` message now says *why* infinite retries are
-  refused (hurl cannot be interrupted mid-call) and what to write instead
-  — it used to cite "ADR-0007", an internal document id with no in-band
-  route to it.
-
-- **A miss below the did-you-mean threshold names the valid set instead of
-  going silent.** All eleven suggestion sites ended
-  `closest(…).unwrap_or_default()` — when nothing was near, the tail
-  vanished, and `unknown_step_kind` said "not claimed by any registered
-  engine" about a registry with exactly **one** member it never named. One
-  `matcher::suggest_or_enumerate` now serves every site: the nearest
-  spelling when one is near, else the set verbatim (small), else a count
-  with the command that lists it (`(9 known — `proef macros` lists
-  them)`). `unknown_fake`, `unknown_variable` and `missing_config_var`
-  carry the same rendered tail through their typed errors.
-- **`unknown_placeholder` fires once per authored defect, not once per
-  Examples row** — a 500-row outline with one typo'd `<column>` pushed 500
-  byte-identical diagnostics at one span (the console collapsed them;
-  SARIF, one-result-per-site by design, did not). It also now names the
-  header's columns.
-- **Every rendered error links the diagnostics catalogue.** The stable
-  codes were greppable and led nowhere — the catalogue was linked from
-  every doc and reachable from no error. `Rendered` implements
-  `Diagnostic::url()` and the LSP sets `code_description`, so editors show
-  a clickable link on the code; on a terminal miette renders an OSC-8
-  hyperlink, and into a pipe or snapshot the URL prints as plain text
-  beside the code (links ride the same TTY/`NO_COLOR` gate as color — an
-  escape sequence a non-terminal sink must never see).
-- **Pack diagnostics point at the defect, not the macro's name.** Every
-  pattern-family and `defaults:` error anchored on the macro-*name* span —
-  thirteen of the nineteen seeded pack snapshots underlined `login:` while
-  the broken `{rol}` sat on a line outside the excerpt (one excerpted the
-  *previous* macro). The `match:`-line span was computed since the pass was
-  written and never reached a diagnostic; it does now, with the name span
-  as fallback. `locate::macro_span` also stopped matching pack-root
-  `bind:` entries (a macro sharing a name with a bind key anchored every
-  diagnostic on the config line).
-- **Parser errors speak hurl's and gherkin's prose, not Rust's.** A pack
-  author was shown `ResponseSectionName { name: "Wrong" }` and
-  `Method { name: "" }` — `{:?}` of internal enums from crates they never
-  heard of. All three engine sites now render through hurl's own
-  `DisplaySourceError` ("the section is not valid. Valid values are
-  Captures or Asserts"), and gherkin's expectation-set tail is
-  sort-normalized: it renders from a `HashSet`, so the same broken file
-  printed two different messages across processes (observed live) —
-  breaking snapshot determinism and the duplicate-collapse alike. Pinned.
-- **A `resolve::*` error names the pack it lives in.** The span is the
-  feature step (the invocation), but `${nope}` is written in a pack YAML
-  the message never named — the reader was sent to a healthy `.feature`
-  line while the sick file stayed anonymous. Every resolve error now
-  carries `(pack <file>)`.
-
-### Added
-
-- **The HTML report is triageable, linkable, and filterable.** Every
-  scenario block carries an `id="s-<slug>"` anchor (the same `stem--name`
-  slug as its artifact, so the two cannot disagree) — a failure is now a
-  URL a colleague can be handed. A "failed:" jump rail under the summary
-  links straight to each failing block (blocks keep completion order — the
-  rail is how a reader skips the green between failures), and a
-  status-filter bar (all/failed/skipped/warned) toggles block visibility
-  through a ~15-line inline script: progressive enhancement over classes
-  the blocks already carry, no framework, still one self-contained file.
-  Snapshot reviewed deliberately.
-- **`--watch` reads like an inner loop.** A visual rule with a rerun
-  counter separates iterations (twenty edits used to stack twenty trees
-  with nothing marking where the current one begins), and the post-run
-  line says the verdict in words ("failures — details above") instead of
-  an exit number to decode.
-
-- **Shell completions and a man page**, generated by the binary itself:
-  hidden `proef completions <shell>` (bash/zsh/fish/powershell/elvish) and
-  `proef man` subcommands, and every release archive now carries
-  `completions/` plus `proef.1` — generated during packaging by the exact
-  artifact they ship beside, so they can never drift from it.
-- **`--env` is global**, like `--config`: `proef --env staging test` and
-  `proef test --env staging` both work — five commands read the profile,
-  and the position-sensitive spelling was a lesson nobody needed.
-- **`doctor` examines the project, not just the engine**: suite resolution
-  (feature-file count, or the failure), `hurl` on PATH (a warning when
-  absent — the engine is embedded, but ADR-0018's stock-replay promise and
-  the emitted `# replay:` hints need the binary), and runs-dir writability
-  (probed with cleanup — the first-run `create_dir_all` failure was
-  invisible to the one command whose job is diagnosis).
-- **A typo'd `--tags`/`--scenario` names the nearest real spelling.** The
-  refusal held every scenario name and tag at the moment it printed "check
-  --tags/--scenario" and used none of them; it now suggests the closest
-  name and tag (glob atoms excepted — a glob selecting nothing is a fact,
-  not a typo) and points at `proef flows`, the treatment
-  `[run] exclusive-tags` always had.
-- **`proef fragments` says *why* a listing is empty** when no
-  `[run] fragments` root is configured — previously indistinguishable from
-  a configured-but-empty corpus, though the reader's next move differs.
-
-- **The console speaks in color, and every run ends on its identity.** The
-  status vocabulary (`✓`/`✗`/`∅`/`⚠`, the dotted glyphs, the summary's
-  verdict half) is ANSI-colored on a terminal — `NO_COLOR`, a dumb TERM, or
-  a non-terminal stream turns it off, and the `run.log` mirror strips the
-  paint either way (content verbatim, paint never). Color is paint on
-  identical bytes: the record, the exit code and every text assertion see
-  the same output. Each run's final stderr line is now
-  `run <id> · <seconds>s` — the run id is the reproduction key `--shard`,
-  `--shuffle` and `${fake:…}` all hang off, and it previously printed only
-  at the top of the scrollback; a red run's trailer adds the
-  `proef explain` pointer. Wall-clock stays console-only, never entering
-  the record.
-
-### Fixed
 
 - **A failure no longer prints its detail twice.** An engine fault quotes
   the failing step's own detail, and the located step line just below
@@ -1097,29 +1085,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   detail, else its fault) capped at ten, with a closing `::notice` naming
   what the ten are out of; `title=` is clipped under GitHub's 255-character
   cap before encoding.
-
-### Breaking
-
-- **`--output` split by meaning: `--format` chooses a format, `-o/--output`
-  names a path.** `test` takes `--format json|tap`; the listing commands
-  (`flows`, `macros`, `fragments`, `flaky`) take `--format json` — each
-  through its own enum, so clap's help can no longer advertise `tap` on
-  four commands whose runtime rejected it (the old shared enum lied about
-  a quarter of the surface, and `-o` changed category between siblings:
-  format on five commands, directory on `artifacts`, file on `report`).
-  `--output json`/`--output tap` no longer parse on those five commands —
-  clean break, no alias; `artifacts`/`report` keep `-o/--output` for their
-  paths, unchanged. The runtime `json_only` check is deleted: the type
-  system does its job now.
-- **Library:** `World::set_global` returns `bool` (`#[must_use]`) — `false`
-  is a refused promotion — and `World` gains `guard_secrets`;
-  `Redactions` gains the `taints` probe. The hurl engine's private
-  equality-only gate is deleted in favor of the World's.
-- **Library:** `ConsoleReporter::new` takes a fourth `color: bool` — the
-  TTY/`NO_COLOR` probe stays at the CLI edge; the sans-IO core takes the
-  answer as a plain value.
-
-### Fixed
 
 - **`saveAs: global` refuses a secret it can *find*, not just a secret it
   can *equal*.** The gate lived in the hurl engine and matched whole-value
@@ -1254,6 +1219,27 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   merge.** The last-entry scan recognised a response line by the bare
   prefix `HTTP`, which the emitter's own recogniser was already hardened
   against; both now share one `is_response_line` (`HTTP ` / `HTTP/`).
+
+### Breaking
+
+- **`--output` split by meaning: `--format` chooses a format, `-o/--output`
+  names a path.** `test` takes `--format json|tap`; the listing commands
+  (`flows`, `macros`, `fragments`, `flaky`) take `--format json` — each
+  through its own enum, so clap's help can no longer advertise `tap` on
+  four commands whose runtime rejected it (the old shared enum lied about
+  a quarter of the surface, and `-o` changed category between siblings:
+  format on five commands, directory on `artifacts`, file on `report`).
+  `--output json`/`--output tap` no longer parse on those five commands —
+  clean break, no alias; `artifacts`/`report` keep `-o/--output` for their
+  paths, unchanged. The runtime `json_only` check is deleted: the type
+  system does its job now.
+- **Library:** `World::set_global` returns `bool` (`#[must_use]`) — `false`
+  is a refused promotion — and `World` gains `guard_secrets`;
+  `Redactions` gains the `taints` probe. The hurl engine's private
+  equality-only gate is deleted in favor of the World's.
+- **Library:** `ConsoleReporter::new` takes a fourth `color: bool` — the
+  TTY/`NO_COLOR` probe stays at the CLI edge; the sans-IO core takes the
+  answer as a plain value.
 
 ## [0.15.0] - 2026-08-25 (the Robot Framework audit: visible skips, tag verdicts, explicit metadata)
 
@@ -1569,6 +1555,60 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [0.13.0] - 2026-08-17 (a record that travels, and a secret that stays one)
 
+### Added
+
+- **`proef diff` takes a path.** Each side is now a run id, a record
+  *directory*, or an events *`.jsonl` file* under any name — the stream is the
+  record (ADR-0008), so all three must mean the same thing. The file form is
+  the CI baseline flow an adopting suite asked for: download the base branch's
+  `events.jsonl` artifact and `proef diff baseline.jsonl <new>
+  --fail-on-regression` gates the PR, with no shared record store. Previously
+  every argument was joined onto `runs-dir`, so a path produced
+  `.proef-runs/<your path>/events.jsonl: No such file` — the argument mangled
+  into the complaint. A path that does not exist now names itself; a `--baseline`
+  flag was considered and declined as a second spelling of the same positional.
+
+- **`[run] keep-runs`** bounds how many past run records `runs-dir` retains. The
+  policy already existed as a hard-coded 200; it just could not be expressed, so
+  a suite re-run on every save accumulated records for a day with nothing
+  signalling a ceiling. `0` keeps none but the run in flight. Rotation still only
+  ever deletes directories named by a *generated* run id — `runs-dir` may be `.`
+  — so a `--run-id <name>` record sits outside the budget and is never rotated,
+  now stated in CONFIG.md rather than left to be discovered. Filed as R12-2.
+
+### Fixed
+
+- **A run record no longer names the machine that produced it.** `[run] suite`
+  resolves against the config directory (0.12.0), so a path-less `proef test`
+  handed the front end an absolute path — and every emitter printed it: the
+  `.hurl` `# source:` header, `.map.json`'s `feature.file`, every
+  `step_finished` event, the console, and pack diagnostics. Two checkouts of one
+  suite stopped producing equal artifacts, which is the property ADR-0010 exists
+  to guarantee; an adopting suite hit it as `/Users/…` in 133 artifact lines and
+  64% of its event stream by bytes.
+
+  The resolution rule was right and stands. What was missing is its **naming
+  dual**: resolve against the project, then name against the project again.
+  `front::SourceNaming` is now the one boundary that answers "how is this path
+  spelled", for features, packs and fragments alike — replacing the fragment
+  corpus's separate cwd-relative strip, which was a second anchor for the same
+  question. The four ways to name one suite — derived from `[run] suite`, typed,
+  typed absolutely, or reached from a subdirectory — now emit one artifact, byte
+  for byte.
+
+  A path that arrives relative is recorded exactly as it arrived; a suite or
+  corpus genuinely outside the project keeps its absolute name, there being no
+  project-relative spelling of it. Filed as R12-1, and it closes R9-6, which had
+  described the same defect as safe from the project root — it no longer was.
+
+  **Breaking**, by the rule in `docs/RELEASING.md`: it changes emitted artifact
+  bytes, which is inherently breaking and takes a MINOR bump. Migration: nothing
+  to do for a suite invoked with a typed relative path — those bytes are
+  unchanged. A tool reading `step.file` or `feature.file` out of a record
+  produced by a path-less run now sees a project-relative path where it saw an
+  absolute one; join it onto the directory holding `proef.toml`. Records written
+  by earlier versions are not rewritten.
+
 ### Security
 
 - **An encoded reflection of a secret is redacted (S1).** Redaction was
@@ -1604,19 +1644,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   one bad file must not sink the ones beside it. An unreferenced corpus still
   costs nothing: the scan stays lazy, so nothing is reported unless a pack
   actually names a fragment. Filed as R9-3.
-
-### Added
-
-- **`proef diff` takes a path.** Each side is now a run id, a record
-  *directory*, or an events *`.jsonl` file* under any name — the stream is the
-  record (ADR-0008), so all three must mean the same thing. The file form is
-  the CI baseline flow an adopting suite asked for: download the base branch's
-  `events.jsonl` artifact and `proef diff baseline.jsonl <new>
-  --fail-on-regression` gates the PR, with no shared record store. Previously
-  every argument was joined onto `runs-dir`, so a path produced
-  `.proef-runs/<your path>/events.jsonl: No such file` — the argument mangled
-  into the complaint. A path that does not exist now names itself; a `--baseline`
-  flag was considered and declined as a second spelling of the same positional.
 
 ### Internal
 
@@ -1689,49 +1716,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 - **The fuzz target list comes from `cargo fuzz list`.** It had been spelled out
   in `ci.yml` *and* `nightly.yml`, so a new target ran nowhere until both were
   edited, and nothing failed to say so.
-
-### Fixed
-
-- **A run record no longer names the machine that produced it.** `[run] suite`
-  resolves against the config directory (0.12.0), so a path-less `proef test`
-  handed the front end an absolute path — and every emitter printed it: the
-  `.hurl` `# source:` header, `.map.json`'s `feature.file`, every
-  `step_finished` event, the console, and pack diagnostics. Two checkouts of one
-  suite stopped producing equal artifacts, which is the property ADR-0010 exists
-  to guarantee; an adopting suite hit it as `/Users/…` in 133 artifact lines and
-  64% of its event stream by bytes.
-
-  The resolution rule was right and stands. What was missing is its **naming
-  dual**: resolve against the project, then name against the project again.
-  `front::SourceNaming` is now the one boundary that answers "how is this path
-  spelled", for features, packs and fragments alike — replacing the fragment
-  corpus's separate cwd-relative strip, which was a second anchor for the same
-  question. The four ways to name one suite — derived from `[run] suite`, typed,
-  typed absolutely, or reached from a subdirectory — now emit one artifact, byte
-  for byte.
-
-  A path that arrives relative is recorded exactly as it arrived; a suite or
-  corpus genuinely outside the project keeps its absolute name, there being no
-  project-relative spelling of it. Filed as R12-1, and it closes R9-6, which had
-  described the same defect as safe from the project root — it no longer was.
-
-  **Breaking**, by the rule in `docs/RELEASING.md`: it changes emitted artifact
-  bytes, which is inherently breaking and takes a MINOR bump. Migration: nothing
-  to do for a suite invoked with a typed relative path — those bytes are
-  unchanged. A tool reading `step.file` or `feature.file` out of a record
-  produced by a path-less run now sees a project-relative path where it saw an
-  absolute one; join it onto the directory holding `proef.toml`. Records written
-  by earlier versions are not rewritten.
-
-### Added
-
-- **`[run] keep-runs`** bounds how many past run records `runs-dir` retains. The
-  policy already existed as a hard-coded 200; it just could not be expressed, so
-  a suite re-run on every save accumulated records for a day with nothing
-  signalling a ceiling. `0` keeps none but the run in flight. Rotation still only
-  ever deletes directories named by a *generated* run id — `runs-dir` may be `.`
-  — so a `--run-id <name>` record sits outside the budget and is never rotated,
-  now stated in CONFIG.md rather than left to be discovered. Filed as R12-2.
 
 ## [0.12.0] - 2026-08-14 (one path rule, and a watcher that stops lying)
 
@@ -2487,39 +2471,80 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 
 ## [0.9.0] - 2026-08-11 (tool-surface integrity & authoring guidance)
-
 > **Breaking:** `proef secret set --value` was removed in favour of `--stdin`,
 > and `proef macros --output json`'s `pattern` field changed from a boolean to
 > `string|null`.
 
-### Documentation
+### Added
 
-- **AUTHORING shows how to write a validation-error catalogue.** Two patterns
-  that were reachable but not signposted, and that compose into one. A
-  validation suite's cases differ *structurally* — one omits a key, one empties
-  it, one adds a key the caller may not set — so a single parameterised macro
-  cannot express them and an `Examples` cell cannot practically hold JSON; the
-  answer is one named macro per malformation, whose sentence says what is wrong
-  in business terms. The expectation side then does **not** grow with the
-  catalogue: because an `expect:` merges into the *previous* request entry, one
-  parameterised `the error code is {code}` covers every case in the set,
-  typically the largest de-duplicator in a validation pack. That merging was
-  documented as a mechanism in two sentences and never shown as the pattern it
-  is. The cost is stated rather than hidden — the pack grows with the catalogue,
-  which is what buys feature files a non-engineer can review.
+- **The run record says which scenarios were lifecycle phases.** `phase`
+  (`"setup"`/`"teardown"`) is now on `scenario_started`/`scenario_finished` —
+  additive and optional (ADR-0008), so older records read as "no phases", which
+  is what they had. Without it a teardown scenario was indistinguishable from a
+  suite one except by feature path, so every consumer re-derived phase
+  membership from `proef.toml` and three of them got it wrong in different
+  ways. Fixing them off one signal is what the three entries below have in
+  common.
 
-- **An outline's `<column>` placeholders substitute into the docstring, and
-  AUTHORING now says so.** They always have — TECH-SPEC §4.4 specifies it and
-  the code has done it since — but the author-facing guide named only step
-  text and table cells, and `StepDefn`'s own doc comment named the
-  substitution on `text` and `table` while describing `docstring` as just
-  "raw request bodies". Naming it twice and omitting it once reads as a
-  deliberate exception, so a reader concludes the opposite of the truth: this
-  is exactly the capability an author reaches for to data-drive a request
-  body without leaving the feature file. AUTHORING gains a worked example.
-  Pinned by tests for the first time — every other outline test asserts on
-  step text, so a regression would have emitted a literal `<label>` into an
-  artifact with the suite green.
+- **`proef doctor` reports a missing pack schema.** `init` installs it
+  automatically, but noticing when it is *absent* never shipped — so a suite
+  whose editor completion had been silently off had nothing telling it so.
+  Reported as a warning, never a failure: it costs autocomplete and load-time
+  validation in the editor, not a run, and `doctor`'s exit is the environment
+  verdict. Uses the same predicate `init` uses, so the two cannot disagree about
+  what "installed" means. Runs outside a project too — no config or no suite is
+  reported, not failed.
+
+- **`bind::unbound_step` names `proef macros` again, from the CLI.** The pointer
+  was removed from the diagnostic in #25 for a correct reason — that text also
+  renders in an editor's diagnostics pane through the LSP, where the affordance
+  is completion, not a command — but nothing put it back on the terminal side,
+  so a terminal reader saw it zero times. It is now added by the CLI's own
+  renderer, which legitimately knows it is the CLI. The core diagnostic still
+  names no tool.
+
+- **`proef macros` answers when the suite does not bind.** Listing the
+  vocabulary previously required every scenario to bind — so the command
+  refused in exactly the situation that sends an author looking for it: a step
+  that matched no macro. It now prints the diagnostics, then the vocabulary the
+  packs offer, and keeps its exit code unchanged (2), so scripts see no
+  difference. Pack loading precedes binding and does not depend on it, so the
+  listed vocabulary is complete. **Every count-derived verdict is withheld in
+  that mode** — `calls`/`unused` render as `—`/`null` rather than `0`/`false`,
+  because a feature that failed to bind contributes no calls and would
+  otherwise make its own macros look dead. `proef flows` deliberately still
+  refuses: its contract is to list *every* scenario, and a partial list that
+  silently omits the unparsed feature is the wrong answer, not a degraded one.
+
+- **A failed run says when the suite is still the untouched scaffold.** A
+  freshly scaffolded project cannot pass — its target and its routes are both
+  placeholders — and `init` says so once, two commands earlier, in a
+  parenthetical the failure never referred back to. The run now names the
+  situation and the remedy. It fires only on the conjunction (`[url] base`
+  still byte-identical to what `init` wrote **and** no `PROEF_BASE_URL`): an
+  operator who set the override *did* name a target, so their failure is about
+  their API and is not second-guessed. Exit codes are untouched — whether an
+  unreachable target is a user or a system fault is a taxonomy question decided
+  in the engine (ADR-0009), and the reader's actual problem is vocabulary.
+
+### Changed
+
+- **`proef secret set --value` is gone; use `--stdin`. Breaking.** A secret in
+  argv is visible to anyone who can run `ps`, and the failure path *steered
+  people to it* — the hidden prompt's error said "pass `--value` in scripts",
+  which fires exactly in the non-TTY/CI case where the exposure matters. There
+  is now no flag that takes a value: `--stdin` reads it from a pipe (same shape
+  as `docker login --password-stdin`), stripping the trailing newline the pipe
+  added, and the prompt stays the default. Scripts using `--value` must pipe
+  instead: `printf %s "$TOKEN" | proef secret set NAME --stdin`.
+
+- **`proef macros` prints the sentence, not just the identifier.** A test author
+  writes prose that binds to a vocabulary somebody else maintains — and the one
+  command that lists that vocabulary showed `health` where the author needs
+  `the service is healthy`. The `match:` pattern was already loaded and already
+  linted; both renderers discarded it on the way out. It now appears in the text
+  listing, and `--output json`'s `pattern` field carries the string itself
+  (`null` when a macro is `use:`-only) instead of a bare boolean.
 
 ### Fixed
 
@@ -2532,8 +2557,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   discovery already used, rather than a second opinion about what a pack is.
   Only the explicit-file path was affected: a directory was always filtered.
 
-### Fixed
-
 - **`proef fmt` leaves the YAML skeleton alone, as it always said it did.** Its
   documented scope is hurl blocks — the module doc promises the skeleton,
   comments included, is never touched, and the code claimed the trailing newline
@@ -2544,8 +2567,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   over-reach the line-ending fix removed in 0.8.0, in the same function, one
   line above where that fix landed.
 
-### Fixed
-
 - **A truncated record no longer drops a warned scenario from its totals.**
   With no `run_finished` to read, `explain` recounts the scenarios present —
   and counted `Passed`/`Failed`/`Skipped` but not `Warned`, so a scenario whose
@@ -2554,8 +2575,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   allowed"), so the reconstruction silently disagreed with the run it was
   reconstructing — and `optional:` exists precisely so a scenario can warn and
   still pass.
-
-### Fixed
 
 - **A failing run says when the scaffold's *routes* are still placeholders.**
   The scaffold has two halves to fill in, and a reader can have done either.
@@ -2568,8 +2587,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   placeholder, and inferring the second from the first is the class of claim
   removed in 0.8.0. The two notes are mutually exclusive — a reader with one
   unfinished half is told about that half, not handed a list.
-
-### Fixed
 
 - **`--dry-run`'s "next" command is the run that was validated.** After
   `--dry-run --env prod --tags smoke` it printed a bare `proef test`, which is a
@@ -2594,8 +2611,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `.toml` extension, so an unrelated manifest in the tree still does not
   requeue.
 
-### Fixed
-
 - **Three places interpolated a value into a format without escaping it.** Same
   shape each time, so they are fixed together:
   - **LSP completion snippets.** `$`, `}` and `\` are LSP snippet syntax, and a
@@ -2610,8 +2625,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   - **The GitHub job-summary table.** The scenario name and file went into
     Markdown cells unescaped; a `|` in either ends the cell and shifts every
     column after it, and the row still renders, which is why it goes unnoticed.
-
-### Fixed
 
 - **A templated `retry:`/`delay:`/`repeat:`/`max-time:` no longer under-counts
   the batch budget.** The estimator matched literal values only, so a
@@ -2631,25 +2644,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   verdict the program then exited past, with nothing to signal the
   disagreement. The escalation is now folded in before anything serializes it.
 
-### Documentation
-
-- **The docs-drift backlog is closed.** `EDITORS.md` said go-to-definition
-  cannot land on a `match:` line — it has since 0.5.1, and
-  `definition_on_a_step_lands_on_the_match_line` proves it; the bullet now
-  names the gap that is real (built-in macros live in a pack compiled into the
-  binary, so there is nothing to open). TECH-SPEC §10's command surface gained
-  `--run-id`/`--rerun`/`--sarif`. `GETTING-STARTED` no longer shows a scaffold
-  comment with a word the scaffold does not write. ADR-0015 described a
-  `worker` on `ScenarioFinished` that is always `None`, because that event is
-  emitted from the dispatcher thread rather than the worker — an errata records
-  what shipped, which `EVENTS.md` had right all along.
-
-  Two entries did not reproduce and are recorded as such rather than dropped:
-  `CONFIG.md` carries no claim that `[env.<name>.run]` overrides any section,
-  and the 0.5.2 changelog does mention the directory-valued-phase error.
-
-### Fixed
-
 - **`proef fmt` keeps each line's own ending.** Its scope is hurl blocks, not
   line endings, but it split the whole file with `str::lines()` — which throws
   the terminator away — and rejoined with a single one. A file mixing CRLF and
@@ -2665,18 +2659,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   binds — the README table was updated and the clap text that actually produces
   `--help` was not.
 
-### Documentation
-
-- **`WRITING-SCENARIOS`'s two sample outputs match the binary again.** The
-  `macros` sample showed two builtins with no ellipsis and omitted the
-  `(builtin, unused here)` marker and the trailing count; the
-  `missing_config_var` sample dropped the `(or in the active
-  [env.<name>.url])` clause. Both read as verbatim transcripts, so a reader
-  comparing them against a real run found differences that were the document's,
-  not theirs.
-
-### Fixed
-
 - **`proef lsp` adopts the workspace root the client announces.** The root was
   resolved at the process edge, before the handshake, from the working
   directory — so an editor launched anywhere but the project analysed the wrong
@@ -2686,19 +2668,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the spec is explicit that folders win when both are present) and then to the
   previous config-then-cwd resolution. `proef-lsp` still knows nothing about
   `proef.toml`: it calls back into the CLI, which owns config (ADR-0012).
-
-### Added
-
-- **The run record says which scenarios were lifecycle phases.** `phase`
-  (`"setup"`/`"teardown"`) is now on `scenario_started`/`scenario_finished` —
-  additive and optional (ADR-0008), so older records read as "no phases", which
-  is what they had. Without it a teardown scenario was indistinguishable from a
-  suite one except by feature path, so every consumer re-derived phase
-  membership from `proef.toml` and three of them got it wrong in different
-  ways. Fixing them off one signal is what the three entries below have in
-  common.
-
-### Fixed
 
 - **A mixed suite+phase failure kept the phase label.** `explain` chose the
   label from the whole report (`failed == 0`), so it appeared only while *every*
@@ -2729,8 +2698,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   0.6.0. A reader must be able to consume a record *or* detect that it cannot;
   quietly doing neither was the one unacceptable option.
 
-### Fixed
-
 - **`proef init` no longer destroys a `proef-pack.schema.json` you wrote.** The
   never-overwrite loop walks a fixed four-entry array; the schema is not in it,
   and is written afterwards by the shared installer. So the one unguarded path
@@ -2740,38 +2707,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the installer to preserve what is already there and reports it as skipped;
   `proef schema --add-to` still refreshes, since that is an explicit install and
   how the schema is updated after upgrading proef.
-
-### Changed
-
-- **`proef secret set --value` is gone; use `--stdin`. Breaking.** A secret in
-  argv is visible to anyone who can run `ps`, and the failure path *steered
-  people to it* — the hidden prompt's error said "pass `--value` in scripts",
-  which fires exactly in the non-TTY/CI case where the exposure matters. There
-  is now no flag that takes a value: `--stdin` reads it from a pipe (same shape
-  as `docker login --password-stdin`), stripping the trailing newline the pipe
-  added, and the prompt stays the default. Scripts using `--value` must pipe
-  instead: `printf %s "$TOKEN" | proef secret set NAME --stdin`.
-
-### Added
-
-- **`proef doctor` reports a missing pack schema.** `init` installs it
-  automatically, but noticing when it is *absent* never shipped — so a suite
-  whose editor completion had been silently off had nothing telling it so.
-  Reported as a warning, never a failure: it costs autocomplete and load-time
-  validation in the editor, not a run, and `doctor`'s exit is the environment
-  verdict. Uses the same predicate `init` uses, so the two cannot disagree about
-  what "installed" means. Runs outside a project too — no config or no suite is
-  reported, not failed.
-
-- **`bind::unbound_step` names `proef macros` again, from the CLI.** The pointer
-  was removed from the diagnostic in #25 for a correct reason — that text also
-  renders in an editor's diagnostics pane through the LSP, where the affordance
-  is completion, not a command — but nothing put it back on the terminal side,
-  so a terminal reader saw it zero times. It is now added by the CLI's own
-  renderer, which legitimately knows it is the CLI. The core diagnostic still
-  names no tool.
-
-### Fixed
 
 - **The first-run note no longer fires on real suites.** It keyed on `[url] base`
   still equalling the value `proef init` writes — which looks init-specific and
@@ -2827,44 +2762,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   (exit 2) rather than a blanket system fault (exit 3), and creates no run
   record.
 
-### Changed
-
-- **`proef macros` prints the sentence, not just the identifier.** A test author
-  writes prose that binds to a vocabulary somebody else maintains — and the one
-  command that lists that vocabulary showed `health` where the author needs
-  `the service is healthy`. The `match:` pattern was already loaded and already
-  linted; both renderers discarded it on the way out. It now appears in the text
-  listing, and `--output json`'s `pattern` field carries the string itself
-  (`null` when a macro is `use:`-only) instead of a bare boolean.
-
-### Added
-
-- **`proef macros` answers when the suite does not bind.** Listing the
-  vocabulary previously required every scenario to bind — so the command
-  refused in exactly the situation that sends an author looking for it: a step
-  that matched no macro. It now prints the diagnostics, then the vocabulary the
-  packs offer, and keeps its exit code unchanged (2), so scripts see no
-  difference. Pack loading precedes binding and does not depend on it, so the
-  listed vocabulary is complete. **Every count-derived verdict is withheld in
-  that mode** — `calls`/`unused` render as `—`/`null` rather than `0`/`false`,
-  because a feature that failed to bind contributes no calls and would
-  otherwise make its own macros look dead. `proef flows` deliberately still
-  refuses: its contract is to list *every* scenario, and a partial list that
-  silently omits the unparsed feature is the wrong answer, not a degraded one.
-
-- **A failed run says when the suite is still the untouched scaffold.** A
-  freshly scaffolded project cannot pass — its target and its routes are both
-  placeholders — and `init` says so once, two commands earlier, in a
-  parenthetical the failure never referred back to. The run now names the
-  situation and the remedy. It fires only on the conjunction (`[url] base`
-  still byte-identical to what `init` wrote **and** no `PROEF_BASE_URL`): an
-  operator who set the override *did* name a target, so their failure is about
-  their API and is not second-guessed. Exit codes are untouched — whether an
-  unreachable target is a user or a system fault is a taxonomy question decided
-  in the engine (ADR-0009), and the reader's actual problem is vocabulary.
-
-### Fixed
-
 - **`proef schema --add-to` and `proef init` now announce the schema file they
   write.** Both wrote `proef-pack.schema.json` silently, so `init` listed four
   files and then reported "created 5 file(s)" — the first output a new user
@@ -2886,6 +2783,56 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   states the invariant this violated: never run zero tests green.
 
 ### Documentation
+
+- **AUTHORING shows how to write a validation-error catalogue.** Two patterns
+  that were reachable but not signposted, and that compose into one. A
+  validation suite's cases differ *structurally* — one omits a key, one empties
+  it, one adds a key the caller may not set — so a single parameterised macro
+  cannot express them and an `Examples` cell cannot practically hold JSON; the
+  answer is one named macro per malformation, whose sentence says what is wrong
+  in business terms. The expectation side then does **not** grow with the
+  catalogue: because an `expect:` merges into the *previous* request entry, one
+  parameterised `the error code is {code}` covers every case in the set,
+  typically the largest de-duplicator in a validation pack. That merging was
+  documented as a mechanism in two sentences and never shown as the pattern it
+  is. The cost is stated rather than hidden — the pack grows with the catalogue,
+  which is what buys feature files a non-engineer can review.
+
+- **An outline's `<column>` placeholders substitute into the docstring, and
+  AUTHORING now says so.** They always have — TECH-SPEC §4.4 specifies it and
+  the code has done it since — but the author-facing guide named only step
+  text and table cells, and `StepDefn`'s own doc comment named the
+  substitution on `text` and `table` while describing `docstring` as just
+  "raw request bodies". Naming it twice and omitting it once reads as a
+  deliberate exception, so a reader concludes the opposite of the truth: this
+  is exactly the capability an author reaches for to data-drive a request
+  body without leaving the feature file. AUTHORING gains a worked example.
+  Pinned by tests for the first time — every other outline test asserts on
+  step text, so a regression would have emitted a literal `<label>` into an
+  artifact with the suite green.
+
+- **The docs-drift backlog is closed.** `EDITORS.md` said go-to-definition
+  cannot land on a `match:` line — it has since 0.5.1, and
+  `definition_on_a_step_lands_on_the_match_line` proves it; the bullet now
+  names the gap that is real (built-in macros live in a pack compiled into the
+  binary, so there is nothing to open). TECH-SPEC §10's command surface gained
+  `--run-id`/`--rerun`/`--sarif`. `GETTING-STARTED` no longer shows a scaffold
+  comment with a word the scaffold does not write. ADR-0015 described a
+  `worker` on `ScenarioFinished` that is always `None`, because that event is
+  emitted from the dispatcher thread rather than the worker — an errata records
+  what shipped, which `EVENTS.md` had right all along.
+
+  Two entries did not reproduce and are recorded as such rather than dropped:
+  `CONFIG.md` carries no claim that `[env.<name>.run]` overrides any section,
+  and the 0.5.2 changelog does mention the directory-valued-phase error.
+
+- **`WRITING-SCENARIOS`'s two sample outputs match the binary again.** The
+  `macros` sample showed two builtins with no ellipsis and omitted the
+  `(builtin, unused here)` marker and the trailing count; the
+  `missing_config_var` sample dropped the `(or in the active
+  [env.<name>.url])` clause. Both read as verbatim transcripts, so a reader
+  comparing them against a real run found differences that were the document's,
+  not theirs.
 
 - **One worklist instead of four documents to cross-read.** Four files read like
   backlogs and only one was: `OPEN-FINDINGS` now carries every open item, including the
