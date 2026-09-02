@@ -1086,6 +1086,81 @@ fn a_rerun_carries_the_bases_scenarios_into_junit_and_the_report() {
         "the banner says what was composed: {}",
         &html[..400]
     );
+    // The headline counts the page, not the re-run subset. Leaving the
+    // re-run's own tail totals in charge printed `0 passed · 1 failed` above
+    // a page listing three scenarios and a sibling JUnit saying the same
+    // three — one page disagreeing with itself.
+    assert!(
+        html.contains("2 passed") && html.contains("1 failed"),
+        "the merged page's headline must count the merged suite: {html}"
+    );
+}
+
+/// …and a **rerun of a rerun** still stands for the whole suite.
+///
+/// `docs/CI.md` promises "one report stands for the composed result", and the
+/// overlay read only the *immediate* base — so the ordinary
+/// fix → rerun → fix → rerun loop, which is the workflow the feature exists
+/// for, silently dropped everything from before the last link. No banner said
+/// so; the page just got smaller.
+#[test]
+fn a_rerun_of_a_rerun_still_covers_the_whole_suite() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: alpha\n    When the suite probes health\n  \
+         Scenario: beta\n    When the first flake settles\n  \
+         Scenario: gamma\n    When the second flake settles\n",
+    )
+    .unwrap();
+    let pack = |beta: u16, gamma: u16| {
+        format!(
+            "{PROBE_PACK}  first:\n    match: the first flake settles\n    steps:\n      \
+             - hurl: |\n          GET ${{url:base}}/health\n          HTTP {beta}\n  \
+             second:\n    match: the second flake settles\n    steps:\n      \
+             - hurl: |\n          GET ${{url:base}}/health\n          HTTP {gamma}\n"
+        )
+    };
+    let pack_path = cwd.path().join("suite/packs/p.yaml");
+
+    // Base: alpha passes, beta and gamma fail.
+    std::fs::write(&pack_path, pack(500, 500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(1);
+    // Rerun 1: fix beta; gamma still fails. Carries alpha.
+    std::fs::write(&pack_path, pack(200, 500)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(1);
+    // Rerun 2: fix gamma. Its immediate base carried alpha, so only a
+    // transitive walk reaches alpha at all.
+    std::fs::write(&pack_path, pack(200, 200)).unwrap();
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun", "--junit", "final.xml"])
+        .assert()
+        .code(0);
+
+    proef_in(cwd.path(), &fixture)
+        .args(["report", "-o", "merged.html"])
+        .assert()
+        .code(0);
+    let html = std::fs::read_to_string(cwd.path().join("merged.html")).unwrap();
+    for name in ["alpha", "beta", "gamma"] {
+        assert!(
+            html.contains(name),
+            "a two-deep rerun chain must still cover the suite ({name}): {html}"
+        );
+    }
+    assert!(
+        html.contains("3 passed"),
+        "the headline counts the whole composed suite: {html}"
+    );
 }
 
 /// `--console dotted` prints one glyph per scenario and `--console quiet`

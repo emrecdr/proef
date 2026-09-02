@@ -370,6 +370,20 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   which changes what a run *says* and never whether it gates: `Warned` counts
   as passing in the exit code, the totals and `JUnit`.
 
+- **A merged report covers the whole suite again, and its headline agrees
+  with its page.** Two independent failures in `--rerun` composition, against
+  `docs/CI.md`'s promise that "one report stands for the composed result". The
+  overlay followed only the *immediate* `rerun_of`, so the ordinary
+  fix → rerun → fix → rerun loop — the workflow the feature exists for —
+  silently dropped everything from before the last link, with no banner saying
+  so; the page just got smaller. It now walks the chain, newest verdict
+  winning, with a cycle guard because `rerun_of` is a string read out of a
+  record and records travel. And the headline took its numbers from the tail
+  totals, which belong to the *re-run*, so one page read `2 passed · 0 failed`
+  above a tag table summing to eight and a sibling `JUnit` saying `tests="8"`.
+  The composed stream now declines those totals rather than inventing new
+  ones, so the headline counts the scenarios actually rendered.
+
 - **Run metadata reaches the two ADR-0020 §5 consumers that never received
   it.** The GitHub job summary — named in the ADR, and the page a CI reader
   actually opens from the job — carried none, so the commit under test was in
