@@ -75,7 +75,16 @@ stale `--output json` spellings in documents describing current behaviour,
 now guarded — narrowly, by an allowlist of present-tense docs, because
 `CHANGELOG`/`RELEASING`/this file quote the flag as it really was.
 
-### P3 — open, because the fix is a design decision
+### P3 — closed by ADR-0021
+
+- **~~`--run-id` records are invisible to `latest`, `flaky`, `diff` and
+  `--rerun`~~** *(closed 2026-09-02 — ADR-0021, the decision this entry asked
+  for).* Split along the risk rather than the file: rotation keeps the uuid
+  predicate (`is_rotatable`), discovery asks whether a directory **holds** an
+  `events.jsonl` (`holds_a_record`), and ordering follows the record's own
+  `run_started` rather than the name. The analysis below stands as the
+  reasoning; it is kept because the tradeoff it names is what the ADR decides,
+  not because the item is open.
 
 - **`--run-id` records are invisible to `latest`, `flaky`, `diff` and
   `--rerun`.** `record::all_runs` filters on `fsutil::is_run_id`, which
