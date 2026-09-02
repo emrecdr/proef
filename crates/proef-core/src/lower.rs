@@ -253,10 +253,9 @@ fn resolve_in_pack_scope(
 fn scope_bindings(
     macro_: &Macro,
     ctx: &LowerCtx<'_>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
-    resolve_pack_scope: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    emit: &mut Emit<'_>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
+    resolve_pack_scope: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
     at: &impl Fn(Diag) -> Diag,
 ) -> Bindings {
     let mut scoped = Bindings::new();
@@ -264,24 +263,25 @@ fn scope_bindings(
         return scoped;
     }
     if let Some(table) = ctx.packs.bind.get(&macro_.pack) {
-        if !refs.pack_bindings.contains_key(&macro_.pack) {
-            let resolved = resolve_bindings(table, refs, sinks, resolve_pack_scope, at);
-            refs.pack_bindings.insert(macro_.pack.clone(), resolved);
+        if !emit.refs.pack_bindings.contains_key(&macro_.pack) {
+            let resolved = resolve_bindings(table, emit, resolve_pack_scope, at);
+            emit.refs
+                .pack_bindings
+                .insert(macro_.pack.clone(), resolved);
         }
-        if let Some(cached) = refs.pack_bindings.get(&macro_.pack) {
+        if let Some(cached) = emit.refs.pack_bindings.get(&macro_.pack) {
             scoped.extend(cached.clone());
         }
     }
-    scoped.extend(resolve_bindings(&macro_.bind, refs, sinks, resolve_in, at));
+    scoped.extend(resolve_bindings(&macro_.bind, emit, resolve_in, at));
     scoped
 }
 
 /// Resolve one `bind:` table in the caller's scope.
 fn resolve_bindings(
     table: &BTreeMap<String, String>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    emit: &mut Emit<'_>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
     at: &impl Fn(Diag) -> Diag,
 ) -> Bindings {
     let mut out = Bindings::new();
@@ -291,7 +291,7 @@ fn resolve_bindings(
             continue;
         }
         if mentions_secret(value) {
-            sinks.errors.push(
+            emit.sinks.errors.push(
                 at(Diag::error(
                     "proef::lower::secret_in_composite_bind",
                     format!(
@@ -305,7 +305,7 @@ fn resolve_bindings(
             );
             continue;
         }
-        if let Some(resolved) = resolve_in(value, refs, sinks) {
+        if let Some(resolved) = resolve_in(value, emit) {
             // A hurl `[Options] variable:` value is a single-line scalar
             // (`VariableValue` is Null/Bool/Number/String), so a line break
             // here cannot survive into the entry. Refused by name rather than
@@ -319,7 +319,7 @@ fn resolve_bindings(
             // and produced exactly the late, mis-blamed failure this check
             // exists to prevent.
             if resolved.chars().any(|c| c.is_control() && c != '\t') {
-                sinks.errors.push(
+                emit.sinks.errors.push(
                     at(Diag::error(
                         "proef::lower::multiline_bind",
                         format!(
@@ -369,6 +369,56 @@ struct Sinks {
     errors: Vec<Diag>,
 }
 
+/// The three mutable outputs every lowering step writes to, bundled.
+///
+/// They were threaded as three parameters through twelve functions, five of
+/// which then needed an arity suppression (not spelled out here: this sentence
+/// would otherwise answer a grep counting them). Bundling them is
+/// the *only* consolidation that works here: the obvious alternative — hoisting
+/// them into a `self` and making the five methods — would break the reason they
+/// are parameters in the first place. `resolve_in` and friends take them
+/// explicitly so they stay callable while other state is mutably borrowed, and
+/// a method on `&mut self` cannot be called while `self` is borrowed elsewhere.
+/// So the threading discipline stays; only the arity changes.
+struct Emit<'a> {
+    /// Lowered steps, appended in order.
+    out: &'a mut Vec<LoweredStep>,
+    /// What resolution referenced.
+    refs: &'a mut Refs,
+    /// Where diagnostics land.
+    sinks: &'a mut Sinks,
+}
+
+/// The values that stay fixed for one authored step, however deep macro
+/// expansion recurses through it: which step the diagnostics belong to, the
+/// lowering context, and the function that anchors a `Diag` on that step.
+///
+/// They travelled as three parameters that were always passed together and
+/// never independently — the definition of a missing type.
+struct StepScope<'a, A: Fn(Diag) -> Diag> {
+    /// The authored step every lowered step and diagnostic traces back to.
+    step_ref: &'a StepRef,
+    /// Packs, routing, injected scopes.
+    ctx: &'a LowerCtx<'a>,
+    /// Anchor a diagnostic on this step.
+    at: &'a A,
+}
+
+/// One lowered step's own description, assembled by the caller that knows the
+/// body form and handed to [`finish_step`], which knows the shared tail.
+struct Finished {
+    /// Which engine kind executes it.
+    kind: StepKindId,
+    /// The step's payload.
+    payload: StepPayload,
+    /// `file.hurl#name` for a `ref:` step, `None` for an inline block — the
+    /// provenance a run record carries (ADR-0018).
+    fragment: Option<String>,
+    /// Where the `${fake:…}` counter stood before this step's functional
+    /// resolves, so a label can replay them without consuming fresh values.
+    label_fakes_start: usize,
+}
+
 /// What resolution referenced while lowering one scenario.
 #[derive(Debug, Default)]
 struct Refs {
@@ -411,13 +461,17 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
         expand_macro(
             macro_,
             &step.args,
-            &step_ref,
-            ctx,
             0,
-            &mut lowered,
-            &mut refs,
-            &mut sinks,
-            &at,
+            &mut Emit {
+                out: &mut lowered,
+                refs: &mut refs,
+                sinks: &mut sinks,
+            },
+            &StepScope {
+                step_ref: &step_ref,
+                ctx,
+                at: &at,
+            },
         );
     }
 
@@ -466,20 +520,16 @@ pub fn lower(scenario: &BoundScenario, ctx: &LowerCtx<'_>) -> Result<LoweredScen
 }
 
 /// Expand one macro invocation into lowered steps (recursing through `use:`).
-#[allow(clippy::too_many_arguments)]
 fn expand_macro(
     macro_: &Macro,
     args: &BTreeMap<String, String>,
-    step_ref: &StepRef,
-    ctx: &LowerCtx<'_>,
     depth: usize,
-    out: &mut Vec<LoweredStep>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    at: &impl Fn(Diag) -> Diag,
+    emit: &mut Emit<'_>,
+    scope: &StepScope<'_, impl Fn(Diag) -> Diag>,
 ) {
+    let (step_ref, ctx, at) = (scope.step_ref, scope.ctx, scope.at);
     if depth > MAX_EXPANSION_DEPTH {
-        sinks.errors.push(at(Diag::error(
+        emit.sinks.errors.push(at(Diag::error(
             "proef::lower::expansion_too_deep",
             format!(
                 "macro expansion exceeded depth {MAX_EXPANSION_DEPTH} at `{}`",
@@ -489,48 +539,44 @@ fn expand_macro(
         return;
     }
 
-    let resolve_in = |text: &str, refs: &mut Refs, sinks: &mut Sinks| -> Option<String> {
-        resolve_in_macro_scope(text, macro_, args, ctx, refs, sinks, at)
+    let resolve_in = |text: &str, emit: &mut Emit<'_>| -> Option<String> {
+        resolve_in_macro_scope(text, macro_, args, ctx, emit.refs, emit.sinks, at)
     };
 
-    let resolve_pack_scope = |text: &str, refs: &mut Refs, sinks: &mut Sinks| -> Option<String> {
-        resolve_in_pack_scope(text, &macro_.pack, ctx, refs, sinks, at)
+    let resolve_pack_scope = |text: &str, emit: &mut Emit<'_>| -> Option<String> {
+        resolve_in_pack_scope(text, &macro_.pack, ctx, emit.refs, emit.sinks, at)
     };
 
     // Bindings in scope for this macro's `ref:` steps: pack scope (resolved
     // once per scenario, cached) then macro scope (once per invocation, which
     // is here). Step scope is applied per step in `expand_step`.
-    let scoped = scope_bindings(
-        macro_,
-        ctx,
-        refs,
-        sinks,
-        &resolve_in,
-        &resolve_pack_scope,
-        at,
-    );
+    let scoped = scope_bindings(macro_, ctx, emit, &resolve_in, &resolve_pack_scope, at);
 
     match &macro_.body {
         MacroBody::Expect(items) => {
             let mut merged: Option<(StepKindId, bool, usize)> = None;
             for item in items {
                 let status = match &item.status {
-                    Some(status) => match resolve_in(status, refs, sinks) {
+                    Some(status) => match resolve_in(status, emit) {
                         Some(status) => Some(status),
                         None => continue,
                     },
                     None => None,
                 };
                 let fragment = match &item.fragment {
-                    Some(fragment) => match resolve_in(fragment, refs, sinks) {
+                    Some(fragment) => match resolve_in(fragment, emit) {
                         Some(fragment) => Some(fragment),
                         None => continue,
                     },
                     None => None,
                 };
-                if let Some((kind, optional, lines)) =
-                    merge_expect(status.as_deref(), fragment.as_deref(), out, sinks, at)
-                {
+                if let Some((kind, optional, lines)) = merge_expect(
+                    status.as_deref(),
+                    fragment.as_deref(),
+                    emit.out,
+                    emit.sinks,
+                    at,
+                ) {
                     let entry = merged.get_or_insert((kind, optional, 0));
                     entry.2 += lines;
                 }
@@ -539,7 +585,7 @@ fn expand_macro(
             // of its own, anchored on the assert lines it appended to the
             // host entry. It shares the host's fate (`optional` inherited).
             if let Some((kind, optional, lines)) = merged {
-                out.push(LoweredStep {
+                emit.out.push(LoweredStep {
                     step: step_ref.clone(),
                     kind,
                     payload: StepPayload::MergedAsserts { lines },
@@ -557,41 +603,28 @@ fn expand_macro(
         }
         MacroBody::Steps(steps) => {
             for macro_step in steps {
-                expand_step(
-                    macro_step,
-                    step_ref,
-                    ctx,
-                    depth,
-                    out,
-                    refs,
-                    sinks,
-                    at,
-                    &resolve_in,
-                    &scoped,
-                );
+                expand_step(macro_step, depth, emit, scope, &resolve_in, &scoped);
             }
         }
     }
 }
 
 /// Expand one pack step (payload or `use:` composition).
-#[allow(clippy::too_many_arguments)]
 fn expand_step(
     macro_step: &MacroStep,
-    step_ref: &StepRef,
-    ctx: &LowerCtx<'_>,
     depth: usize,
-    out: &mut Vec<LoweredStep>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    at: &impl Fn(Diag) -> Diag,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    emit: &mut Emit<'_>,
+    scope: &StepScope<'_, impl Fn(Diag) -> Diag>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
     scoped: &Bindings,
 ) {
+    // No `at` here: every arm now hands the whole scope onward rather than
+    // unpacking it, so the anchor is used at the leaves, not in this router.
+    let (step_ref, ctx) = (scope.step_ref, scope.ctx);
     match &macro_step.kind {
-        MacroStepKind::Ref { target } => expand_ref_step(
-            target, macro_step, step_ref, ctx, out, refs, sinks, at, resolve_in, scoped,
-        ),
+        MacroStepKind::Ref { target } => {
+            expand_ref_step(target, macro_step, emit, scope, resolve_in, scoped);
+        }
         MacroStepKind::Use { target, with } => {
             let Some(target_macro) = ctx.packs.find_use_target(target) else {
                 return; // pack validation reported it
@@ -600,25 +633,15 @@ fn expand_step(
             // child's args (child defaults fill the rest).
             let mut child_args = BTreeMap::new();
             for (key, value) in with {
-                if let Some(resolved) = resolve_in(value, refs, sinks) {
+                if let Some(resolved) = resolve_in(value, emit) {
                     child_args.insert(key.clone(), resolved);
                 }
             }
-            expand_macro(
-                target_macro,
-                &child_args,
-                step_ref,
-                ctx,
-                depth + 1,
-                out,
-                refs,
-                sinks,
-                at,
-            );
+            expand_macro(target_macro, &child_args, depth + 1, emit, scope);
         }
-        MacroStepKind::Payload { kind, payload } => expand_payload_step(
-            macro_step, kind, payload, step_ref, out, refs, sinks, resolve_in,
-        ),
+        MacroStepKind::Payload { kind, payload } => {
+            expand_payload_step(macro_step, kind, payload, step_ref, emit, resolve_in);
+        }
     }
 }
 /// R9-5 / R9-4 — what a `bind:` value may read, and what a literal bind may
@@ -735,19 +758,15 @@ fn lint_bind_values(
 
 /// One `ref:` step: bind, check every read is supplied, then emit the
 /// fragment's own text with the bindings baked in (ADR-0018).
-#[allow(clippy::too_many_arguments)]
 fn expand_ref_step(
     target: &str,
     macro_step: &MacroStep,
-    step_ref: &StepRef,
-    ctx: &LowerCtx<'_>,
-    out: &mut Vec<LoweredStep>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    at: &impl Fn(Diag) -> Diag,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    emit: &mut Emit<'_>,
+    scope: &StepScope<'_, impl Fn(Diag) -> Diag>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
     scoped: &Bindings,
 ) {
+    let (step_ref, ctx, at) = (scope.step_ref, scope.ctx, scope.at);
     let Some(fragment) = ctx.packs.find_fragment(target) else {
         return; // pack validation reported it
     };
@@ -755,16 +774,10 @@ fn expand_ref_step(
     // are what the request is built from — so the label replays from here
     // (see `finish_step`). Pack- and macro-scope bindings resolved earlier and
     // are shared, so they are deliberately not replayed.
-    let label_fakes_start = refs.fakes;
+    let label_fakes_start = emit.refs.fakes;
     // Step scope is the most specific, so it lands last and wins.
     let mut bindings = scoped.clone();
-    bindings.extend(resolve_bindings(
-        &macro_step.bind,
-        refs,
-        sinks,
-        resolve_in,
-        at,
-    ));
+    bindings.extend(resolve_bindings(&macro_step.bind, emit, resolve_in, at));
 
     // Every variable the fragment reads must be bound here or captured
     // by a step before it. hurl's `[Options] variable:` *assigns* into
@@ -776,7 +789,7 @@ fn expand_ref_step(
         .iter()
         .filter(|name| {
             !bindings.contains_key(name.as_str())
-                && !refs.secrets.contains_key(name.as_str())
+                && !emit.refs.secrets.contains_key(name.as_str())
                 // A fragment that answers its own question is answered. This is
                 // what lets the file run standalone under the engine's own
                 // binary with no variables file — ADR-0018's premise — so
@@ -796,7 +809,7 @@ fn expand_ref_step(
     let captured = if unbound.is_empty() && bindings.is_empty() {
         BTreeSet::new()
     } else {
-        captures_before(out)
+        captures_before(emit.out)
     };
     let missing: Vec<&str> = unbound
         .into_iter()
@@ -818,7 +831,7 @@ fn expand_ref_step(
             fragment.name,
             missing.join("`, `"),
         );
-        sinks.errors.push(
+        emit.sinks.errors.push(
             Diag::error("proef::lower::unbound_placeholder", message)
                 .with_source(fragment.file.clone(), Arc::clone(&fragment.source))
                 .maybe_span(crate::pack::locate::line_span(
@@ -841,10 +854,10 @@ fn expand_ref_step(
         &Suppliers {
             captured: &captured,
             supplied: &fragment.supplied_variables,
-            secrets: &refs.secrets,
+            secrets: &emit.refs.secrets,
             reads: fragment.template_reads,
         },
-        sinks,
+        emit.sinks,
         at,
     ) {
         return;
@@ -859,7 +872,7 @@ fn expand_ref_step(
     for (name, bound) in bindings {
         match bound {
             Bound::Secret(secret) => {
-                refs.secrets.insert(name, secret);
+                emit.refs.secrets.insert(name, secret);
             }
             Bound::Value(value) => {
                 literals.insert(name, value);
@@ -875,32 +888,30 @@ fn expand_ref_step(
     finish_step(
         macro_step,
         step_ref,
-        StepKindId::from(fragment.kind.as_str()),
-        StepPayload::HurlEntries(text),
-        // Qualified here rather than at the reader: `target` is what the pack
-        // wrote, which may be the bare name, and a record has to stand on its
-        // own — by the time anyone reads it the pack may say something else.
-        Some(fragment.qualified()),
-        label_fakes_start,
-        out,
-        refs,
-        sinks,
+        Finished {
+            kind: StepKindId::from(fragment.kind.as_str()),
+            payload: StepPayload::HurlEntries(text),
+            // Qualified here rather than at the reader: `target` is what the
+            // pack wrote, which may be the bare name, and a record has to stand
+            // on its own — by the time anyone reads it the pack may say
+            // something else.
+            fragment: Some(fragment.qualified()),
+            label_fakes_start,
+        },
+        emit,
         resolve_in,
     );
 }
 
 /// One inline-payload step: resolve `${…}` in place, then bake the step's own
 /// `retry:`/`delay:` into `[Options]` (ADR-0010 — artifacts replay identically).
-#[allow(clippy::too_many_arguments)]
 fn expand_payload_step(
     macro_step: &MacroStep,
     kind: &str,
     payload: &PayloadForm,
     step_ref: &StepRef,
-    out: &mut Vec<LoweredStep>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    emit: &mut Emit<'_>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
 ) {
     // The label annotates *this* step for humans (artifact comments,
     // events) — it must report the fake values the step actually
@@ -908,10 +919,10 @@ fn expand_payload_step(
     // occurrence counter stood before the functional resolves
     // (payload, then guard) so the label can replay from the same
     // base afterward.
-    let label_fakes_start = refs.fakes;
+    let label_fakes_start = emit.refs.fakes;
     let payload = match payload {
         PayloadForm::Raw(text) => {
-            let Some(resolved) = resolve_in(text, refs, sinks) else {
+            let Some(resolved) = resolve_in(text, emit) else {
                 return;
             };
             // Bake `retry:`/`delay:` into hurl `[Options]` so artifacts
@@ -939,7 +950,7 @@ fn expand_payload_step(
                 if !text.contains('$') {
                     return Some(text.to_owned());
                 }
-                resolve_in(text, refs, sinks)
+                resolve_in(text, emit)
             };
             match resolve_structured(value, &mut resolve) {
                 Some(resolved) => StepPayload::Structured(resolved),
@@ -950,13 +961,13 @@ fn expand_payload_step(
     finish_step(
         macro_step,
         step_ref,
-        StepKindId::from(kind),
-        payload,
-        None, // inline `hurl:` block — no fragment to point at
-        label_fakes_start,
-        out,
-        refs,
-        sinks,
+        Finished {
+            kind: StepKindId::from(kind),
+            payload,
+            fragment: None, // inline `hurl:` block — no fragment to point at
+            label_fakes_start,
+        },
+        emit,
         resolve_in,
     );
 }
@@ -969,23 +980,21 @@ fn expand_payload_step(
 /// `label_fakes_start` is where the occurrence counter stood before *this
 /// step's* functional resolves (the payload for an inline step, the step-scope
 /// `bind:` for a `ref:` one).
-#[allow(clippy::too_many_arguments)]
 fn finish_step(
     macro_step: &MacroStep,
     step_ref: &StepRef,
-    kind: StepKindId,
-    payload: StepPayload,
-    // `file.hurl#name` for a `ref:` step, `None` for an inline block — the
-    // provenance a run record carries (ADR-0018).
-    fragment: Option<String>,
-    label_fakes_start: usize,
-    out: &mut Vec<LoweredStep>,
-    refs: &mut Refs,
-    sinks: &mut Sinks,
-    resolve_in: &impl Fn(&str, &mut Refs, &mut Sinks) -> Option<String>,
+    finished: Finished,
+    emit: &mut Emit<'_>,
+    resolve_in: &impl Fn(&str, &mut Emit<'_>) -> Option<String>,
 ) {
+    let Finished {
+        kind,
+        payload,
+        fragment,
+        label_fakes_start,
+    } = finished;
     let when = match &macro_step.when {
-        Some(guard) => match resolve_in(guard, refs, sinks) {
+        Some(guard) => match resolve_in(guard, emit) {
             Some(resolved) => Some(Guard(resolved)),
             None => return,
         },
@@ -1012,12 +1021,12 @@ fn finish_step(
     // Mirrored references replay with no trace (unaffected, the
     // common case); any extra reference the label consumes stays
     // consumed and can never be reissued.
-    let functional_fakes_end = refs.fakes;
+    let functional_fakes_end = emit.refs.fakes;
     let label = match &macro_step.name {
         Some(name) => {
-            refs.fakes = label_fakes_start;
-            let resolved = resolve_in(name, refs, sinks);
-            refs.fakes = functional_fakes_end.max(refs.fakes);
+            emit.refs.fakes = label_fakes_start;
+            let resolved = resolve_in(name, emit);
+            emit.refs.fakes = functional_fakes_end.max(emit.refs.fakes);
             match resolved {
                 Some(resolved) => Some(resolved),
                 None => return,
@@ -1025,7 +1034,7 @@ fn finish_step(
         }
         None => None,
     };
-    out.push(LoweredStep {
+    emit.out.push(LoweredStep {
         step: step_ref.clone(),
         kind,
         payload,

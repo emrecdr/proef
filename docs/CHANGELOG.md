@@ -6,6 +6,32 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`lower.rs` stops threading the same three values through twelve
+  functions.** `out`, `refs` and `sinks` travelled as separate parameters
+  everywhere, and five functions — `expand_macro`, `expand_step`,
+  `expand_ref_step`, `expand_payload_step`, `finish_step` — carried 8 to 11
+  parameters each behind individual arity suppressions. Adding one piece of
+  lowering state meant editing five signatures and five call sites, which is the
+  shape of change that drops a parameter at one site.
+
+  Two bundles, both of them types that were already implied by the code:
+  `Emit { out, refs, sinks }` (the mutable outputs, always passed together and
+  never independently), `StepScope { step_ref, ctx, at }` (what stays fixed for
+  one authored step however deep expansion recurses), and a small `Finished`
+  for the four values that describe a step being completed.
+
+  **What was *not* done matters as much.** The obvious refactor — hoist the
+  state into a `self` and make the five methods — would have broken the reason
+  they are parameters at all: `resolve_in` and friends take them explicitly so
+  they remain callable while other state is mutably borrowed, and a method on
+  `&mut self` cannot be called while `self` is borrowed elsewhere. The threading
+  discipline is load-bearing, so it stays; only the arity changes.
+
+  Arity suppressions across the workspace: **13 → 6**, with `lower.rs` at zero.
+  No behaviour change, and the 241 core tests say so.
+
 ### Added
 
 - **The editor tells proef's two variable tiers apart.** A pack's `hurl: |` block
