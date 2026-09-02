@@ -1641,15 +1641,7 @@ fn build_specs(
         }
         let file_arc: Arc<str> = Arc::from(feature.file.path.as_str());
         let feature_arc = Arc::new(feature.file.clone());
-        let stem: Arc<str> = Arc::from(
-            Path::new(feature.file.path.as_str())
-                .file_stem()
-                .map_or_else(
-                    || "feature".to_owned(),
-                    |s| s.to_string_lossy().into_owned(),
-                )
-                .as_str(),
-        );
+        let stem: Arc<str> = Arc::from(proef_core::emit::feature_stem(&feature.file.path).as_str());
         for scenario in &feature.scenarios {
             if !front::tag_selected(&scenario.lowered.tags, tags) {
                 continue;

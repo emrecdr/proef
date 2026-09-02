@@ -214,6 +214,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **Artifact naming is defined once — `emit::feature_stem` and
+  `emit::artifact_slug`.** The stem expression (`file_stem`, falling back to
+  `"feature"`) existed four times across both crates — the emitter's caller,
+  the dispatcher's spec naming, the HTML report's anchors, the editor's
+  analysis — and the `stem--scenario` composition twice, with the report's
+  links to artifact files resolving only because both sides happened to derive
+  the same name. Worklist item Q6 called the four sites a future-drift risk;
+  the closure is structural rather than descriptive: one definition each, and
+  every consumer calls it. Additive to the library surface. In the same pass,
+  Q2 (the editor's per-request walks) was found already closed by the #146
+  analysis cache and its entry now says so with the evidence.
+
 - **"What a scenario costs" is defined once, as `ScenarioOutcome::cost`.** The
   sum of a scenario's step durations was computed in three places on the same
   type — `JUnit`'s per-suite time, `JUnit`'s per-case time, and the new

@@ -235,10 +235,7 @@ pub fn run(
             world: &world,
             mode,
         };
-        let feature_stem = feature_path.file_stem().map_or_else(
-            || "feature".to_owned(),
-            |s| s.to_string_lossy().into_owned(),
-        );
+        let feature_stem = emit::feature_stem(&feature_path.display().to_string());
         let mut scenarios = Vec::new();
         for scenario in bound {
             match lower::lower(&scenario, &ctx) {

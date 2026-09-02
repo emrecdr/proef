@@ -9,9 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::Path;
 
-use crate::emit::slugify;
 use crate::event::Event;
 use crate::step::Status;
 
@@ -289,11 +287,7 @@ for (const b of document.querySelectorAll('.filter button')) {
 /// link — the same `stem--name` spelling the emitter uses for the `.hurl`
 /// file, so the two can never disagree.
 fn block_slug(block: &ScenarioBlock) -> String {
-    let stem = Path::new(&block.file).file_stem().map_or_else(
-        || "feature".to_owned(),
-        |stem| stem.to_string_lossy().into_owned(),
-    );
-    format!("{}--{}", slugify(&stem), slugify(&block.name))
+    crate::emit::artifact_slug(&crate::emit::feature_stem(&block.file), &block.name)
 }
 
 /// The status filter's buttons. Progressive enhancement over classes the
