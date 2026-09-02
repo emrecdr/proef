@@ -55,17 +55,6 @@ fn sibling_tmp(path: &Path) -> PathBuf {
     with_suffix(path, &format!(".{}.tmp", std::process::id()))
 }
 
-/// Is this directory name a proef run id (uuid)? Shared by run rotation and
-/// `explain`'s latest-run lookup so the two can never diverge on what counts
-/// as a run dir.
-pub fn is_run_id(name: &str) -> bool {
-    // proef only ever writes the hyphenated form. `Uuid::try_parse` also
-    // accepts bare 32-hex, `urn:uuid:…` and braced spellings — and rotation
-    // deletes the oldest run-shaped directories, so breadth here is a deletion
-    // hazard when the runs dir points somewhere shared.
-    name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
-}
-
 /// Create the directories `path`'s file needs, so writing it can succeed.
 ///
 /// An output path the user named is a path proef was asked to write, and every
@@ -102,19 +91,6 @@ pub(crate) fn parent_dir(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn only_hyphenated_uuid_dirs_count_as_run_ids() {
-        // Rotation deletes the oldest run-shaped directories beyond the
-        // retention limit, and the runs dir can point somewhere shared — so
-        // "run-shaped" must mean the hyphenated form proef actually writes,
-        // not every spelling the uuid parser accepts.
-        assert!(is_run_id("0198f3c1-0000-7000-8000-00000000001a"));
-        assert!(!is_run_id("0198f3c100007000800000000000001a"));
-        assert!(!is_run_id("urn:uuid:0198f3c1-0000-7000-8000-00000000001a"));
-        assert!(!is_run_id("{0198f3c1-0000-7000-8000-00000000001a}"));
-        assert!(!is_run_id("cache-abc"));
-    }
 
     #[test]
     fn parent_dir_normalizes_a_bare_filename_to_cwd() {

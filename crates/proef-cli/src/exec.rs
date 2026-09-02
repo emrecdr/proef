@@ -1846,15 +1846,18 @@ fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
 /// records without bound whatever `keep` says. Deliberate — guessing at
 /// user-named directories is the worse failure — and documented in CONFIG.md.
 fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
-    // `record::all_runs` is the one answer to "what is a run record here" —
-    // sorted, uuid-named directories only. Rotation adds a single further
-    // exclusion (the in-flight run), not a second enumeration rule.
+    // Rotation asks a different question from discovery, and ADR-0021 keeps
+    // them apart: `all_runs` answers "is this a run I can *show* you", which
+    // is safe when broad, while this asks "may I *delete* this", which is only
+    // safe when narrow. So the shared enumeration is filtered back down to
+    // uuid-named directories here — a `--run-id pr` record is discoverable and
+    // still never deleted — plus the in-flight run.
     let dirs: Vec<PathBuf> = crate::record::all_runs(runs_dir)
         .into_iter()
         .filter(|p| {
             p.file_name()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| name != current_run)
+                .is_some_and(|name| name != current_run && crate::record::is_rotatable(name))
         })
         .collect();
     if dirs.len() > keep {
@@ -2138,16 +2141,51 @@ mod tests {
     fn rotation_keeps_the_budget_and_only_ever_deletes_what_it_named() {
         let tmp = tempfile::tempdir().unwrap();
         let runs = tmp.path();
-        // uuid-v7 names sort by time, so these are oldest-first by construction.
+        // A run directory *is* one because it holds a record (ADR-0021), so
+        // the fixtures carry one — an empty directory is not a run, and a test
+        // built from empty directories would be validating a shape that never
+        // occurs.
+        //
+        // Built as a real `Event` and serialized, not typed out as JSON: the
+        // head's shape is a schema (ADR-0008), and a fixture spelling it by
+        // hand goes stale silently the first time the variant gains a field,
+        // leaving the test asserting against a wire format proef no longer
+        // writes. Serde keeps it honest for free.
+        let record = |dir: &std::path::Path| {
+            std::fs::create_dir_all(dir).unwrap();
+            let head = proef_core::event::Event::RunStarted {
+                schema: proef_core::event::EVENT_SCHEMA_VERSION,
+                run_id: std::sync::Arc::from(&*dir.file_name().unwrap().to_string_lossy()),
+                env: None,
+                metadata: std::collections::BTreeMap::new(),
+                shuffled: false,
+                rerun_of: None,
+            };
+            std::fs::write(
+                dir.join("events.jsonl"),
+                serde_json::to_string(&head).unwrap(),
+            )
+            .unwrap();
+        };
+        // uuid-v7 names share one embedded timestamp here, so they tie on time
+        // and fall back to the name — oldest-first by construction.
         let ids: Vec<String> = (0..5)
             .map(|n| format!("0198f3c1-0000-7000-8000-00000000000{n}"))
             .collect();
         for id in &ids {
-            std::fs::create_dir_all(runs.join(id)).unwrap();
+            record(&runs.join(id));
         }
-        for foreign in ["ci", "nightly-42", "notes"] {
-            std::fs::create_dir_all(runs.join(foreign)).unwrap();
+        // Custom-id runs are real records: discoverable, never deletable.
+        // `00-nightly` is the discriminator — it sorts *before* every uuid by
+        // name and *after* every one of them by time (a uuid-v7 minted in the
+        // fixture's past versus a directory created just now), so an ordering
+        // that still rode on the name would put it first.
+        for foreign in ["00-nightly", "ci"] {
+            record(&runs.join(foreign));
         }
+        // Not a record at all: no `events.jsonl`, so neither discovered nor
+        // deleted. `runs-dir` may be `.`, which is why this case exists.
+        std::fs::create_dir_all(runs.join("notes")).unwrap();
 
         // Budget of 2, plus the in-flight run, over 5 existing records.
         rotate_runs(runs, &ids[4], 2);
@@ -2168,12 +2206,38 @@ mod tests {
         for kept in [&ids[2], &ids[3], &ids[4]] {
             assert!(left.contains(kept), "{kept} must survive: {left:?}");
         }
-        for foreign in ["ci", "nightly-42", "notes"] {
+        // The ADR-0021 property: a custom-id record is *discoverable* and
+        // still never deleted. Rotation enumerating by "holds a record" would
+        // have taken these.
+        for foreign in ["00-nightly", "ci", "notes"] {
             assert!(
                 left.contains(&foreign.to_owned()),
                 "`{foreign}` is not a generated run id — rotation must not touch it: {left:?}"
             );
         }
+        let discovered: Vec<String> = crate::record::all_runs(runs)
+            .into_iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert!(
+            discovered.contains(&"ci".to_owned()) && discovered.contains(&"00-nightly".to_owned()),
+            "a custom-id record must still be discoverable: {discovered:?}"
+        );
+        assert!(
+            !discovered.contains(&"notes".to_owned()),
+            "a directory with no record is not a run: {discovered:?}"
+        );
+        // Order follows *time*, not the name. `00-nightly` sorts before every
+        // uuid alphabetically and was created long after all of them, so a
+        // name-ordered list would open with it; a time-ordered one puts it
+        // past every uuid. (Which of the two custom dirs is last depends on
+        // their mtimes and is not the property under test.)
+        let nightly = discovered.iter().position(|n| n == "00-nightly");
+        let last_uuid = discovered.iter().rposition(|n| n.starts_with("0198f3c1"));
+        assert!(
+            nightly > last_uuid && last_uuid.is_some(),
+            "ordering must not ride on the directory name: {discovered:?}"
+        );
     }
 
     /// A run that panics mid-flight must stay `RunCompletion::Incomplete`, not

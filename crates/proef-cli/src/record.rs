@@ -8,26 +8,105 @@ use std::path::{Path, PathBuf};
 use proef_core::event::Event;
 use proef_core::step::Status;
 
-/// Every run dir under `runs_root`, oldest→newest. uuid-v7 names sort
-/// chronologically, so lexical order *is* time order. Filters to real run dirs
-/// so that under `runs-dir = "."` a stray `suite/`/`target/` sorting after the
-/// uuid range cannot masquerade as a run.
+/// May rotation **delete** this directory? Only a uuid-named one (ADR-0021).
+///
+/// Deliberately narrow, and narrow for a reason that does not generalise:
+/// `runs-dir` may be `.`, so anything broader here lets `[run] keep-runs`
+/// remove directories proef never created. `Uuid::try_parse` alone would
+/// accept bare 32-hex, `urn:uuid:…` and braced spellings; proef only ever
+/// writes the hyphenated form, so the length check keeps the deletable set to
+/// exactly what proef makes.
+///
+/// **Not the discovery test.** This used to answer both "may I delete this?"
+/// and "is this a run I can show you?", and those questions are unsafe in
+/// opposite directions — the second is unsafe when *narrow*, and a
+/// `--run-id pr` record was invisible to `explain`, `diff`, `flaky`, `report`
+/// and `--rerun` as a result. See [`holds_a_record`].
+pub fn is_rotatable(name: &str) -> bool {
+    name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
+}
+
+/// Is this directory a run record proef can **read**? (ADR-0021.)
+///
+/// A directory holding proef's own `events.jsonl` is a proef record, whatever
+/// it is called — which is what makes a `--run-id pr` run findable. Safe to
+/// be broad precisely because it authorises nothing destructive: the widest
+/// mistake it can make is offering a directory whose record then fails to
+/// parse, which already reports itself by name.
+pub fn holds_a_record(dir: &Path) -> bool {
+    dir.join("events.jsonl").is_file()
+}
+
+/// Every run dir under `runs_root`, oldest→newest (ADR-0021).
+///
+/// A directory is a run because it **holds a record**, not because of its
+/// name: `--run-id pr` writes a perfectly good record, and keying discovery on
+/// the uuid shape made it invisible to every command that resolves "the latest
+/// run". The deletion question is a different one with the opposite risk and
+/// keeps its own narrow predicate — see [`is_rotatable`].
+///
+/// Ordering no longer rides on the name either. uuid-v7 sorts chronologically,
+/// so lexical order *was* time order — until a custom-id directory joined the
+/// set and sorted by its first letter.
 pub fn all_runs(runs_root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(runs_root)
+    // Decorated, and sorted on the whole `(time, path)` pair, so that equal
+    // times break by **name** rather than by whatever order the filesystem
+    // handed back. Ties are ordinary, not exotic: two uuid-v7 ids minted in the
+    // same millisecond tie exactly, and coarse mtimes make custom-id runs tie
+    // routinely. `sort_by_cached_key` would also time each directory once — the
+    // decoration's other motive — but it is merely *stable*, so it would leave
+    // those ties in `read_dir` order and make the ordering
+    // filesystem-dependent. The cheaper-looking rewrite is the wrong one.
+    //
+    // No `is_dir()` first: `holds_a_record` already answers it — a plain file
+    // `foo` cannot have `foo/events.jsonl` under it — so the extra probe was a
+    // second `stat` per entry for an answer the next one gives.
+    let mut timed: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(runs_root)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(crate::fsutil::is_run_id)
-        })
+        .filter(|path| holds_a_record(path))
+        .map(|path| (began_at(&path), path))
         .collect();
-    dirs.sort();
-    dirs
+    timed.sort();
+    timed.into_iter().map(|(_, path)| path).collect()
+}
+
+/// When this run began, as well as the run itself can say.
+///
+/// A uuid-v7 name **carries the moment proef minted it** — 48 bits of unix
+/// milliseconds, which is precisely why the old lexical sort worked at all.
+/// Taking the timestamp rather than the spelling keeps that property while
+/// letting differently-named runs into the same ordering, and it survives a
+/// record being copied or restored, which mtime does not.
+///
+/// A custom `--run-id` carries no such thing, so the directory's own
+/// modification time is the best answer available. Both are wall-clock unix
+/// time, so the two sources compare directly.
+///
+/// Deliberately **not** read from the record. The head event carries
+/// `schema`/`run_id`/`event` and no timestamp at all (per-event times are
+/// injected observability on `scenario_started`, ADR-0015), so a run with no
+/// scenarios would have no time to read — and an ordering that depends on the
+/// suite having done something is not an ordering.
+fn began_at(dir: &Path) -> std::time::SystemTime {
+    let minted = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| uuid::Uuid::try_parse(name).ok())
+        // `None` for any non-v7 uuid, which is the check that matters here —
+        // only v7 embeds a creation time.
+        .and_then(|id| id.get_timestamp())
+        .map(|stamp| {
+            let (secs, nanos) = stamp.to_unix();
+            std::time::UNIX_EPOCH + std::time::Duration::new(secs, nanos)
+        });
+    minted.unwrap_or_else(|| {
+        std::fs::metadata(dir)
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::UNIX_EPOCH)
+    })
 }
 
 /// The newest run dir, or `None` when there are no run records.
@@ -658,10 +737,64 @@ pub fn carried_outcomes(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+
     use super::*;
     use proef_core::event::Event;
     use proef_core::step::{Status, StepRef};
     use std::sync::Arc;
+
+    #[test]
+    fn only_hyphenated_uuid_dirs_are_rotatable() {
+        // Rotation deletes the oldest run-shaped directories beyond the
+        // retention limit, and the runs dir can point somewhere shared — so
+        // "run-shaped" must mean the hyphenated form proef actually writes,
+        // not every spelling the uuid parser accepts.
+        assert!(is_rotatable("0198f3c1-0000-7000-8000-00000000001a"));
+        assert!(!is_rotatable("0198f3c100007000800000000000001a"));
+        assert!(!is_rotatable(
+            "urn:uuid:0198f3c1-0000-7000-8000-00000000001a"
+        ));
+        assert!(!is_rotatable("{0198f3c1-0000-7000-8000-00000000001a}"));
+        assert!(!is_rotatable("cache-abc"));
+        // Deliberately *not* the discovery test (ADR-0021): `cache-abc` above
+        // is undeletable, not undiscoverable. A `--run-id`-named directory
+        // holding a record is a run — which is the question `holds_a_record`
+        // answers, and the reason these are two predicates.
+    }
+
+    #[test]
+    fn runs_that_began_at_the_same_moment_still_order_deterministically() {
+        // uuid-v7 embeds milliseconds, so ids minted inside one millisecond
+        // carry an identical time — these share a timestamp prefix and differ
+        // only past the variant, so every one of them ties. `all_runs` breaks
+        // that tie by name; a `sort_by_cached_key` rewrite would leave it to
+        // `read_dir`, i.e. to the filesystem, i.e. flaky rather than wrong.
+        //
+        // Enough of them to *see* it: directory order is a hash/B-tree walk on
+        // APFS and ext4, and at three entries it can coincide with sorted order
+        // by luck — which is a test reporting a guard it does not have.
+        // Twenty-four, created in descending order, does not coincide there.
+        let tmp = tempfile::tempdir().unwrap();
+        let ids: Vec<String> = (0..24u8)
+            .map(|n| format!("0198f3c1-0000-7000-8000-0000000000{n:02x}"))
+            .collect();
+        for id in ids.iter().rev() {
+            let dir = tmp.path().join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("events.jsonl"), "").unwrap();
+        }
+        // Where it cannot bite, stated rather than asserted: NTFS keys its
+        // directory B+ tree on the filename, so Windows enumerates in name
+        // order and the assertion below holds trivially there. That is a
+        // platform limit, not a failure — asserting the premise would turn the
+        // Windows job red for a filesystem behaving correctly, and printing a
+        // note would be swallowed, since a passing test's stdout is captured.
+        let found: Vec<String> = all_runs(tmp.path())
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(found, ids, "equal timestamps must order by name");
+    }
 
     /// Write `events` as one JSON object per line into `<dir>/events.jsonl`.
     fn write_events(dir: &Path, events: &[Event]) {

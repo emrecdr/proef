@@ -2544,6 +2544,67 @@ fn a_warned_run_does_not_print_like_a_spotless_one() {
     );
 }
 
+/// A `--run-id`-named record is findable by the commands that resolve "the
+/// latest run" (ADR-0021).
+///
+/// Discovery used to key on the uuid shape, which `--run-id pr` does not have
+/// — so a perfectly good record was invisible to `explain`, `diff`, `flaky`,
+/// `report` and `--rerun`, and `--rerun` in particular would silently operate
+/// on some *older* run instead of the one just produced. The narrow predicate
+/// stays where it belongs: rotation still refuses to delete such a directory.
+#[test]
+fn a_custom_run_id_record_is_discoverable_but_never_rotated() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[run]\nkeep-runs = 0\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--run-id", "pr-1234"])
+        .assert()
+        .code(0);
+    assert!(
+        cwd.path()
+            .join(".proef-runs/pr-1234/events.jsonl")
+            .is_file(),
+        "the custom-id run wrote its record"
+    );
+
+    // `explain` with no argument resolves the latest run — it must be this one.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["explain"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("pr-1234"),
+        "the newest record is the custom-id one: {out}"
+    );
+
+    // A second, uuid-named run with `keep-runs = 0` rotates every *deletable*
+    // record away — and must still leave the custom-id one alone.
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+    assert!(
+        cwd.path()
+            .join(".proef-runs/pr-1234/events.jsonl")
+            .is_file(),
+        "rotation must never delete a directory it did not name"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated
@@ -3003,11 +3064,21 @@ fn secret_valued_captures_never_promote_to_global_state() {
 // write `events.jsonl` directly by serializing `Event`s (the JSONL stream IS
 // the record, ADR-0008) — mirroring record.rs's own test helpers.
 
-/// A valid uuid-v7-shaped dir name (`fsutil::is_run_id` parses via
-/// `uuid::Uuid::try_parse`) so `all_runs` picks these up under the default
-/// `diff` resolution (no base/new given → previous vs latest).
-const DIFF_BASE_RUN_ID: &str = "00000000-0000-0000-0000-000000000001";
-const DIFF_NEW_RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+/// Two run ids that `diff`'s default resolution (no base/new given → previous
+/// vs latest) must order base-then-new.
+///
+/// Real uuid-v7s, a second apart in their **embedded** timestamps, because that
+/// is what `record::began_at` reads (ADR-0021). The previous pair —
+/// `00000000-…-000000000001`/`…002` — looked v7 and was not: the version nibble
+/// is `0`, so `get_timestamp()` returns `None` and both fell through to
+/// directory mtime, leaving the order to two coincidences at once (writes
+/// happening to land on rising mtimes, and a lexical tie-break rescuing them
+/// when they did not). Neither is the mechanism under test.
+///
+/// Discovery no longer turns on the name at all — `all_runs` admits whatever
+/// holds an `events.jsonl` — so the shape here buys ordering, nothing else.
+const DIFF_BASE_RUN_ID: &str = "0198f3c1-0000-7000-8000-000000000001";
+const DIFF_NEW_RUN_ID: &str = "0198f3c2-0000-7000-8000-000000000002";
 
 /// Write `events` as one JSON object per line into `<runs_root>/<id>/events.jsonl`.
 fn write_run(runs_root: &Path, id: &str, events: &[proef_core::event::Event]) {

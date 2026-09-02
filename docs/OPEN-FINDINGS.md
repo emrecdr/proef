@@ -75,7 +75,19 @@ stale `--output json` spellings in documents describing current behaviour,
 now guarded — narrowly, by an allowlist of present-tense docs, because
 `CHANGELOG`/`RELEASING`/this file quote the flag as it really was.
 
-### P3 — open, because the fix is a design decision
+### P3 — closed by ADR-0021
+
+- **~~`--run-id` records are invisible to `latest`, `flaky`, `diff` and
+  `--rerun`~~** *(closed 2026-09-02 — ADR-0021, the decision this entry asked
+  for).* Split along the risk rather than the file: rotation keeps the uuid
+  predicate (`is_rotatable`), discovery asks whether a directory **holds** an
+  `events.jsonl` (`holds_a_record`), and ordering follows the **uuid's own
+  embedded timestamp**, falling back to directory mtime for a custom id.
+  *Not* the record's `run_started`, which is what this entry and the ADR's
+  first draft both proposed: the head event carries `event`/`run_id`/`schema`
+  and no time at all, so there was nothing there to read. The analysis below
+  stands as the reasoning; it is kept because the tradeoff it names is what the
+  ADR decides, not because the item is open.
 
 - **`--run-id` records are invisible to `latest`, `flaky`, `diff` and
   `--rerun`.** `record::all_runs` filters on `fsutil::is_run_id`, which
@@ -98,6 +110,30 @@ now guarded — narrowly, by an allowlist of present-tense docs, because
   need mtime or the record's own `run_started`. CONFIG.md documents the
   rotation consequence of custom ids; it does not document the invisibility.
   That gap is real either way.
+
+### Noted while reviewing ADR-0021 — recorded, not scheduled
+
+- **`--rerun` reads the base record's `events.jsonl` twice.** `exec.rs` calls
+  `record::read_events(&dir)` for the JUnit overlay, then
+  `record::rerun_candidates(&dir)`, which calls `read_record` → `read_events`
+  on the same directory. Two full reads and two full deserializations of one
+  file, bounded only by the 256 MiB record ceiling. Pre-dates ADR-0021 and is
+  untouched by it. The fix is small and shaped like the rest of the module —
+  `rerun_candidates` takes `&[Event]` rather than a `&Path`, and the one caller
+  passes the events it already has — but it is a signature change on a path
+  `--rerun` alone exercises, so it wants its own change, not a ride on this one.
+
+- **Discovery now costs a second `stat` per custom-id run, and that population
+  is the one nothing bounds.** `all_runs` stats each directory once for
+  `holds_a_record`; `began_at` then reads a uuid-v7 name's time out of the name
+  itself (no syscall) but falls to `std::fs::metadata` for any other name. Since
+  rotation deliberately never deletes custom-id directories, `[run] keep-runs`
+  does not cap that set — so a CI job minting `--run-id` per build pays one
+  extra stat per historical build on every command that resolves "latest".
+  Accepted, not a defect: the stat is what buys correct interleaving of
+  custom-id and uuid runs in one time order, which is the point of the ADR.
+  Recorded because it is the one cost here that grows unbounded, and a future
+  reader measuring a slow `flaky` on a long-lived runs dir should find it named.
 
 ### Corrections this round made to earlier ones *(accepted)*
 

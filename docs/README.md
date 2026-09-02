@@ -63,6 +63,7 @@ the live status. This corpus is also published as a website: <https://emrecdr.gi
 | [0018](adr/ADR-0018-named-hurl-fragments.md) | Named hurl fragments: `ref:` as a second macro body form, `# @proef <name>` in real `.hurl` files, explicit `bind:` scopes | Accepted |
 | [0019](adr/ADR-0019-reserved-tags-and-the-authored-skip.md) | Reserved tags and the authored skip: `@skip[:reason]` at the CLI edge, reasons in every sink, authored-vs-mechanical split for `--rerun`, quarantine aligned in JUnit | Accepted |
 | [0020](adr/ADR-0020-run-metadata-is-explicit-injection-only.md) | Run metadata is explicit-injection-only: `--meta`/`[meta]`/`[env.<name>.meta]`, `run_started` gains `env`/`metadata`/`shuffled`, harvested-vs-handed-over is the boundary | Accepted |
+| [0021](adr/ADR-0021-run-discovery-and-rotation-are-separate-questions.md) | Run discovery and rotation are separate questions: a directory is a record because it holds one, rotation still deletes only uuid-named dirs, ordering follows the uuid-v7 timestamp, then mtime | Accepted |
 
 ## Naming & identifiers
 
