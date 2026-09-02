@@ -234,17 +234,44 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
-- **Artifact naming is defined once — `emit::feature_stem` and
-  `emit::artifact_slug`.** The stem expression (`file_stem`, falling back to
-  `"feature"`) existed four times across both crates — the emitter's caller,
-  the dispatcher's spec naming, the HTML report's anchors, the editor's
-  analysis — and the `stem--scenario` composition twice, with the report's
-  links to artifact files resolving only because both sides happened to derive
-  the same name. Worklist item Q6 called the four sites a future-drift risk;
-  the closure is structural rather than descriptive: one definition each, and
-  every consumer calls it. Additive to the library surface. In the same pass,
-  Q2 (the editor's per-request walks) was found already closed by the #146
-  analysis cache and its entry now says so with the evidence.
+- **An artifact is named by its feature's *path*, not its stem — two scenarios
+  can no longer claim one file.** Slugs were `{stem}--{scenario}`, dropping the
+  directory, so `features/x.feature` and `features/sub/x.feature` each with a
+  `same name` scenario both produced `x--same-name`: the second artifact
+  **silently overwrote the first** while the CLI reported writing two. Silent
+  loss of the hand-off ADR-0010 calls a contract — and the project already
+  treats same-named scenarios across files as real, which is what
+  `--scenario-file` exists for. The same slug drives the HTML report's anchors
+  and artifact links, `reproduce:` lines, and harness trial names, so all of
+  them move together off the one helper.
+
+  Names are now `features-sub-x--same-name`. Derived from the path rather than
+  disambiguated on collision, deliberately: a counter or hash appended only
+  when two names clash would make one scenario's artifact name depend on
+  whether some *other* file exists, so adding a feature would rename an
+  unrelated artifact — the instability `--shard`'s frozen hash exists to
+  avoid. The path fed in is the portable suite-relative name the record
+  carries, never a path off the running machine.
+
+  **Breaking, and quietly so for library callers:** `emit::artifact_slug` keeps
+  its `(&str, &str) -> String` signature while its first argument changes
+  meaning from *stem* to *feature path*, so the API gate cannot see it —
+  passing a stem still compiles and now yields a different name.
+  `emit::emit`'s second parameter changes the same way, and `emit::feature_stem`
+  is removed (it had no remaining consumer). Artifact filenames and report
+  anchors change for every suite; the snapshot corpus was regenerated under the
+  new names and reviewed.
+
+  The unification that made that a one-line change came first: the stem
+  expression (`file_stem`, falling back to `"feature"`) had existed four times
+  across both crates — the emitter's caller, the dispatcher's spec naming, the
+  HTML report's anchors, the editor's analysis — and the `stem--scenario`
+  composition twice, with the report's links to artifact files resolving only
+  because both sides happened to derive the same name. Worklist item Q6 called
+  the four sites a future-drift risk; collapsing them to one helper is what
+  let the collision above be fixed in a single place instead of four. In the
+  same pass, Q2 (the editor's per-request walks) was found already closed by
+  the #146 analysis cache, and its entry now says so with the evidence.
 
 - **"What a scenario costs" is defined once, as `ScenarioOutcome::cost`.** The
   sum of a scenario's step durations was computed in three places on the same
@@ -330,6 +357,46 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   made it look worse than it is.
 
 ### Fixed
+
+- **`--rerun` on a *truncated* record no longer reports success over a suite
+  that never ran.** `Record::scenarios` is built from `scenario_finished`
+  events alone, so a run killed mid-flight — SIGKILL, OOM, a full disk, a
+  container eviction — leaves its unreached scenarios **absent** rather than
+  recorded. The candidate list built from such a record named nothing, the
+  "no failures" branch fired, and `--rerun` exited 0 having executed no
+  scenario at all. `explain` saw the truncation the whole time; `--rerun` did
+  not, and CI is exactly where truncation happens. The same class as the
+  cancelled-run bug fixed in 0.14.0, which this code's own comment describes.
+
+  A truncated base inverts the question: not "what did the record say to
+  re-run" but "what can the record prove finished" — everything else in the
+  selected front runs, announced with a warning naming the truncation. That
+  distinction now lives in a `RerunFilter` predicate rather than a list,
+  because only the record reader knows which of the two questions applies.
+
+- **`diff` no longer reports a scenario skipped in *both* runs as "now skipped
+  … (was passing)".** Both halves were false — it did not become skipped, and
+  it was not passing — and it fired for every `@skip` scenario on every diff,
+  including two runs of an unchanged suite, handing `--format json` consumers
+  the same wrong pair. The bucket exists for *transitions* (ADR-0019 §7); the
+  guard makes that true of the code and not only of its name.
+
+- **A tab in a bound value is refused where every other control character
+  already was.** The lower-time guard exempted `\t`, which hurl's `variable:`
+  grammar rejects like any other control character, so exactly one character
+  kept taking the late path the guard exists to close — dying as
+  `emit::invalid_artifact` against *generated* text the author never wrote,
+  rather than as a refusal naming their own `bind:`.
+
+- **`--shard-weights` no longer piles every zero-cost scenario into shard 0.**
+  Costs are whole milliseconds, so anything sub-millisecond stores as `0` —
+  routine for a fast suite — and adding `0` never moved a shard's load, so
+  shard 0 stayed the minimum forever. An all-zero weights file put the entire
+  suite in one shard and left the others selecting nothing: the flag doing the
+  exact opposite of its purpose, silently, with the partition still exact so
+  nothing complained. Assignments are now a tie-break alongside load, which
+  also gives the right answer when weights genuinely cannot separate
+  scenarios: equal cost, equal share.
 
 - **A disk filling *mid-run* now reaches the exit code.** A stdout that was
   already broken at start has failed loudly since the correctness series — but

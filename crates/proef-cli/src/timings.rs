@@ -145,13 +145,26 @@ pub fn assign(weights: &Weights, count: u32) -> BTreeMap<(String, String), u32> 
 
     let buckets = count.max(1) as usize;
     let mut load = vec![0u64; buckets];
+    let mut taken = vec![0usize; buckets];
     let mut assigned = BTreeMap::new();
     for (identity, ms) in ordered {
-        // The lightest shard; the lowest index among equals, so an all-equal
-        // set deals round-robin rather than piling onto whichever `min_by_key`
-        // happened to see first.
-        let target = (0..buckets).min_by_key(|&i| (load[i], i)).unwrap_or(0);
+        // Lightest shard, then fewest scenarios, then lowest index.
+        //
+        // The count is not a nicety — without it a **zero-cost** scenario
+        // inverts the whole flag. Costs are whole milliseconds, so anything
+        // sub-millisecond stores as `0`, which is routine for a fast suite;
+        // adding `0` never moves `load`, so shard 0 stayed the minimum
+        // forever and every such scenario piled into it. An all-zero file
+        // put the entire suite in shard 0 and left every other shard
+        // selecting nothing — the exact opposite of balancing, from the flag
+        // whose purpose is balance. Counting assignments keeps the deal
+        // round-robin when the weights cannot separate the scenarios, which
+        // is also the right answer: equal cost, equal share.
+        let target = (0..buckets)
+            .min_by_key(|&i| (load[i], taken[i], i))
+            .unwrap_or(0);
         load[target] = load[target].saturating_add(*ms);
+        taken[target] += 1;
         assigned.insert(identity.clone(), u32::try_from(target).unwrap_or(0));
     }
     assigned
@@ -221,6 +234,59 @@ mod tests {
         reversed.reverse();
         let rebuilt: Weights = reversed.into_iter().map(|(k, v)| (k.clone(), *v)).collect();
         assert_eq!(assign(&forward, 2), assign(&rebuilt, 2));
+    }
+
+    /// **Zero-cost scenarios must still spread.** Costs are whole
+    /// milliseconds, so every sub-millisecond scenario stores as `0` — routine
+    /// for a fast suite. Balancing on load alone never advanced past shard 0
+    /// for those, so an all-zero file put the whole suite in one shard and
+    /// left the others selecting nothing: the flag doing the opposite of its
+    /// purpose, silently, with the partition still exact so nothing complained.
+    #[test]
+    fn zero_cost_scenarios_spread_instead_of_piling_into_shard_zero() {
+        let w = weights(&[
+            ("f.feature", "a", 0),
+            ("f.feature", "b", 0),
+            ("f.feature", "c", 0),
+            ("f.feature", "d", 0),
+        ]);
+        let split = assign(&w, 2);
+        let mut per_shard = [0usize; 2];
+        for shard in split.values() {
+            per_shard[*shard as usize] += 1;
+        }
+        assert_eq!(
+            per_shard,
+            [2, 2],
+            "an all-zero weights file must still deal evenly: {split:?}"
+        );
+
+        // Mixed: the one real cost dominates, and the zeros fill the rest
+        // rather than all landing beside each other.
+        let mixed = weights(&[
+            ("f.feature", "heavy", 900),
+            ("f.feature", "z1", 0),
+            ("f.feature", "z2", 0),
+            ("f.feature", "z3", 0),
+        ]);
+        let split = assign(&mixed, 3);
+        let heavy = split[&("f.feature".to_owned(), "heavy".to_owned())];
+        let zeros: Vec<u32> = ["z1", "z2", "z3"]
+            .iter()
+            .map(|n| split[&("f.feature".to_owned(), (*n).to_owned())])
+            .collect();
+        assert!(
+            zeros.iter().all(|s| *s != heavy),
+            "nothing should join the 900ms shard while empty shards exist: {split:?}"
+        );
+        assert_eq!(
+            zeros
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            2,
+            "the zeros fill both remaining shards rather than stacking on one: {split:?}"
+        );
     }
 
     #[test]

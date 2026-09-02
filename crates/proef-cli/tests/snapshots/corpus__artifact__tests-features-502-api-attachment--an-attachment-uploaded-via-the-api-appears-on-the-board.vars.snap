@@ -2,5 +2,5 @@
 source: crates/proef-cli/tests/corpus.rs
 expression: "String::from_utf8(content_a).unwrap()"
 ---
-# proef variables for 520-api-breadth--a-synthetic-name-searches-cleanly.hurl
+# proef variables for tests-features-502-api-attachment--an-attachment-uploaded-via-the-api-appears-on-the-board.hurl
 # secret `apiToken` — supply at replay: --secret apiToken=<value>

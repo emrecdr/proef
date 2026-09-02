@@ -210,21 +210,32 @@ impl Report {
                 Some(base_run) => {
                     let was_fail = base_run.status == Status::Failed;
                     let now_fail = new_run.status == Status::Failed;
-                    if new_run.status == Status::Skipped {
+                    match (base_run.status, new_run.status) {
+                        // Skipped in **both** runs is not a transition, so it
+                        // gets no verdict. Reporting it as "now skipped (was
+                        // passing)" was false twice over — it did not become
+                        // skipped, and it was not passing — and it fired for
+                        // every `@skip` scenario on every diff, including two
+                        // runs of an unchanged suite. The bucket exists for
+                        // transitions (ADR-0019 §7); the guard is what makes
+                        // that true of the code rather than only of the name.
+                        (Status::Skipped, Status::Skipped) => {}
                         // Into-Skipped is neither fixed nor regressed;
                         // "fixed" here certified skipping a failing test.
-                        report.now_skipped.push((key.clone(), was_fail));
-                    } else if base_run.status == Status::Skipped {
+                        (_, Status::Skipped) => {
+                            report.now_skipped.push((key.clone(), was_fail));
+                        }
                         // Out of Skipped: no meaningful baseline — the
                         // `added` shape, honest about what is known.
-                        report.added.push((key.clone(), new_run.status));
-                    } else {
-                        match (was_fail, now_fail) {
+                        (Status::Skipped, _) => {
+                            report.added.push((key.clone(), new_run.status));
+                        }
+                        _ => match (was_fail, now_fail) {
                             (false, true) => report.regressed.push(key.clone()),
                             (true, false) => report.fixed.push(key.clone()),
                             (true, true) => report.still_failing.push(key.clone()),
                             (false, false) => {}
-                        }
+                        },
                     }
                     report.note_flaky(key, base_run, new_run);
                     report.note_slower(key, base_run, new_run);
@@ -507,5 +518,38 @@ mod tests {
             "a skipped baseline was never passing"
         );
         assert_eq!(report.added.len(), 1, "no baseline — the added shape");
+    }
+
+    /// Skipped in **both** runs is not a transition, so it earns no verdict.
+    ///
+    /// Without the guard every `@skip` scenario landed in `now_skipped` on
+    /// every diff — including two runs of an unchanged suite — rendered as
+    /// "now skipped … (was passing)", which is false twice: it did not become
+    /// skipped, and it was not passing. `--format json` handed a CI consumer
+    /// the same wrong pair.
+    #[test]
+    fn a_scenario_skipped_in_both_runs_is_not_a_transition() {
+        let run = || {
+            let mut scenarios = BTreeMap::new();
+            scenarios.insert(
+                ("f.feature".to_string(), "parked".to_string()),
+                ScenarioRun {
+                    status: Status::Skipped,
+                    reason: Some("@skip".to_string()),
+                    tags: Vec::new(),
+                    steps: BTreeMap::new(),
+                    phase: None,
+                },
+            );
+            scenarios
+        };
+        let report = Report::compute(&run(), &run());
+        assert!(
+            report.now_skipped.is_empty(),
+            "no transition, no verdict: {:?}",
+            report.now_skipped
+        );
+        assert!(report.added.is_empty(), "it is not new either");
+        assert!(report.fixed.is_empty() && report.regressed.is_empty());
     }
 }

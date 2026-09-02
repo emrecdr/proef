@@ -4,7 +4,7 @@ expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — A note posted via the API appears on the board
 # source: tests/features/500_api_note.feature:9
-# replay: hurl --test 500-api-note--a-note-posted-via-the-api-appears-on-the-board.hurl --variables-file 500-api-note--a-note-posted-via-the-api-appears-on-the-board.vars --secret apiToken=<value>
+# replay: hurl --test tests-features-500-api-note--a-note-posted-via-the-api-appears-on-the-board.hurl --variables-file tests-features-500-api-note--a-note-posted-via-the-api-appears-on-the-board.vars --secret apiToken=<value>
 
 # tests/features/500_api_note.feature:10 — the workspace is provisioned (fixture warm-up probe)
 # optional

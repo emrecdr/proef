@@ -2332,6 +2332,72 @@ fn rerun_after_a_max_fail_stop_continues_the_never_ran_tail() {
     );
 }
 
+/// `--rerun` on a **truncated** base runs everything the record cannot prove
+/// finished — the same class as the cancelled case above, and the one CI
+/// actually hits.
+///
+/// A cancelled run records its skipped tail, so a list works. A run that was
+/// *killed* — SIGKILL, OOM, a full disk, a container eviction — writes no tail
+/// `RunFinished` and its unreached scenarios are simply **absent**, because
+/// `Record::scenarios` is built from `scenario_finished` events alone. So the
+/// old list-shaped question ("what did the record say failed?") answered
+/// "nothing", and `--rerun` exited 0 having executed no scenario at all, over a
+/// suite that never ran. `explain` saw the truncation the whole time; `--rerun`
+/// did not.
+#[test]
+fn rerun_on_a_truncated_record_runs_what_it_cannot_prove_finished() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    let mut feature = String::from("Feature: F\n");
+    for i in 0..4 {
+        use std::fmt::Write as _;
+        let _ = write!(
+            feature,
+            "  Scenario: case {i}\n    When the suite probes health\n"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), &feature).unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+
+    // Truncate the record the way a killed process leaves it: a head, some
+    // partial scenario traffic, and no `run_finished`.
+    let events = latest_run_dir(cwd.path()).join("events.jsonl");
+    let text = std::fs::read_to_string(&events).unwrap();
+    let mut head = text.lines().take(3).collect::<Vec<_>>().join("\n");
+    head.push('\n');
+    assert!(
+        !head.contains("run_finished"),
+        "the fixture for this test must not carry a tail event"
+    );
+    std::fs::write(&events, head).unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--rerun"])
+        .assert()
+        .code(0);
+    let rendered = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+        + &String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        rendered.contains("4 passed"),
+        "every scenario the truncated record could not prove finished must run: {rendered}"
+    );
+    assert!(
+        !rendered.contains("nothing to rerun"),
+        "'no failures' is only a safe reading of a record that finished: {rendered}"
+    );
+    assert!(
+        rendered.contains("truncated"),
+        "the reader must be told why the whole suite is being rerun: {rendered}"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated

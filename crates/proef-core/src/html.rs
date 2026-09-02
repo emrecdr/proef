@@ -287,7 +287,7 @@ for (const b of document.querySelectorAll('.filter button')) {
 /// link — the same `stem--name` spelling the emitter uses for the `.hurl`
 /// file, so the two can never disagree.
 fn block_slug(block: &ScenarioBlock) -> String {
-    crate::emit::artifact_slug(&crate::emit::feature_stem(&block.file), &block.name)
+    crate::emit::artifact_slug(&block.file, &block.name)
 }
 
 /// The status filter's buttons. Progressive enhancement over classes the

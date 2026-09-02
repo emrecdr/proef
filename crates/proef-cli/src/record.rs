@@ -2,7 +2,7 @@
 //! stream IS the record (ADR-0008), so there is no second format to parse.
 //! Shared by `explain`, `--rerun`, and `proef diff`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use proef_core::event::Event;
@@ -446,6 +446,56 @@ pub struct RerunCandidates {
     /// a console note: the developer is continuing a partial run, not merely
     /// retrying failures.
     pub never_ran: usize,
+    /// The selection predicate, which is not always a list — see
+    /// [`RerunFilter`].
+    pub filter: RerunFilter,
+}
+
+/// Which selected scenarios a `--rerun` executes.
+///
+/// A predicate rather than a list, because on a **truncated** base the record
+/// physically cannot name the work it missed. `Record::scenarios` is built
+/// from `scenario_finished` events alone, so a run killed mid-flight — SIGKILL,
+/// OOM, a full disk, a container eviction — leaves its unreached scenarios
+/// *absent* rather than recorded. A list built from such a record names only
+/// what happened to be observed, which is how `--rerun` came to report success
+/// over a suite that never ran.
+///
+/// So a truncated base inverts the question: instead of "what did the record
+/// say to re-run", it is "what can the record prove finished". Everything else
+/// in the selected front runs.
+#[derive(Debug, Default)]
+pub struct RerunFilter {
+    /// Identities the record positively names: failures, plus a cancelled
+    /// run's never-completed tail.
+    queued: BTreeSet<(String, String)>,
+    /// On a truncated base only: the identities the record saw *finish*.
+    /// `None` when the base ended with a `RunFinished`, where the queued list
+    /// is complete by construction and this second rule must not apply.
+    finished_when_truncated: Option<BTreeSet<(String, String)>>,
+}
+
+impl RerunFilter {
+    /// Does this selected scenario run?
+    #[must_use]
+    pub fn keeps(&self, file: &str, name: &str) -> bool {
+        let identity = (file.to_owned(), name.to_owned());
+        if self.queued.contains(&identity) {
+            return true;
+        }
+        // Truncated base: anything the record cannot prove finished must run.
+        // Nothing to prove it *failed* either — but an unexecuted scenario
+        // reported green is the failure this rule exists to prevent.
+        self.finished_when_truncated
+            .as_ref()
+            .is_some_and(|finished| !finished.contains(&identity))
+    }
+
+    /// Is the base truncated — i.e. is the second rule in play at all?
+    #[must_use]
+    pub fn base_truncated(&self) -> bool {
+        self.finished_when_truncated.is_some()
+    }
 }
 
 /// The scenarios `--rerun` should run: every failure — plus, on a **cancelled**
@@ -471,12 +521,21 @@ pub struct RerunCandidates {
 pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
     let record = read_record(record_dir)?;
     let cancelled = record.completion == RunCompletion::Cancelled;
+    // A record with no tail `RunFinished` cannot enumerate what it missed, so
+    // the filter below flips to "run everything not proven finished". Kept
+    // separate from `cancelled`: a cancelled run *does* record its skipped
+    // tail, which is why that branch can work from a list at all.
+    let truncated = record.completion == RunCompletion::Incomplete;
+    let mut finished: BTreeSet<(String, String)> = BTreeSet::new();
     let mut scenarios = Vec::new();
     let mut never_ran = 0;
     for (key, run) in record.scenarios {
         if !run.is_suite() {
             continue;
         }
+        // Reached a terminal event, whatever it said. On a truncated base this
+        // is the only positive knowledge there is.
+        finished.insert(key.clone());
         match run.status {
             Status::Failed => scenarios.push(key),
             // An authored skip is not "never ran" — its reason is the tag
@@ -497,9 +556,14 @@ pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
             _ => {}
         }
     }
+    let filter = RerunFilter {
+        queued: scenarios.iter().cloned().collect(),
+        finished_when_truncated: truncated.then_some(finished),
+    };
     Ok(RerunCandidates {
         scenarios,
         never_ran,
+        filter,
     })
 }
 
