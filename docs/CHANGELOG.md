@@ -28,6 +28,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   struct-literal construction needs the new line (`..Default::default()` sites
   are untouched, and an absent `[http] cookie-store` key changes nothing).
 
+- **`--ctrf <path>` — the run's verdicts as a CTRF report.** CTRF
+  (<https://ctrf.io>) is the emerging JSON successor to `JUnit` XML for CI
+  dashboards, and it models in the *schema* what `JUnit` can only smuggle
+  through extensions — which is exactly the data proef already tracks: a
+  pass-after-retry carries `flaky`, `retries`, and `retryAttempts` listing
+  the real failed attempts with their (redacted) messages; every test carries
+  its tags and file path. One serializer off the same fold as `JUnit`, so the
+  two files cannot disagree — most visibly for a quarantined failure, which
+  both report as *skipped with a message* (ADR-0019), because a dashboard
+  reading "failed" beside exit 0 would contradict itself. A `User`/`System`
+  fault stays `failed` even under a quarantine tag: quarantine is for flaky
+  tests, not broken input.
+
+  The R12-3 contract applies from day one: a `[run] setup` abort still writes
+  the file, carrying the setup scenario itself — a job gating on the report
+  must never see *no file at all*. The schema's required wall-clock
+  `start`/`stop` are measured at the CLI edge like every other clock read
+  (ADR-0015); the sans-IO core and the JSONL record are untouched — the
+  record remains the only record (ADR-0008).
+
 - **The HTML report answers "what is slowest".** After "what failed", it is the
   question a test report is most often asked, and the page could not answer it:
   the timeline showed *that* workers were busy, never *which* scenarios to

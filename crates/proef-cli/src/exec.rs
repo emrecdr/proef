@@ -145,6 +145,7 @@ pub fn execute(
     jobs: Option<usize>,
     output: Option<OutputFormat>,
     junit: Option<&str>,
+    ctrf: Option<&Path>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     active_env: Option<&str>,
@@ -183,6 +184,15 @@ pub fn execute(
             crate::render::errln!("error: {message}");
             return ExitCode::UserError;
         }
+    };
+
+    // The CI report destinations plus the run's wall-clock start (CTRF's
+    // summary requires an epoch start/stop pair). A CLI-edge clock read like
+    // every other (ADR-0015) — the sans-IO core and the record never see it.
+    let sinks = CiSinks {
+        junit,
+        ctrf,
+        started_at: std::time::SystemTime::now(),
     };
 
     // Read before anything runs: a `--shard-weights` that cannot be read is a
@@ -499,7 +509,7 @@ pub fn execute(
                                 tag_links: &config.tag_links,
                             },
                             &front.run_id,
-                            junit,
+                            sinks,
                             &run_dir,
                             &redactions,
                             machine_stdout,
@@ -530,7 +540,7 @@ pub fn execute(
                                 tag_links: &config.tag_links,
                             },
                             &front.run_id,
-                            junit,
+                            sinks,
                             &run_dir,
                             &redactions,
                             machine_stdout,
@@ -883,7 +893,7 @@ pub fn execute(
                 tag_links: &config.tag_links,
             },
             &front.run_id,
-            junit,
+            sinks,
             &run_dir,
             &redactions,
             machine_stdout,
@@ -1461,15 +1471,57 @@ struct Verdict<'a> {
     tag_links: &'a std::collections::BTreeMap<String, String>,
 }
 
+/// The optional CI report destinations, and the clock they share — one value
+/// because every call site passes the same three, and the three abort paths
+/// must stay in lockstep with the main one (R12-3: a job gating on a report
+/// file must never see it missing because the run died early).
+#[derive(Clone, Copy)]
+struct CiSinks<'a> {
+    /// `--junit`: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`).
+    junit: Option<&'a str>,
+    /// `--ctrf`: the CTRF JSON destination.
+    ctrf: Option<&'a Path>,
+    /// The run's wall-clock start (CTRF's summary requires epoch start/stop).
+    started_at: std::time::SystemTime,
+}
+
 fn write_ci_reports(
     verdict: &Verdict<'_>,
     run_id: &str,
-    junit: Option<&str>,
+    sinks: CiSinks<'_>,
     run_dir: &Path,
     redactions: &proef_core::report::Redactions,
     machine_stdout: bool,
 ) -> bool {
+    let CiSinks {
+        junit,
+        ctrf,
+        started_at,
+    } = sinks;
     let mut junit_failed = false;
+    // Beside JUnit, deliberately inside this function: the two sinks must
+    // describe one truth on every path that reaches CI — including the
+    // setup-abort paths (R12-3), where a job gating on either file must not
+    // see it missing. A write failure re-classifies the exit exactly as a
+    // JUnit write failure does.
+    if let Some(path) = ctrf {
+        match crate::ctrf::write(
+            verdict.summary,
+            verdict.teardown,
+            verdict.carried,
+            verdict.non_gating,
+            run_id,
+            started_at,
+            path,
+            redactions,
+        ) {
+            Ok(()) => crate::render::errln!("ctrf report: {}", path.display()),
+            Err(message) => {
+                crate::render::errln!("error: {message}");
+                junit_failed = true;
+            }
+        }
+    }
     let junit_path = match junit {
         Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {
             Some(run_dir.join("report.junit.xml"))
