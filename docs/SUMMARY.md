@@ -45,6 +45,7 @@
 - [ADR-0018 — Named hurl fragments](adr/ADR-0018-named-hurl-fragments.md)
 - [ADR-0019 — Reserved tags and the authored skip](adr/ADR-0019-reserved-tags-and-the-authored-skip.md)
 - [ADR-0020 — Run metadata is explicit-injection-only](adr/ADR-0020-run-metadata-is-explicit-injection-only.md)
+- [ADR-0021 — Run discovery and rotation are separate questions](adr/ADR-0021-run-discovery-and-rotation-are-separate-questions.md)
 
 # Project
 

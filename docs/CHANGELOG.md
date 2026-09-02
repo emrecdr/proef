@@ -388,9 +388,10 @@ Regrouping preserved every entry and its order within its kind.
   record because it **holds** an `events.jsonl`, while rotation still deletes
   only uuid-named directories, so a custom-id run is discoverable and still
   never reclaimed by `[run] keep-runs`. Ordering stopped riding on the name
-  too — uuid-v7 sorted chronologically until a `pr` directory joined the set —
-  and now follows the record's own `run_started` timestamp, then mtime, then
-  name.
+  too — uuid-v7 sorted chronologically until a custom-id directory joined the
+  set and sorted by its first letter — and now takes the *timestamp* a uuid-v7
+  name carries (48 bits of unix milliseconds, which is why the lexical sort
+  worked), falling back to directory mtime for a name that carries none.
 
 - **A run with a failed `optional:` step no longer prints exactly like a
   spotless one.** `ConsoleMode::Failed`'s own doc comment states the

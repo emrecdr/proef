@@ -44,8 +44,9 @@ half was the undocumented half.
 
 **Split the predicate along the risk, not along the file.**
 
-1. **Rotation keeps `is_run_id`** — uuid-named directories only. Unchanged, for
-   the reason it was written. A custom-id record is still never deleted by
+1. **Rotation keeps the uuid rule** (`is_rotatable`, formerly `is_run_id`) —
+   uuid-named directories only. Unchanged in behaviour, for the reason it was
+   written; renamed for the question it answers. A custom-id record is still never deleted by
    `[run] keep-runs`, and that stays documented.
 
 2. **Discovery admits any directory containing an `events.jsonl`.** A
@@ -55,13 +56,23 @@ half was the undocumented half.
    record fails as a parse error naming the file, which is already how a
    corrupt record behaves.
 
-3. **Ordering stops relying on the name.** `all_runs` documented that
-   "uuid-v7 names sort chronologically, so lexical order *is* time order",
-   which a `pr` directory breaks. Discovery now orders by the record's own
-   `run_started` timestamp where the record carries one, falling back to the
-   directory's modification time, and finally to the name. The run's own
-   statement of when it started outranks a filesystem guess, and a filesystem
-   guess outranks an alphabet.
+3. **Ordering stops relying on the name — but keeps relying on the uuid.**
+   `all_runs` documented that "uuid-v7 names sort chronologically, so lexical
+   order *is* time order", which a `pr` directory breaks. The fix takes the
+   *timestamp* rather than the spelling: a uuid-v7 name carries 48 bits of
+   unix milliseconds — the moment proef minted it — which is precisely why the
+   lexical sort worked. Runs order by that where it exists, and by directory
+   mtime where it does not (a custom `--run-id` carries no time). Both are
+   wall-clock unix time, so the two sources compare directly.
+
+   **Not read from the record**, though the first draft of this ADR said it
+   would be. The head event carries `event`/`run_id`/`schema` and no timestamp
+   at all — per-event times are injected observability on `scenario_started`
+   (ADR-0015) — so "the record's own `run_started` timestamp" does not exist.
+   Reading it returned `None` for every real record and silently ordered
+   everything by mtime; the test that covered it passed only because its
+   fixtures fabricated a field no record has. An ordering that depended on the
+   suite having run at least one scenario would not be an ordering anyway.
 
 ## Consequences
 
@@ -76,9 +87,10 @@ half was the undocumented half.
   needs to be on the record. The two are named for their questions
   (`is_rotatable` / `holds_a_record`) so a future reader cannot reach for the
   wrong one by picking the shorter name.
-- Ordering now costs a `stat` per run directory, and a header read where the
-  record carries one. Bounded by `[run] keep-runs` (200 by default) and paid
-  only by commands that resolve "latest".
+- Ordering costs a `stat` per *custom-id* run directory and nothing at all for
+  a uuid-named one, whose time is read straight out of its name. Bounded by
+  `[run] keep-runs` (200 by default) and paid only by commands that resolve
+  "latest".
 
 ## Alternatives considered
 

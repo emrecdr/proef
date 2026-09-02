@@ -17,46 +17,59 @@ use proef_core::step::Status;
 /// keeps its own narrow predicate — see [`crate::fsutil::is_rotatable`].
 ///
 /// Ordering no longer rides on the name either. uuid-v7 sorts chronologically,
-/// so lexical order *was* time order — until a `pr` directory joined the set.
-/// Each run is ordered by its own `run_started` timestamp where the record
-/// carries one, then by directory mtime, then by name: the run's own statement
-/// of when it began outranks a filesystem guess, and a filesystem guess
-/// outranks an alphabet.
+/// so lexical order *was* time order — until a custom-id directory joined the
+/// set and sorted by its first letter.
 pub fn all_runs(runs_root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<(Option<u64>, std::time::SystemTime, PathBuf)> = std::fs::read_dir(runs_root)
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(runs_root)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.is_dir() && crate::fsutil::holds_a_record(path))
-        .map(|path| {
-            let mtime = std::fs::metadata(&path)
-                .and_then(|meta| meta.modified())
-                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            (started_at(&path), mtime, path)
-        })
         .collect();
-    dirs.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.cmp(&b.2))
-    });
-    dirs.into_iter().map(|(_, _, path)| path).collect()
+    // Decorated so each directory is timed once: `sort_by_key` would call the
+    // key function O(n log n) times, and the fallback arm of `began_at` is a
+    // `stat`.
+    let mut timed: Vec<(std::time::SystemTime, PathBuf)> =
+        dirs.drain(..).map(|path| (began_at(&path), path)).collect();
+    timed.sort();
+    timed.into_iter().map(|(_, path)| path).collect()
 }
 
-/// The run's own `timestamp_ms` from its head event, when it carries one.
+/// When this run began, as well as the run itself can say.
 ///
-/// Read from the first line alone: this runs once per run directory on every
-/// "latest" resolution, and a whole-record parse to answer "when did it start"
-/// would make the cheap question cost the expensive one. A record whose head
-/// is missing or unreadable simply orders by mtime instead.
-fn started_at(dir: &Path) -> Option<u64> {
-    use std::io::BufRead as _;
-    let file = std::fs::File::open(dir.join("events.jsonl")).ok()?;
-    let mut first = String::new();
-    std::io::BufReader::new(file).read_line(&mut first).ok()?;
-    let head: serde_json::Value = serde_json::from_str(&first).ok()?;
-    head.get("timestamp_ms").and_then(serde_json::Value::as_u64)
+/// A uuid-v7 name **carries the moment proef minted it** — 48 bits of unix
+/// milliseconds, which is precisely why the old lexical sort worked at all.
+/// Taking the timestamp rather than the spelling keeps that property while
+/// letting differently-named runs into the same ordering, and it survives a
+/// record being copied or restored, which mtime does not.
+///
+/// A custom `--run-id` carries no such thing, so the directory's own
+/// modification time is the best answer available. Both are wall-clock unix
+/// time, so the two sources compare directly.
+///
+/// Deliberately **not** read from the record. The head event carries
+/// `schema`/`run_id`/`event` and no timestamp at all (per-event times are
+/// injected observability on `scenario_started`, ADR-0015), so a run with no
+/// scenarios would have no time to read — and an ordering that depends on the
+/// suite having done something is not an ordering.
+fn began_at(dir: &Path) -> std::time::SystemTime {
+    let minted = dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| uuid::Uuid::try_parse(name).ok())
+        // `None` for any non-v7 uuid, which is the check that matters here —
+        // only v7 embeds a creation time.
+        .and_then(|id| id.get_timestamp())
+        .map(|stamp| {
+            let (secs, nanos) = stamp.to_unix();
+            std::time::UNIX_EPOCH + std::time::Duration::new(secs, nanos)
+        });
+    minted.unwrap_or_else(|| {
+        std::fs::metadata(dir)
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::UNIX_EPOCH)
+    })
 }
 
 /// The newest run dir, or `None` when there are no run records.

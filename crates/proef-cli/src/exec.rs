@@ -2141,27 +2141,36 @@ mod tests {
     fn rotation_keeps_the_budget_and_only_ever_deletes_what_it_named() {
         let tmp = tempfile::tempdir().unwrap();
         let runs = tmp.path();
-        // A run directory *is* one because it holds a record (ADR-0021), and
-        // the head's own timestamp is what orders it — so the fixtures carry
-        // both rather than relying on the name, which is exactly the coupling
-        // that ADR removed.
-        let record = |dir: &std::path::Path, started: u64| {
+        // A run directory *is* one because it holds a record (ADR-0021), so
+        // the fixtures carry one — an empty directory is not a run, and a test
+        // built from empty directories would be validating a shape that never
+        // occurs. The head is the real one: `event`/`run_id`/`schema`, with no
+        // timestamp (per-event times are injected observability on
+        // `scenario_started`, ADR-0015).
+        let record = |dir: &std::path::Path| {
             std::fs::create_dir_all(dir).unwrap();
+            let id = dir.file_name().unwrap().to_string_lossy();
             std::fs::write(
                 dir.join("events.jsonl"),
-                format!("{{\"event\":\"run_started\",\"timestamp_ms\":{started}}}\n"),
+                format!(r#"{{"event":"run_started","run_id":"{id}","schema":1}}"#),
             )
             .unwrap();
         };
+        // uuid-v7 names share one embedded timestamp here, so they tie on time
+        // and fall back to the name — oldest-first by construction.
         let ids: Vec<String> = (0..5)
             .map(|n| format!("0198f3c1-0000-7000-8000-00000000000{n}"))
             .collect();
-        for (n, id) in ids.iter().enumerate() {
-            record(&runs.join(id), 1_000 + n as u64);
+        for id in &ids {
+            record(&runs.join(id));
         }
-        // Custom-id runs are real records — discoverable, and never deletable.
-        for (n, foreign) in ["ci", "nightly-42"].iter().enumerate() {
-            record(&runs.join(foreign), 100 + n as u64); // older than every uuid
+        // Custom-id runs are real records: discoverable, never deletable.
+        // `00-nightly` is the discriminator — it sorts *before* every uuid by
+        // name and *after* every one of them by time (a uuid-v7 minted in the
+        // fixture's past versus a directory created just now), so an ordering
+        // that still rode on the name would put it first.
+        for foreign in ["00-nightly", "ci"] {
+            record(&runs.join(foreign));
         }
         // Not a record at all: no `events.jsonl`, so neither discovered nor
         // deleted. `runs-dir` may be `.`, which is why this case exists.
@@ -2186,34 +2195,37 @@ mod tests {
         for kept in [&ids[2], &ids[3], &ids[4]] {
             assert!(left.contains(kept), "{kept} must survive: {left:?}");
         }
-        // The ADR-0021 property: `ci` and `nightly-42` are the two *oldest*
-        // records here, so a rotation that enumerated by "holds a record"
-        // would have eaten them first. They survive because deletion asks a
-        // narrower question than discovery.
-        for foreign in ["ci", "nightly-42", "notes"] {
+        // The ADR-0021 property: a custom-id record is *discoverable* and
+        // still never deleted. Rotation enumerating by "holds a record" would
+        // have taken these.
+        for foreign in ["00-nightly", "ci", "notes"] {
             assert!(
                 left.contains(&foreign.to_owned()),
                 "`{foreign}` is not a generated run id — rotation must not touch it: {left:?}"
             );
         }
-        // …and being undeletable does not mean being invisible: the same
-        // custom-id records are what `explain`/`diff`/`flaky`/`--rerun` see.
         let discovered: Vec<String> = crate::record::all_runs(runs)
             .into_iter()
             .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .collect();
         assert!(
-            discovered.contains(&"ci".to_owned()) && discovered.contains(&"nightly-42".to_owned()),
+            discovered.contains(&"ci".to_owned()) && discovered.contains(&"00-nightly".to_owned()),
             "a custom-id record must still be discoverable: {discovered:?}"
         );
         assert!(
             !discovered.contains(&"notes".to_owned()),
             "a directory with no record is not a run: {discovered:?}"
         );
-        assert_eq!(
-            discovered.first().map(String::as_str),
-            Some("ci"),
-            "order follows the record's own start time, not the name: {discovered:?}"
+        // Order follows *time*, not the name. `00-nightly` sorts before every
+        // uuid alphabetically and was created long after all of them, so a
+        // name-ordered list would open with it; a time-ordered one puts it
+        // past every uuid. (Which of the two custom dirs is last depends on
+        // their mtimes and is not the property under test.)
+        let nightly = discovered.iter().position(|n| n == "00-nightly");
+        let last_uuid = discovered.iter().rposition(|n| n.starts_with("0198f3c1"));
+        assert!(
+            nightly > last_uuid && last_uuid.is_some(),
+            "ordering must not ride on the directory name: {discovered:?}"
         );
     }
 
