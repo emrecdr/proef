@@ -2144,15 +2144,26 @@ mod tests {
         // A run directory *is* one because it holds a record (ADR-0021), so
         // the fixtures carry one — an empty directory is not a run, and a test
         // built from empty directories would be validating a shape that never
-        // occurs. The head is the real one: `event`/`run_id`/`schema`, with no
-        // timestamp (per-event times are injected observability on
-        // `scenario_started`, ADR-0015).
+        // occurs.
+        //
+        // Built as a real `Event` and serialized, not typed out as JSON: the
+        // head's shape is a schema (ADR-0008), and a fixture spelling it by
+        // hand goes stale silently the first time the variant gains a field,
+        // leaving the test asserting against a wire format proef no longer
+        // writes. Serde keeps it honest for free.
         let record = |dir: &std::path::Path| {
             std::fs::create_dir_all(dir).unwrap();
-            let id = dir.file_name().unwrap().to_string_lossy();
+            let head = proef_core::event::Event::RunStarted {
+                schema: proef_core::event::EVENT_SCHEMA_VERSION,
+                run_id: std::sync::Arc::from(&*dir.file_name().unwrap().to_string_lossy()),
+                env: None,
+                metadata: std::collections::BTreeMap::new(),
+                shuffled: false,
+                rerun_of: None,
+            };
             std::fs::write(
                 dir.join("events.jsonl"),
-                format!(r#"{{"event":"run_started","run_id":"{id}","schema":1}}"#),
+                serde_json::to_string(&head).unwrap(),
             )
             .unwrap();
         };

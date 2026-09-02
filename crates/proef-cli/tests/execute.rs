@@ -3064,11 +3064,21 @@ fn secret_valued_captures_never_promote_to_global_state() {
 // write `events.jsonl` directly by serializing `Event`s (the JSONL stream IS
 // the record, ADR-0008) — mirroring record.rs's own test helpers.
 
-/// A valid uuid-v7-shaped dir name (`fsutil::is_run_id` parses via
-/// `uuid::Uuid::try_parse`) so `all_runs` picks these up under the default
-/// `diff` resolution (no base/new given → previous vs latest).
-const DIFF_BASE_RUN_ID: &str = "00000000-0000-0000-0000-000000000001";
-const DIFF_NEW_RUN_ID: &str = "00000000-0000-0000-0000-000000000002";
+/// Two run ids that `diff`'s default resolution (no base/new given → previous
+/// vs latest) must order base-then-new.
+///
+/// Real uuid-v7s, a second apart in their **embedded** timestamps, because that
+/// is what `record::began_at` reads (ADR-0021). The previous pair —
+/// `00000000-…-000000000001`/`…002` — looked v7 and was not: the version nibble
+/// is `0`, so `get_timestamp()` returns `None` and both fell through to
+/// directory mtime, leaving the order to two coincidences at once (writes
+/// happening to land on rising mtimes, and a lexical tie-break rescuing them
+/// when they did not). Neither is the mechanism under test.
+///
+/// Discovery no longer turns on the name at all — `all_runs` admits whatever
+/// holds an `events.jsonl` — so the shape here buys ordering, nothing else.
+const DIFF_BASE_RUN_ID: &str = "0198f3c1-0000-7000-8000-000000000001";
+const DIFF_NEW_RUN_ID: &str = "0198f3c2-0000-7000-8000-000000000002";
 
 /// Write `events` as one JSON object per line into `<runs_root>/<id>/events.jsonl`.
 fn write_run(runs_root: &Path, id: &str, events: &[proef_core::event::Event]) {
