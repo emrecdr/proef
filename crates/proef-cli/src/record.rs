@@ -781,7 +781,10 @@ mod tests {
         for id in ids.iter().rev() {
             let dir = tmp.path().join(id);
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("events.jsonl"), "").unwrap();
+            // The module's own writer, not a second one: an empty slice joins
+            // to the empty file this wants, and if `write_events` ever grows a
+            // convention this picks it up instead of forking from it.
+            write_events(&dir, &[]);
         }
         // Where it cannot bite, stated rather than asserted: NTFS keys its
         // directory B+ tree on the filename, so Windows enumerates in name

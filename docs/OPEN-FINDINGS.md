@@ -113,6 +113,19 @@ now guarded — narrowly, by an allowlist of present-tense docs, because
 
 ### Noted while reviewing ADR-0021 — recorded, not scheduled
 
+- **One doc check is still in the binary-half's file.** `docs.rs` states its own
+  charter — it holds the checks that need a *built binary*, because they ask
+  clap rather than parsing help text — and `xtask docs-check` states the mirror
+  rule for the checks that only read files. Three of the four tests left in
+  `docs.rs` genuinely need the binary;
+  `no_current_behaviour_doc_spells_a_format_as_an_output_path` reads files and
+  nothing else, so it belongs in `docs_check()` beside `check_examples` and
+  `check_links`. Consequence, the same one that moved the changelog check: it
+  never runs in the fast doc-only CI step. Not moved with that one because it
+  depends on `collect_markdown` and the `DESCRIBES_TODAY` allowlist, both local
+  to `docs.rs` — porting them is a real change, not a relocation, and it earns
+  its own.
+
 - **`--rerun` reads the base record's `events.jsonl` twice.** `exec.rs` calls
   `record::read_events(&dir)` for the JUnit overlay, then
   `record::rerun_candidates(&dir)`, which calls `read_record` → `read_events`
