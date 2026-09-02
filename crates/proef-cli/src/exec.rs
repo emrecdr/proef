@@ -367,7 +367,7 @@ pub fn execute(
     };
     let reporters: Vec<Box<dyn Reporter>> = vec![
         Box::new(ConsoleReporter::new(
-            Tee(console_out, log_file),
+            Tee(console_out, log_file, !machine_stdout),
             redactions.clone(),
             // run.log mirrors the console verbatim, dots included: the
             // record (events.jsonl) is the full truth (ADR-0008), and a
@@ -1798,13 +1798,31 @@ fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
 }
 
 /// Console output tee'd into `run.log` (§11 — the human-readable run record).
-struct Tee(Box<dyn Write + Send>, Option<std::fs::File>);
+///
+/// The third field says whether the console leg is **stdout**. It matters on
+/// failure: the `ConsoleReporter` above this swallows write errors (a reporter
+/// cannot meaningfully report its own channel dying), so this is the last
+/// place a failed console write is visible — and output proef could not
+/// deliver must not look like success. A disk filling *mid-run* used to
+/// truncate the human report while the run still exited by its verdict; a
+/// disk already full at start was caught. The latch closes the gap.
+struct Tee(Box<dyn Write + Send>, Option<std::fs::File>, bool);
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // Console first: the mirror copies what the console accepted, so a
         // short write cannot duplicate the tail into `run.log`.
-        let written = self.0.write(buf)?;
+        let written = match self.0.write(buf) {
+            Ok(written) => written,
+            Err(err) => {
+                // Same rule as `outln!`: a closed pipe is the reader ending
+                // the pipeline on purpose (`proef … | head`), never a failure.
+                if self.2 && err.kind() != std::io::ErrorKind::BrokenPipe {
+                    crate::render::note_stdout_failure();
+                }
+                return Err(err);
+            }
+        };
         if let Some(file) = &mut self.1 {
             // The mirror stays verbatim in *content*, not in paint: the
             // console may carry ANSI color for a terminal, and a log file
@@ -1820,7 +1838,13 @@ impl Write for Tee {
         if let Some(file) = &mut self.1 {
             let _ = file.flush();
         }
-        self.0.flush()
+        // A failed flush is a failed delivery too — same latch, same
+        // closed-pipe exemption as `write`.
+        self.0.flush().inspect_err(|err| {
+            if self.2 && err.kind() != std::io::ErrorKind::BrokenPipe {
+                crate::render::note_stdout_failure();
+            }
+        })
     }
 }
 
@@ -1846,7 +1870,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).unwrap();
-        let mut tee = super::Tee(Box::new(std::io::sink()), Some(file));
+        let mut tee = super::Tee(Box::new(std::io::sink()), Some(file), false);
         tee.write_all(b"\x1b[31m2 failed\x1b[0m plain\n").unwrap();
         tee.flush().unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "2 failed plain\n");
@@ -2152,7 +2176,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).expect("create");
-        let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file));
+        let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file), false);
 
         tee.write_all(b"abcdefghij").expect("write_all");
         tee.flush().expect("flush");
@@ -2162,6 +2186,63 @@ mod tests {
         assert_eq!(
             mirrored, "abcdefghij",
             "the mirror must be a faithful copy of what the console received"
+        );
+    }
+
+    /// A disk filling *mid-run* truncates the human report through this exact
+    /// path: `ConsoleReporter` swallows the error (a reporter cannot report
+    /// its own channel dying), so the `Tee` is the last place the failure is
+    /// visible — it must latch [`crate::render::note_stdout_failure`] so the
+    /// exit funnel turns lost output into exit 3 instead of the run's verdict.
+    ///
+    /// One test for all three cases, ordered so the global latch (safe: one
+    /// process per test under the mandated nextest) is only flipped at the
+    /// end: a closed pipe must NOT latch (`proef … | head` ends the pipeline
+    /// on purpose), a non-stdout console must NOT latch (machine mode moves
+    /// the report to stderr, whose failure has nowhere better to go), and a
+    /// real stdout failure MUST.
+    #[test]
+    fn a_failed_console_write_latches_the_stdout_failure() {
+        use std::io::Write;
+
+        use super::Tee;
+
+        struct FailWith(std::io::ErrorKind);
+        impl Write for FailWith {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(self.0))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::from(self.0))
+            }
+        }
+
+        let mut closed_pipe = Tee(
+            Box::new(FailWith(std::io::ErrorKind::BrokenPipe)),
+            None,
+            true,
+        );
+        assert!(
+            closed_pipe.write(b"x").is_err(),
+            "the error still propagates"
+        );
+        assert!(
+            !crate::render::stdout_failed(),
+            "a closed pipe is the reader ending the pipeline, not a failure"
+        );
+
+        let mut stderr_console = Tee(Box::new(FailWith(std::io::ErrorKind::Other)), None, false);
+        assert!(stderr_console.write(b"x").is_err());
+        assert!(
+            !crate::render::stdout_failed(),
+            "a non-stdout console must not claim stdout failed"
+        );
+
+        let mut full_disk = Tee(Box::new(FailWith(std::io::ErrorKind::Other)), None, true);
+        assert!(full_disk.write(b"x").is_err());
+        assert!(
+            crate::render::stdout_failed(),
+            "output proef could not deliver must not look like success"
         );
     }
 
