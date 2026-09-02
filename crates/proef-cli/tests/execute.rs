@@ -2544,6 +2544,67 @@ fn a_warned_run_does_not_print_like_a_spotless_one() {
     );
 }
 
+/// A `--run-id`-named record is findable by the commands that resolve "the
+/// latest run" (ADR-0021).
+///
+/// Discovery used to key on the uuid shape, which `--run-id pr` does not have
+/// — so a perfectly good record was invisible to `explain`, `diff`, `flaky`,
+/// `report` and `--rerun`, and `--rerun` in particular would silently operate
+/// on some *older* run instead of the one just produced. The narrow predicate
+/// stays where it belongs: rotation still refuses to delete such a directory.
+#[test]
+fn a_custom_run_id_record_is_discoverable_but_never_rotated() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[run]\nkeep-runs = 0\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--run-id", "pr-1234"])
+        .assert()
+        .code(0);
+    assert!(
+        cwd.path()
+            .join(".proef-runs/pr-1234/events.jsonl")
+            .is_file(),
+        "the custom-id run wrote its record"
+    );
+
+    // `explain` with no argument resolves the latest run — it must be this one.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["explain"])
+        .assert()
+        .code(0);
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("pr-1234"),
+        "the newest record is the custom-id one: {out}"
+    );
+
+    // A second, uuid-named run with `keep-runs = 0` rotates every *deletable*
+    // record away — and must still leave the custom-id one alone.
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+    assert!(
+        cwd.path()
+            .join(".proef-runs/pr-1234/events.jsonl")
+            .is_file(),
+        "rotation must never delete a directory it did not name"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated

@@ -55,15 +55,33 @@ fn sibling_tmp(path: &Path) -> PathBuf {
     with_suffix(path, &format!(".{}.tmp", std::process::id()))
 }
 
-/// Is this directory name a proef run id (uuid)? Shared by run rotation and
-/// `explain`'s latest-run lookup so the two can never diverge on what counts
-/// as a run dir.
-pub fn is_run_id(name: &str) -> bool {
-    // proef only ever writes the hyphenated form. `Uuid::try_parse` also
-    // accepts bare 32-hex, `urn:uuid:…` and braced spellings — and rotation
-    // deletes the oldest run-shaped directories, so breadth here is a deletion
-    // hazard when the runs dir points somewhere shared.
+/// May rotation **delete** this directory? Only a uuid-named one (ADR-0021).
+///
+/// Deliberately narrow, and narrow for a reason that does not generalise:
+/// `runs-dir` may be `.`, so anything broader here lets `[run] keep-runs`
+/// remove directories proef never created. `Uuid::try_parse` alone would
+/// accept bare 32-hex, `urn:uuid:…` and braced spellings; proef only ever
+/// writes the hyphenated form, so the length check keeps the deletable set to
+/// exactly what proef makes.
+///
+/// **Not the discovery test.** This used to answer both "may I delete this?"
+/// and "is this a run I can show you?", and those questions are unsafe in
+/// opposite directions — the second is unsafe when *narrow*, and a
+/// `--run-id pr` record was invisible to `explain`, `diff`, `flaky`, `report`
+/// and `--rerun` as a result. See [`holds_a_record`].
+pub fn is_rotatable(name: &str) -> bool {
     name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
+}
+
+/// Is this directory a run record proef can **read**? (ADR-0021.)
+///
+/// A directory holding proef's own `events.jsonl` is a proef record, whatever
+/// it is called — which is what makes a `--run-id pr` run findable. Safe to
+/// be broad precisely because it authorises nothing destructive: the widest
+/// mistake it can make is offering a directory whose record then fails to
+/// parse, which already reports itself by name.
+pub fn holds_a_record(dir: &Path) -> bool {
+    dir.join("events.jsonl").is_file()
 }
 
 /// Create the directories `path`'s file needs, so writing it can succeed.
@@ -109,11 +127,13 @@ mod tests {
         // retention limit, and the runs dir can point somewhere shared — so
         // "run-shaped" must mean the hyphenated form proef actually writes,
         // not every spelling the uuid parser accepts.
-        assert!(is_run_id("0198f3c1-0000-7000-8000-00000000001a"));
-        assert!(!is_run_id("0198f3c100007000800000000000001a"));
-        assert!(!is_run_id("urn:uuid:0198f3c1-0000-7000-8000-00000000001a"));
-        assert!(!is_run_id("{0198f3c1-0000-7000-8000-00000000001a}"));
-        assert!(!is_run_id("cache-abc"));
+        assert!(is_rotatable("0198f3c1-0000-7000-8000-00000000001a"));
+        assert!(!is_rotatable("0198f3c100007000800000000000001a"));
+        assert!(!is_rotatable(
+            "urn:uuid:0198f3c1-0000-7000-8000-00000000001a"
+        ));
+        assert!(!is_rotatable("{0198f3c1-0000-7000-8000-00000000001a}"));
+        assert!(!is_rotatable("cache-abc"));
     }
 
     #[test]

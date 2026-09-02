@@ -374,6 +374,24 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Fixed
 
+- **A `--run-id` record is findable again (ADR-0021).** `--run-id pr-1234`
+  writes a perfectly good record, and every command that resolves *the latest
+  run* — `explain`, `diff`, `flaky`, `report`, `--rerun` — enumerated by the
+  uuid *shape*, so that record was invisible to all of them. `--rerun` was the
+  sharp edge: it silently continued some older run instead of the one just
+  produced.
+
+  One predicate had been answering two questions whose risks point in opposite
+  directions — *may I delete this?* is unsafe when broad, *is this a run I can
+  show you?* is unsafe when narrow — so the deletion-safety choice had
+  silently become a visibility choice. They are now separate: a directory is a
+  record because it **holds** an `events.jsonl`, while rotation still deletes
+  only uuid-named directories, so a custom-id run is discoverable and still
+  never reclaimed by `[run] keep-runs`. Ordering stopped riding on the name
+  too — uuid-v7 sorted chronologically until a `pr` directory joined the set —
+  and now follows the record's own `run_started` timestamp, then mtime, then
+  name.
+
 - **A run with a failed `optional:` step no longer prints exactly like a
   spotless one.** `ConsoleMode::Failed`'s own doc comment states the
   requirement and the `Warned` arm implementing it was **unreachable**: a

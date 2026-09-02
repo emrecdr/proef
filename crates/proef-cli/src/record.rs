@@ -8,26 +8,55 @@ use std::path::{Path, PathBuf};
 use proef_core::event::Event;
 use proef_core::step::Status;
 
-/// Every run dir under `runs_root`, oldest→newest. uuid-v7 names sort
-/// chronologically, so lexical order *is* time order. Filters to real run dirs
-/// so that under `runs-dir = "."` a stray `suite/`/`target/` sorting after the
-/// uuid range cannot masquerade as a run.
+/// Every run dir under `runs_root`, oldest→newest (ADR-0021).
+///
+/// A directory is a run because it **holds a record**, not because of its
+/// name: `--run-id pr` writes a perfectly good record, and keying discovery on
+/// the uuid shape made it invisible to every command that resolves "the latest
+/// run". The deletion question is a different one with the opposite risk and
+/// keeps its own narrow predicate — see [`crate::fsutil::is_rotatable`].
+///
+/// Ordering no longer rides on the name either. uuid-v7 sorts chronologically,
+/// so lexical order *was* time order — until a `pr` directory joined the set.
+/// Each run is ordered by its own `run_started` timestamp where the record
+/// carries one, then by directory mtime, then by name: the run's own statement
+/// of when it began outranks a filesystem guess, and a filesystem guess
+/// outranks an alphabet.
 pub fn all_runs(runs_root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(runs_root)
+    let mut dirs: Vec<(Option<u64>, std::time::SystemTime, PathBuf)> = std::fs::read_dir(runs_root)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_dir()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(crate::fsutil::is_run_id)
+        .filter(|path| path.is_dir() && crate::fsutil::holds_a_record(path))
+        .map(|path| {
+            let mtime = std::fs::metadata(&path)
+                .and_then(|meta| meta.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            (started_at(&path), mtime, path)
         })
         .collect();
-    dirs.sort();
-    dirs
+    dirs.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    dirs.into_iter().map(|(_, _, path)| path).collect()
+}
+
+/// The run's own `timestamp_ms` from its head event, when it carries one.
+///
+/// Read from the first line alone: this runs once per run directory on every
+/// "latest" resolution, and a whole-record parse to answer "when did it start"
+/// would make the cheap question cost the expensive one. A record whose head
+/// is missing or unreadable simply orders by mtime instead.
+fn started_at(dir: &Path) -> Option<u64> {
+    use std::io::BufRead as _;
+    let file = std::fs::File::open(dir.join("events.jsonl")).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(file).read_line(&mut first).ok()?;
+    let head: serde_json::Value = serde_json::from_str(&first).ok()?;
+    head.get("timestamp_ms").and_then(serde_json::Value::as_u64)
 }
 
 /// The newest run dir, or `None` when there are no run records.

@@ -1846,15 +1846,18 @@ fn write_or_warn(path: &Path, contents: impl AsRef<[u8]>) {
 /// records without bound whatever `keep` says. Deliberate — guessing at
 /// user-named directories is the worse failure — and documented in CONFIG.md.
 fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
-    // `record::all_runs` is the one answer to "what is a run record here" —
-    // sorted, uuid-named directories only. Rotation adds a single further
-    // exclusion (the in-flight run), not a second enumeration rule.
+    // Rotation asks a different question from discovery, and ADR-0021 keeps
+    // them apart: `all_runs` answers "is this a run I can *show* you", which
+    // is safe when broad, while this asks "may I *delete* this", which is only
+    // safe when narrow. So the shared enumeration is filtered back down to
+    // uuid-named directories here — a `--run-id pr` record is discoverable and
+    // still never deleted — plus the in-flight run.
     let dirs: Vec<PathBuf> = crate::record::all_runs(runs_dir)
         .into_iter()
         .filter(|p| {
             p.file_name()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| name != current_run)
+                .is_some_and(|name| name != current_run && crate::fsutil::is_rotatable(name))
         })
         .collect();
     if dirs.len() > keep {
@@ -2138,16 +2141,31 @@ mod tests {
     fn rotation_keeps_the_budget_and_only_ever_deletes_what_it_named() {
         let tmp = tempfile::tempdir().unwrap();
         let runs = tmp.path();
-        // uuid-v7 names sort by time, so these are oldest-first by construction.
+        // A run directory *is* one because it holds a record (ADR-0021), and
+        // the head's own timestamp is what orders it — so the fixtures carry
+        // both rather than relying on the name, which is exactly the coupling
+        // that ADR removed.
+        let record = |dir: &std::path::Path, started: u64| {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(
+                dir.join("events.jsonl"),
+                format!("{{\"event\":\"run_started\",\"timestamp_ms\":{started}}}\n"),
+            )
+            .unwrap();
+        };
         let ids: Vec<String> = (0..5)
             .map(|n| format!("0198f3c1-0000-7000-8000-00000000000{n}"))
             .collect();
-        for id in &ids {
-            std::fs::create_dir_all(runs.join(id)).unwrap();
+        for (n, id) in ids.iter().enumerate() {
+            record(&runs.join(id), 1_000 + n as u64);
         }
-        for foreign in ["ci", "nightly-42", "notes"] {
-            std::fs::create_dir_all(runs.join(foreign)).unwrap();
+        // Custom-id runs are real records — discoverable, and never deletable.
+        for (n, foreign) in ["ci", "nightly-42"].iter().enumerate() {
+            record(&runs.join(foreign), 100 + n as u64); // older than every uuid
         }
+        // Not a record at all: no `events.jsonl`, so neither discovered nor
+        // deleted. `runs-dir` may be `.`, which is why this case exists.
+        std::fs::create_dir_all(runs.join("notes")).unwrap();
 
         // Budget of 2, plus the in-flight run, over 5 existing records.
         rotate_runs(runs, &ids[4], 2);
@@ -2168,12 +2186,35 @@ mod tests {
         for kept in [&ids[2], &ids[3], &ids[4]] {
             assert!(left.contains(kept), "{kept} must survive: {left:?}");
         }
+        // The ADR-0021 property: `ci` and `nightly-42` are the two *oldest*
+        // records here, so a rotation that enumerated by "holds a record"
+        // would have eaten them first. They survive because deletion asks a
+        // narrower question than discovery.
         for foreign in ["ci", "nightly-42", "notes"] {
             assert!(
                 left.contains(&foreign.to_owned()),
                 "`{foreign}` is not a generated run id — rotation must not touch it: {left:?}"
             );
         }
+        // …and being undeletable does not mean being invisible: the same
+        // custom-id records are what `explain`/`diff`/`flaky`/`--rerun` see.
+        let discovered: Vec<String> = crate::record::all_runs(runs)
+            .into_iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .collect();
+        assert!(
+            discovered.contains(&"ci".to_owned()) && discovered.contains(&"nightly-42".to_owned()),
+            "a custom-id record must still be discoverable: {discovered:?}"
+        );
+        assert!(
+            !discovered.contains(&"notes".to_owned()),
+            "a directory with no record is not a run: {discovered:?}"
+        );
+        assert_eq!(
+            discovered.first().map(String::as_str),
+            Some("ci"),
+            "order follows the record's own start time, not the name: {discovered:?}"
+        );
     }
 
     /// A run that panics mid-flight must stay `RunCompletion::Incomplete`, not
