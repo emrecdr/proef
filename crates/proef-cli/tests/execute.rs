@@ -784,6 +784,92 @@ fn a_failed_setup_still_writes_the_junit_report() {
     );
 }
 
+/// `--ctrf` writes a spec-shaped CTRF file from a real run: the envelope, the
+/// counted summary, and a passed test naming its file. The deeper mapping
+/// cases (quarantine, flaky retries, faults) are unit-pinned in `ctrf.rs`;
+/// this is the end-to-end half — the flag exists, the path is honoured, the
+/// file parses.
+#[test]
+fn ctrf_flag_writes_a_spec_shaped_report() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--ctrf", "out/report.ctrf.json"])
+        .assert()
+        .code(0);
+
+    let text = std::fs::read_to_string(cwd.path().join("out/report.ctrf.json"))
+        .expect("the flag names the file; the run must write it");
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["reportFormat"], "CTRF");
+    assert_eq!(body["results"]["summary"]["tests"], 1);
+    assert_eq!(body["results"]["summary"]["passed"], 1);
+    let case = &body["results"]["tests"][0];
+    assert_eq!(case["name"], "one");
+    assert_eq!(case["status"], "passed");
+    assert_eq!(case["filePath"], "suite/case.feature");
+}
+
+/// R12-3's contract applies to every CI report, not only `JUnit`: a job
+/// gating on the CTRF file must not see *no file at all* when setup aborts
+/// the run — indistinguishable from proef never running. Same path, same
+/// honesty: the report carries the setup scenario itself, failed.
+#[test]
+fn a_failed_setup_still_writes_the_ctrf_report() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[run]\nsetup = \"suite/setup.feature\"\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/setup.feature"),
+        "Feature: S\n  Scenario: broken setup\n    When setup probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: should not run\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  setupProbe:\n    match: setup probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 500\n  \
+         suiteProbe:\n    match: the suite probes health\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--ctrf", "report.ctrf.json"])
+        .assert()
+        .code(2);
+
+    let text = std::fs::read_to_string(cwd.path().join("report.ctrf.json"))
+        .expect("the abort must still write the report");
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["results"]["summary"]["failed"], 1);
+    let case = &body["results"]["tests"][0];
+    assert_eq!(case["name"], "broken setup");
+    assert_eq!(case["status"], "failed");
+    assert!(
+        !text.contains("should not run"),
+        "nothing is fabricated for a pool that never ran: {text}"
+    );
+}
+
 /// …and the empty-selection refusal (exit 2 by design) is a terminating path
 /// too — the fourth this contract had to be applied to.
 #[test]
@@ -1898,6 +1984,48 @@ fn cookies_survive_batch_splits() {
     std::fs::write(
         cwd.path().join("suite/packs/p.yaml"),
         "macros:\n  cookies:\n    match: the cookie session is exercised\n    steps:\n      - name: obtain the session cookie\n        hurl: |\n          GET ${url:base}/cookie/set\n          HTTP 200\n      - name: unrelated optional probe (forces a batch split)\n        optional: true\n        hurl: |\n          GET ${url:base}/health\n          HTTP 200\n      - name: cookie must still be sent after the split\n        hurl: |\n          GET ${url:base}/cookie/check\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+}
+
+/// `[http] cookie-store = false` runs the suite cookie-less: the fixture's
+/// `/cookie/check` returns 403 without the session cookie, and the suite is
+/// green only because the steps *assert* 403 — a stateless-API proof, which a
+/// silently-carried cookie would fake. Two scenarios pin both halves: within
+/// one batch (hurl's own engine switch) and across a forced split (proef's
+/// cookie round-trip must stay out of the way — with the store off there is no
+/// file to write and none to inject).
+#[test]
+fn a_disabled_cookie_store_carries_no_cookie_anywhere() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[http]\ncookie-store = false\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  \
+         Scenario: no cookie within one batch\n    When the cookie is refused in one batch\n  \
+         Scenario: no cookie across the split\n    When the cookie is refused across the split\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  oneBatch:\n    match: the cookie is refused in one batch\n    steps:\n      \
+         - name: the server offers a session cookie\n        hurl: |\n          GET ${url:base}/cookie/set\n          HTTP 200\n      \
+         - name: the very next request must not present it\n        hurl: |\n          GET ${url:base}/cookie/check\n          HTTP 403\n  \
+         acrossSplit:\n    match: the cookie is refused across the split\n    steps:\n      \
+         - name: the server offers a session cookie\n        hurl: |\n          GET ${url:base}/cookie/set\n          HTTP 200\n      \
+         - name: unrelated optional probe (forces a batch split)\n        optional: true\n        hurl: |\n          GET ${url:base}/health\n          HTTP 200\n      \
+         - name: the request after the split must not present it either\n        hurl: |\n          GET ${url:base}/cookie/check\n          HTTP 403\n",
     )
     .unwrap();
 

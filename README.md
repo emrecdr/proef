@@ -263,7 +263,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | Command | Purpose |
 |---|---|
 | `proef init [dir]` | scaffold a minimal working suite — `proef.toml`, one feature, one pack, schema wired up; never overwrites an existing file |
-| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--run-id`, `--rerun`, `--sarif`, `--format json|tap`, `--watch`, `--shard I/N`, `--shard-weights`, `--max-fail N`, `--shuffle`, `--meta KEY=VALUE`, `--console full|failed|dotted|quiet`); path optional — defaults to `[run] suite`, then `tests/` |
+| `proef test [path]` | validate + execute (`--env`, `--dry-run`, `--tags`, `--scenario`, `--scenario-file`, `--jobs`, `--junit`, `--ctrf`, `--run-id`, `--rerun`, `--sarif`, `--format json|tap`, `--watch`, `--shard I/N`, `--shard-weights`, `--max-fail N`, `--shuffle`, `--meta KEY=VALUE`, `--console full|failed|dotted|quiet`); path optional — defaults to `[run] suite`, then `tests/` |
 | `proef flows [path]` | list scenarios with anchors and tags (`--env`, `--format json` feeds the nextest harness) |
 | `proef macros [path]` | list every macro with the `match:` sentence a feature may say, plus its call count, flagging pattern macros no scenario binds; still lists the vocabulary when a step fails to bind (`--env`, `--format json`) |
 | `proef fragments [path]` | list the `[run] fragments` corpus with how many scenarios actually run each entry — naming both ways a fragment dies (no macro refs it; only a macro nothing binds does) and the entries carrying no `# @proef` at all (`--check`, `--require-annotated`, `--format json`) |
@@ -300,8 +300,9 @@ pure prose:
 - **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path,
   `fragments` = the `.hurl` corpus root scanned for `ref:` targets) and
   `[http]` — the settings that describe an *environment* rather than a test:
-  `timeout-ms`, `follow-location`/`max-redirs`, `user-agent`, and the TLS and
-  proxy surface (`insecure`, `cacert`, `client-cert`/`client-key` for mTLS,
+  `timeout-ms`, `follow-location`/`max-redirs`, `user-agent`, `cookie-store`
+  (`false` proves a stateless API by refusing to carry a session), and the TLS
+  and proxy surface (`insecure`, `cacert`, `client-cert`/`client-key` for mTLS,
   `proxy`/`no-proxy`). Credentials stay out on purpose — a password belongs in
   the secret store.
 - **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /

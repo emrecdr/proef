@@ -43,6 +43,16 @@ The pieces:
   `GITHUB_ACTIONS` only, so local runs stay clean. Failures also reach the
   job summary and the PR's changed-files gutter as `::error` annotations
   automatically; no extra step.
+- **`--ctrf report.ctrf.json`** writes the same verdicts as
+  [CTRF](https://ctrf.io) JSON — the format that carries what `JUnit` XML
+  cannot: retries and flakiness natively (a pass-after-retry lists its real
+  failed attempts with messages), tags, and a file path per test. Point a
+  CTRF consumer such as `ctrf-io/github-test-reporter` at it. The two files
+  never disagree: a quarantined failure is *skipped with a message* in both
+  (ADR-0019), because a dashboard reading "failed" beside exit 0 would
+  contradict itself. Like `--junit`, the file is written even when
+  `[run] setup` aborts the run — a job gating on it must never see it
+  missing.
 - **`--shard I/N`** partitions by a stable hash of `(file, scenario)`:
   adding a scenario never re-buckets the others, so shard timings stay
   comparable across commits. Every matrix job runs the same expression and

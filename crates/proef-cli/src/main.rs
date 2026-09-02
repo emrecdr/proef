@@ -9,6 +9,7 @@ mod assets;
 mod ci_reports;
 mod commands;
 mod config;
+mod ctrf;
 mod diff;
 mod disk_provider;
 mod envvar;
@@ -100,6 +101,11 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// `Test` dwarfs the other variants (it owns most of the CLI's flags), and the
+// enum exists as exactly one instance for the length of one parse — boxing
+// fields here would trade real destructuring ergonomics for bytes nobody
+// counts. Signal-free at this shape, like the workspace's curated allows.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Validate and run feature files against the configured target
     Test {
@@ -125,6 +131,11 @@ enum Command {
         /// `JUnit` XML: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`)
         #[arg(long)]
         junit: Option<String>,
+        /// CTRF JSON report (<https://ctrf.io>): same verdicts as `--junit`,
+        /// in the format that carries retries, flakiness, tags and file paths
+        /// natively
+        #[arg(long, value_name = "PATH")]
+        ctrf: Option<PathBuf>,
         /// Only the scenario with exactly this name
         #[arg(long)]
         scenario: Option<String>,
@@ -580,6 +591,7 @@ fn main() -> std::process::ExitCode {
             jobs,
             format,
             junit,
+            ctrf,
             scenario,
             scenario_file,
             watch: watch_mode,
@@ -645,6 +657,7 @@ fn main() -> std::process::ExitCode {
                                             jobs,
                                             format,
                                             junit.as_deref(),
+                                            ctrf.as_deref(),
                                             scenario.as_deref(),
                                             scenario_file.as_deref(),
                                             active_env.as_deref(),

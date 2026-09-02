@@ -145,6 +145,7 @@ pub fn execute(
     jobs: Option<usize>,
     output: Option<OutputFormat>,
     junit: Option<&str>,
+    ctrf: Option<&Path>,
     scenario_filter: Option<&str>,
     scenario_file_filter: Option<&str>,
     active_env: Option<&str>,
@@ -183,6 +184,15 @@ pub fn execute(
             crate::render::errln!("error: {message}");
             return ExitCode::UserError;
         }
+    };
+
+    // The CI report destinations plus the run's wall-clock start (CTRF's
+    // summary requires an epoch start/stop pair). A CLI-edge clock read like
+    // every other (ADR-0015) — the sans-IO core and the record never see it.
+    let sinks = CiSinks {
+        junit,
+        ctrf,
+        started_at: std::time::SystemTime::now(),
     };
 
     // Read before anything runs: a `--shard-weights` that cannot be read is a
@@ -367,7 +377,7 @@ pub fn execute(
     };
     let reporters: Vec<Box<dyn Reporter>> = vec![
         Box::new(ConsoleReporter::new(
-            Tee(console_out, log_file),
+            Tee(console_out, log_file, !machine_stdout),
             redactions.clone(),
             // run.log mirrors the console verbatim, dots included: the
             // record (events.jsonl) is the full truth (ADR-0008), and a
@@ -499,7 +509,7 @@ pub fn execute(
                                 tag_links: &config.tag_links,
                             },
                             &front.run_id,
-                            junit,
+                            sinks,
                             &run_dir,
                             &redactions,
                             machine_stdout,
@@ -530,7 +540,7 @@ pub fn execute(
                                 tag_links: &config.tag_links,
                             },
                             &front.run_id,
-                            junit,
+                            sinks,
                             &run_dir,
                             &redactions,
                             machine_stdout,
@@ -874,7 +884,7 @@ pub fn execute(
         );
 
         // CI reports (US-8): JUnit XML + GitHub job summary.
-        let junit_failed = write_ci_reports(
+        let reports_failed = write_ci_reports(
             &Verdict {
                 summary: &summary,
                 teardown: teardown_summary.as_ref(),
@@ -883,7 +893,7 @@ pub fn execute(
                 tag_links: &config.tag_links,
             },
             &front.run_id,
-            junit,
+            sinks,
             &run_dir,
             &redactions,
             machine_stdout,
@@ -940,7 +950,7 @@ pub fn execute(
         // already been printed, so `--format json` reported an `exit_code` the
         // process then exited past — a body that disagrees with its own program is
         // worse than no body, because a consumer has no way to notice.
-        let exit = if junit_failed {
+        let exit = if reports_failed {
             ExitCode::SystemError
         } else {
             exit
@@ -1461,15 +1471,57 @@ struct Verdict<'a> {
     tag_links: &'a std::collections::BTreeMap<String, String>,
 }
 
+/// The optional CI report destinations, and the clock they share — one value
+/// because every call site passes the same three, and the three abort paths
+/// must stay in lockstep with the main one (R12-3: a job gating on a report
+/// file must never see it missing because the run died early).
+#[derive(Clone, Copy)]
+struct CiSinks<'a> {
+    /// `--junit`: a path, or `auto` (run dir, only under `GITHUB_ACTIONS`).
+    junit: Option<&'a str>,
+    /// `--ctrf`: the CTRF JSON destination.
+    ctrf: Option<&'a Path>,
+    /// The run's wall-clock start (CTRF's summary requires epoch start/stop).
+    started_at: std::time::SystemTime,
+}
+
 fn write_ci_reports(
     verdict: &Verdict<'_>,
     run_id: &str,
-    junit: Option<&str>,
+    sinks: CiSinks<'_>,
     run_dir: &Path,
     redactions: &proef_core::report::Redactions,
     machine_stdout: bool,
 ) -> bool {
-    let mut junit_failed = false;
+    let CiSinks {
+        junit,
+        ctrf,
+        started_at,
+    } = sinks;
+    let mut reports_failed = false;
+    // Beside JUnit, deliberately inside this function: the two sinks must
+    // describe one truth on every path that reaches CI — including the
+    // setup-abort paths (R12-3), where a job gating on either file must not
+    // see it missing. A write failure re-classifies the exit exactly as a
+    // JUnit write failure does.
+    if let Some(path) = ctrf {
+        match crate::ctrf::write(
+            verdict.summary,
+            verdict.teardown,
+            verdict.carried,
+            verdict.non_gating,
+            run_id,
+            started_at,
+            path,
+            redactions,
+        ) {
+            Ok(()) => crate::render::errln!("ctrf report: {}", path.display()),
+            Err(message) => {
+                crate::render::errln!("error: {message}");
+                reports_failed = true;
+            }
+        }
+    }
     let junit_path = match junit {
         Some("auto") if std::env::var_os("GITHUB_ACTIONS").is_some() => {
             Some(run_dir.join("report.junit.xml"))
@@ -1491,7 +1543,7 @@ fn write_ci_reports(
             Err(message) => {
                 // A CI job gating on this file must not see exit 0.
                 crate::render::errln!("error: {message}");
-                junit_failed = true;
+                reports_failed = true;
             }
         }
     }
@@ -1505,7 +1557,7 @@ fn write_ci_reports(
             crate::render::outln!("{}", annotations.trim_end());
         }
     }
-    junit_failed
+    reports_failed
 }
 
 /// Classify a setup/teardown summary: `None` when every scenario passed, else
@@ -1641,15 +1693,7 @@ fn build_specs(
         }
         let file_arc: Arc<str> = Arc::from(feature.file.path.as_str());
         let feature_arc = Arc::new(feature.file.clone());
-        let stem: Arc<str> = Arc::from(
-            Path::new(feature.file.path.as_str())
-                .file_stem()
-                .map_or_else(
-                    || "feature".to_owned(),
-                    |s| s.to_string_lossy().into_owned(),
-                )
-                .as_str(),
-        );
+        let stem: Arc<str> = Arc::from(proef_core::emit::feature_stem(&feature.file.path).as_str());
         for scenario in &feature.scenarios {
             if !front::tag_selected(&scenario.lowered.tags, tags) {
                 continue;
@@ -1798,13 +1842,31 @@ fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
 }
 
 /// Console output tee'd into `run.log` (§11 — the human-readable run record).
-struct Tee(Box<dyn Write + Send>, Option<std::fs::File>);
+///
+/// The third field says whether the console leg is **stdout**. It matters on
+/// failure: the `ConsoleReporter` above this swallows write errors (a reporter
+/// cannot meaningfully report its own channel dying), so this is the last
+/// place a failed console write is visible — and output proef could not
+/// deliver must not look like success. A disk filling *mid-run* used to
+/// truncate the human report while the run still exited by its verdict; a
+/// disk already full at start was caught. The latch closes the gap.
+struct Tee(Box<dyn Write + Send>, Option<std::fs::File>, bool);
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // Console first: the mirror copies what the console accepted, so a
         // short write cannot duplicate the tail into `run.log`.
-        let written = self.0.write(buf)?;
+        let written = match self.0.write(buf) {
+            Ok(written) => written,
+            Err(err) => {
+                // Same rule as `outln!`: a closed pipe is the reader ending
+                // the pipeline on purpose (`proef … | head`), never a failure.
+                if self.2 && err.kind() != std::io::ErrorKind::BrokenPipe {
+                    crate::render::note_stdout_failure();
+                }
+                return Err(err);
+            }
+        };
         if let Some(file) = &mut self.1 {
             // The mirror stays verbatim in *content*, not in paint: the
             // console may carry ANSI color for a terminal, and a log file
@@ -1820,7 +1882,13 @@ impl Write for Tee {
         if let Some(file) = &mut self.1 {
             let _ = file.flush();
         }
-        self.0.flush()
+        // A failed flush is a failed delivery too — same latch, same
+        // closed-pipe exemption as `write`.
+        self.0.flush().inspect_err(|err| {
+            if self.2 && err.kind() != std::io::ErrorKind::BrokenPipe {
+                crate::render::note_stdout_failure();
+            }
+        })
     }
 }
 
@@ -1846,7 +1914,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).unwrap();
-        let mut tee = super::Tee(Box::new(std::io::sink()), Some(file));
+        let mut tee = super::Tee(Box::new(std::io::sink()), Some(file), false);
         tee.write_all(b"\x1b[31m2 failed\x1b[0m plain\n").unwrap();
         tee.flush().unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "2 failed plain\n");
@@ -2152,7 +2220,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).expect("create");
-        let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file));
+        let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file), false);
 
         tee.write_all(b"abcdefghij").expect("write_all");
         tee.flush().expect("flush");
@@ -2162,6 +2230,63 @@ mod tests {
         assert_eq!(
             mirrored, "abcdefghij",
             "the mirror must be a faithful copy of what the console received"
+        );
+    }
+
+    /// A disk filling *mid-run* truncates the human report through this exact
+    /// path: `ConsoleReporter` swallows the error (a reporter cannot report
+    /// its own channel dying), so the `Tee` is the last place the failure is
+    /// visible — it must latch [`crate::render::note_stdout_failure`] so the
+    /// exit funnel turns lost output into exit 3 instead of the run's verdict.
+    ///
+    /// One test for all three cases, ordered so the global latch (safe: one
+    /// process per test under the mandated nextest) is only flipped at the
+    /// end: a closed pipe must NOT latch (`proef … | head` ends the pipeline
+    /// on purpose), a non-stdout console must NOT latch (machine mode moves
+    /// the report to stderr, whose failure has nowhere better to go), and a
+    /// real stdout failure MUST.
+    #[test]
+    fn a_failed_console_write_latches_the_stdout_failure() {
+        use std::io::Write;
+
+        use super::Tee;
+
+        struct FailWith(std::io::ErrorKind);
+        impl Write for FailWith {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from(self.0))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::from(self.0))
+            }
+        }
+
+        let mut closed_pipe = Tee(
+            Box::new(FailWith(std::io::ErrorKind::BrokenPipe)),
+            None,
+            true,
+        );
+        assert!(
+            closed_pipe.write(b"x").is_err(),
+            "the error still propagates"
+        );
+        assert!(
+            !crate::render::stdout_failed(),
+            "a closed pipe is the reader ending the pipeline, not a failure"
+        );
+
+        let mut stderr_console = Tee(Box::new(FailWith(std::io::ErrorKind::Other)), None, false);
+        assert!(stderr_console.write(b"x").is_err());
+        assert!(
+            !crate::render::stdout_failed(),
+            "a non-stdout console must not claim stdout failed"
+        );
+
+        let mut full_disk = Tee(Box::new(FailWith(std::io::ErrorKind::Other)), None, true);
+        assert!(full_disk.write(b"x").is_err());
+        assert!(
+            crate::render::stdout_failed(),
+            "output proef could not deliver must not look like success"
         );
     }
 

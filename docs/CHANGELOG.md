@@ -8,6 +8,46 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`[http] cookie-store = false` runs the whole suite cookie-less** — hurl
+  8.0's `--no-cookie-store`, surfaced through the table built for exactly this
+  class of setting. No `Set-Cookie` is retained and none is replayed, which is
+  how a stateless API is *proven* stateless: the fixture-backed test is green
+  only because its steps assert the 403 a missing session cookie earns.
+
+  This is the one `[http]` key with **no per-entry `[Options]` spelling at
+  all** (`OptionKind` has no cookie variant — verified against the enum), so
+  run-wide is not a compromise but the only place it can be said. With the
+  store off, the engine also skips both halves of the batch-split cookie
+  round-trip: hurl reads a `cookie_input_file` only when enabling the engine,
+  so injecting one would be silently ignored — and there is nothing to write.
+  hurl's own FIXME (a handle once given cookie storage cannot lose it) never
+  reaches proef, because `run_entries` builds its client per call (TECH-SPEC
+  §5) — a handle never transitions on → off.
+
+  Breaking (library): `HttpDefaults` gains the `cookie_store` field, so a
+  struct-literal construction needs the new line (`..Default::default()` sites
+  are untouched, and an absent `[http] cookie-store` key changes nothing).
+
+- **`--ctrf <path>` — the run's verdicts as a CTRF report.** CTRF
+  (<https://ctrf.io>) is the emerging JSON successor to `JUnit` XML for CI
+  dashboards, and it models in the *schema* what `JUnit` can only smuggle
+  through extensions — which is exactly the data proef already tracks: a
+  pass-after-retry carries `flaky`, `retries`, and `retryAttempts` listing
+  the real failed attempts with their (redacted) messages; every test carries
+  its tags and file path. One serializer off the same fold as `JUnit`, so the
+  two files cannot disagree — most visibly for a quarantined failure, which
+  both report as *skipped with a message* (ADR-0019), because a dashboard
+  reading "failed" beside exit 0 would contradict itself. A `User`/`System`
+  fault stays `failed` even under a quarantine tag: quarantine is for flaky
+  tests, not broken input.
+
+  The R12-3 contract applies from day one: a `[run] setup` abort still writes
+  the file, carrying the setup scenario itself — a job gating on the report
+  must never see *no file at all*. The schema's required wall-clock
+  `start`/`stop` are measured at the CLI edge like every other clock read
+  (ADR-0015); the sans-IO core and the JSONL record are untouched — the
+  record remains the only record (ADR-0008).
+
 - **The HTML report answers "what is slowest".** After "what failed", it is the
   question a test report is most often asked, and the page could not answer it:
   the timeline showed *that* workers were busy, never *which* scenarios to
@@ -194,6 +234,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **Artifact naming is defined once — `emit::feature_stem` and
+  `emit::artifact_slug`.** The stem expression (`file_stem`, falling back to
+  `"feature"`) existed four times across both crates — the emitter's caller,
+  the dispatcher's spec naming, the HTML report's anchors, the editor's
+  analysis — and the `stem--scenario` composition twice, with the report's
+  links to artifact files resolving only because both sides happened to derive
+  the same name. Worklist item Q6 called the four sites a future-drift risk;
+  the closure is structural rather than descriptive: one definition each, and
+  every consumer calls it. Additive to the library surface. In the same pass,
+  Q2 (the editor's per-request walks) was found already closed by the #146
+  analysis cache and its entry now says so with the evidence.
+
 - **"What a scenario costs" is defined once, as `ScenarioOutcome::cost`.** The
   sum of a scenario's step durations was computed in three places on the same
   type — `JUnit`'s per-suite time, `JUnit`'s per-case time, and the new
@@ -278,6 +330,18 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   made it look worse than it is.
 
 ### Fixed
+
+- **A disk filling *mid-run* now reaches the exit code.** A stdout that was
+  already broken at start has failed loudly since the correctness series — but
+  the human report's own writes go through the console reporter, which
+  swallows write errors (a reporter cannot report its own channel dying), so a
+  disk filling *during* the run truncated the report while the run still
+  exited by its verdict. The `Tee` under the reporter is the last place the
+  failure is visible; it now latches the same stdout-failure flag `outln!`
+  uses, and the exit funnel turns lost output into exit 3. Same closed-pipe
+  exemption as ever — `proef … | head` is the reader ending the pipeline, not
+  a failure — and a stderr console (machine mode) does not claim stdout
+  failed. Pinned by a three-case test, mutation-checked.
 
 - **The complexity guard added moments earlier was itself flaky, and now runs
   alone.** It shipped in the ordinary suite on the reasoning that a *ratio*

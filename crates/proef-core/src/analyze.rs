@@ -293,7 +293,7 @@ pub fn analyze_suite(ctx: &AnalyzeCtx<'_>) -> SuiteAnalysis {
                     out.push_diags(name, lowered.warnings.iter().cloned());
                     // Emit + artifact validation is executed for its diagnostics
                     // only; the artifact text is discarded.
-                    let stem = feature_stem(name);
+                    let stem = emit::feature_stem(name);
                     if let Some(artifact) = emit::emit(&lowered, &stem, &world) {
                         let mut diags = Vec::new();
                         validate_artifact(&artifact, &lowered, ctx.kinds, &mut diags);
@@ -417,13 +417,6 @@ fn index_use_refs(packs: &PackSet) -> Vec<UseRef> {
                 target_macro: target_macro.name.clone(),
             })
         },
-    )
-}
-
-fn feature_stem(name: &str) -> String {
-    std::path::Path::new(name).file_stem().map_or_else(
-        || "feature".to_owned(),
-        |s| s.to_string_lossy().into_owned(),
     )
 }
 

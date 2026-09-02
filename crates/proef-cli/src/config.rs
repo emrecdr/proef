@@ -181,6 +181,11 @@ pub struct HttpTable {
     /// `User-Agent` sent with every request.
     #[serde(rename = "user-agent")]
     pub user_agent: Option<String>,
+    /// Keep a cookie store across a scenario's requests (default `true`).
+    /// `false` is hurl's `--no-cookie-store`: prove a workflow needs no
+    /// session cookie by refusing to carry one.
+    #[serde(rename = "cookie-store")]
+    pub cookie_store: Option<bool>,
 }
 
 /// `[sla]` settings — an opt-in run-level latency budget (ceilings in
@@ -409,6 +414,7 @@ impl ProjectConfig {
             client_cert,
             client_key,
             user_agent: pick_text(|http| http.user_agent.as_ref()),
+            cookie_store: pick_bool(|http| http.cookie_store, base.cookie_store),
         })
     }
 
