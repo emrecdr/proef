@@ -29,6 +29,49 @@ was re-checked against `main` on **2026-08-10**.
 
 ---
 
+## Ingested — the 2026-09-02 survey (internal), validated then implemented
+
+A deliberate check-the-world round: repo state against upstream releases,
+standards movement, and the open list itself. Recorded like every external
+round so its verdicts are not re-derived.
+
+**Validated as needing nothing — do not re-raise without new evidence:**
+
+- **The hurl pin is current.** 8.0.1 *is* the latest upstream stable
+  (2026-04-28); the canary covers the next one.
+- **The Rust pin is correct per the written policy.** 1.98.0 landed
+  2026-08-20; no 1.98.1 exists yet, and policy adopts at `x.y.1` — a calendar
+  item (~mid-September 2026), not a drift.
+- **`notify` 9.0 is still a release candidate** (rc.4, 2026-05); `=8.2.0`
+  stands.
+- **Release engineering already ships the modern supply-chain story** —
+  Sigstore attestations (`attest-build-provenance@v4`), `.sha256` sidecars,
+  Homebrew tap, binstall metadata, SHA-pinned actions gated by pinned zizmor.
+  The survey's own candidate ("add attestations") died against the tree.
+- **Competitor movement is OpenAPI-generative testing** (Schemathesis et
+  al.) — a different product shape (generated negative tests vs. declared
+  business scenarios); no charter-fit gap. The hurl-fidelity niche is
+  uncontested.
+
+**Shipped from the survey (this series):** `[http] cookie-store = false`
+(hurl 8.0's env-shaped option; the one `[http]` key with no per-entry
+spelling at all); `--ctrf` (CTRF report off the JUnit fold, quarantine
+parity per ADR-0019, real `retryAttempts`); the mid-run console write
+failure latch (the deferred v0.6–v0.8 item, to its own written design);
+`emit::feature_stem`/`emit::artifact_slug` closing Q6 structurally; Q2
+re-verdicted closed (the #146 cache had already closed it).
+
+**Still open from the survey, dispositions unchanged:** `[source-links]`
+(*build* verdict of 2026-09-01, unscheduled); P13 (nightly `llvm-cov` job —
+`cargo-llvm-cov` is already in the documented toolchain); the text-scan
+honesty bundle (capture-name charset / ≤2-char methods / `key_line_spans`
+flag — see the deferred list); P12 (measure first, alone, per the
+complexity-guard lesson). Decision items untouched: E2's split-invocation
+remainder (trigger not fired), E3 (wants an ADR), R1 (wants its own spec),
+the shipped-changelog duplicate headers (maintainer's call).
+
+---
+
 ## Shipped since validation
 
 Kept here so the list reads as live rather than stale, and so a finding is not
