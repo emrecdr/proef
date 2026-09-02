@@ -172,13 +172,24 @@ in the macro count", "~2× per doubling" — is a **ratio between two input size
 not a stopwatch against a threshold:
 
 - A ratio tests what was actually promised. The claim is a shape; a shape is a ratio.
-- A ratio survives a shared runner. Load inflates both measurements together and
-  cancels out, where an absolute threshold has to be loosened until it means nothing.
 - The separation is wide enough to be safe. `validation_cost_stays_linear_in_the_macro_count`
   observes ~2.05× against a bound of 3.0; restoring the pre-#138 quadratic shape
-  measures 4.01×. Take the **minimum** of several samples — scheduler noise only ever
-  adds, so the fastest observation is the closest to the work actually done — and
-  assert the smaller load was slow enough to time at all, or the ratio is meaningless.
+  measures 4.01×. Take the **minimum** of several interleaved samples — scheduler
+  noise only ever adds, so the fastest observation is the closest to the work
+  actually done — and assert the smaller load was slow enough to time at all, or
+  the ratio is meaningless.
+
+**A timing test runs alone, or it does not run.** These are `#[ignore]`d and have
+their own CI step and `just perf`; nothing else shares the machine. The first
+version of this section claimed the opposite — that a ratio "survives a shared
+runner" because load inflates both sides and cancels — and shipped a test that
+failed on its second full-suite run. Measurement: **2.05× alone, 3.09× under
+nextest's full parallelism.** The larger input has the larger working set, so
+memory-bandwidth contention penalises it more; the ratio drifts rather than
+cancelling, and interleaving cannot fix a systematic effect. nextest's
+`test-groups` bound concurrency *within* a group, which does not isolate one
+from the rest of the suite — so `#[ignore]` plus a dedicated invocation is the
+only mechanism that actually delivers isolation.
 
 Benchmark frameworks were considered and are deliberately absent. `iai-callgrind`
 is the right tool for gating in CI, because instruction counts ignore runner noise

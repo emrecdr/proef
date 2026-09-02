@@ -2444,12 +2444,24 @@ mod diagnostic_code_coverage {
 /// correctness and no gate measures seconds.
 ///
 /// **Why a ratio and not a benchmark.** The claim *is* a ratio, so asserting one
-/// tests the thing that was promised rather than a proxy for it. A ratio is also
-/// the only timing assertion that survives a shared CI runner: load inflates
-/// both measurements together and cancels, where an absolute threshold would
-/// have to be set so loose it stopped meaning anything. `TESTING-STRATEGY.md`
-/// §5 permits wall time "only as generous upper bounds", and this is one — the
-/// observed value is ~2.05 against a bound of 3.0, while quadratic is 4.0.
+/// tests the thing that was promised rather than a proxy for it: the observed
+/// value is ~2.05 against a bound of 3.0, while quadratic is 4.0.
+///
+/// **It is `#[ignore]`d, and that is the load-bearing part.** The first version
+/// ran in the ordinary suite on the theory that a ratio cancels out runner
+/// load. Measurement says otherwise: alone it reads 2.05×, but under nextest's
+/// full parallelism it read **3.09×** and failed — the larger input has the
+/// larger working set, so memory-bandwidth contention penalises it more than
+/// the smaller one, and the ratio itself drifts rather than cancelling.
+/// Interleaving the samples does not fix a systematic effect, and nextest's
+/// `test-groups` bound concurrency *within* a group without isolating it from
+/// the rest of the suite. So the only honest place for a timing assertion is
+/// alone: CI runs it as its own step, and `just perf` runs it locally.
+///
+/// That correction is worth stating plainly, because the first version of this
+/// comment asserted the opposite — "a ratio is the only timing assertion that
+/// survives a shared CI runner" — and shipped a flaky test on the strength of
+/// it. The claim was reasoning, not measurement.
 ///
 /// Criterion, divan and iai-callgrind were all considered and rejected.
 /// iai-callgrind is the right tool for gating in CI — instruction counts are
@@ -2495,28 +2507,34 @@ mod complexity {
         text
     }
 
-    /// Best of five. The minimum is the right statistic for a timing sample:
-    /// scheduler noise only ever *adds*, so the fastest observation is the one
-    /// closest to the work actually done.
-    fn best_load(text: &str) -> Duration {
-        let mut best = Duration::MAX;
-        for _ in 0..5 {
-            let source = PackSource {
-                name: "p.yaml".into(),
-                text: Arc::from(text),
-            };
-            let start = Instant::now();
-            let loaded = pack::load(&[source], &FragmentCorpus::empty(), KINDS);
-            best = best.min(start.elapsed());
-            assert!(loaded.is_ok(), "the generated pack must be valid");
-        }
-        best
+    /// One timed load. The caller takes the minimum across rounds: scheduler
+    /// noise only ever *adds*, so the fastest observation is the one closest to
+    /// the work actually done.
+    fn timed_load(text: &str) -> Duration {
+        let source = PackSource {
+            name: "p.yaml".into(),
+            text: Arc::from(text),
+        };
+        let start = Instant::now();
+        let loaded = pack::load(&[source], &FragmentCorpus::empty(), KINDS);
+        let elapsed = start.elapsed();
+        assert!(loaded.is_ok(), "the generated pack must be valid");
+        elapsed
     }
 
     #[test]
+    #[ignore = "timing: must run alone — `just perf`, or CI's own step. See the module comment."]
     fn validation_cost_stays_linear_in_the_macro_count() {
-        let single = best_load(&pack_of(1_000));
-        let double = best_load(&pack_of(2_000));
+        let (small, large) = (pack_of(1_000), pack_of(2_000));
+        // Interleaved rather than five of one then five of the other, so a
+        // drifting machine cannot bias the two sides against each other. It is
+        // not sufficient on its own — that is why the test runs alone — but it
+        // removes the one source of skew that ordering alone creates.
+        let (mut single, mut double) = (Duration::MAX, Duration::MAX);
+        for _ in 0..5 {
+            single = single.min(timed_load(&small));
+            double = double.min(timed_load(&large));
+        }
 
         // Guard against a degenerate measurement making the ratio meaningless:
         // if the smaller load is too fast to time, the assertion below would

@@ -8,6 +8,57 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **The editor tells proef's two variable tiers apart.** A pack's `hurl: |` block
+  is the centre of the authoring experience and, to every editor, a plain YAML
+  scalar — inside which `${…}` (resolved at **lower time**, by proef, before any
+  request exists) and `{{…}}` (resolved at **run time**, by hurl) look
+  identical. That distinction is ADR-0005's whole model and the thing authors
+  most often get wrong, and no generic grammar can see it: a YAML highlighter
+  sees a string, and a hurl highlighter never runs because the block is not a
+  file. proef is the only party that knows.
+
+  The server now answers `textDocument/semanticTokens/full`, lighting `${…}` as
+  **macro** — a substitution performed before execution, which is what a macro
+  is — and `{{…}}` as **variable**. Both are coloured differently by every
+  mainstream theme, so it works without anyone configuring anything. The `$${`
+  escape stays dark, because telling an author proef will substitute text it
+  will in fact leave alone is worse than no highlighting.
+
+  The `${…}` scan is `proef_core::resolve::reference_spans`, walking the same
+  `first_reference` the resolver itself uses — a second implementation of the
+  escape rule would drift, and the drift would show as an editor confidently
+  colouring literal text. The `{{…}}` scan lives in `proef-lsp` rather than
+  core, because that spelling is the engine's and ADR-0002's amendment is that
+  engine syntax does not accumulate in the core.
+
+  Collapsing the seven-arm request dispatch behind a local macro came with it:
+  the chain crossed clippy's line limit the moment an eighth feature landed, and
+  the honest fix was to stop repeating an identical frame seven times rather
+  than to suppress the lint that noticed.
+
+### Fixed
+
+- **The complexity guard added moments earlier was itself flaky, and now runs
+  alone.** It shipped in the ordinary suite on the reasoning that a *ratio*
+  cancels out runner load. Measurement disagreed on its second full-suite run:
+  **2.05× isolated, 3.09× under nextest's full parallelism**, against a bound of
+  3.0. The larger input has the larger working set, so memory-bandwidth
+  contention penalises it more than the smaller one — the ratio drifts rather
+  than cancelling, and interleaving the samples cannot fix a systematic effect.
+
+  nextest's `test-groups` bound concurrency *within* a group and do not isolate
+  one from the rest of the suite, so the only mechanism that actually delivers
+  isolation is `#[ignore]` plus a dedicated invocation: a CI step of its own and
+  `just perf`. The samples are interleaved as well, which removes the one skew
+  that ordering alone creates.
+
+  `TESTING-STRATEGY.md` §6 previously asserted the opposite in as many words —
+  that a ratio "survives a shared runner" — and is corrected with the numbers.
+  The claim was reasoning, not measurement, which is the failure this whole
+  section of the changelog exists to record.
+
+### Added
+
 - **The linear-validation claim is now a test, not a sentence.** #138 made pack
   validation linear and recorded the result as a shape: *"the curve changed
   shape — 4× per doubling before, ~2× after"*. That number lived only in the

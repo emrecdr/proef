@@ -1375,3 +1375,70 @@ fn completion_inside_bind_offers_the_fragments_variables() {
 
     shutdown(&client, server);
 }
+
+/// The wiring, end to end over JSON-RPC: the capability is announced with a
+/// legend, and a `semanticTokens/full` request comes back with the two tiers
+/// distinguished. The unit tests cover the encoding; this covers the parts
+/// only the protocol can break — a missing capability, an unregistered method,
+/// or a legend whose order disagrees with the indices the encoder emits.
+#[test]
+fn semantic_tokens_distinguish_the_two_variable_tiers_over_the_protocol() {
+    let feature_name = native_abs("suite/f.feature");
+    let pack_name = native_abs("suite/packs/p.yaml");
+    // One lower-time `${…}` and one run-time `{{…}}` on the same payload line,
+    // which is the situation no editor grammar can resolve on its own.
+    let pack_text = "macros:\n  greet:\n    match: I greet Sam\n    steps:\n      - hurl: |\n          GET ${url:base}/r/{{recordId}}\n          HTTP 200\n";
+    let mut files = BTreeMap::new();
+    let feature_text = "Feature: F\n  Scenario: S\n    When I greet Sam\n";
+    files.insert(feature_name.clone(), Arc::from(feature_text));
+    files.insert(pack_name.clone(), Arc::from(pack_text));
+    let disk = FakeDisk {
+        features: vec![feature_name.clone()],
+        packs: vec![pack_name.clone()],
+        fragments: Vec::new(),
+        files,
+    };
+
+    let (client, server) = spawn(disk, hurl_kinds());
+    init(&client);
+    let url = name_to_url(&pack_name).unwrap();
+    open(&client, &url, pack_text);
+    let _ = wait_for_any_diagnostics(&client);
+
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(40),
+            method: "textDocument/semanticTokens/full".to_owned(),
+            params: serde_json::to_value(lsp_types::SemanticTokensParams {
+                text_document: TextDocumentIdentifier { uri: url.clone() },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            })
+            .unwrap(),
+        }))
+        .unwrap();
+
+    let tokens = wait_for_response::<lsp_types::SemanticTokens>(&client, &RequestId::from(40));
+    assert_eq!(
+        tokens.data.len(),
+        2,
+        "one `${{url:base}}` and one `{{{{recordId}}}}`: {:?}",
+        tokens.data
+    );
+    // Index 0 is `macro` (lower time), index 1 is `variable` (run time) — the
+    // order the announced legend promises.
+    assert_eq!(tokens.data[0].token_type, 0, "`${{…}}` is the macro tier");
+    assert_eq!(
+        tokens.data[1].token_type, 1,
+        "`{{{{…}}}}` is the variable tier"
+    );
+    assert_eq!(tokens.data[0].length, 11, "`${{url:base}}` is 11 units");
+    assert_eq!(tokens.data[1].length, 12, "`{{{{recordId}}}}` is 12 units");
+    assert_eq!(
+        tokens.data[1].delta_line, 0,
+        "both sit on the same payload line"
+    );
+
+    shutdown(&client, server);
+}
