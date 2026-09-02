@@ -3536,21 +3536,38 @@ fn setup_failure_still_closes_the_record_with_one_pair() {
 /// the ones that must say so instead of rendering it as complete.
 #[test]
 fn explain_and_report_flag_a_truncated_record() {
+    use proef_core::event::Event;
+
     let cwd = tempfile::tempdir().unwrap();
-    let run = cwd
-        .path()
-        .join(".proef-runs/0198f3c1-0000-7000-8000-000000000001");
-    std::fs::create_dir_all(&run).unwrap();
-    // Starts, runs one scenario to completion, then stops: no run_finished.
-    std::fs::write(
-        run.join("events.jsonl"),
-        concat!(
-            r#"{"schema":1,"event":"run_started","run_id":"0198f3c1-0000-7000-8000-000000000001","scenarios":2}"#, "\n",
-            r#"{"schema":1,"event":"scenario_started","scenario":"first","file":"suite/a.feature"}"#, "\n",
-            r#"{"schema":1,"event":"scenario_finished","scenario":"first","file":"suite/a.feature","status":"passed","line":3}"#, "\n",
-        ),
-    )
-    .unwrap();
+    let run_id = "0198f3c1-0000-7000-8000-000000000001";
+    // Starts, runs one scenario to completion, then stops: no `run_finished`.
+    //
+    // Typed, not hand-spelled JSON. This fixture used to write the stream as
+    // string literals and had drifted three fields off the schema — a
+    // `scenarios` count on the head, a `schema` on the body events, a `line`
+    // on the close — none of which these variants carry. Serde ignores
+    // unknown fields, so nothing ever failed; the fixture just quietly
+    // stopped describing what proef writes, which is the whole reason a
+    // fixture exists. Built from `Event` it cannot drift again without
+    // breaking the build.
+    write_run(
+        &cwd.path().join(".proef-runs"),
+        run_id,
+        &[
+            diff_run_started(run_id),
+            Event::ScenarioStarted {
+                scenario: std::sync::Arc::from("health"),
+                file: std::sync::Arc::from("case.feature"),
+                timestamp_ms: None,
+                worker: None,
+                phase: None,
+                exclusive: false,
+            },
+            // Same scenario the `ScenarioStarted` above opens — a stream that
+            // opens one name and closes another is not the shape being tested.
+            diff_scenario_finished(),
+        ],
+    );
 
     let mut explain = assert_cmd::Command::cargo_bin("proef").unwrap();
     let assert = explain

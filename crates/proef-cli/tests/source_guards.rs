@@ -1,6 +1,6 @@
 //! Drift guards enforced by scanning the workspace's own sources.
 //!
-//! Four rules, one walker. Each exists because the property it pins is
+//! Six rules, one walker. Each exists because the property it pins is
 //! invisible to every other gate: `fmt`, `clippy` and the test suite are all
 //! indifferent to the contents of a string literal, and none of them can see
 //! that a rule which holds at one call site was never applied at the next.
@@ -28,6 +28,10 @@
 //!    exercised by nothing. The rendered form is where the risk sits: round 19
 //!    found a caret on the wrong token and parser prose coming from the wrong
 //!    layer, neither of which a type checker can see.
+//! 6. **No phantom field in a hand-written event literal.** A fixture that
+//!    spells the record's JSON by hand is asserting about the wire format, and
+//!    the reader ignores unknown keys — so a stale one parses cleanly and the
+//!    test silently stops making the claim it was written to make.
 //!
 //! These live in `tests/` rather than a `#[cfg(test)] mod` inside `src/` for a
 //! correctness reason, not a stylistic one: a source-scanning assertion placed
@@ -688,4 +692,93 @@ fn split_production(text: &str) -> (String, String) {
     }
     kept.push_str(rest);
     (kept, tests)
+}
+
+/// Every hand-written event literal still describes a real [`Event`].
+///
+/// A fixture that spells the JSON out by hand is asserting about proef's own
+/// wire format, and nothing checks that the format it names is the one proef
+/// writes — the record reader ignores unknown fields (no
+/// `deny_unknown_fields`), so a stale key parses cleanly and reads as an
+/// assertion the test never actually makes. Found live: one `explain` fixture
+/// carried a `scenarios` count on the head plus a `schema` and a `line` on
+/// events that never had either, so a "record with one passed scenario" was
+/// three-quarters invented. Nothing failed, because there is nothing to fail —
+/// which is exactly the shape a guard has to cover.
+///
+/// The test is *inertness*, not a field list: a key is phantom when deleting
+/// it yields the same `Event`. No inventory to maintain, and it stays correct
+/// through renames, `#[serde(default)]` and `skip_serializing_if` — none of
+/// which a key-set comparison against re-serialized JSON survives.
+///
+/// Fragments (`"event":"run_finished","passed":1`) are skipped by
+/// construction: they are not objects, so they never parse, and they are a
+/// legitimate idiom here — the suite asserts them as substrings against a
+/// record proef actually emitted, which is the opposite direction and cannot
+/// go stale unnoticed.
+///
+/// The one accepted blind spot is a real field written at its own default: it
+/// is inert too. Nothing in the tree does that, and the alternative — pinning
+/// a field inventory — is the maintenance burden this shape exists to avoid.
+#[test]
+fn a_hand_written_event_literal_carries_no_field_the_schema_lacks() {
+    use proef_core::event::Event;
+    use serde_json::Value;
+
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().unwrap().parent().unwrap();
+    let mut files = Vec::new();
+    for dir in std::fs::read_dir(workspace.join("crates"))
+        .unwrap()
+        .flatten()
+    {
+        for sub in ["src", "tests"] {
+            let scan = dir.path().join(sub);
+            if scan.is_dir() {
+                rust_sources(&scan, &mut files);
+            }
+        }
+    }
+    assert!(!files.is_empty(), "no Rust sources found to scan");
+
+    let (mut offenders, mut checked) = (Vec::new(), 0usize);
+    for file in &files {
+        let text = std::fs::read_to_string(file).expect("readable source file");
+        for literal in string_literals(&text) {
+            let Ok(Value::Object(source)) = serde_json::from_str::<Value>(literal) else {
+                continue;
+            };
+            if !source.contains_key("event") {
+                continue;
+            }
+            let Ok(whole) = serde_json::from_value::<Event>(Value::Object(source.clone())) else {
+                offenders.push(format!(
+                    "{}: tagged `event` but does not deserialize as one: {literal}",
+                    file.display()
+                ));
+                continue;
+            };
+            checked += 1;
+            for key in source.keys().filter(|key| key.as_str() != "event") {
+                let mut without = source.clone();
+                without.remove(key);
+                if serde_json::from_value::<Event>(Value::Object(without))
+                    .is_ok_and(|shorter| shorter == whole)
+                {
+                    offenders.push(format!(
+                        "{}: `{key}` changes nothing when removed — the schema does not read it",
+                        file.display()
+                    ));
+                }
+            }
+        }
+    }
+    // Vacuity guard, as elsewhere here: a literal scanner that quietly stopped
+    // matching would report a clean tree, the one answer this must not invent.
+    assert!(checked >= 3, "scan found only {checked} event literals");
+    assert!(
+        offenders.is_empty(),
+        "a hand-written event fixture names a field the schema does not have:\n  {}",
+        offenders.join("\n  ")
+    );
 }
