@@ -482,6 +482,15 @@ pub struct HttpDefaults {
     /// `User-Agent` sent with every request — how a server tells test traffic
     /// from real traffic, which is why it is an environment setting.
     pub user_agent: Option<String>,
+    /// Whether the engine keeps a cookie store (`true` — hurl's own default).
+    ///
+    /// `false` runs the whole suite cookie-less (hurl's `--no-cookie-store`):
+    /// no `Set-Cookie` is retained and none is replayed, which is how a
+    /// stateless API is *proven* stateless — a green run that silently rode a
+    /// session cookie proves nothing. A **workflow** property, not a per-test
+    /// one: hurl has no `[Options]` spelling for it at all, so `[http]` is the
+    /// only place it can be said.
+    pub cookie_store: bool,
 }
 
 impl Default for HttpDefaults {
@@ -505,6 +514,7 @@ impl Default for HttpDefaults {
             client_cert: None,
             client_key: None,
             user_agent: None,
+            cookie_store: true,
         }
     }
 }

@@ -36,6 +36,8 @@ timeout-ms      = 30000     # per-request timeout (batch-level default)
 follow-location = false     # follow redirects
 max-redirs      = 10        # redirect ceiling (only meaningful with follow-location)
 user-agent      = "proef"   # sent with every request — how a server spots test traffic
+cookie-store    = true      # false = run cookie-less (hurl's --no-cookie-store):
+                            # prove a stateless API by refusing to carry a session
 # TLS and proxy: the settings that differ *between environments*, which is why
 # they belong here and not in a pack. Paths resolve against this file.
 insecure        = false     # skip certificate verification (warns loudly when on)
@@ -88,6 +90,7 @@ timeout-ms = 60000
 | `[http] proxy` | *(unset)* | proxy URL for every request |
 | `[http] no-proxy` | *(unset)* | comma-separated hosts bypassing `proxy` (curl's `NO_PROXY` form) |
 | `[http] user-agent` | *(engine default)* | `User-Agent` for every request. Run-wide only — hurl has no per-entry `user-agent` option, so one entry opts out with a `User-Agent:` header instead |
+| `[http] cookie-store` | `true` | `false` runs the suite cookie-less (hurl's `--no-cookie-store`): no `Set-Cookie` is kept, none is replayed — how a stateless API is *proven* stateless. Run-wide only — hurl has no per-entry spelling for it at all |
 | `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
 | `[sla] max-ms` | *(unset)* | slowest single-step ceiling; unset = no gate |
 | `[url] <key>` | *(none)* | URL variables, referenced as `${url:<key>}` |

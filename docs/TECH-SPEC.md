@@ -238,14 +238,25 @@ call — verified semantics, relied upon.
 
 `HttpDefaults` carries what `[http]`/`[env.<name>.http]` express: `timeout-ms`,
 `follow-location`, `max-redirs`, `insecure`, `proxy`/`no-proxy`, `cacert`,
-`client-cert`/`client-key`, `user-agent`. Each reaches the builder **only when
-the project set it**, so an unset key leaves hurl's own default rather than this
-engine restating a constant that could drift from upstream on the next pin bump.
+`client-cert`/`client-key`, `user-agent`, `cookie-store`. Each reaches the
+builder **only when the project set it**, so an unset key leaves hurl's own
+default rather than this engine restating a constant that could drift from
+upstream on the next pin bump.
 Path-valued fields arrive already resolved — the CLI applies the one-path rule
-and core touches no filesystem (ADR-0012). `user-agent` is the one exception to
-the per-entry override rule above: `hurl_core`'s `OptionKind` has no
-`UserAgent` variant, so it is run-wide and an entry opts out with a
-`User-Agent:` request header instead (verified against the enum, not inferred).
+and core touches no filesystem (ADR-0012). Two keys are exceptions to the
+per-entry override rule above, verified against `OptionKind` rather than
+inferred: it has no `UserAgent` variant (run-wide; an entry opts out with a
+`User-Agent:` request header instead) and no cookie variant at all, so
+`cookie-store` is run-wide with no per-entry spelling whatsoever.
+
+`cookie-store = false` maps to `use_cookie_store(false)` (hurl's
+`--no-cookie-store`, 8.0.0). Verified: hurl enables curl's cookie engine only
+under `use_cookie_store` (`http/client.rs:390`), which also means a
+`cookie_input_file` handed over with the store off is silently ignored — so the
+engine skips both halves of the §5 round-trip when the store is off. hurl's own
+FIXME there (a handle once given cookie storage cannot have it removed) never
+reaches proef: the client is per-call (below), so a handle never transitions
+on → off.
 
 **Client lifetime (verified).** `run_entries` constructs `http::Client::new()`
 internally per call (`runner/hurl_file.rs:169`) — fresh libcurl handle: connection

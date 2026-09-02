@@ -1907,6 +1907,48 @@ fn cookies_survive_batch_splits() {
         .code(0);
 }
 
+/// `[http] cookie-store = false` runs the suite cookie-less: the fixture's
+/// `/cookie/check` returns 403 without the session cookie, and the suite is
+/// green only because the steps *assert* 403 — a stateless-API proof, which a
+/// silently-carried cookie would fake. Two scenarios pin both halves: within
+/// one batch (hurl's own engine switch) and across a forced split (proef's
+/// cookie round-trip must stay out of the way — with the store off there is no
+/// file to write and none to inject).
+#[test]
+fn a_disabled_cookie_store_carries_no_cookie_anywhere() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(
+        cwd.path().join("proef.toml"),
+        format!("{BASE_URL_CONFIG}[http]\ncookie-store = false\n"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  \
+         Scenario: no cookie within one batch\n    When the cookie is refused in one batch\n  \
+         Scenario: no cookie across the split\n    When the cookie is refused across the split\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  oneBatch:\n    match: the cookie is refused in one batch\n    steps:\n      \
+         - name: the server offers a session cookie\n        hurl: |\n          GET ${url:base}/cookie/set\n          HTTP 200\n      \
+         - name: the very next request must not present it\n        hurl: |\n          GET ${url:base}/cookie/check\n          HTTP 403\n  \
+         acrossSplit:\n    match: the cookie is refused across the split\n    steps:\n      \
+         - name: the server offers a session cookie\n        hurl: |\n          GET ${url:base}/cookie/set\n          HTTP 200\n      \
+         - name: unrelated optional probe (forces a batch split)\n        optional: true\n        hurl: |\n          GET ${url:base}/health\n          HTTP 200\n      \
+         - name: the request after the split must not present it either\n        hurl: |\n          GET ${url:base}/cookie/check\n          HTTP 403\n",
+    )
+    .unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+}
+
 /// ADR-0007 (bounded runtime): a hanging backend is cut off by the clamped
 /// per-request timeout — the run ends promptly with a system fault, never
 /// hanging on `/slow`.

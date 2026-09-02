@@ -8,6 +8,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Added
 
+- **`[http] cookie-store = false` runs the whole suite cookie-less** — hurl
+  8.0's `--no-cookie-store`, surfaced through the table built for exactly this
+  class of setting. No `Set-Cookie` is retained and none is replayed, which is
+  how a stateless API is *proven* stateless: the fixture-backed test is green
+  only because its steps assert the 403 a missing session cookie earns.
+
+  This is the one `[http]` key with **no per-entry `[Options]` spelling at
+  all** (`OptionKind` has no cookie variant — verified against the enum), so
+  run-wide is not a compromise but the only place it can be said. With the
+  store off, the engine also skips both halves of the batch-split cookie
+  round-trip: hurl reads a `cookie_input_file` only when enabling the engine,
+  so injecting one would be silently ignored — and there is nothing to write.
+  hurl's own FIXME (a handle once given cookie storage cannot lose it) never
+  reaches proef, because `run_entries` builds its client per call (TECH-SPEC
+  §5) — a handle never transitions on → off.
+
+  Breaking (library): `HttpDefaults` gains the `cookie_store` field, so a
+  struct-literal construction needs the new line (`..Default::default()` sites
+  are untouched, and an absent `[http] cookie-store` key changes nothing).
+
 - **The HTML report answers "what is slowest".** After "what failed", it is the
   question a test report is most often asked, and the page could not answer it:
   the timeline showed *that* workers were busy, never *which* scenarios to

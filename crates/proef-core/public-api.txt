@@ -518,6 +518,7 @@ pub struct proef_core::engine::HttpDefaults
 pub proef_core::engine::HttpDefaults::cacert: core::option::Option<alloc::string::String>
 pub proef_core::engine::HttpDefaults::client_cert: core::option::Option<alloc::string::String>
 pub proef_core::engine::HttpDefaults::client_key: core::option::Option<alloc::string::String>
+pub proef_core::engine::HttpDefaults::cookie_store: bool
 pub proef_core::engine::HttpDefaults::follow_location: bool
 pub proef_core::engine::HttpDefaults::insecure: bool
 pub proef_core::engine::HttpDefaults::max_redirs: core::option::Option<usize>
