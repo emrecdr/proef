@@ -6,6 +6,44 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Added
+
+- **`--shard-weights` balances a shard matrix by measured duration.** `--shard`
+  assigns by a frozen hash, which guarantees that adding one scenario never
+  re-buckets the others but cannot balance by *time* — and a CI matrix finishes
+  when its slowest shard does, so a count-split routinely leaves runners idle.
+  Every run now writes a small `timings.json` into its run directory; CI
+  archives that one file and each matrix job points `--shard-weights` at the
+  same copy.
+
+  **The obvious design is silently wrong, and the module says so at length.**
+  proef already retains records carrying every step's duration, so "weight by
+  the newest local record" looks free. But matrix jobs run on *different
+  machines*, each with its own (usually empty) `runs-dir` — every job would
+  compute a different weight table, therefore a different assignment, and
+  scenarios would run twice or not at all while the suite reported green.
+  Nothing about that announces itself. One named file shared by every job is
+  what makes the split a pure function of (selected scenarios, that file).
+
+  Two rules place scenarios and they **partition** rather than compete: a
+  scenario the file mentions goes through longest-processing-time-first
+  placement, and one it does not mention falls back to the frozen hash. So a
+  test added after the timings were captured still runs exactly once. That is
+  pinned by a test that runs a whole three-way matrix — with a weights file
+  covering only five of nine scenarios, so both rules are exercised at once —
+  and asserts set equality both ways; mutating the placement by one bucket drops
+  two scenarios and the test names them.
+
+  The weight is the **sum of a scenario's step durations**, not its wall-clock
+  span. The span includes time spent waiting for a worker, which is a property
+  of the run's scheduling rather than of the scenario, and feeding it back would
+  let one crowded run's queueing distort the next split.
+
+  What this gives up is exactly what hash mode was chosen for: a balanced split
+  is not stable under insertion. That is what balancing means, which is why the
+  flag is opt-in. A missing or malformed weights file is exit 2 — falling back
+  silently would hand back the unbalanced split the flag was passed to avoid.
+
 ### Changed
 
 - **`lower.rs` stops threading the same three values through twelve

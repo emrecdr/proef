@@ -3767,3 +3767,116 @@ fn a_truncated_record_counts_a_warned_scenario_as_passed() {
     );
     assert!(stdout.contains("run incomplete"), "{stdout}");
 }
+
+/// **The property whose absence reports green.** A CI matrix runs
+/// `--shard 1/N … N/N`, each job on a different machine; if the shards do not
+/// partition the suite exactly, scenarios run twice or not at all and the suite
+/// still passes. Nothing announces it.
+///
+/// So this runs the whole matrix and asserts set equality both ways: every
+/// scenario appears, and none appears twice. It runs the matrix *with* a
+/// weights file that mentions only some scenarios, which is the case that
+/// exercises both placement rules at once — the balanced split for the weighted
+/// ones and the frozen hash for the rest. Those two rules must partition rather
+/// than compete, and a test that weighted everything would never find out.
+#[test]
+fn a_weighted_shard_matrix_still_runs_every_scenario_exactly_once() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    let names: Vec<String> = (0..9).map(|i| format!("case {i}")).collect();
+    let mut feature = String::from("Feature: F\n");
+    for name in &names {
+        use std::fmt::Write as _;
+        let _ = write!(
+            feature,
+            "  Scenario: {name}\n    When the suite probes health\n"
+        );
+    }
+    std::fs::write(cwd.path().join("suite/case.feature"), &feature).unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    // Weights for five of the nine, one of them dominant. The other four are
+    // absent on purpose: they must reach a shard through the hash fallback.
+    let weights = serde_json::json!({
+        "schema": 1,
+        "scenarios": [
+            {"file": "suite/case.feature", "scenario": "case 0", "ms": 9000},
+            {"file": "suite/case.feature", "scenario": "case 1", "ms": 50},
+            {"file": "suite/case.feature", "scenario": "case 2", "ms": 50},
+            {"file": "suite/case.feature", "scenario": "case 3", "ms": 50},
+            {"file": "suite/case.feature", "scenario": "case 4", "ms": 50},
+        ]
+    });
+    let weights_path = cwd.path().join("timings.json");
+    std::fs::write(&weights_path, weights.to_string()).unwrap();
+
+    let mut seen: Vec<String> = Vec::new();
+    for index in 1..=3 {
+        let assert = proef_in(cwd.path(), &fixture)
+            .args([
+                "test",
+                "suite",
+                "--shard",
+                &format!("{index}/3"),
+                "--shard-weights",
+                &weights_path.display().to_string(),
+                "--format",
+                "tap",
+            ])
+            .assert()
+            .code(0);
+        let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+        for line in stdout.lines().filter(|l| l.starts_with("ok ")) {
+            // `ok <n> - <scenario name>`
+            if let Some((_, name)) = line.split_once(" - ") {
+                seen.push(name.trim().to_owned());
+            }
+        }
+    }
+
+    seen.sort();
+    let mut expected = names.clone();
+    expected.sort();
+    assert_eq!(
+        seen, expected,
+        "the three shards must partition the suite: no scenario run twice, none missed"
+    );
+}
+
+/// A run leaves the weights for the next one. Without this the feature is
+/// unusable in the shape it was designed for — CI archives `timings.json` from
+/// one run and hands it to the next run's matrix.
+#[test]
+fn a_run_writes_the_timings_sidecar_it_will_later_read() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: one\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    proef_in(cwd.path(), &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+
+    let run_dir = latest_run_dir(cwd.path());
+    let text = std::fs::read_to_string(run_dir.join("timings.json"))
+        .expect("every run writes a timings sidecar");
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["schema"], 1);
+    let rows = body["scenarios"].as_array().expect("scenarios array");
+    assert_eq!(rows.len(), 1, "one scenario ran: {text}");
+    assert_eq!(rows[0]["scenario"], "one");
+    assert_eq!(rows[0]["file"], "suite/case.feature");
+    assert!(
+        rows[0]["ms"].as_u64().is_some(),
+        "a duration in milliseconds: {text}"
+    );
+}

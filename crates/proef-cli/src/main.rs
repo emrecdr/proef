@@ -28,6 +28,7 @@ mod sarif;
 mod secretstore;
 mod sla;
 mod tap;
+mod timings;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -154,6 +155,13 @@ enum Command {
         /// never re-buckets the others across a CI matrix
         #[arg(long, value_parser = parse_shard)]
         shard: Option<(u32, u32)>,
+        /// Balance `--shard` by measured duration using a `timings.json` from
+        /// an earlier run (proef writes one into every run directory). Every
+        /// matrix job must read the *same* file — a per-machine record store
+        /// would give each job a different split. A scenario the file does not
+        /// mention falls back to the stable hash, so a new test still runs once
+        #[arg(long, value_name = "PATH", requires = "shard")]
+        shard_weights: Option<PathBuf>,
         /// Re-deal the execution order. The permutation is seeded by the run
         /// id — `--shuffle --run-id <id>` reproduces a failing order exactly,
         /// one knob for order and fakes alike
@@ -580,6 +588,7 @@ fn main() -> std::process::ExitCode {
             rerun,
             max_fail,
             shard,
+            shard_weights,
             shuffle,
             meta,
             console,
@@ -643,6 +652,7 @@ fn main() -> std::process::ExitCode {
                                             rerun,
                                             max_fail,
                                             shard,
+                                            shard_weights.as_deref(),
                                             shuffle,
                                             &config.metadata(active_env.as_deref(), pairs),
                                             console.into(),
