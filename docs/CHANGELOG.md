@@ -6,33 +6,63 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
-### Changed
-
-- **`lower.rs` stops threading the same three values through twelve
-  functions.** `out`, `refs` and `sinks` travelled as separate parameters
-  everywhere, and five functions — `expand_macro`, `expand_step`,
-  `expand_ref_step`, `expand_payload_step`, `finish_step` — carried 8 to 11
-  parameters each behind individual arity suppressions. Adding one piece of
-  lowering state meant editing five signatures and five call sites, which is the
-  shape of change that drops a parameter at one site.
-
-  Two bundles, both of them types that were already implied by the code:
-  `Emit { out, refs, sinks }` (the mutable outputs, always passed together and
-  never independently), `StepScope { step_ref, ctx, at }` (what stays fixed for
-  one authored step however deep expansion recurses), and a small `Finished`
-  for the four values that describe a step being completed.
-
-  **What was *not* done matters as much.** The obvious refactor — hoist the
-  state into a `self` and make the five methods — would have broken the reason
-  they are parameters at all: `resolve_in` and friends take them explicitly so
-  they remain callable while other state is mutably borrowed, and a method on
-  `&mut self` cannot be called while `self` is borrowed elsewhere. The threading
-  discipline is load-bearing, so it stays; only the arity changes.
-
-  Arity suppressions across the workspace: **13 → 6**, with `lower.rs` at zero.
-  No behaviour change, and the 241 core tests say so.
-
 ### Added
+
+- **The HTML report answers "what is slowest".** After "what failed", it is the
+  question a test report is most often asked, and the page could not answer it:
+  the timeline showed *that* workers were busy, never *which* scenarios to
+  attack. Every number needed was already in the fold.
+
+  A ranked section, slowest first, each row linking to its own block, with the
+  heading reporting the **share of run time the listed scenarios account for** —
+  "3 of 40 · 71% of run time" is a decision, where a column of durations is
+  homework. Capped at eight: a ranking long enough to scroll has stopped
+  answering the question.
+
+  Cost is the **sum of a scenario's step durations**, the same definition
+  `timings.json` uses for shard weights — one notion of what a scenario costs
+  across the whole tool. Not the wall-clock span, which includes time waiting
+  for a worker: a property of how the run was scheduled, and not something the
+  reader can go and fix.
+
+  Absent when there is nothing to rank — fewer than two timed scenarios, or a
+  record with no injected durations at all.
+
+- **`--shard-weights` balances a shard matrix by measured duration.** `--shard`
+  assigns by a frozen hash, which guarantees that adding one scenario never
+  re-buckets the others but cannot balance by *time* — and a CI matrix finishes
+  when its slowest shard does, so a count-split routinely leaves runners idle.
+  Every run that reaches its suite now writes a small `timings.json` into its
+  run directory; CI archives that one file and each matrix job points
+  `--shard-weights` at the same copy.
+
+  **The obvious design is silently wrong, and the module says so at length.**
+  proef already retains records carrying every step's duration, so "weight by
+  the newest local record" looks free. But matrix jobs run on *different
+  machines*, each with its own (usually empty) `runs-dir` — every job would
+  compute a different weight table, therefore a different assignment, and
+  scenarios would run twice or not at all while the suite reported green.
+  Nothing about that announces itself. One named file shared by every job is
+  what makes the split a pure function of (selected scenarios, that file).
+
+  Two rules place scenarios and they **partition** rather than compete: a
+  scenario the file mentions goes through longest-processing-time-first
+  placement, and one it does not mention falls back to the frozen hash. So a
+  test added after the timings were captured still runs exactly once. That is
+  pinned by a test that runs a whole three-way matrix — with a weights file
+  covering only five of nine scenarios, so both rules are exercised at once —
+  and asserts set equality both ways; mutating the placement by one bucket drops
+  two scenarios and the test names them.
+
+  The weight is the **sum of a scenario's step durations**, not its wall-clock
+  span. The span includes time spent waiting for a worker, which is a property
+  of the run's scheduling rather than of the scenario, and feeding it back would
+  let one crowded run's queueing distort the next split.
+
+  What this gives up is exactly what hash mode was chosen for: a balanced split
+  is not stable under insertion. That is what balancing means, which is why the
+  flag is opt-in. A missing or malformed weights file is exit 2 — falling back
+  silently would hand back the unbalanced split the flag was passed to avoid.
 
 - **The editor tells proef's two variable tiers apart.** A pack's `hurl: |` block
   is the centre of the authoring experience and, to every editor, a plain YAML
@@ -62,29 +92,6 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   the honest fix was to stop repeating an identical frame seven times rather
   than to suppress the lint that noticed.
 
-### Fixed
-
-- **The complexity guard added moments earlier was itself flaky, and now runs
-  alone.** It shipped in the ordinary suite on the reasoning that a *ratio*
-  cancels out runner load. Measurement disagreed on its second full-suite run:
-  **2.05× isolated, 3.09× under nextest's full parallelism**, against a bound of
-  3.0. The larger input has the larger working set, so memory-bandwidth
-  contention penalises it more than the smaller one — the ratio drifts rather
-  than cancelling, and interleaving the samples cannot fix a systematic effect.
-
-  nextest's `test-groups` bound concurrency *within* a group and do not isolate
-  one from the rest of the suite, so the only mechanism that actually delivers
-  isolation is `#[ignore]` plus a dedicated invocation: a CI step of its own and
-  `just perf`. The samples are interleaved as well, which removes the one skew
-  that ordering alone creates.
-
-  `TESTING-STRATEGY.md` §6 previously asserted the opposite in as many words —
-  that a ratio "survives a shared runner" — and is corrected with the numbers.
-  The claim was reasoning, not measurement, which is the failure this whole
-  section of the changelog exists to record.
-
-### Added
-
 - **The linear-validation claim is now a test, not a sentence.** #138 made pack
   validation linear and recorded the result as a shape: *"the curve changed
   shape — 4× per doubling before, ~2× after"*. That number lived only in the
@@ -101,7 +108,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   rather than reporting a number.
 
   A ratio rather than a benchmark, for a reason now written into
-  `TESTING-STRATEGY.md` §6: load on a shared runner inflates both measurements
+  `TESTING-STRATEGY.md` §7: load on a shared runner inflates both measurements
   together and cancels, where an absolute threshold has to be loosened until it
   means nothing. `iai-callgrind` would be the better CI gate — instruction
   counts ignore runner noise entirely — but it needs valgrind, so it would be a
@@ -187,6 +194,53 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **"What a scenario costs" is defined once, as `ScenarioOutcome::cost`.** The
+  sum of a scenario's step durations was computed in three places on the same
+  type — `JUnit`'s per-suite time, `JUnit`'s per-case time, and the new
+  `timings.json` weights — plus a fourth over the record-fold shape in the HTML
+  report. Four surfaces free to drift apart about a number they are supposed to
+  agree on, and the argument for summing steps rather than taking a wall-clock
+  span was written out twice.
+
+  Now a method on the type that owns the steps, with the rationale stated there
+  and referenced from the rest. The one behaviour change is a fidelity gain: the
+  weights file used to truncate *each step* to whole milliseconds before summing
+  and now truncates the sum, so its numbers agree with the times `JUnit` has
+  always reported. Additive to the library surface.
+
+- **A run whose setup aborted no longer leaves shard weights behind.**
+  `timings.json` was written from inside the CI-report block, which a setup
+  abort also reaches — with the *setup phase's* summary. The file that came out
+  named setup scenarios, and a weights file naming them is worse than no file:
+  those identities never appear in a suite run, so they absorb bucket load on
+  behalf of scenarios that never run and skew the very split `--shard-weights`
+  exists to balance, silently. The write moved to the one site where the summary
+  is the suite's, pinned by a test that reproduces the old file.
+
+- **`lower.rs` stops threading the same three values through twelve
+  functions.** `out`, `refs` and `sinks` travelled as separate parameters
+  everywhere, and five functions — `expand_macro`, `expand_step`,
+  `expand_ref_step`, `expand_payload_step`, `finish_step` — carried 8 to 11
+  parameters each behind individual arity suppressions. Adding one piece of
+  lowering state meant editing five signatures and five call sites, which is the
+  shape of change that drops a parameter at one site.
+
+  Two bundles, both of them types that were already implied by the code:
+  `Emit { out, refs, sinks }` (the mutable outputs, always passed together and
+  never independently), `StepScope { step_ref, ctx, at }` (what stays fixed for
+  one authored step however deep expansion recurses), and a small `Finished`
+  for the four values that describe a step being completed.
+
+  **What was *not* done matters as much.** The obvious refactor — hoist the
+  state into a `self` and make the five methods — would have broken the reason
+  they are parameters at all: `resolve_in` and friends take them explicitly so
+  they remain callable while other state is mutably borrowed, and a method on
+  `&mut self` cannot be called while `self` is borrowed elsewhere. The threading
+  discipline is load-bearing, so it stays; only the arity changes.
+
+  Arity suppressions across the workspace: **13 → 6**, with `lower.rs` at zero.
+  No behaviour change, and the 241 core tests say so.
+
 - **ADR-0002 now names the core's hurl entry grammar, and a guard keeps it
   closed.** "Adding an engine leaves `proef-core` diff-empty" was true of
   engine-*types* and never of engine-*syntax*: the core does text surgery on
@@ -222,6 +276,27 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   and names both remedies. A claim of this shape decays the moment it is only
   prose — this one already had, by an order of magnitude, in the direction that
   made it look worse than it is.
+
+### Fixed
+
+- **The complexity guard added moments earlier was itself flaky, and now runs
+  alone.** It shipped in the ordinary suite on the reasoning that a *ratio*
+  cancels out runner load. Measurement disagreed on its second full-suite run:
+  **2.05× isolated, 3.09× under nextest's full parallelism**, against a bound of
+  3.0. The larger input has the larger working set, so memory-bandwidth
+  contention penalises it more than the smaller one — the ratio drifts rather
+  than cancelling, and interleaving the samples cannot fix a systematic effect.
+
+  nextest's `test-groups` bound concurrency *within* a group and do not isolate
+  one from the rest of the suite, so the only mechanism that actually delivers
+  isolation is `#[ignore]` plus a dedicated invocation: a CI step of its own and
+  `just perf`. The samples are interleaved as well, which removes the one skew
+  that ordering alone creates.
+
+  `TESTING-STRATEGY.md` §7 previously asserted the opposite in as many words —
+  that a ratio "survives a shared runner" — and is corrected with the numbers.
+  The claim was reasoning, not measurement, which is the failure this whole
+  section of the changelog exists to record.
 
 ## [0.16.0] - 2026-08-31 (the surfaces tell the truth: an eight-wave improvement programme, and the round that found what it missed)
 

@@ -231,10 +231,21 @@ threading mode: `parallel/worker.rs:76,124-133`) → map `EntryResult`s to `Step
 via the sidecar (SourceInfo spans → feature lines) → merge `HurlResult.variables` back
 into the World (typed).
 
-**RunnerOptions mapping.** Batch-level `RunnerOptionsBuilder` from config
-(timeouts, follow-location, insecure, user-agent, context_dir…); per-entry `[Options]`
-override batch defaults by clone-then-override (`runner/options.rs:43-58`), `variable=`
-inserts persist for the rest of the call — verified semantics, relied upon.
+**RunnerOptions mapping.** Batch-level `RunnerOptionsBuilder` from config;
+per-entry `[Options]` override batch defaults by clone-then-override
+(`runner/options.rs:43-58`), `variable=` inserts persist for the rest of the
+call — verified semantics, relied upon.
+
+`HttpDefaults` carries what `[http]`/`[env.<name>.http]` express: `timeout-ms`,
+`follow-location`, `max-redirs`, `insecure`, `proxy`/`no-proxy`, `cacert`,
+`client-cert`/`client-key`, `user-agent`. Each reaches the builder **only when
+the project set it**, so an unset key leaves hurl's own default rather than this
+engine restating a constant that could drift from upstream on the next pin bump.
+Path-valued fields arrive already resolved — the CLI applies the one-path rule
+and core touches no filesystem (ADR-0012). `user-agent` is the one exception to
+the per-entry override rule above: `hurl_core`'s `OptionKind` has no
+`UserAgent` variant, so it is run-wide and an entry opts out with a
+`User-Agent:` request header instead (verified against the enum, not inferred).
 
 **Client lifetime (verified).** `run_entries` constructs `http::Client::new()`
 internally per call (`runner/hurl_file.rs:169`) — fresh libcurl handle: connection

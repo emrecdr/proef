@@ -152,6 +152,7 @@ pub fn execute(
     rerun: bool,
     max_fail: Option<u32>,
     shard: Option<(u32, u32)>,
+    shard_weights: Option<&Path>,
     shuffle: bool,
     metadata: &std::collections::BTreeMap<String, String>,
     console_mode: proef_core::report::ConsoleMode,
@@ -179,6 +180,17 @@ pub fn execute(
         | (_, Err(message), ..)
         | (_, _, Err(message), _)
         | (_, _, _, Err(message)) => {
+            crate::render::errln!("error: {message}");
+            return ExitCode::UserError;
+        }
+    };
+
+    // Read before anything runs: a `--shard-weights` that cannot be read is a
+    // typo'd path or a stale CI artifact, and falling back silently would hand
+    // back exactly the unbalanced split the flag was passed to avoid.
+    let balanced_placement = match shard_weights.map(crate::timings::read).transpose() {
+        Ok(weights) => weights,
+        Err(message) => {
             crate::render::errln!("error: {message}");
             return ExitCode::UserError;
         }
@@ -547,7 +559,24 @@ pub fn execute(
         let before_shard = specs.len();
         let mut specs = specs;
         if let Some((index, count)) = shard {
-            specs.retain(|spec| shard_bucket(&spec.file, &spec.name, count) == index - 1);
+            // Weighted scenarios are placed by the balanced split; everything
+            // the weights file does not mention falls back to the frozen hash.
+            // The two rules *partition* the set rather than competing for it,
+            // so every scenario lands in exactly one shard — a test added after
+            // the timings were captured still runs exactly once, which is the
+            // property that must never bend.
+            let placed = match balanced_placement {
+                Some(ref weights) => crate::timings::assign(weights, count),
+                None => std::collections::BTreeMap::new(),
+            };
+            specs.retain(|spec| {
+                let identity = (spec.file.to_string(), spec.name.to_string());
+                let bucket = placed
+                    .get(&identity)
+                    .copied()
+                    .unwrap_or_else(|| shard_bucket(&spec.file, &spec.name, count));
+                bucket == index - 1
+            });
         }
         // `--shuffle` — after the shard filter, so each matrix job re-deals
         // exactly what it runs (bucketing hashes identity and is
@@ -829,6 +858,21 @@ pub fn execute(
                 rerun_base.as_ref().map_or("?", |(id, _)| id.as_str())
             );
         }
+        // The weights a *later* run's `--shard-weights` reads — a suite only
+        // becomes worth balancing once it has run at least once. Written here,
+        // at the one site where `summary` is the *suite's*, and deliberately
+        // not beside the CI reports below: `write_ci_reports` is also reached
+        // from the two setup-abort paths, whose summary describes the setup
+        // phase. Timings naming setup scenarios would be worse than no file at
+        // all — those identities never appear in a suite run, so they would
+        // absorb bucket load on behalf of scenarios that never run and skew the
+        // very split the flag exists to balance. Best-effort: a failure to
+        // write timings must never change a run's verdict.
+        write_or_warn(
+            &run_dir.join("timings.json"),
+            crate::timings::render(&summary),
+        );
+
         // CI reports (US-8): JUnit XML + GitHub job summary.
         let junit_failed = write_ci_reports(
             &Verdict {

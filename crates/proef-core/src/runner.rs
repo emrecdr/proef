@@ -187,6 +187,24 @@ pub struct ScenarioOutcome {
     pub artifact_slug: Option<Arc<str>>,
 }
 
+impl ScenarioOutcome {
+    /// What this scenario cost: the **sum of its steps' durations**.
+    ///
+    /// The sum rather than a wall-clock span, deliberately. A span also counts
+    /// time the scenario spent waiting for a worker, which is a property of the
+    /// *run's* scheduling rather than of the scenario — it is not something a
+    /// report's reader can go and fix, and feeding it into a shard split would
+    /// let one crowded run's queueing distort the next run's balance.
+    ///
+    /// Named once so the surfaces cannot drift: `JUnit`'s per-case and
+    /// per-suite times, the `timings.json` shard weights, and the HTML report's
+    /// "Slowest" ranking are all this number.
+    #[must_use]
+    pub fn cost(&self) -> std::time::Duration {
+        self.steps.iter().map(|step| step.duration).sum()
+    }
+}
+
 /// A non-test fault attributed per ADR-0009.
 #[derive(Debug)]
 pub enum Fault {

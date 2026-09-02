@@ -165,6 +165,44 @@ A `proxy` URL is the one edge — if yours embeds credentials, it is plaintext i
 a file you probably commit, and it belongs in an environment variable your shell
 expands into the proxy's own configuration instead.
 
+## Balancing a shard matrix by duration (`--shard-weights`)
+
+`--shard I/N` assigns scenarios by a frozen hash of `(file, scenario)`, so adding
+one test never re-buckets the others. What it cannot do is balance by **time** —
+and a CI matrix finishes when its slowest shard finishes, so a count-balanced
+split routinely leaves runners idle.
+
+Every run that reaches its suite writes `timings.json` into its run directory (a
+run whose `[run] setup` aborted has no suite to weigh, and writes none). Archive
+that one file and hand it to the next run's matrix:
+
+```yaml
+# each matrix job, all reading the same archived file
+- run: proef test --shard ${{ matrix.shard }}/4 --shard-weights timings.json
+```
+
+**Every job must read the same file.** The tempting alternative — "let each job
+weight by its own newest local record" — is silently wrong: matrix jobs run on
+different machines with different (usually empty) `runs-dir`s, so each would
+compute a different assignment and scenarios would run twice or not at all while
+the suite still reported green.
+
+Two rules place scenarios, and they *partition* rather than compete:
+
+- a scenario the file mentions is placed by the balanced split
+  (longest-processing-time-first: heaviest to the lightest shard, repeatedly);
+- a scenario it does not mention falls back to the frozen hash.
+
+So a test added after the timings were captured still runs exactly once. That
+property is pinned by a test that runs a whole matrix and asserts set equality
+both ways.
+
+What you give up is the thing hash mode was chosen for: a balanced split is not
+stable under insertion, so adding a slow scenario can move others. That is what
+balancing *means*, and it is why the flag is opt-in rather than the default.
+A missing or malformed weights file is exit 2, never a silent fall back to the
+unbalanced split you passed the flag to avoid.
+
 ## SLA gate (`[sla]`)
 
 The optional `[sla]` table is a **run-level latency budget**: after a run, proef folds
