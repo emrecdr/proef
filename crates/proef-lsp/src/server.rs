@@ -18,7 +18,7 @@ use proef_core::provider::SourceProvider;
 use crate::analysis::{Analysis, RecomputeInputs, read_fragments, recompute};
 use crate::documents::Documents;
 use crate::features::{
-    code_action, completion, definition, diagnostics, hover, references, symbols,
+    code_action, completion, definition, diagnostics, hover, references, semantic_tokens, symbols,
 };
 
 /// How the server talks to its client.
@@ -94,8 +94,9 @@ impl std::error::Error for ServerError {}
 fn capabilities() -> ServerCapabilities {
     use lsp_types::{
         CodeActionKind, CodeActionOptions, CodeActionProvider, CompletionOptions,
-        DefinitionProvider, DocumentSymbolProvider, HoverProvider, ReferencesProvider,
-        TextDocumentSync, TextDocumentSyncKind,
+        DefinitionProvider, DocumentSymbolProvider, Full, HoverProvider, ReferencesProvider,
+        SemanticTokensLegend, SemanticTokensOptions, SemanticTokensProvider, TextDocumentSync,
+        TextDocumentSyncKind,
     };
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSync::Kind(TextDocumentSyncKind::Full)),
@@ -111,6 +112,24 @@ fn capabilities() -> ServerCapabilities {
         })),
         document_symbol_provider: Some(DocumentSymbolProvider::Bool(true)),
         hover_provider: Some(HoverProvider::Bool(true)),
+        // Full-document only: `range` and `delta` exist to avoid re-tokenizing
+        // a large file, and the scan here is two linear passes over a pack —
+        // cheaper than the bookkeeping either would add. The legend's order is
+        // the wire format (`semantic_tokens::TOKEN_TYPES`).
+        semantic_tokens_provider: Some(SemanticTokensProvider::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: SemanticTokensLegend {
+                    token_types: semantic_tokens::TOKEN_TYPES
+                        .iter()
+                        .map(|name| (*name).to_owned())
+                        .collect(),
+                    token_modifiers: Vec::new(),
+                },
+                range: None,
+                full: Some(Full::Bool(true)),
+                work_done_progress_options: lsp_types::WorkDoneProgressOptions::default(),
+            },
+        )),
         ..Default::default()
     }
 }
@@ -559,98 +578,70 @@ fn dispatch_request(
 ) -> Result<(), ServerError> {
     use lsp_types::{
         CodeActionRequest, CompletionRequest, DefinitionRequest, DocumentSymbolRequest,
-        HoverRequest, LspRequestMethod, ReferencesRequest, Request as _,
+        HoverRequest, LspRequestMethod, ReferencesRequest, Request as _, SemanticTokensRequest,
     };
 
     let method = LspRequestMethod::from(req.method.as_str());
 
-    if method == DefinitionRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::DefinitionParams| {
-                let at = params.text_document_position_params;
-                definition::goto(analysis, &at.text_document.uri, at.position).map(|location| {
-                    lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(
-                        location,
+    // One arm per request type, and nothing but the type and its handler
+    // differs — the `answer` call around each was identical seven times over.
+    // Spelled out, the chain grew past the line limit the moment an eighth
+    // feature landed, and the honest fix is to stop repeating the frame rather
+    // than to suppress the lint that noticed.
+    macro_rules! dispatch {
+        ($($request:ty => $handler:expr,)*) => {
+            $(if method == <$request>::METHOD {
+                return answer(connection, cfg, state, req, $handler);
+            })*
+        };
+    }
+
+    dispatch! {
+        DefinitionRequest =>
+    |analysis, params: lsp_types::DefinitionParams| {
+                    let at = params.text_document_position_params;
+                    definition::goto(analysis, &at.text_document.uri, at.position).map(|location| {
+                        lsp_types::DefinitionResponse::Definition(lsp_types::Definition::Location(
+                            location,
+                        ))
+                    })
+                },
+        CompletionRequest =>
+    |analysis, params: lsp_types::CompletionParams| {
+                    let at = params.text_document_position_params;
+                    let items = completion::complete(analysis, &at.text_document.uri, at.position);
+                    Some(lsp_types::CompletionResponse::CompletionItemList(items))
+                },
+        ReferencesRequest =>
+    |analysis, params: lsp_types::ReferenceParams| {
+                    let at = params.text_document_position_params;
+                    Some(references::find(
+                        analysis,
+                        &at.text_document.uri,
+                        at.position,
                     ))
-                })
-            },
-        );
-    }
-
-    if method == CompletionRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::CompletionParams| {
-                let at = params.text_document_position_params;
-                let items = completion::complete(analysis, &at.text_document.uri, at.position);
-                Some(lsp_types::CompletionResponse::CompletionItemList(items))
-            },
-        );
-    }
-
-    if method == ReferencesRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::ReferenceParams| {
-                let at = params.text_document_position_params;
-                Some(references::find(
-                    analysis,
-                    &at.text_document.uri,
-                    at.position,
-                ))
-            },
-        );
-    }
-
-    if method == CodeActionRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::CodeActionParams| {
-                Some(code_action::actions(
-                    analysis,
-                    &params.text_document.uri,
-                    params.range,
-                ))
-            },
-        );
-    }
-
-    if method == DocumentSymbolRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::DocumentSymbolParams| {
-                symbols::outline(analysis, &params.text_document.uri)
-            },
-        );
-    }
-
-    if method == HoverRequest::METHOD {
-        return answer(
-            connection,
-            cfg,
-            state,
-            req,
-            |analysis, params: lsp_types::HoverParams| {
-                let at = params.text_document_position_params;
-                hover::hover(analysis, &at.text_document.uri, at.position)
-            },
-        );
+                },
+        CodeActionRequest =>
+    |analysis, params: lsp_types::CodeActionParams| {
+                    Some(code_action::actions(
+                        analysis,
+                        &params.text_document.uri,
+                        params.range,
+                    ))
+                },
+        DocumentSymbolRequest =>
+    |analysis, params: lsp_types::DocumentSymbolParams| {
+                    symbols::outline(analysis, &params.text_document.uri)
+                },
+        HoverRequest =>
+    |analysis, params: lsp_types::HoverParams| {
+                    let at = params.text_document_position_params;
+                    hover::hover(analysis, &at.text_document.uri, at.position)
+                },
+        SemanticTokensRequest =>
+    |analysis, params: lsp_types::SemanticTokensParams| {
+                    semantic_tokens::tokens(analysis, &params.text_document.uri)
+                },
     }
 
     // Unknown methods get a method-not-found response so the client never

@@ -29,6 +29,13 @@ gates:
     cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
     cargo run -p xtask -- docs-check
 
+# The complexity guards, alone. Timing assertions cannot share a machine with
+# the rest of the suite — measured: the linear-validation ratio reads 2.05x
+# alone and 3.09x under nextest's full parallelism — so they are `#[ignore]`d
+# and run only here and in their own CI step.
+perf:
+    cargo nextest run --run-ignored only -E 'test(validation_cost_stays_linear)'
+
 audit:
     cargo audit
 

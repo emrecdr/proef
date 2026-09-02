@@ -6,6 +6,83 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ## [Unreleased]
 
+### Changed
+
+- **`lower.rs` stops threading the same three values through twelve
+  functions.** `out`, `refs` and `sinks` travelled as separate parameters
+  everywhere, and five functions — `expand_macro`, `expand_step`,
+  `expand_ref_step`, `expand_payload_step`, `finish_step` — carried 8 to 11
+  parameters each behind individual arity suppressions. Adding one piece of
+  lowering state meant editing five signatures and five call sites, which is the
+  shape of change that drops a parameter at one site.
+
+  Two bundles, both of them types that were already implied by the code:
+  `Emit { out, refs, sinks }` (the mutable outputs, always passed together and
+  never independently), `StepScope { step_ref, ctx, at }` (what stays fixed for
+  one authored step however deep expansion recurses), and a small `Finished`
+  for the four values that describe a step being completed.
+
+  **What was *not* done matters as much.** The obvious refactor — hoist the
+  state into a `self` and make the five methods — would have broken the reason
+  they are parameters at all: `resolve_in` and friends take them explicitly so
+  they remain callable while other state is mutably borrowed, and a method on
+  `&mut self` cannot be called while `self` is borrowed elsewhere. The threading
+  discipline is load-bearing, so it stays; only the arity changes.
+
+  Arity suppressions across the workspace: **13 → 6**, with `lower.rs` at zero.
+  No behaviour change, and the 241 core tests say so.
+
+### Added
+
+- **The editor tells proef's two variable tiers apart.** A pack's `hurl: |` block
+  is the centre of the authoring experience and, to every editor, a plain YAML
+  scalar — inside which `${…}` (resolved at **lower time**, by proef, before any
+  request exists) and `{{…}}` (resolved at **run time**, by hurl) look
+  identical. That distinction is ADR-0005's whole model and the thing authors
+  most often get wrong, and no generic grammar can see it: a YAML highlighter
+  sees a string, and a hurl highlighter never runs because the block is not a
+  file. proef is the only party that knows.
+
+  The server now answers `textDocument/semanticTokens/full`, lighting `${…}` as
+  **macro** — a substitution performed before execution, which is what a macro
+  is — and `{{…}}` as **variable**. Both are coloured differently by every
+  mainstream theme, so it works without anyone configuring anything. The `$${`
+  escape stays dark, because telling an author proef will substitute text it
+  will in fact leave alone is worse than no highlighting.
+
+  The `${…}` scan is `proef_core::resolve::reference_spans`, walking the same
+  `first_reference` the resolver itself uses — a second implementation of the
+  escape rule would drift, and the drift would show as an editor confidently
+  colouring literal text. The `{{…}}` scan lives in `proef-lsp` rather than
+  core, because that spelling is the engine's and ADR-0002's amendment is that
+  engine syntax does not accumulate in the core.
+
+  Collapsing the seven-arm request dispatch behind a local macro came with it:
+  the chain crossed clippy's line limit the moment an eighth feature landed, and
+  the honest fix was to stop repeating an identical frame seven times rather
+  than to suppress the lint that noticed.
+
+### Fixed
+
+- **The complexity guard added moments earlier was itself flaky, and now runs
+  alone.** It shipped in the ordinary suite on the reasoning that a *ratio*
+  cancels out runner load. Measurement disagreed on its second full-suite run:
+  **2.05× isolated, 3.09× under nextest's full parallelism**, against a bound of
+  3.0. The larger input has the larger working set, so memory-bandwidth
+  contention penalises it more than the smaller one — the ratio drifts rather
+  than cancelling, and interleaving the samples cannot fix a systematic effect.
+
+  nextest's `test-groups` bound concurrency *within* a group and do not isolate
+  one from the rest of the suite, so the only mechanism that actually delivers
+  isolation is `#[ignore]` plus a dedicated invocation: a CI step of its own and
+  `just perf`. The samples are interleaved as well, which removes the one skew
+  that ordering alone creates.
+
+  `TESTING-STRATEGY.md` §6 previously asserted the opposite in as many words —
+  that a ratio "survives a shared runner" — and is corrected with the numbers.
+  The claim was reasoning, not measurement, which is the failure this whole
+  section of the changelog exists to record.
+
 ### Added
 
 - **The linear-validation claim is now a test, not a sentence.** #138 made pack

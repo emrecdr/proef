@@ -64,6 +64,14 @@ jobs:
       - name: doctests
         run: cargo test --doc --locked
 
+      # Alone, deliberately. A timing ratio cannot share a machine with the
+      # rest of the suite: measured at 2.05x isolated and 3.09x under nextest's
+      # full parallelism, because the larger input's working set suffers more
+      # from memory contention — so the ratio drifts rather than cancelling.
+      # `#[ignore]` keeps it out of the suite; this step is where it runs.
+      - name: complexity guards (timing — runs alone)
+        run: cargo nextest run --profile ci --locked --run-ignored only -E 'test(validation_cost_stays_linear)'
+
       - name: rustdoc
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features --workspace
 

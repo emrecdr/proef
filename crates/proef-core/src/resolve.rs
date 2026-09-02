@@ -248,6 +248,35 @@ pub(crate) fn first_reference(text: &str) -> Option<(&str, usize, usize)> {
     None
 }
 
+/// Every live `${…}` reference in `text`, as byte spans, in source order.
+///
+/// Exposed for editors: highlighting the two variable tiers apart is the one
+/// thing no generic YAML grammar can do, because `${…}` and `{{…}}` are both
+/// just characters in a block scalar to it. The escape rule is the subtle part
+/// — `$${` is a literal `${` and must not light up — which is exactly why this
+/// walks the resolver's own `first_reference` rather than letting a consumer
+/// write its own scan (not linked: that scanner is deliberately crate-private):
+/// a second implementation of that rule would drift, and the drift would show
+/// as an editor confidently colouring text proef treats as literal.
+///
+/// Note this reports *syntax*, not resolvability: a `${nosuch:key}` still gets
+/// a span. Whether it resolves is a diagnostic's job, and the two must not be
+/// conflated — an author fixing a typo wants the token to stay lit while they
+/// retype it.
+#[must_use]
+pub fn reference_spans(text: &str) -> Vec<crate::diag::Span> {
+    let mut spans = Vec::new();
+    let mut base = 0;
+    while let Some((_, start, end)) = first_reference(&text[base..]) {
+        spans.push(crate::diag::Span {
+            start: base + start,
+            end: base + end,
+        });
+        base += end;
+    }
+    spans
+}
+
 /// Resolve one reference name to its substitution value.
 fn lookup(
     name: &str,

@@ -1492,6 +1492,7 @@ impl<'a> core::marker::UnsafeUnpin for proef_core::resolve::ResolveCtx<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for proef_core::resolve::ResolveCtx<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for proef_core::resolve::ResolveCtx<'a>
 pub const proef_core::resolve::MAX_DEPTH: usize
+pub fn proef_core::resolve::reference_spans(&str) -> alloc::vec::Vec<proef_core::diag::Span>
 pub fn proef_core::resolve::resolve(&str, &proef_core::resolve::ResolveCtx<'_>, &mut usize) -> core::result::Result<proef_core::resolve::Resolution, proef_core::resolve::ResolveError>
 pub mod proef_core::runner
 pub enum proef_core::runner::Fault
