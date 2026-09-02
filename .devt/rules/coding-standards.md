@@ -6,7 +6,10 @@
 
 ## Toolchain
 
-- **Always latest stable Rust** (1.97.1 at writing), pinned via `rust-toolchain.toml`.
+- **Latest stable Rust, adopted at its `x.y.1` point release** (~3-4 weeks after
+  `x.y.0`; 1.97.1 at writing), pinned via `rust-toolchain.toml`. Tools and
+  third-party crates track latest immediately; exact pins like hurl outrank all
+  of it. Normative statement: TECH-SPEC §15.
 - **Edition 2024**, workspace **`resolver = "3"`**, virtual workspace with
   `workspace.{package,dependencies,lints}` inherited by members.
 - Workspace lints table is strict (clippy all=warn + a curated pedantic slice) and is

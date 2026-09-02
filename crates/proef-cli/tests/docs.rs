@@ -299,6 +299,101 @@ fn every_subcommand_is_documented() {
     );
 }
 
+/// Every `.md` under `dir`, recursively — skipping `target/` and `.git/`.
+fn collect_markdown(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if path.is_dir() {
+            if name == "target" || name == ".git" || name == "node_modules" {
+                continue;
+            }
+            collect_markdown(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "md") {
+            out.push(path);
+        }
+    }
+}
+
+/// No doc describing *today* may spell a machine format as `--output json`.
+///
+/// `--output`/`-o` names a **path** since the `--format` / `-o` split; the
+/// format flag is `--format`. The invocation gate above cannot catch the stale
+/// spelling, because it parses a span only once it sees the literal token
+/// `proef` at a shell boundary — and these appear as bare
+/// `` `flows --output json` `` in prose, naming the subcommand without the
+/// binary. Three live normative documents drifted that way (two ADRs and
+/// `CLAUDE.md`) while the gate stayed silent.
+///
+/// Deliberately narrow rather than teaching `invocations` to accept a bare
+/// subcommand: `` `diff --git a/x b/x` `` starts with a subcommand name and
+/// carries a flag, so the general rule would need an exception list, and an
+/// inventory that is a third exceptions stops reading as a closed set. This
+/// pattern needs none — `--output json` is not a valid invocation of anything.
+///
+/// An **allowlist**, because the split is not "which file" but "which tense".
+/// `CHANGELOG` and `RELEASING`'s release notes, and `OPEN-FINDINGS`' shipped
+/// table, quote the flag as it really was when that release shipped;
+/// rewriting them to match today is how a changelog stops being one. The
+/// documents below answer "what does proef do now", so in them the old
+/// spelling is simply wrong.
+#[test]
+fn no_current_behaviour_doc_spells_a_format_as_an_output_path() {
+    const DESCRIBES_TODAY: &[&str] = &[
+        "README.md",
+        "CLAUDE.md",
+        "docs/TECH-SPEC.md",
+        "docs/CONFIG.md",
+        "docs/CI.md",
+        "docs/AUTHORING.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/EDITORS.md",
+        "docs/DIAGNOSTICS.md",
+        "docs/SECURITY.md",
+        "docs/TESTING-STRATEGY.md",
+        "docs/GETTING-STARTED.md",
+        "docs/WRITING-SCENARIOS.md",
+        "docs/INSTALL.md",
+    ];
+    let root = workspace_root();
+    let mut offenders: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    let mut adrs: Vec<std::path::PathBuf> = Vec::new();
+    collect_markdown(&root.join("docs/adr"), &mut adrs);
+    let named = DESCRIBES_TODAY.iter().map(|rel| root.join(rel));
+    for file in named.chain(adrs) {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue; // a doc that does not exist here is another gate's job
+        };
+        checked += 1;
+        let shown = file
+            .strip_prefix(&root)
+            .unwrap_or(&file)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (number, line) in text.lines().enumerate() {
+            if line.contains("--output json") || line.contains("--output tap") {
+                offenders.push(format!("{shown}:{}: {}", number + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        checked >= DESCRIBES_TODAY.len(),
+        "the allowlist names {} docs but only {checked} were readable — a rename \
+         must move the entry, not silently shrink the gate",
+        DESCRIBES_TODAY.len()
+    );
+    assert!(
+        offenders.is_empty(),
+        "`--output` names a path; the machine format flag is `--format`:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
 /// The flags half of the same direction (R17-2.6): v0.14.0 shipped `--shard`
 /// and `--max-fail` and the README said nothing — the command gate above is
 /// blind to flags because it parses only the `Commands:` block. Every long

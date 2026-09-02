@@ -234,6 +234,15 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Changed
 
+- **The toolchain policy is stated in the spec that `rust-toolchain.toml`
+  cites.** R18-2 corrected the policy to *latest stable, adopted at its
+  `x.y.1` point release*, and the correction reached `RELEASING.md` and
+  `CLAUDE.md` while TECH-SPEC §15 — named by `rust-toolchain.toml` as its
+  authority — still said "always latest stable". R18-2's own conclusion was
+  that an unwritten policy contradicting the written one is a docs defect;
+  fixing it in two files and leaving the source of truth contradicting itself
+  reproduced the defect one level down. Now consistent across all four.
+
 - **An artifact is named by its feature's *path*, not its stem — two scenarios
   can no longer claim one file.** Slugs were `{stem}--{scenario}`, dropping the
   directory, so `features/x.feature` and `features/sub/x.feature` each with a
@@ -369,6 +378,26 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   Steps carried `Warned`; scenarios never did. The aggregate now promotes,
   which changes what a run *says* and never whether it gates: `Warned` counts
   as passing in the exit code, the totals and `JUnit`.
+
+- **`explain` prints a step's authored `name:`, like its five siblings.**
+  `step_label`'s own doc enumerates the six surfaces that must render it —
+  console, HTML, `JUnit`, TAP, the job summary, `explain` — and `explain` was
+  the one that never called it, so the post-mortem tool showed one sentence
+  repeated where the live console had told the steps apart.
+
+- **The HTML "Slowest" section no longer counts `[run] setup`/`teardown` into
+  "% of run time".** Every other aggregate on the page excludes phases
+  (ADR-0014), including the tag table directly above it, so the share meant
+  something different in that one section. A slow phase stays visible in the
+  timeline and in its own block.
+
+- **`.cargo/audit.toml` no longer suppresses advisories `deny.toml`
+  deliberately un-suppressed.** It carried the quick-xml pair
+  (RUSTSEC-2026-0194/0195) with a comment claiming it mirrored `deny.toml` —
+  which had removed them, precisely because the reason had expired
+  (`quick-junit` 0.7 moved to the patched `quick-xml` 0.41, which the lockfile
+  is on). So the nightly `cargo audit` job was suppressing for no reason, and
+  would also have silenced any *new* advisory filed against that line.
 
 - **A merged report covers the whole suite again, and its headline agrees
   with its page.** Two independent failures in `--rerun` composition, against

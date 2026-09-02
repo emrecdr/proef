@@ -47,7 +47,7 @@ would have shipped a laundering bug, not a feature.
 5. **A skipped scenario is selected, counted, and reasoned in every sink**:
    console (`∅ … — @skip:x`), JUnit (`<skipped message>`), TAP
    (`# SKIP @skip:x`), the record (`ScenarioFinished.reason`, additive,
-   schema stays 1), the HTML report, `explain`, `flows --output json`
+   schema stays 1), the HTML report, `explain`, `flows --format json`
    (`"skip"`), and the harness (libtest's ignored flag). `--tags` remains
    the *unselection* mechanism — the two semantics stay distinct, as in RF.
 6. **All-selected-scenarios-skipped exits 0.** Exit 2 is for faulty *input*;

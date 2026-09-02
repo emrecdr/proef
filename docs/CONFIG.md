@@ -75,7 +75,7 @@ timeout-ms = 60000
 |---|---|---|
 | `[run] suite` | *(unset)* | default path for `proef test`/`flows`/`macros`/`fragments`/`artifacts` (and what `doctor` and `lsp` inspect); falls back to the `tests/` convention, then errors. An explicit path always wins |
 | `[run] jobs` | available parallelism | `--jobs` flag wins; live threads never exceed the scenario count |
-| `[run] runs-dir` | `.proef-runs` | run records rotate here; only uuid-named run dirs are ever touched |
+| `[run] runs-dir` | `.proef-runs` | run records rotate here; only uuid-named run dirs are ever touched — see the `--run-id` note below |
 | `[run] keep-runs` | `200` | how many **past** records `runs-dir` retains, besides the one being written; `0` keeps none but the run in flight |
 | `[run] setup` | *(unset)* | feature run **once before** the pool (suite setup); its `saveAs: global` reaches every scenario; a failure aborts the run |
 | `[run] teardown` | *(unset)* | feature run **once after** the pool (suite teardown), only if setup succeeded; its failure is a distinct exit 3 |
@@ -98,6 +98,25 @@ timeout-ms = 60000
 | `[meta] <key>` | *(none)* | run metadata recorded in the run head; `[env.<name>.meta]` overrides it, `--meta` flags win (ADR-0020) |
 | `[tag-links] "<glob>"` | *(none)* | tag glob → URL template (`{tag}` substituted); matching tags link out from the HTML report and GitHub summary. Base table only |
 | `[env.<name>.<section>]` | inherits base | per-environment override of any base section (`url`/`vars`/`http`/`run`/`sla`/`meta`) |
+
+### A custom `--run-id` is not a run record proef will find
+
+`--run-id` accepts any single path component, and a run named that way writes
+a perfectly good record. Two consequences, both from the same rule — proef
+treats **only uuid-named directories** as run records:
+
+- **Rotation never deletes it.** `[run] keep-runs` cannot reclaim it, so a
+  caller minting a fresh id per build accumulates records without bound. This
+  is deliberate: guessing at user-named directories under a `runs-dir` that
+  may be `.` is the worse failure.
+- **Nothing finds it afterwards.** `proef explain`, `diff`, `flaky`, `report`
+  and `--rerun` all resolve "the latest run" by enumerating uuid-named
+  directories, so a `--run-id pr` record is invisible to every one of them
+  unless you name it explicitly (`proef explain pr`).
+
+Use `--run-id` when you want a *stable, externally-known* name — a CI job
+archiving `.proef-runs/pr/` by path — and leave it unset when you want the
+run to participate in history.
 
 ## Environments
 

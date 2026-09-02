@@ -651,6 +651,13 @@ const SLOWEST_SHOWN: usize = 8;
 fn render_slowest(html: &mut String, blocks: &[ScenarioBlock]) {
     let mut ranked: Vec<(u64, &ScenarioBlock)> = blocks
         .iter()
+        // Suite scenarios only, like every other aggregate on this page
+        // (ADR-0014). Including `[run] setup`/`teardown` made the heading's
+        // "% of run time" mean something different here than in the tag table
+        // directly above it — two shares on one page over two populations,
+        // which is worse than a phase going unlisted. A slow phase is still
+        // visible in the timeline and in its own block.
+        .filter(|block| block.phase.is_none())
         .map(|block| {
             let ms = block.steps.iter().map(|step| step.duration_ms).sum::<u64>();
             (ms, block)

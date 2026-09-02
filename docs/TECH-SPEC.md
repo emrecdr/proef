@@ -39,7 +39,7 @@ Scenario = unit of isolation, parallelism, retry, and artifact emission. The orc
 
 ```
 proef/
-  rust-toolchain.toml      # channel "1.97.1" (policy: always latest stable), rustfmt+clippy
+  rust-toolchain.toml      # channel "1.97.1" (policy: latest stable at its x.y.1), rustfmt+clippy
   Cargo.toml               # virtual workspace, resolver="3", workspace.{package,dependencies,lints}
   deny.toml  .config/nextest.toml  proef.toml.example
   .github/workflows/ci.yml           # fmt, clippy -D warnings, nextest, doc -D warnings,
@@ -479,7 +479,15 @@ macOS: Xcode CLT.
 
 ## 15. Conventions
 
-Toolchain pinned latest stable (1.97.1 at writing); edition 2024; resolver 3; workspace
+Toolchain pinned to **latest stable adopted at its `x.y.1` point release** —
+~3-4 weeks after `x.y.0`, so a new minor waits out its first patch (1.97.1 at
+writing; tools and third-party crates track latest immediately, and exact pins
+like hurl outrank everything). `rust-toolchain.toml` cites this section as its
+authority, so the policy is stated here rather than only in `RELEASING.md`,
+where the correction first landed (R18-2): an unwritten policy contradicting
+the written one is a docs defect, and fixing it in two files while the
+normative spec still said "always latest stable" left the contradiction in the
+source of truth. Edition 2024; resolver 3; workspace
 lints (the legacy suite table); CI gates (PR): `cargo fmt --check`, `clippy --all-targets
 --all-features -D warnings`, `cargo nextest run`, `cargo test --doc`,
 `RUSTDOCFLAGS="-D warnings" cargo doc`, `cargo deny check`, `cargo machete`, `zizmor`,

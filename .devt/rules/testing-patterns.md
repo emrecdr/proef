@@ -31,7 +31,7 @@ suite**. No test merges without covering the new behavior (definition of done).
 - **Corpus:** `--dry-run` over every `.feature` in `tests/` — the suite's own features are
   the regression corpus.
 - **CLI (assert_cmd):** exit codes `0/1/2/3` pinned per command and failure class;
-  `--output json` schema-checked; `--junit` round-parsed with quick-junit.
+  `--format json` schema-checked; `--junit` round-parsed with quick-junit.
 
 ## Test data
 
