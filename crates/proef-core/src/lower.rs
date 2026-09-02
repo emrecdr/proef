@@ -2854,4 +2854,189 @@ mod tests {
         )
         .expect("a preceding capture supplies it");
     }
+
+    /// Lowering's own codes, each reached through a real path.
+    ///
+    /// These four had nothing naming them. Two are *defence in depth* —
+    /// `kind_unrouted` says "internal" in its own message, and pack validation
+    /// catches an over-deep `use:` chain before lowering ever sees it — but a
+    /// guard that has never fired once is a guard nobody knows still works, and
+    /// the cost of finding out during an incident is the whole reason it exists.
+    mod diagnostic_code_coverage {
+        use std::fmt::Write as _;
+
+        use super::*;
+
+        fn codes(diags: &[Diag]) -> Vec<&str> {
+            diags.iter().map(|d| d.code).collect()
+        }
+
+        /// `expect: - status: "2xx"` reads perfectly to a human and is not a
+        /// number, so the failure has to be named rather than parsed away.
+        #[test]
+        fn a_non_numeric_expected_status_is_refused() {
+            let packs = pack::load(
+                &[PackSource {
+                    name: "t.yaml".into(),
+                    text: Arc::from(
+                        // An `expect:` macro merges into the *previous* request
+                        // entry, so the scenario needs a `When` to merge into —
+                        // a bare `Then` trips `then_before_when` first.
+                        "macros:\n  fetch:\n    match: the operator fetches it\n    steps:\n      - hurl: |\n          GET /x\n          HTTP 200\n  m:\n    match: the response is fine\n    expect:\n      - status: \"2xx\"\n",
+                    ),
+                }],
+                &crate::pack::FragmentCorpus::empty(),
+                KINDS,
+            )
+            .unwrap();
+            let feature = crate::feature::parse(
+                "t.feature",
+                "Feature: F\n  Scenario: S\n    When the operator fetches it\n    Then the response is fine\n",
+            )
+            .unwrap();
+            let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+            let kind_to_engine: BTreeMap<String, String> =
+                [("hurl".to_owned(), "hurl".to_owned())].into();
+            let (env, config_vars, world) = (BTreeMap::new(), BTreeMap::new(), World::default());
+            let diags = lower(
+                &scenario,
+                &ctx(
+                    &feature,
+                    &packs,
+                    &kind_to_engine,
+                    &env,
+                    &config_vars,
+                    &world,
+                ),
+            )
+            .expect_err("`2xx` is not a status number");
+            assert!(
+                codes(&diags).contains(&"proef::lower::bad_status"),
+                "{:?}",
+                codes(&diags)
+            );
+        }
+
+        /// Under `--dry-run` a runtime-populated global cannot be known, so it
+        /// resolves to empty *and warns*. Silence here would be the exact
+        /// failure the correctness series was about: a green dry run that
+        /// quietly substituted nothing.
+        #[test]
+        fn an_unknown_global_warns_rather_than_passing_silently() {
+            let packs = pack::load(
+                &[PackSource {
+                    name: "t.yaml".into(),
+                    text: Arc::from(
+                        "macros:\n  m:\n    match: the operator reads the record\n    steps:\n      - hurl: |\n          GET /records/${global:recordId}\n          HTTP 200\n",
+                    ),
+                }],
+                &crate::pack::FragmentCorpus::empty(),
+                KINDS,
+            )
+            .unwrap();
+            let feature = crate::feature::parse(
+                "t.feature",
+                "Feature: F\n  Scenario: S\n    When the operator reads the record\n",
+            )
+            .unwrap();
+            let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+            let kind_to_engine: BTreeMap<String, String> =
+                [("hurl".to_owned(), "hurl".to_owned())].into();
+            let (env, config_vars, world) = (BTreeMap::new(), BTreeMap::new(), World::default());
+            let lowered = lower(
+                &scenario,
+                &ctx(
+                    &feature,
+                    &packs,
+                    &kind_to_engine,
+                    &env,
+                    &config_vars,
+                    &world,
+                ),
+            )
+            .expect("a dry run substitutes rather than failing");
+            assert!(
+                codes(&lowered.warnings).contains(&"proef::lower::dry_run_unknown"),
+                "{:?}",
+                codes(&lowered.warnings)
+            );
+        }
+
+        /// The registry-drift guard. Unreachable while pack validation and the
+        /// engine registry agree — which is precisely why it needs a test that
+        /// makes them disagree on purpose.
+        #[test]
+        fn a_step_kind_no_engine_claims_is_an_internal_error() {
+            let (feature, scenario, packs) = fixture();
+            let unrouted = BTreeMap::new(); // the registry forgot `hurl`
+            let (env, world) = (BTreeMap::new(), World::default());
+            let config_vars =
+                BTreeMap::from([("url:base".to_owned(), "http://fixture.local".to_owned())]);
+            let diags = lower(
+                &scenario,
+                &ctx(&feature, &packs, &unrouted, &env, &config_vars, &world),
+            )
+            .expect_err("no engine claims `hurl:`");
+            assert!(
+                codes(&diags).contains(&"proef::lower::kind_unrouted"),
+                "{:?}",
+                codes(&diags)
+            );
+        }
+
+        /// Pack validation refuses an over-deep `use:` chain first, so this
+        /// bypasses it with `load_collecting` — the only way to hand lowering
+        /// a graph validation would have stopped, and therefore the only way to
+        /// prove the second line of defence is still there.
+        #[test]
+        fn expansion_depth_is_bounded_even_when_validation_is_bypassed() {
+            let depth = MAX_EXPANSION_DEPTH + 2;
+            let mut text = String::from("macros:\n");
+            for level in 0..=depth {
+                let _ = write!(
+                    text,
+                    "  m{level}:\n    match: sentence number {level}\n    steps:\n"
+                );
+                if level == depth {
+                    text.push_str("      - hurl: |\n          GET /x\n          HTTP 200\n");
+                } else {
+                    let _ = writeln!(text, "      - use: m{}", level + 1);
+                }
+            }
+            let (packs, _refused) = pack::load_collecting(
+                &[PackSource {
+                    name: "t.yaml".into(),
+                    text: Arc::from(text.as_str()),
+                }],
+                &crate::pack::FragmentCorpus::empty(),
+                KINDS,
+            );
+            let feature = crate::feature::parse(
+                "t.feature",
+                "Feature: F\n  Scenario: S\n    When sentence number 0\n",
+            )
+            .unwrap();
+            let scenario = crate::bind::bind(&feature, &packs).unwrap().remove(0);
+            let kind_to_engine: BTreeMap<String, String> =
+                [("hurl".to_owned(), "hurl".to_owned())].into();
+            let (env, config_vars, world) = (BTreeMap::new(), BTreeMap::new(), World::default());
+            let diags = lower(
+                &scenario,
+                &ctx(
+                    &feature,
+                    &packs,
+                    &kind_to_engine,
+                    &env,
+                    &config_vars,
+                    &world,
+                ),
+            )
+            .expect_err("the chain is deeper than lowering allows");
+            assert!(
+                codes(&diags).contains(&"proef::lower::expansion_too_deep"),
+                "{:?}",
+                codes(&diags)
+            );
+        }
+    }
 }

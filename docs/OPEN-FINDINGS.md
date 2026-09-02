@@ -303,6 +303,65 @@ Two wave items did **not** ship, and one of them should not:
 
 ### Verified against the tree (each entry says whether it is open or closed)
 
+- **`--shard` balances by hash while the timing data to balance by duration is
+  already retained.** Open, and the obvious design is *wrong* in a way worth
+  recording before someone builds it.
+
+  `shard_bucket(file, name, count)` takes identity only (`exec.rs`), so a 4-way
+  split is balanced by count and not by time — and a CI matrix finishes when its
+  slowest shard finishes. Meanwhile `[run] keep-runs` retains up to 200 records
+  and `record::StepRun` carries `duration_ms`, which `flaky` and `diff` already
+  read. Summing a scenario's steps is in fact a *better* weight than the
+  scenario's wall-clock span (which the reader does not retain anyway): it
+  measures work rather than queue wait.
+
+  **The hazard.** The natural implementation — "weight by the latest record in
+  `runs-dir`" — is silently incorrect for the only case sharding exists to serve.
+  Each shard of a CI matrix runs on a **separate machine** with its own
+  (usually empty) `runs-dir`, so every job would compute a *different* weight
+  table and therefore a different assignment. Scenarios would run twice or not
+  at all, and the suite would still report green. Nothing about the failure
+  announces itself.
+
+  So the weights must come from one explicitly named source shared by every job,
+  which makes this a change to `--shard`'s documented contract ("adding one
+  scenario never re-buckets the others") rather than an additive flag. The two
+  candidate shapes, neither yet chosen: `--shard-weights <run-dir>`, reusing
+  `record::read_record` and asking CI to archive a run directory; or a small
+  timings sidecar written beside the existing `.map.json`, which is lighter to
+  archive but is a new artifact to version. Either way an unweighted scenario
+  must fall back to the current frozen hash, so a new test never lands unshared.
+
+- **`lower.rs` threads the same mutable trio through twelve functions.** Open,
+  with a *validated* design and a corrected premise. Five of them —
+  `expand_macro`, `expand_step`, `expand_ref_step`, `expand_payload_step`,
+  `finish_step` — carry 8 to 11 parameters each and are individually silenced
+  with `#[allow(clippy::too_many_arguments)]`; all twelve pass some combination
+  of `out: &mut Vec<LoweredStep>`, `refs: &mut Refs`, `sinks: &mut Sinks`.
+
+  **The premise this was first filed under — "mechanical, no behaviour change,
+  introduce a context struct and make them methods" — is wrong**, and the reason
+  matters. The closures (`resolve_in`, `resolve_pack_scope`) take `refs` and
+  `sinks` as *explicit parameters* rather than capturing them, precisely so they
+  remain callable while other state is mutably borrowed. Hoisting that state
+  into `self` and turning the five into methods would reintroduce exactly the
+  borrow conflict the current shape exists to avoid. Threading is not an
+  oversight here; it is load-bearing.
+
+  The design that does work needs **two** bundles, not one, and keeps the
+  parameter-passing discipline intact:
+
+  - `Emit<'a> { out, refs, sinks }` — the three mutable outputs, passed as
+    `&mut Emit`. `resolve_in` becomes `Fn(&str, &mut Emit<'_>) -> Option<String>`.
+  - `Scope<'a, A, R> { step_ref, ctx, at: &A, resolve_in: &R, scoped }` — the
+    values that are invariant across one macro expansion.
+
+  With both, the five land at 7, 4, 4, 5 and 7 parameters and every suppression
+  goes. It is a genuine refactor of the most correctness-critical file in the
+  tree (two-tier variables, secret handling, the `${fake:…}` occurrence
+  counter), so it wants its own change with the 616-test suite as the check —
+  not a rider on a feature.
+
 - ~~Hurl grammar in `proef-core` vs ADR-0002's diff-empty claim.~~ **Closed
   (2026-09-01) by an ADR-0002 amendment plus a guard — and this entry was wrong
   three times over.** "~290 lines" counted `#[cfg(test)]` fixtures; the

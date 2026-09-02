@@ -159,6 +159,28 @@ pub struct HttpTable {
     /// Follow redirects.
     #[serde(rename = "follow-location")]
     pub follow_location: Option<bool>,
+    /// Maximum redirects to follow (only meaningful with `follow-location`).
+    #[serde(rename = "max-redirs")]
+    pub max_redirs: Option<usize>,
+    /// Skip TLS certificate verification. The run prints a warning whenever
+    /// this is on — see [`ProjectConfig::http_defaults`].
+    pub insecure: Option<bool>,
+    /// Proxy URL for every request, e.g. `http://proxy.corp:3128`.
+    pub proxy: Option<String>,
+    /// Comma-separated hosts that bypass `proxy` (curl's `NO_PROXY` form).
+    #[serde(rename = "no-proxy")]
+    pub no_proxy: Option<String>,
+    /// CA bundle to trust instead of the system store. Config-relative.
+    pub cacert: Option<String>,
+    /// Client certificate for mTLS. Config-relative.
+    #[serde(rename = "client-cert")]
+    pub client_cert: Option<String>,
+    /// Client private key for mTLS. Config-relative.
+    #[serde(rename = "client-key")]
+    pub client_key: Option<String>,
+    /// `User-Agent` sent with every request.
+    #[serde(rename = "user-agent")]
+    pub user_agent: Option<String>,
 }
 
 /// `[sla]` settings — an opt-in run-level latency budget (ceilings in
@@ -333,18 +355,60 @@ impl ProjectConfig {
 
     /// The effective HTTP defaults: builtin < `[http]` < `[env.<name>.http]`,
     /// merged field by field so an environment overrides only what it lists.
+    ///
+    /// The path-valued options (`cacert`, `client-cert`, `client-key`) are
+    /// resolved here, against the config file's directory — the one-path rule.
+    /// Core never sees a relative path and never touches the filesystem, which
+    /// is why resolution belongs at this edge (ADR-0012).
+    ///
+    /// A `client-key` without a `client-cert` is refused rather than passed
+    /// through: libcurl would accept the pair silently and simply never present
+    /// a certificate, so an mTLS suite would fail at the *server* with an
+    /// authentication error that names nothing about the real cause.
     pub fn http_defaults(&self, active_env: Option<&str>) -> Result<HttpDefaults, String> {
         let base = HttpDefaults::default();
         let env_http = self.env_profile(active_env)?.map(|profile| &profile.http);
+        // Each option: environment first, then base table, then the builtin.
+        let pick_bool = |get: fn(&HttpTable) -> Option<bool>, fallback: bool| {
+            env_http
+                .and_then(get)
+                .or_else(|| get(&self.http))
+                .unwrap_or(fallback)
+        };
+        let pick_text = |get: fn(&HttpTable) -> Option<&String>| {
+            env_http.and_then(get).or_else(|| get(&self.http)).cloned()
+        };
+        // A path written in the config resolves against the config's directory.
+        let pick_path = |get: fn(&HttpTable) -> Option<&String>| {
+            pick_text(get).map(|written| self.resolve(&written).display().to_string())
+        };
+
+        let client_cert = pick_path(|http| http.client_cert.as_ref());
+        let client_key = pick_path(|http| http.client_key.as_ref());
+        if client_key.is_some() && client_cert.is_none() {
+            return Err(
+                "[http] client-key is set without client-cert — a key alone presents no \
+                 certificate, so the server sees an unauthenticated client"
+                    .to_owned(),
+            );
+        }
+
         Ok(HttpDefaults {
             timeout_ms: env_http
                 .and_then(|http| http.timeout_ms)
                 .or(self.http.timeout_ms)
                 .unwrap_or(base.timeout_ms),
-            follow_location: env_http
-                .and_then(|http| http.follow_location)
-                .or(self.http.follow_location)
-                .unwrap_or(base.follow_location),
+            follow_location: pick_bool(|http| http.follow_location, base.follow_location),
+            max_redirs: env_http
+                .and_then(|http| http.max_redirs)
+                .or(self.http.max_redirs),
+            insecure: pick_bool(|http| http.insecure, base.insecure),
+            proxy: pick_text(|http| http.proxy.as_ref()),
+            no_proxy: pick_text(|http| http.no_proxy.as_ref()),
+            cacert: pick_path(|http| http.cacert.as_ref()),
+            client_cert,
+            client_key,
+            user_agent: pick_text(|http| http.user_agent.as_ref()),
         })
     }
 
@@ -603,6 +667,101 @@ mod tests {
         let http = config.http_defaults(Some("prod")).unwrap();
         assert_eq!(http.timeout_ms, 60000, "env overrides timeout");
         assert!(http.follow_location, "follow-location inherited from base");
+    }
+
+    /// The environment options are the reason `[env.<name>.http]` exists: a
+    /// staging profile turns verification off and points at a corporate proxy
+    /// while production inherits neither. Field-wise merging is what makes that
+    /// expressible without restating the whole table per environment.
+    #[test]
+    fn environment_http_options_merge_field_wise() {
+        let config = parse(
+            "[http]\nuser-agent = \"proef-suite\"\nmax-redirs = 3\n\
+             [env.staging.http]\ninsecure = true\nproxy = \"http://proxy.invalid:3128\"\n",
+        );
+
+        let staging = config.http_defaults(Some("staging")).unwrap();
+        assert!(staging.insecure, "the environment turned verification off");
+        assert_eq!(staging.proxy.as_deref(), Some("http://proxy.invalid:3128"));
+        assert_eq!(
+            staging.user_agent.as_deref(),
+            Some("proef-suite"),
+            "an option the environment did not list is inherited, not dropped"
+        );
+        assert_eq!(staging.max_redirs, Some(3), "inherited from the base table");
+
+        let base = config.http_defaults(None).unwrap();
+        assert!(
+            !base.insecure,
+            "an environment-scoped insecure must not leak into the base profile"
+        );
+        assert!(base.proxy.is_none(), "nor its proxy");
+    }
+
+    /// The one-path rule: a path written in `proef.toml` resolves against the
+    /// config's directory. Getting this wrong is silent — a `cacert` read
+    /// against the working directory simply fails to open from a subdirectory,
+    /// and libcurl reports a TLS error that names nothing about the cause.
+    #[test]
+    fn certificate_paths_resolve_against_the_config_not_the_cwd() {
+        let (project, absolute) = if cfg!(windows) {
+            (r"C:\proj", r"C:\secrets\ca.pem")
+        } else {
+            ("/proj", "/secrets/ca.pem")
+        };
+        let mut config = parse(
+            "[http]\ncacert = \"certs/ca.pem\"\n\
+             client-cert = \"certs/client.crt\"\nclient-key = \"certs/client.key\"\n",
+        );
+        config.path = Some(Path::new(project).join("proef.toml"));
+
+        let http = config.http_defaults(None).unwrap();
+        let at = |rest: &str| Some(Path::new(project).join(rest).display().to_string());
+        assert_eq!(http.cacert, at("certs/ca.pem"));
+        assert_eq!(http.client_cert, at("certs/client.crt"));
+        assert_eq!(http.client_key, at("certs/client.key"));
+
+        // An absolute path is taken as written — a CA bundle is routinely a
+        // machine-wide file outside the project.
+        let mut config = parse(&format!("[http]\ncacert = '{absolute}'\n"));
+        config.path = Some(Path::new(project).join("proef.toml"));
+        assert_eq!(
+            config.http_defaults(None).unwrap().cacert.as_deref(),
+            Some(absolute)
+        );
+    }
+
+    /// libcurl accepts a key without a certificate and then simply presents
+    /// nothing, so the failure surfaces at the server as an authentication
+    /// error that names nothing about the real cause. Refusing it here is the
+    /// only place the message can still be accurate.
+    #[test]
+    fn a_client_key_without_a_certificate_is_refused() {
+        let config = parse("[http]\nclient-key = \"certs/client.key\"\n");
+        let message = config
+            .http_defaults(None)
+            .expect_err("a key alone authenticates nothing");
+        assert!(
+            message.contains("client-key") && message.contains("client-cert"),
+            "the error must name both keys so the fix is obvious: {message}"
+        );
+
+        // The pair together is fine, and so is a certificate on its own — a
+        // combined PEM carrying both is a normal way to ship one.
+        assert!(
+            config_with_both().http_defaults(None).is_ok(),
+            "cert + key is the ordinary mTLS case"
+        );
+        assert!(
+            parse("[http]\nclient-cert = \"certs/both.pem\"\n")
+                .http_defaults(None)
+                .is_ok(),
+            "a combined PEM carries the key inside the certificate file"
+        );
+    }
+
+    fn config_with_both() -> ProjectConfig {
+        parse("[http]\nclient-cert = \"c.crt\"\nclient-key = \"c.key\"\n")
     }
 
     #[test]

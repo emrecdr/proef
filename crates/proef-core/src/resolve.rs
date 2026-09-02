@@ -743,4 +743,37 @@ mod tests {
             }
         }
     }
+
+    /// The three reference failures that had no test.
+    ///
+    /// Each is a *typo* class — an empty `${}`, a namespace that does not
+    /// exist, a `${run:…}` field that does not exist — and the whole value of a
+    /// typed resolve error is that the author is told which. Asserting the code
+    /// rather than the prose pins the contract `DIAGNOSTICS.md` publishes while
+    /// leaving the wording free to improve.
+    #[test]
+    fn malformed_references_carry_their_documented_codes() {
+        let f = Fixture::new();
+        for (input, code) in [
+            ("GET /x/${}", "proef::resolve::empty_reference"),
+            ("GET /x/${nosuch:key}", "proef::resolve::unknown_namespace"),
+            (
+                "GET /x/${run:nosuchfield}",
+                "proef::resolve::unknown_run_field",
+            ),
+        ] {
+            let Err(err) = resolve(input, &f.ctx(ResolveMode::Strict), &mut 0) else {
+                panic!("{input} must not resolve");
+            };
+            assert_eq!(err.code(), code, "for {input}: {err}");
+        }
+
+        // `${run:id}` is the field that *does* exist — without this the three
+        // assertions above would pass on a resolver that rejected every
+        // `${run:…}` reference.
+        assert!(
+            resolve("GET /x/${run:id}", &f.ctx(ResolveMode::Strict), &mut 0).is_ok(),
+            "the one real run field must still resolve"
+        );
+    }
 }

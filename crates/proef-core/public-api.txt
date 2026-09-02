@@ -515,15 +515,22 @@ impl core::marker::UnsafeUnpin for proef_core::engine::FragmentSupport
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::FragmentSupport
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::FragmentSupport
 pub struct proef_core::engine::HttpDefaults
+pub proef_core::engine::HttpDefaults::cacert: core::option::Option<alloc::string::String>
+pub proef_core::engine::HttpDefaults::client_cert: core::option::Option<alloc::string::String>
+pub proef_core::engine::HttpDefaults::client_key: core::option::Option<alloc::string::String>
 pub proef_core::engine::HttpDefaults::follow_location: bool
+pub proef_core::engine::HttpDefaults::insecure: bool
+pub proef_core::engine::HttpDefaults::max_redirs: core::option::Option<usize>
+pub proef_core::engine::HttpDefaults::no_proxy: core::option::Option<alloc::string::String>
+pub proef_core::engine::HttpDefaults::proxy: core::option::Option<alloc::string::String>
 pub proef_core::engine::HttpDefaults::timeout_ms: u64
+pub proef_core::engine::HttpDefaults::user_agent: core::option::Option<alloc::string::String>
 impl core::clone::Clone for proef_core::engine::HttpDefaults
 pub fn proef_core::engine::HttpDefaults::clone(&self) -> proef_core::engine::HttpDefaults
 impl core::default::Default for proef_core::engine::HttpDefaults
 pub fn proef_core::engine::HttpDefaults::default() -> Self
 impl core::fmt::Debug for proef_core::engine::HttpDefaults
 pub fn proef_core::engine::HttpDefaults::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for proef_core::engine::HttpDefaults
 impl core::marker::Freeze for proef_core::engine::HttpDefaults
 impl core::marker::Send for proef_core::engine::HttpDefaults
 impl core::marker::Sync for proef_core::engine::HttpDefaults

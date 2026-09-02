@@ -774,7 +774,7 @@ fn run_scenario(
                 artifact: prepared.artifact.clone(),
                 secrets: Arc::clone(&config.secrets),
                 secret_bindings: Arc::new(prepared.secret_bindings.clone()),
-                http: config.http,
+                http: config.http.clone(),
                 file_root: spec.file_root.clone(),
             };
             match factory.open(&ctx) {

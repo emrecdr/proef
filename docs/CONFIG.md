@@ -34,6 +34,16 @@ exclusive-tags = "@serial"  # scenarios matching this run with the pool to thems
 [http]
 timeout-ms      = 30000     # per-request timeout (batch-level default)
 follow-location = false     # follow redirects
+max-redirs      = 10        # redirect ceiling (only meaningful with follow-location)
+user-agent      = "proef"   # sent with every request — how a server spots test traffic
+# TLS and proxy: the settings that differ *between environments*, which is why
+# they belong here and not in a pack. Paths resolve against this file.
+insecure        = false     # skip certificate verification (warns loudly when on)
+cacert          = "certs/ca.pem"       # trust this CA instead of the system store
+client-cert     = "certs/client.crt"   # mTLS: the certificate to present
+client-key      = "certs/client.key"   # mTLS: its private key
+proxy           = "http://proxy.corp:3128"
+no-proxy        = "localhost,.internal"
 
 [sla]                       # opt-in run-level latency budget (omit = no gate)
 p95-ms = 250                # 95th-percentile per-step duration ceiling
@@ -70,6 +80,14 @@ timeout-ms = 60000
 | `[run] exclusive-tags` | *(unset)* | tag expression (same language as `--tags`) selecting scenarios that run with the pool to themselves; a malformed expression is exit 2 |
 | `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it |
 | `[http] follow-location` | `false` | per-entry `[Options]` override it |
+| `[http] max-redirs` | *(engine default)* | redirect ceiling; only reached when `follow-location` is on |
+| `[http] insecure` | `false` | skip TLS certificate verification. The run prints a warning naming the profile whenever this is on — a green run that verified nothing is not the same result, and nothing else would say so |
+| `[http] cacert` | *(system store)* | CA bundle to trust instead of the system store. **Path — resolves against `proef.toml`** |
+| `[http] client-cert` | *(unset)* | client certificate for mTLS. **Path.** A combined PEM may carry the key too |
+| `[http] client-key` | *(unset)* | private key for `client-cert`. **Path.** Setting it *without* `client-cert` is exit 2 — a key alone presents nothing, and the failure would otherwise surface at the server as an unexplained auth error |
+| `[http] proxy` | *(unset)* | proxy URL for every request |
+| `[http] no-proxy` | *(unset)* | comma-separated hosts bypassing `proxy` (curl's `NO_PROXY` form) |
+| `[http] user-agent` | *(engine default)* | `User-Agent` for every request. Run-wide only — hurl has no per-entry `user-agent` option, so one entry opts out with a `User-Agent:` header instead |
 | `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
 | `[sla] max-ms` | *(unset)* | slowest single-step ceiling; unset = no gate |
 | `[url] <key>` | *(none)* | URL variables, referenced as `${url:<key>}` |
@@ -101,6 +119,51 @@ listing one there is a hard parse error (exit 2), never a silent no-op. A named-
 user error (exit 2) listing the known environments. A `${url:key}` / `${vars:key}` referenced
 in a pack but defined in neither the base nor the active environment fails at lower time
 (`proef::resolve::missing_config_var`).
+
+## TLS, proxies and mTLS (`[http]`)
+
+These are the settings that describe an **environment** rather than a test, which
+is why they live here and not in a macro pack. Staging presents a self-signed
+certificate, CI traverses a corporate proxy, production speaks mTLS — and the
+same suite has to run against all three without a single pack changing. Put the
+differences in `[env.<name>.http]` and the shared parts in `[http]`:
+
+```toml
+[http]
+user-agent = "proef-suite"          # every environment identifies test traffic
+
+[env.staging.http]
+insecure = true                     # staging's certificate is self-signed
+proxy    = "http://proxy.corp:3128"
+
+[env.prod.http]
+cacert      = "certs/prod-ca.pem"   # a private CA, not the system store
+client-cert = "certs/client.crt"    # mTLS
+client-key  = "certs/client.key"
+```
+
+Three things worth knowing before you rely on this:
+
+- **Paths resolve against `proef.toml`**, not the working directory — the same
+  one-path rule every other config path follows, so `proef test` from a
+  subdirectory finds the same CA bundle it finds from the project root.
+- **`insecure = true` warns on every run**, naming the profile that set it. A
+  suite that goes green without verifying a certificate has not proved what a
+  green suite normally proves, and the run record deliberately carries no config,
+  so the warning is the whole audit trail.
+- **A per-entry `[Options]` block still wins — for all of these but one.** These
+  are batch-level defaults, so one request that must skip verification, or present
+  a different certificate, says so in its own hurl block and overrides the table
+  for itself alone. The exception is `user-agent`: hurl has no per-entry option
+  for it, so `[http] user-agent` is run-wide and a single entry cannot opt out.
+  Set a `User-Agent:` request header in that entry instead.
+
+Credentials stay out of this table on purpose. There is no `[http] user` or
+`netrc` key: a password belongs in the secret store (`proef secret set`), where
+it is encrypted at rest and masked out of artifacts, events, logs and reports.
+A `proxy` URL is the one edge — if yours embeds credentials, it is plaintext in
+a file you probably commit, and it belongs in an environment variable your shell
+expands into the proxy's own configuration instead.
 
 ## SLA gate (`[sla]`)
 

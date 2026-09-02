@@ -184,6 +184,21 @@ pub fn execute(
         }
     };
 
+    // Certificate verification off is a property of the *result*, not just of
+    // the invocation: a green run that never verified a certificate did not
+    // prove what a green run normally proves. Nothing else on any surface says
+    // so — the record carries no config, by design — so the warning is the
+    // whole audit trail, and it names the environment because that is the scope
+    // the setting was almost certainly meant to have.
+    if http_defaults.insecure {
+        let scope =
+            active_env.map_or_else(|| "[http]".to_owned(), |env| format!("[env.{env}.http]"));
+        crate::render::errln!(
+            "warning: {scope} insecure = true — TLS certificate verification is off \
+             for every request in this run"
+        );
+    }
+
     // Every project file this run reads or writes, resolved once against the
     // config rather than against the working directory (`ProjectConfig::resolve`).
     let state_file = config.state_file();
@@ -591,7 +606,7 @@ pub fn execute(
                 http_defaults.timeout_ms.saturating_mul(4).max(60_000),
             ),
             secrets,
-            http: http_defaults,
+            http: http_defaults.clone(),
         };
         let summary = runner::run(specs, &engines, &store, &run_config, &pool_sink, &cancel);
         record.add(&summary);
@@ -1361,7 +1376,7 @@ fn run_phase(
         jobs: 1, // setup/teardown run sequentially
         default_batch_budget: Duration::from_millis(http.timeout_ms.saturating_mul(4).max(60_000)),
         secrets,
-        http: *http,
+        http: http.clone(),
     };
     Ok(runner::run(
         specs,
