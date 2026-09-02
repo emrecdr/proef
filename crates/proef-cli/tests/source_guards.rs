@@ -226,10 +226,16 @@ const PROEF_OWN_KEYS: &[&str] = &["macros", "match", "secret", "steps", "use"];
 /// - **recognised** — the core reads this to find an entry boundary before
 ///   performing text surgery (the fence, and the `HTTP` response line).
 ///
-/// `bind.rs`'s row is neither: it is a hurl snippet inside a did-you-mean help
-/// string, shown to an author whose sentence bound no macro. It generates
-/// nothing and parses nothing — but it is engine syntax in the core, it drifts
-/// like any other copy, and the first version of this guard could not see it.
+/// `bind.rs`'s two rows are neither: they are one hurl snippet inside a
+/// did-you-mean help string, shown to an author whose sentence bound no macro.
+/// It generates nothing and parses nothing — but it is engine syntax in the
+/// core, it drifts like any other copy, and each half of it defeated a
+/// different version of this guard. The `HTTP 200` line was invisible while
+/// the scan was per-line (the literal is `\`-continued and never closes on its
+/// own line); the `GET …` line above it stayed invisible after that was fixed,
+/// because the classifier knew four shapes and *method line* was not among
+/// them — though ADR-0002's Measurement section names it. A guard is only
+/// closed over the shapes it can classify.
 /// proef's own pack keys are excluded by [`PROEF_OWN_KEYS`] rather than listed
 /// here.
 const CORE_ENGINE_GRAMMAR: &[(&str, &str, &[&str])] = &[
@@ -239,6 +245,7 @@ const CORE_ENGINE_GRAMMAR: &[(&str, &str, &[&str])] = &[
     ("http", "HTTP ", &["lower.rs"]),
     ("http", "HTTP *", &["lower.rs"]),
     ("http", "HTTP/", &["lower.rs"]),
+    ("method", "GET ${{url:base}}/PATH", &["bind.rs"]),
     ("option", "delay: {delay_ms}ms", &["lower.rs"]),
     ("option", "retry-interval: {}ms", &["lower.rs"]),
     ("option", "retry: {}", &["lower.rs"]),
@@ -379,6 +386,18 @@ fn engine_grammar_kind(literal: &str) -> Option<&'static str> {
             return Some("section");
         }
     }
+    // A request line: an uppercase method and a target. ADR-0002's own
+    // Measurement section names method lines among the boundary recognisers
+    // core carries, and the guard could not see one — so the sanctioned set
+    // was closed over the shapes the guard happened to classify rather than
+    // over the shapes the ADR names.
+    if let Some((method, target)) = literal.split_once(' ') {
+        let looks_like_method =
+            method.len() >= 3 && method.chars().all(|c| c.is_ascii_uppercase()) && method != "HTTP";
+        if looks_like_method && !target.is_empty() && !target.contains(' ') {
+            return Some("method");
+        }
+    }
     if let Some((key, rest)) = literal.split_once(':') {
         let keyed = key.starts_with(|c: char| c.is_ascii_lowercase())
             && key.chars().all(|c| c.is_ascii_lowercase() || c == '-');
@@ -434,7 +453,7 @@ fn hurl_grammar_in_core_is_the_closed_set_the_adr_names() {
         let text = std::fs::read_to_string(file).expect("readable source file");
         // One lexed pass over the production half. The lexer knows what a
         // comment is, so nothing here has to guess from a line prefix.
-        for literal in string_literals(production_text(&text)) {
+        for literal in string_literals(&split_production(&text).0) {
             for line in literal_lines(literal) {
                 if let Some(kind) = engine_grammar_kind(line) {
                     found
@@ -544,9 +563,9 @@ fn every_diagnostic_code_is_named_by_a_test() {
             test_corpus.push_str(&text);
             continue;
         }
-        let production = production_text(&text);
-        test_corpus.push_str(&text[production.len()..]);
-        for literal in string_literals(production) {
+        let (production, tests) = split_production(&text);
+        test_corpus.push_str(&tests);
+        for literal in string_literals(&production) {
             if literal.starts_with("proef::") && literal.matches("::").count() == 2 {
                 defined
                     .entry(literal.to_owned())
@@ -615,10 +634,49 @@ fn every_diagnostic_code_is_named_by_a_test() {
 /// A test fixture writing hurl is not the core knowing hurl — a core test that
 /// exercises the pipeline has to supply *some* engine's payload. Conflating
 /// the two is what produced the worklist's order-of-magnitude overcount.
-fn production_text(text: &str) -> &str {
+fn split_production(text: &str) -> (String, String) {
+    // Every test module is cut out, not just the text from the first one on.
+    // Truncating at the first `#[cfg(test)] mod` left production code that
+    // happens to sit *after* a test module unscanned — the guard would then
+    // be silently narrower than its own claim, which is the failure mode this
+    // whole file exists to prevent. `html.rs` and `pack/validate.rs` already
+    // carry a second test module, so the shape is one edit away.
+    //
     // Column 0 and `mod` on the next line: the crate's test modules are all
     // written that way, and requiring both keeps a nested `#[cfg(test)] fn`
-    // *inside* a test module (`tags.rs` has one) from truncating early.
-    text.find("\n#[cfg(test)]\nmod ")
-        .map_or(text, |offset| &text[..offset])
+    // *inside* a test module (`tags.rs` has one) from cutting early.
+    let mut kept = String::with_capacity(text.len());
+    let mut tests = String::new();
+    let mut rest = text;
+    while let Some(offset) = rest.find("\n#[cfg(test)]\nmod ") {
+        kept.push_str(&rest[..offset]);
+        // Skip to the module's opening brace, then past its matching close.
+        let after = &rest[offset..];
+        let Some(open) = after.find('{') else { break };
+        let mut depth = 0usize;
+        let mut end = None;
+        for (index, ch) in after[open..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + index + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Unbalanced (should not happen in compiling code): stop rather than
+        // let test text reach the production half.
+        let Some(end) = end else {
+            tests.push_str(after);
+            return (kept, tests);
+        };
+        tests.push_str(&after[..end]);
+        rest = &after[end..];
+    }
+    kept.push_str(rest);
+    (kept, tests)
 }

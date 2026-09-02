@@ -87,14 +87,14 @@ literals without making the algorithm engine-independent.
 
 Not the "~290 lines, all in `lower.rs`" the worklist recorded — that figure
 counted `#[cfg(test)]` fixtures, where a core test exercising the pipeline
-necessarily writes *some* engine's payload. The vocabulary is **twelve** distinct
+necessarily writes *some* engine's payload. The vocabulary is **thirteen** distinct
 literals across four files:
 
 | Group | Tokens | Where |
 |---|---|---|
 | **written** — the core generates this hurl | `[Options]`, `[Asserts]`, `HTTP *`, `variable:`, `retry:`, `retry-interval:`, `delay:` | `lower.rs` |
 | **recognised** — read to find an entry boundary | ` ``` ` (body fence), `HTTP` / `HTTP ` / `HTTP/` | `lower.rs`, `emit.rs`, `pack/validate.rs` |
-| **quoted** — a hurl snippet shown to an author | `HTTP 200` | `bind.rs` |
+| **quoted** — a hurl snippet shown to an author | `GET ${url:base}/PATH`, `HTTP 200` | `bind.rs` |
 
 The four boundary recognisers (`is_method_line`, `is_section_header`,
 `is_response_line`, `is_header_line`) are already one canonical `pub(crate)` set
@@ -110,6 +110,19 @@ closes — while this amendment claimed the set was closed. Multi-line literals
 are where a *larger* piece of engine syntax would naturally be written, so the
 blind spot sat exactly where the risk is highest. The guard now lexes whole
 files.
+
+**The same row cost a second correction (2026-09-02).** Lexing whole files
+surfaced `HTTP 200`; the `GET ${url:base}/PATH` line directly above it in the
+same literal stayed invisible for another round, because the guard classified
+four *shapes* — fence, response line, section header, option line — and a
+**method line** was not among them, though this section names it as one of the
+four recognisers. A guard is closed only over the shapes it can classify, so
+the two claims have to be checked against each other rather than assumed to
+agree. The classifier now knows method lines, which is what added the row
+above. In the same pass the scan stopped truncating at a file's *first*
+`#[cfg(test)] mod` and began excising every test module instead: production
+code placed after one was silently unscanned, and `html.rs` and
+`pack/validate.rs` already carry a second test module.
 
 proef's own pack keys (`macros:`, `match:`, `secret:`, `steps:`, `use:`) are
 shaped like option lines and are excluded by name rather than listed as

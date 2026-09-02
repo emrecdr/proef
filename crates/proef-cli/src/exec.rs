@@ -520,6 +520,7 @@ pub fn execute(
                                 non_gating: &[],
                                 carried: &[],
                                 tag_links: &config.tag_links,
+                                metadata,
                             },
                             &front.run_id,
                             sinks,
@@ -551,6 +552,7 @@ pub fn execute(
                                 non_gating: &[],
                                 carried: &[],
                                 tag_links: &config.tag_links,
+                                metadata,
                             },
                             &front.run_id,
                             sinks,
@@ -904,6 +906,7 @@ pub fn execute(
                 non_gating: &non_gating,
                 carried: &carried,
                 tag_links: &config.tag_links,
+                metadata,
             },
             &front.run_id,
             sinks,
@@ -1482,6 +1485,9 @@ struct Verdict<'a> {
     carried: &'a [runner::ScenarioOutcome],
     /// `[tag-links]` — the GitHub summary links matching tags.
     tag_links: &'a std::collections::BTreeMap<String, String>,
+    /// Explicit run metadata (ADR-0020 §5 names the GitHub summary among the
+    /// surfaces it must reach). Handed over by the user, never harvested.
+    metadata: &'a std::collections::BTreeMap<String, String>,
 }
 
 /// The optional CI report destinations, and the clock they share — one value
@@ -1560,7 +1566,13 @@ fn write_ci_reports(
             }
         }
     }
-    crate::ci_reports::write_github_summary(verdict.summary, verdict.tag_links, run_id, redactions);
+    crate::ci_reports::write_github_summary(
+        verdict.summary,
+        verdict.tag_links,
+        run_id,
+        verdict.metadata,
+        redactions,
+    );
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--format json`) owns stdout.

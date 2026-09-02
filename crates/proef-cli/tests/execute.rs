@@ -2398,6 +2398,77 @@ fn rerun_on_a_truncated_record_runs_what_it_cannot_prove_finished() {
     );
 }
 
+/// A run in which an `optional:` step really failed must not print exactly
+/// what a spotless run prints.
+///
+/// `ConsoleMode::Failed`'s own doc comment states the requirement, and the
+/// `Warned` arm implementing it was **unreachable**: a scenario's aggregate
+/// status was only ever `Failed | Skipped | Passed`, so a real optional
+/// failure was invisible under `--console failed`, showed a `.` rather than a
+/// `w` under `--console dotted`, and left the HTML report's warned count and
+/// filter button permanently empty. Steps carried `Warned`; scenarios never
+/// did. Promoting the aggregate changes what the run *says*, never whether it
+/// gates — `Warned` counts as passing in the exit code, the totals and JUnit.
+#[test]
+fn a_warned_run_does_not_print_like_a_spotless_one() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: warns\n    When the optional probe misfires\n  \
+         Scenario: clean\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  warns:\n    match: the optional probe misfires\n    steps:\n      \
+         - name: an optional step that really fails\n        optional: true\n        hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 500\n  \
+         clean:\n    match: the suite probes health\n    steps:\n      - hurl: |\n          \
+         GET ${url:base}/health\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let shown = |scenario: &str| {
+        let assert = proef_in(cwd.path(), &fixture)
+            .args([
+                "test",
+                "suite",
+                "--console",
+                "failed",
+                "--scenario",
+                scenario,
+            ])
+            .assert()
+            .code(0);
+        String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
+    };
+    let warned = shown("warns");
+    let clean = shown("clean");
+    assert_ne!(
+        warned.contains("scenario warns"),
+        clean.contains("scenario clean"),
+        "the warned run must show its tree where the clean one shows nothing"
+    );
+    assert!(
+        warned.contains("scenario warns"),
+        "an optional step that really failed must reach the console: {warned}"
+    );
+
+    // …and the dotted glyph the docs promise is reachable too.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--console", "dotted"])
+        .assert()
+        .code(0);
+    let dotted = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        dotted.contains('w'),
+        "a warned scenario is a `w`, not a `.`: {dotted}"
+    );
+}
+
 /// A secret reflected back *encoded* is still redacted (S1).
 ///
 /// The raw-needle half of ADR-0005 was airtight and insufficient, demonstrated

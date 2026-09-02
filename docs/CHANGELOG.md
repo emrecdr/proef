@@ -358,6 +358,39 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
 
 ### Fixed
 
+- **A run with a failed `optional:` step no longer prints exactly like a
+  spotless one.** `ConsoleMode::Failed`'s own doc comment states the
+  requirement and the `Warned` arm implementing it was **unreachable**: a
+  scenario's aggregate status was only ever `Failed | Skipped | Passed`, so a
+  real optional failure was invisible under `--console failed`, showed a `.`
+  rather than the documented `w` under `--console dotted`, and left the HTML
+  report's warned count and its filter-bar warned button permanently empty —
+  four consumers and three docs describing something that could not occur.
+  Steps carried `Warned`; scenarios never did. The aggregate now promotes,
+  which changes what a run *says* and never whether it gates: `Warned` counts
+  as passing in the exit code, the totals and `JUnit`.
+
+- **Run metadata reaches the two ADR-0020 §5 consumers that never received
+  it.** The GitHub job summary — named in the ADR, and the page a CI reader
+  actually opens from the job — carried none, so the commit under test was in
+  the record and the HTML report but not there. And `diff --format json`
+  carried `env` but not `metadata` while diff's *human* output printed
+  metadata differences, leaving the machine surface a CI gate reads missing
+  exactly the context the ADR was written to provide. Still handed over, never
+  harvested.
+
+- **The ADR-0002 grammar guard can now see the shapes the ADR names.** The
+  amendment claims the core's hurl vocabulary is closed and pinned; the guard
+  classified four shapes, and **method lines** — one of the four boundary
+  recognisers the amendment's own Measurement section names — was not among
+  them. Teaching it surfaced one unenumerated token immediately:
+  `GET ${url:base}/PATH`, sitting in `bind.rs` in the *same literal* as the
+  already-pinned `HTTP 200`. The ADR's table and the pinned set both now carry
+  it, and the vocabulary is thirteen literals rather than twelve. The scan also
+  stopped truncating at a file's first `#[cfg(test)] mod` and now excises every
+  test module: production code placed after one was silently unscanned, and two
+  core files already carry a second test module.
+
 - **`--rerun` on a *truncated* record no longer reports success over a suite
   that never ran.** `Record::scenarios` is built from `scenario_finished`
   events alone, so a run killed mid-flight — SIGKILL, OOM, a full disk, a

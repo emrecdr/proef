@@ -313,11 +313,18 @@ impl Report {
             "base": {
                 "run_id": run_name(base_dir),
                 "env": base_rec.env,
+                // ADR-0020 §5: the *machine* surface a CI gate reads must
+                // carry the same context the human one does. It printed
+                // metadata differences and then omitted them here, so a gate
+                // comparing two records could not see which commit each came
+                // from — the exact question the metadata exists to answer.
+                "metadata": base_rec.metadata,
                 "complete": base_rec.completion == record::RunCompletion::Completed,
             },
             "new": {
                 "run_id": run_name(new_dir),
                 "env": new_rec.env,
+                "metadata": new_rec.metadata,
                 "complete": new_rec.completion == record::RunCompletion::Completed,
             },
             "phases_excluded": phases_skipped,

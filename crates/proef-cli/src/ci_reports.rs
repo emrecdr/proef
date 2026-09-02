@@ -219,12 +219,13 @@ pub fn write_github_summary(
     summary: &RunSummary,
     tag_links: &std::collections::BTreeMap<String, String>,
     run_id: &str,
+    metadata: &std::collections::BTreeMap<String, String>,
     redactions: &Redactions,
 ) {
     let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
         return;
     };
-    let body = summary_body(summary, tag_links, run_id);
+    let body = summary_body(summary, tag_links, run_id, metadata);
     if let Ok(mut file) = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
@@ -245,11 +246,25 @@ fn summary_body(
     summary: &RunSummary,
     tag_links: &std::collections::BTreeMap<String, String>,
     run_id: &str,
+    metadata: &std::collections::BTreeMap<String, String>,
 ) -> String {
     let mut body = format!(
-        "## proef run `{run_id}`\n\n**{} passed · {} failed · {} skipped**\n\n| scenario | status | steps |\n|---|---|---|\n",
+        "## proef run `{run_id}`\n\n**{} passed · {} failed · {} skipped**\n\n",
         summary.passed, summary.failed, summary.skipped
     );
+    // ADR-0020 §5 names the GitHub summary as a metadata consumer, and it was
+    // the one named surface that never received any: the commit a CI reader is
+    // looking at reached the record and the HTML report but not the page they
+    // actually open from the job. Handed over, never harvested — proef reads
+    // no `GITHUB_SHA` to fill this in.
+    if !metadata.is_empty() {
+        let rendered: Vec<String> = metadata
+            .iter()
+            .map(|(key, value)| format!("`{}={}`", enc_cell(key), enc_cell(value)))
+            .collect();
+        let _ = writeln!(body, "{}\n", rendered.join(" · "));
+    }
+    body.push_str("| scenario | status | steps |\n|---|---|---|\n");
     for outcome in &summary.outcomes {
         let _ = writeln!(
             body,
@@ -577,7 +592,12 @@ mod provenance_tests {
             annotations.contains("(via tests/hurl/admin.hurl#admin.search)"),
             "the annotation must carry it: {annotations}"
         );
-        let summary_md = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
+        let summary_md = summary_body(
+            &summary,
+            &std::collections::BTreeMap::new(),
+            "run-1",
+            &std::collections::BTreeMap::new(),
+        );
         assert!(
             summary_md.contains("(via tests/hurl/admin.hurl#admin.search)"),
             "the job summary must carry it: {summary_md}"
@@ -589,7 +609,13 @@ mod provenance_tests {
             "an inline step has no fragment and must not render an empty one"
         );
         assert!(
-            !summary_body(&inline, &std::collections::BTreeMap::new(), "run-1").contains("via "),
+            !summary_body(
+                &inline,
+                &std::collections::BTreeMap::new(),
+                "run-1",
+                &std::collections::BTreeMap::new()
+            )
+            .contains("via "),
             "an inline step has no fragment and must not render an empty one"
         );
     }
@@ -608,7 +634,12 @@ mod provenance_tests {
             annotations.contains("provision the environment"),
             "the annotation must carry it: {annotations}"
         );
-        let summary_md = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
+        let summary_md = summary_body(
+            &summary,
+            &std::collections::BTreeMap::new(),
+            "run-1",
+            &std::collections::BTreeMap::new(),
+        );
         assert!(
             summary_md.contains("› provision the environment"),
             "the job summary must carry it: {summary_md}"
@@ -616,7 +647,12 @@ mod provenance_tests {
 
         // Both at once, and in a stable order: label then provenance.
         let both = failed_run(Some("tests/hurl/a.hurl#x"), Some("second entry"));
-        let md = summary_body(&both, &std::collections::BTreeMap::new(), "run-1");
+        let md = summary_body(
+            &both,
+            &std::collections::BTreeMap::new(),
+            "run-1",
+            &std::collections::BTreeMap::new(),
+        );
         assert!(
             md.contains("› second entry") && md.contains("(via tests/hurl/a.hurl#x)"),
             "{md}"
@@ -625,7 +661,13 @@ mod provenance_tests {
         // An unnamed step adds no separator.
         let unnamed = failed_run(None, None);
         assert!(
-            !summary_body(&unnamed, &std::collections::BTreeMap::new(), "run-1").contains('›'),
+            !summary_body(
+                &unnamed,
+                &std::collections::BTreeMap::new(),
+                "run-1",
+                &std::collections::BTreeMap::new()
+            )
+            .contains('›'),
             "a step with no `name:` gains nothing"
         );
     }
@@ -656,15 +698,44 @@ mod provenance_tests {
             skipped: 0,
             cancelled: false,
         };
-        let body = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1");
+        let body = summary_body(
+            &summary,
+            &std::collections::BTreeMap::new(),
+            "run-1",
+            &std::collections::BTreeMap::new(),
+        );
         assert!(body.contains("### by tag"), "{body}");
+        assert!(
+            !body.contains("· `"),
+            "no metadata, no metadata line: {body}"
+        );
+
+        // ADR-0020 §5 names the GitHub summary among the surfaces run
+        // metadata must reach, and it was the one that never received any:
+        // the commit a CI reader is looking at reached the record and the
+        // HTML report, but not the page they open from the job.
+        let meta: std::collections::BTreeMap<String, String> = [
+            ("commit".to_owned(), "abc123".to_owned()),
+            ("build".to_owned(), "42".to_owned()),
+        ]
+        .into();
+        let with_meta = summary_body(&summary, &std::collections::BTreeMap::new(), "run-1", &meta);
+        assert!(
+            with_meta.contains("`commit=abc123`") && with_meta.contains("`build=42`"),
+            "handed-over metadata must reach the job summary: {with_meta}"
+        );
         assert!(body.contains("| @api | 1 | 1 | 0 |"), "{body}");
 
         // `[tag-links]`: a matching glob linkifies the cell; non-matching
         // tags stay plain.
         let links: std::collections::BTreeMap<String, String> =
             [("smoke".to_owned(), "https://ci.example/t/{tag}".to_owned())].into();
-        let linked = summary_body(&summary, &links, "run-1");
+        let linked = summary_body(
+            &summary,
+            &links,
+            "run-1",
+            &std::collections::BTreeMap::new(),
+        );
         assert!(
             linked.contains("| [@smoke](https://ci.example/t/smoke) | 2 | 0 | 0 |"),
             "{linked}"
@@ -686,8 +757,13 @@ mod provenance_tests {
             cancelled: false,
         };
         assert!(
-            !summary_body(&untagged, &std::collections::BTreeMap::new(), "run-1")
-                .contains("### by tag"),
+            !summary_body(
+                &untagged,
+                &std::collections::BTreeMap::new(),
+                "run-1",
+                &std::collections::BTreeMap::new()
+            )
+            .contains("### by tag"),
             "a tagless suite gets no empty section"
         );
     }

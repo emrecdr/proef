@@ -928,6 +928,19 @@ fn run_scenario(
         Status::Failed
     } else if interrupted {
         Status::Skipped
+    } else if steps.iter().any(|s| s.status == Status::Warned) {
+        // A scenario in which an `optional:` step really failed is not a
+        // spotless one, and every surface downstream was already written to
+        // say so — `--console failed` shows it, `--console dotted` has a `w`
+        // glyph for it, the HTML report counts and filters it. None of that
+        // could ever fire, because this aggregate only ever produced
+        // `Failed | Skipped | Passed`: a run with a real optional failure
+        // printed byte-identically to a clean one.
+        //
+        // Warned is a *passing* status everywhere it matters — the exit code,
+        // the pass totals, `JUnit`'s success case — so promoting it here
+        // changes what the run says, never whether it gates.
+        Status::Warned
     } else {
         Status::Passed
     };
