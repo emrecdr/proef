@@ -186,9 +186,18 @@ fn a_run_record_is_only_ever_opened_by_the_reader_that_bounds_it() {
             // The record's own file name next to a raw read is the shape:
             // either on one line, or a `read_to_string` of a path built from
             // it. Both spellings appeared in the two sites this caught.
+            //
+            // `File::open` counts too. A reader that streams the record —
+            // `BufReader` over a handle, reading a line or two — never types
+            // `read_to_string`, so it would have walked past a guard whose
+            // whole point is that *every* reader goes through the bounded
+            // door. Found while writing exactly that shape inside `record.rs`,
+            // which this scan exempts; outside it, nothing would have said so.
+            // `File::create` is the writer and is deliberately not matched.
             if line.contains("events.jsonl")
                 && (text.contains("read_to_string(&events_path)")
-                    || line.contains("read_to_string"))
+                    || line.contains("read_to_string")
+                    || line.contains("File::open"))
             {
                 offenders.push(format!("{}:{}", file.display(), index + 1));
             }

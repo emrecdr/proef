@@ -8,30 +8,61 @@ use std::path::{Path, PathBuf};
 use proef_core::event::Event;
 use proef_core::step::Status;
 
+/// May rotation **delete** this directory? Only a uuid-named one (ADR-0021).
+///
+/// Deliberately narrow, and narrow for a reason that does not generalise:
+/// `runs-dir` may be `.`, so anything broader here lets `[run] keep-runs`
+/// remove directories proef never created. `Uuid::try_parse` alone would
+/// accept bare 32-hex, `urn:uuid:…` and braced spellings; proef only ever
+/// writes the hyphenated form, so the length check keeps the deletable set to
+/// exactly what proef makes.
+///
+/// **Not the discovery test.** This used to answer both "may I delete this?"
+/// and "is this a run I can show you?", and those questions are unsafe in
+/// opposite directions — the second is unsafe when *narrow*, and a
+/// `--run-id pr` record was invisible to `explain`, `diff`, `flaky`, `report`
+/// and `--rerun` as a result. See [`holds_a_record`].
+pub fn is_rotatable(name: &str) -> bool {
+    name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
+}
+
+/// Is this directory a run record proef can **read**? (ADR-0021.)
+///
+/// A directory holding proef's own `events.jsonl` is a proef record, whatever
+/// it is called — which is what makes a `--run-id pr` run findable. Safe to
+/// be broad precisely because it authorises nothing destructive: the widest
+/// mistake it can make is offering a directory whose record then fails to
+/// parse, which already reports itself by name.
+pub fn holds_a_record(dir: &Path) -> bool {
+    dir.join("events.jsonl").is_file()
+}
+
 /// Every run dir under `runs_root`, oldest→newest (ADR-0021).
 ///
 /// A directory is a run because it **holds a record**, not because of its
 /// name: `--run-id pr` writes a perfectly good record, and keying discovery on
 /// the uuid shape made it invisible to every command that resolves "the latest
 /// run". The deletion question is a different one with the opposite risk and
-/// keeps its own narrow predicate — see [`crate::fsutil::is_rotatable`].
+/// keeps its own narrow predicate — see [`is_rotatable`].
 ///
 /// Ordering no longer rides on the name either. uuid-v7 sorts chronologically,
 /// so lexical order *was* time order — until a custom-id directory joined the
 /// set and sorted by its first letter.
 pub fn all_runs(runs_root: &Path) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(runs_root)
+    // Decorated so each directory is timed once: `sort_by_key` would call the
+    // key function O(n log n) times, and `began_at`'s fallback arm is a `stat`.
+    //
+    // No `is_dir()` first: `holds_a_record` already answers it — a plain file
+    // `foo` cannot have `foo/events.jsonl` under it — so the extra probe was a
+    // second `stat` per entry for an answer the next one gives.
+    let mut timed: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(runs_root)
         .into_iter()
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && crate::fsutil::holds_a_record(path))
+        .filter(|path| holds_a_record(path))
+        .map(|path| (began_at(&path), path))
         .collect();
-    // Decorated so each directory is timed once: `sort_by_key` would call the
-    // key function O(n log n) times, and the fallback arm of `began_at` is a
-    // `stat`.
-    let mut timed: Vec<(std::time::SystemTime, PathBuf)> =
-        dirs.drain(..).map(|path| (began_at(&path), path)).collect();
     timed.sort();
     timed.into_iter().map(|(_, path)| path).collect()
 }
@@ -700,6 +731,21 @@ pub fn carried_outcomes(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    #[test]
+    fn only_hyphenated_uuid_dirs_count_as_run_ids() {
+        // Rotation deletes the oldest run-shaped directories beyond the
+        // retention limit, and the runs dir can point somewhere shared — so
+        // "run-shaped" must mean the hyphenated form proef actually writes,
+        // not every spelling the uuid parser accepts.
+        assert!(is_rotatable("0198f3c1-0000-7000-8000-00000000001a"));
+        assert!(!is_rotatable("0198f3c100007000800000000000001a"));
+        assert!(!is_rotatable(
+            "urn:uuid:0198f3c1-0000-7000-8000-00000000001a"
+        ));
+        assert!(!is_rotatable("{0198f3c1-0000-7000-8000-00000000001a}"));
+        assert!(!is_rotatable("cache-abc"));
+    }
     use super::*;
     use proef_core::event::Event;
     use proef_core::step::{Status, StepRef};

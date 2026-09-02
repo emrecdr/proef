@@ -55,35 +55,6 @@ fn sibling_tmp(path: &Path) -> PathBuf {
     with_suffix(path, &format!(".{}.tmp", std::process::id()))
 }
 
-/// May rotation **delete** this directory? Only a uuid-named one (ADR-0021).
-///
-/// Deliberately narrow, and narrow for a reason that does not generalise:
-/// `runs-dir` may be `.`, so anything broader here lets `[run] keep-runs`
-/// remove directories proef never created. `Uuid::try_parse` alone would
-/// accept bare 32-hex, `urn:uuid:…` and braced spellings; proef only ever
-/// writes the hyphenated form, so the length check keeps the deletable set to
-/// exactly what proef makes.
-///
-/// **Not the discovery test.** This used to answer both "may I delete this?"
-/// and "is this a run I can show you?", and those questions are unsafe in
-/// opposite directions — the second is unsafe when *narrow*, and a
-/// `--run-id pr` record was invisible to `explain`, `diff`, `flaky`, `report`
-/// and `--rerun` as a result. See [`holds_a_record`].
-pub fn is_rotatable(name: &str) -> bool {
-    name.len() == 36 && uuid::Uuid::try_parse(name).is_ok()
-}
-
-/// Is this directory a run record proef can **read**? (ADR-0021.)
-///
-/// A directory holding proef's own `events.jsonl` is a proef record, whatever
-/// it is called — which is what makes a `--run-id pr` run findable. Safe to
-/// be broad precisely because it authorises nothing destructive: the widest
-/// mistake it can make is offering a directory whose record then fails to
-/// parse, which already reports itself by name.
-pub fn holds_a_record(dir: &Path) -> bool {
-    dir.join("events.jsonl").is_file()
-}
-
 /// Create the directories `path`'s file needs, so writing it can succeed.
 ///
 /// An output path the user named is a path proef was asked to write, and every
@@ -120,21 +91,6 @@ pub(crate) fn parent_dir(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn only_hyphenated_uuid_dirs_count_as_run_ids() {
-        // Rotation deletes the oldest run-shaped directories beyond the
-        // retention limit, and the runs dir can point somewhere shared — so
-        // "run-shaped" must mean the hyphenated form proef actually writes,
-        // not every spelling the uuid parser accepts.
-        assert!(is_rotatable("0198f3c1-0000-7000-8000-00000000001a"));
-        assert!(!is_rotatable("0198f3c100007000800000000000001a"));
-        assert!(!is_rotatable(
-            "urn:uuid:0198f3c1-0000-7000-8000-00000000001a"
-        ));
-        assert!(!is_rotatable("{0198f3c1-0000-7000-8000-00000000001a}"));
-        assert!(!is_rotatable("cache-abc"));
-    }
 
     #[test]
     fn parent_dir_normalizes_a_bare_filename_to_cwd() {

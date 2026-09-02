@@ -1857,7 +1857,7 @@ fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
         .filter(|p| {
             p.file_name()
                 .and_then(std::ffi::OsStr::to_str)
-                .is_some_and(|name| name != current_run && crate::fsutil::is_rotatable(name))
+                .is_some_and(|name| name != current_run && crate::record::is_rotatable(name))
         })
         .collect();
     if dirs.len() > keep {
