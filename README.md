@@ -276,7 +276,7 @@ authoring reference: [`docs/AUTHORING.md`](docs/AUTHORING.md).
 | `proef secret set\|list\|rm` | encrypted secret store (names listed, values never) |
 | `proef fmt <path>` | canonicalize raw hurl blocks inside packs (`--check` for CI) |
 | `proef doctor` | native library, environment, and secret store/key checks (`--format json`) |
-| `proef lsp` | language server over stdio — diagnostics, go-to-definition, completion, references (see [`docs/EDITORS.md`](docs/EDITORS.md)) |
+| `proef lsp` | language server over stdio — diagnostics, go-to-definition, completion, references, hover, document symbols, quick fixes, and semantic tokens that tell `${…}` (lower time) from `{{…}}` (run time) (see [`docs/EDITORS.md`](docs/EDITORS.md)) |
 
 **Exit codes are a contract:** `0` ok · `1` test failure (incl. cancelled runs) ·
 `2` user error · `3` system error.
@@ -299,7 +299,11 @@ pure prose:
 
 - **Runner** — `[run]` (`jobs`, `runs-dir`, `suite` = the default test path,
   `fragments` = the `.hurl` corpus root scanned for `ref:` targets) and
-  `[http]` (`timeout-ms`, `follow-location`).
+  `[http]` — the settings that describe an *environment* rather than a test:
+  `timeout-ms`, `follow-location`/`max-redirs`, `user-agent`, and the TLS and
+  proxy surface (`insecure`, `cacert`, `client-cert`/`client-key` for mTLS,
+  `proxy`/`no-proxy`). Credentials stay out on purpose — a password belongs in
+  the secret store.
 - **Variables** — `[url]` and `[vars]`, referenced in packs as `${url:base}` /
   `${vars:apiVersion}`. Secrets stay in the encrypted store (`${secret:…}`), never here.
 - **Metadata & links** — `[meta]` key/values recorded verbatim in the run head
@@ -310,8 +314,9 @@ pure prose:
 
 Precedence: defaults < `proef.toml` base < active `[env.<name>]` < flags (ADR-0012).
 Secrets resolve `PROEF_SECRET_<NAME>` env overrides before the encrypted store.
-Run records land under `.proef-runs/<run-id>/` (events.jsonl, run.log, artifacts;
-200-run rotation); the persistent World lives in `.proef-state.json`.
+Run records land under `.proef-runs/<run-id>/` (events.jsonl, run.log, artifacts,
+`timings.json`; 200-run rotation); the persistent World lives in
+`.proef-state.json`.
 
 ## Workspace
 

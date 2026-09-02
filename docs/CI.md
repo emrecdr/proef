@@ -46,13 +46,45 @@ The pieces:
 - **`--shard I/N`** partitions by a stable hash of `(file, scenario)`:
   adding a scenario never re-buckets the others, so shard timings stay
   comparable across commits. Every matrix job runs the same expression and
-  the shards partition exactly.
+  the shards partition exactly. To balance by *time* instead of by count, see
+  below.
 - **`--meta commit=…`** records provenance the run cannot harvest itself:
   proef never reads `GITHUB_SHA` or any CI variable (ADR-0020) — what the
   workflow hands over explicitly is what the record carries.
 - **`PROEF_SECRET_<NAME>`** supplies `${secret:name}` values. They never
   appear in artifacts, events, logs, or reports — including base64/hex/
   percent-encoded reflections.
+
+## Balancing the matrix by duration
+
+A hash split balances by **count**, and a matrix finishes when its slowest shard
+does — so one long scenario can leave three runners idle. Every run writes a
+small `timings.json` into its run directory; archive it once and hand it to the
+next run's matrix:
+
+```yaml
+      - name: Run the suite
+        run: |
+          proef test tests/features \
+            --shard ${{ matrix.shard }}/3 --shard-weights timings.json
+      # one job publishes the file the next run's matrix reads
+      - uses: actions/upload-artifact@v4
+        if: matrix.shard == 1
+        with:
+          name: proef-timings
+          path: .proef-runs/*/timings.json
+```
+
+**Every job must read the same file.** The tempting shortcut — letting each job
+weight by its own local run history — is silently wrong: matrix jobs run on
+different machines with different (usually empty) `runs-dir`s, so each would
+compute a different assignment and scenarios would run twice or not at all while
+the suite still reported green.
+
+A scenario the file does not mention falls back to the frozen hash, so a test
+added after the timings were captured still runs exactly once. A missing or
+malformed file is exit 2 — never a silent fall back to the unbalanced split.
+Full detail in [CONFIG.md](CONFIG.md).
 
 ## Gating on regressions between runs
 

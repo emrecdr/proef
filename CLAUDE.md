@@ -180,7 +180,12 @@ pack loader; smoke in PR CI, full nightly) + insta snapshots (artifacts, diagnos
 schema, event streams) + fixture integration (green path = the reference-corpus features;
 retry/cookies/optional/World/cancellation cases) + `--dry-run` corpus over `tests/` +
 assert_cmd CLI/exit-code suite + the hurl upgrade canary. Flake rule: assert attempt
-counts and normalized event order, never wall-clock or raw interleaving.
+counts and normalized event order, never raw interleaving. Wall time only as a
+generous upper bound — and a *timing* assertion (the complexity ratios) is
+`#[ignore]`d and runs alone, via `just perf` and its own CI step, because a ratio
+measured beside the rest of the suite drifts rather than cancelling
+(TESTING-STRATEGY §7). Every diagnostic code is named by a test, enforced by a
+`source_guards.rs` scan (§6).
 
 **The reference corpus (`tests/features`) is config-independent by design** — several
 tests run it from a temp cwd with settings passed by environment variable and no
@@ -321,6 +326,37 @@ build requirement).
       (#149), and the 256 MiB record ceiling reached the two of four readers it
       had missed (#150). Breaking (library): `StepOutcome` and
       `Event::StepFinished` gain `label`; event schema stays 1 (additive)
+- [x] ADR-0002's grammar boundary (#153–#155) — "core stays free of engine
+      *types*" was always true; "free of engine *syntax*" never was. Measured:
+      twelve literals across four files, sanctioned and closed by an ADR-0002
+      amendment plus a guard that lexes whole files. The three items filed as
+      charter questions turned out to need no ADR at all, and two had the wrong
+      governing principle attached
+- [x] the 0.16 survey (#156–#158 + the report ranking) — six findings validated
+      against the tree and shipped, and **two of the six had premises that did
+      not survive validation.** `[http]` gained the settings that describe an
+      *environment* — `insecure`, `proxy`/`no-proxy`, `cacert`, client
+      cert/key, `max-redirs`, `user-agent` — where before a self-signed staging
+      cert or a corporate proxy could only be said by repeating `[Options]` in
+      every macro; `insecure = true` warns every run naming the profile, a
+      `client-key` without its cert is exit 2, and credentials stay in the
+      secret store. **23 of 75 diagnostic codes had no test at all** (the
+      catalogue itself measured exactly honest — 75 defined, 75 documented,
+      zero drift), closed by 19 tests and a fifth `source_guards` rule. #138's
+      "4× per doubling before, ~2× after" became a ratio test, and that test
+      then had to be fixed: it read 2.05× alone and **3.09× under nextest's
+      parallelism**, so timing assertions now run alone (`just perf`, its own CI
+      step) and TESTING-STRATEGY §7 says why. The LSP tells the two variable
+      tiers apart — `${…}` as `macro`, `{{…}}` as `variable` — which is the
+      ADR-0005 distinction no generic grammar can see. `lower.rs` stopped
+      threading a mutable trio through twelve functions (arity suppressions
+      13 → 6, `lower.rs` at zero) — *not* by hoisting state into a `self`,
+      which would have broken the borrow discipline the threading exists for.
+      `--shard-weights` balances a matrix by measured duration from one shared
+      `timings.json`; the natural per-machine design would have run scenarios
+      twice or not at all while reporting green. And the HTML report finally
+      answers "what is slowest", with the share of run time it accounts for.
+      Breaking (library): `HttpDefaults` gains eight fields and loses `Copy`
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

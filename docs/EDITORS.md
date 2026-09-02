@@ -25,6 +25,16 @@ server that speaks **generic LSP over stdio**. Point any LSP-capable editor at
   pattern and params; on a `ref:`, the fragment's file and the variables still
   needing a `bind:`. Every fact comes from the same analysis the diagnostics
   do, so a hover can never contradict the squiggle on the same line.
+- **Semantic tokens** — the two variable tiers, told apart on screen. Inside a
+  pack's `hurl: |` block, `${…}` (resolved at **lower time**, by proef, before
+  any request exists) and `{{…}}` (resolved at **run time**, by hurl) look
+  identical to every editor: a YAML highlighter sees a string, and a hurl
+  highlighter never runs because the block is not a file. proef is the only
+  party that knows which is which. `${…}` is reported as a **macro** — a
+  substitution performed before execution, which is what a macro is — and
+  `{{…}}` as a **variable**; every mainstream theme colours those differently
+  already, so nothing needs configuring. A `$${` escape stays unhighlighted,
+  because it is a literal `${` proef will not substitute.
 - **Quick fixes** — a misspelled name that already earned a "did you mean"
   becomes an applicable edit: `use:` and `ref:` targets, `with:` and `bind:`
   keys, step kinds, Examples placeholders, and data-table columns. A fix is

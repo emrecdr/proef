@@ -164,7 +164,34 @@ bit-deterministic by construction. Integration layer: fixture delays are token-d
 only as generous upper bounds; parallel tests assert on Normalized event order, never
 raw interleaving. Any test needing "now" receives it as a parameter.
 
-## 6. Complexity claims are asserted as ratios, never as benchmarks
+## 6. Every diagnostic code is named by a test
+
+`DIAGNOSTICS.md` calls codes "a contract: they never change meaning". A contract
+with nothing holding it to it is a wish — 23 of 75 were in that state when the
+rule was written: reachable in production, documented, and exercised by nothing
+at all, not even an assertion on their message text.
+
+`source_guards.rs` enforces it. A code counts as covered when either a seeded
+`tests/errors/<area>__<name>/` directory exists (the corpus driver dry-runs it,
+so the *rendered* diagnostic is exercised end to end) or the literal code string
+appears in a test. **Naming the code, not matching the prose** — the wording is
+expected to improve, while the code is the part that promises not to change.
+
+Two codes are exempted by name with recorded reasons (`source::unreadable`,
+`config::unreadable` need a file the process may stat but not read, which CI
+runners do not reproduce because they run as root). The guard checks its own
+exemption list too: an exemption that outlives its code silently excuses
+nothing.
+
+Reaching a defensive guard is worth the effort rather than a reason to skip it.
+`lower::kind_unrouted` fires only when the engine registry and pack validation
+disagree, so its test makes them disagree; `lower::expansion_too_deep` sits
+behind pack validation's identical limit, so its test bypasses validation with
+`load_collecting` — the only way to hand lowering a graph validation would have
+stopped, and therefore the only way to prove the second line of defence still
+works.
+
+## 7. Complexity claims are asserted as ratios, never as benchmarks
 
 A published performance claim is a claim like any other, and this project has now
 watched four separate ones decay in prose. The guard for a *shape* claim — "linear

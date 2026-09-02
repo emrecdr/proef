@@ -136,7 +136,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   `just perf`. The samples are interleaved as well, which removes the one skew
   that ordering alone creates.
 
-  `TESTING-STRATEGY.md` §6 previously asserted the opposite in as many words —
+  `TESTING-STRATEGY.md` §7 previously asserted the opposite in as many words —
   that a ratio "survives a shared runner" — and is corrected with the numbers.
   The claim was reasoning, not measurement, which is the failure this whole
   section of the changelog exists to record.
@@ -159,7 +159,7 @@ versioning follows [SemVer](https://semver.org) (policy in `docs/RELEASING.md`).
   rather than reporting a number.
 
   A ratio rather than a benchmark, for a reason now written into
-  `TESTING-STRATEGY.md` §6: load on a shared runner inflates both measurements
+  `TESTING-STRATEGY.md` §7: load on a shared runner inflates both measurements
   together and cancels, where an absolute threshold has to be loosened until it
   means nothing. `iai-callgrind` would be the better CI gate — instruction
   counts ignore runner noise entirely — but it needs valgrind, so it would be a
