@@ -487,6 +487,58 @@ fn check_diagnostics_index(failures: &mut Vec<String>) {
     }
 }
 
+/// A release section names each kind of change **once**.
+///
+/// Keep a Changelog's kinds (`Added`/`Changed`/`Fixed`/…) are the reader's
+/// index into a release: "what broke for me" should be one heading. A release
+/// carrying four separate `### Fixed` blocks has no such index — the reader
+/// must read all four to know they have read them all. Thirty-four such
+/// repeats had accumulated by 0.16, appended a wave at a time, because
+/// appending is what writing a changelog feels like.
+///
+/// The kind is the text **before any parenthetical**: two 0.2-era releases
+/// spell theirs `### Fixed (v0.1.0 deep-review follow-up …)`, and comparing
+/// raw heading text would let a plain `### Fixed` sit beside one undetected.
+/// That is exactly the collision worth catching, so the comparison normalizes
+/// the way a reader does.
+fn check_changelog_kinds(failures: &mut Vec<String>) {
+    let Ok(text) = std::fs::read_to_string("docs/CHANGELOG.md") else {
+        failures.push("cannot read docs/CHANGELOG.md".to_owned());
+        return;
+    };
+    let mut release = "(preamble)";
+    let mut seen: Vec<(&str, usize)> = Vec::new();
+    let mut releases = 0usize;
+    for (offset, line) in text.lines().enumerate() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            release = heading.trim();
+            seen.clear();
+            releases += 1;
+        } else if let Some(heading) = line.strip_prefix("### ") {
+            let kind = heading
+                .split_once('(')
+                .map_or(heading, |(before, _)| before)
+                .trim();
+            if let Some((_, first)) = seen.iter().find(|(name, _)| *name == kind) {
+                failures.push(format!(
+                    "docs/CHANGELOG.md: `{release}` names `{kind}` twice — lines {first} and {}",
+                    offset + 1
+                ));
+            } else {
+                seen.push((kind, offset + 1));
+            }
+        }
+    }
+    // Same rule the `read_dir` arms above follow: a scan that quietly stopped
+    // matching would report an aligned changelog, the one answer this must
+    // never invent.
+    if releases < 15 {
+        failures.push(format!(
+            "docs/CHANGELOG.md: parsed only {releases} release sections — the scan is broken"
+        ));
+    }
+}
+
 /// Mechanical doc↔code alignment (the drift class fixed by hand a dozen times
 /// before this existed): every workspace crate appears in TECH-SPEC §2 and
 /// CLAUDE.md; every ADR file appears in the docs index; every diagnostic code
@@ -545,6 +597,7 @@ fn docs_check() -> ExitCode {
         Err(err) => failures.push(format!("cannot read docs/adr/: {err}")),
     }
     check_diagnostics_index(&mut failures);
+    check_changelog_kinds(&mut failures);
     let docs = living_docs();
     check_examples(&docs, &mut failures);
     check_links(&docs, &mut failures);

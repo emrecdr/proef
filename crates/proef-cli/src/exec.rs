@@ -2155,7 +2155,7 @@ mod tests {
             std::fs::create_dir_all(dir).unwrap();
             let head = proef_core::event::Event::RunStarted {
                 schema: proef_core::event::EVENT_SCHEMA_VERSION,
-                run_id: std::sync::Arc::from(&*dir.file_name().unwrap().to_string_lossy()),
+                run_id: std::sync::Arc::from(dir.file_name().unwrap().to_string_lossy()),
                 env: None,
                 metadata: std::collections::BTreeMap::new(),
                 shuffled: false,
