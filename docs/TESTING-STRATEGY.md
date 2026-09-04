@@ -103,10 +103,19 @@ the suite's own features are the regression corpus.
 
 **Documentation (`xtask docs-check` + `crates/proef-cli/tests/docs.rs`):** the docs make
 claims a machine can settle, so they are settled mechanically rather than by review.
-`docs-check` reads files — every relative link resolves, and every fenced `toml`/`yaml`
-example parses **with the product's own parsers**, so the check means "proef would accept
-this", not "some parser would". `tests/docs.rs` needs a built binary and therefore lives
+`docs-check` reads files, and does six things: every workspace crate appears in
+TECH-SPEC §2 and CLAUDE.md; every ADR file appears in the decision log; every diagnostic
+code the workspace emits has a `DIAGNOSTICS.md` row and vice versa; every release names
+each kind of change **once** (repeats accumulate by appending, which is how a changelog
+gets written); every relative link resolves; and every fenced `toml`/`yaml` example parses
+**with the product's own parsers**, so the check means "proef would accept this", not
+"some parser would". `tests/docs.rs` needs a built binary and therefore lives
 with `assert_cmd`: it asks clap whether every documented command and long flag exists.
+
+The split is a rule, not an accident, and each half states it in its own header — a check
+that reads files belongs in `docs-check` even when a test would be easier to write, because
+the doc-only CI step is the fast one and a file-reading check placed in the test suite
+silently stops running there.
 
 Both were written against defects that had already shipped — an ADR whose first example
 could not load, and a row marked *shipped* that named a `--html` flag which never
@@ -140,8 +149,9 @@ Linux (ubuntu-latest, prereqs pre-baked) + macOS on every PR; Windows weekly (vc
 libs) while the port stabilizes, then per-PR (port green 2026-07-28: VCPKG_ROOT export,
 hurl's crates.io-missing icon supplied in CI, `/`-normalized path identifiers). Gates: fmt, clippy `-D warnings`, nextest (all crates),
 doctests, rustdoc `-D warnings`, deny, cargo-machete, zizmor (workflow static
-analysis), `xtask docs-check`, public-api snapshot, fuzz smoke
-(30 s/target), corpus dry-run, CLI suite. Snapshot tests (`insta`) run inside nextest —
+analysis), `xtask docs-check`, `proef doctor` smoke, public-api snapshot, fuzz smoke
+(30 s/target), corpus dry-run, CLI suite, and — on a pull request — the changelog-entry
+check (§8). The complexity ratios run as their own step, alone, for the reason §7 gives. Snapshot tests (`insta`) run inside nextest —
 a drifted snapshot fails there, no separate step. Nightly: full fuzz (10 min/target),
 canary, cargo-audit (advisories against unchanged code — deny covers PRs).
 Coverage: **not measured in CI today** (filed as P13). A `cargo llvm-cov` PR comment
@@ -224,3 +234,29 @@ entirely — but it needs valgrind, making it a gate the maintainer cannot repro
 on macOS. `criterion` and `divan` measure wall time, which is the same noise regime
 as the ratio test while also adding a dependency tree to a workspace that audits
 every edge.
+
+## 8. A change that lands records itself
+
+`RELEASING.md` states that every landed change adds an `[Unreleased]` line in the
+commit series that lands it. Nothing enforced that, and the rule was broken exactly
+once — by the series that added the guard for the changelog's *shape*. A rule whose
+only enforcement is a sentence in another document is a rule with a known decay rate,
+which is the same finding this suite keeps re-deriving.
+
+So a pull-request job asks one question: did any `crates/**` or `xtask/**` `.rs` file
+change without `docs/CHANGELOG.md` changing too? If so it fails, naming the files and
+quoting the rule. `[no changelog]` in the PR title waives it.
+
+**It was sized before it was written**, because a gate with a high false-positive rate
+trains people to reach for the waiver and is then worse than nothing. Across the 21
+source-touching merges preceding it the rule would have fired *once* — on the one
+commit that actually broke it. Pure-test and pure-performance changes all carried an
+entry already, so "source changed" tracks "worth recording" closely here. That is a
+measurement of this repository's habits rather than a general law, and the waiver
+exists for where it stops holding.
+
+The check reads a diff rather than files, so it is neither a `docs-check` task nor a
+`tests/docs.rs` test — it lives in the workflow, which is the only place the base
+commit is known. The PR title reaches it through `env`, never interpolated into the
+shell body: a title is attacker-controlled text, and `${{ … }}` inside `run:` is a
+template injection that `zizmor` flags.

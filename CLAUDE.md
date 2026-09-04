@@ -372,6 +372,28 @@ build requirement).
       exist yet (policy adopts at `x.y.1`), notify 9 is still RC, and release
       engineering already ships attestations/tap/binstall. Breaking (library):
       `HttpDefaults` gains `cookie_store`
+- [x] validation round 19 + the surfaces that outlived their claims — one P1,
+      eight P2s, then two rounds of cleanup finding the same shape each time: a
+      statement that was true when written and had nothing holding it there. A
+      run with a failed `optional:` step printed exactly like a spotless one
+      (`ConsoleMode::Failed`'s own doc comment stated the requirement and its
+      `Warned` arm was unreachable); an artifact is named by its feature's
+      *path*, not its stem, so two same-named scenarios stop colliding; a
+      `--run-id` record is findable again (ADR-0021 — discovery asks whether a
+      directory *holds* an `events.jsonl`, rotation still deletes only
+      uuid-named ones, and ordering takes the uuid's own embedded timestamp,
+      falling back to mtime; the two questions are unsafe in opposite
+      directions, so one predicate could not answer both). Then the guards for
+      the claims themselves: a release names each kind of change once
+      (`xtask docs-check`), a hand-written event fixture cannot carry a field
+      the schema lacks (a sixth `source_guards` rule — three had drifted
+      unnoticed, since serde drops unknown keys), and a PR that changes source
+      has to record itself in `[Unreleased]`. Each doc check also moved to the
+      half of the gate its own rule names: `tests/docs.rs` for what needs a
+      built binary, `xtask docs-check` for what reads files. Breaking
+      (library): `emit::artifact_slug` keeps its signature while its first
+      argument changes meaning from stem to feature path — a break the API gate
+      cannot see
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

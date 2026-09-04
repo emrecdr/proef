@@ -1,9 +1,9 @@
 # ADR-0020 — Run metadata is explicit-injection-only
 
-## Status
+**Status:** Accepted · **Date:** 2026-08-24
 
-Accepted (2026-08-24). The RF-audit wave-2 companion to ADR-0019; codifies
-the boundary R12-1 drew and the JUnit provenance decisions applied.
+The RF-audit wave-2 companion to ADR-0019; codifies the boundary R12-1 drew and
+the JUnit provenance decisions applied.
 
 ## Context
 
