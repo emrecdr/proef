@@ -29,6 +29,66 @@ was re-checked against `main` on **2026-08-10**.
 
 ---
 
+## Ingested — the hurl-coverage audit (2026-09-05), validated claim-by-claim
+
+**The question:** can every hurl test case now be wrapped in Gherkin? Answered
+by enumerating hurl 8.0.1's own surface from its AST — 8 section kinds, 7 body
+byte kinds (5 multiline variants incl. GraphQL), 42 options — and checking each
+against both body forms. Coverage is near-total *by construction*: the fragment
+scanner implements hurl's own `Visitor`, so it has no per-construct enumeration
+to fall out of date, and only 4 of the 42 options are constrained at all (the
+ADR-0007 budget rules on `retry`/`repeat`/`delay`/`retry-interval`).
+
+**Shipped:** the two defects the audit found — a `file,…;` body in a `ref:`
+fragment was unresolvable, and staged assets collided across scenarios. See
+the ADR-0018 amendment of the same date.
+
+**A premise of the audit's own first pass that did not survive validation.**
+Path-valued options were reported as sharing the file-body defect. They do not:
+`runner/options.rs` never consults `context_dir`, so `cacert`, `client-cert`,
+`client-key` and `netrc-file` reach curl as raw CWD-relative strings under both
+runners, identically. `[Options] output:` *is* context-dir mediated
+(`runner/output.rs`), via a later path than the option table — which is what
+made the first reading look right.
+
+### Open — the two remaining gaps are by design, and stay that way
+
+**H1. One `ref:` names one entry.** A `.hurl` file is usually one test case
+spanning several chained entries; wrapping it means annotating each entry and
+writing one `ref:` step per entry. Deliberate (ADR-0018 fixes the annotation at
+one entry, permanently) and *not silent*: `proef fragments` prints
+`UNANNOTATED — not referenceable` per entry with its line, and
+`--require-annotated` exits 1. Declined rather than open: a multi-entry `ref:`
+would have to decide where the run ends, which is the orchestration ADR-0018
+keeps in YAML.
+
+**H2. A cross-entry `[Options] variable:` does not carry into a fragment.**
+hurl's `variable:` assigns into one shared set that persists forward, so a
+corpus file whose first entry declares `variable: term=ok` and whose second
+reads `{{term}}` runs standalone but is refused by proef at `--dry-run`
+(`proef::lower::unbound_placeholder`). Correct as it stands: a fragment is
+independently runnable by definition, so its inputs must be satisfiable
+without a neighbour having run first. The refusal is early, names the variable,
+and offers the fix that *preserves* standalone runnability — give the fragment
+its own `[Options] variable:`. Worth a porting note in AUTHORING if adopters
+hit it; not worth weakening the check.
+
+**H3. `--dry-run` does not notice a missing `file,…;` asset.** Verified: a
+suite whose asset has been deleted still reports `dry-run OK`. A missing file
+is statically knowable and `--dry-run` is the gate CI runs before standing an
+environment up, so catching it there is the right end state. Deliberately not
+done in the same change as the staging fix, for two reasons worth writing
+down. `dry_run` has its own path and never calls `build_specs`, so the check
+would be *second* code walking artifacts for assets — which "one way to do one
+thing" says should instead be one shared checker both paths call. And the
+reference corpus is run from temp working directories with settings passed by
+environment (TESTING-STRATEGY), so a new filesystem requirement at validation
+time needs its own regression pass over those tests before it can be trusted.
+Until then the run-time failure is early (before the request is sent), names
+the file and the directory it was sought in, and cannot be reached silently.
+
+---
+
 ## Ingested — validation round 19 (2026-09-02), validated claim-by-claim
 
 An external round against v0.15.0+v0.16.0 (66 commits). Every finding was

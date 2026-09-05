@@ -288,6 +288,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::diag::Span
 impl core::panic::unwind_safe::UnwindSafe for proef_core::diag::Span
 pub mod proef_core::emit
 pub struct proef_core::emit::Artifact
+pub proef_core::emit::Artifact::assets: alloc::vec::Vec<proef_core::emit::AssetRef>
 pub proef_core::emit::Artifact::hurl_text: alloc::string::String
 pub proef_core::emit::Artifact::map: proef_core::emit::SidecarMap
 pub proef_core::emit::Artifact::slug: alloc::string::String
@@ -303,6 +304,24 @@ impl core::marker::Unpin for proef_core::emit::Artifact
 impl core::marker::UnsafeUnpin for proef_core::emit::Artifact
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::Artifact
 impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::Artifact
+pub struct proef_core::emit::AssetRef
+pub proef_core::emit::AssetRef::fragment: core::option::Option<alloc::string::String>
+pub proef_core::emit::AssetRef::name: alloc::string::String
+impl core::clone::Clone for proef_core::emit::AssetRef
+pub fn proef_core::emit::AssetRef::clone(&self) -> proef_core::emit::AssetRef
+impl core::cmp::Eq for proef_core::emit::AssetRef
+impl core::cmp::PartialEq for proef_core::emit::AssetRef
+pub fn proef_core::emit::AssetRef::eq(&self, &proef_core::emit::AssetRef) -> bool
+impl core::fmt::Debug for proef_core::emit::AssetRef
+pub fn proef_core::emit::AssetRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for proef_core::emit::AssetRef
+impl core::marker::Freeze for proef_core::emit::AssetRef
+impl core::marker::Send for proef_core::emit::AssetRef
+impl core::marker::Sync for proef_core::emit::AssetRef
+impl core::marker::Unpin for proef_core::emit::AssetRef
+impl core::marker::UnsafeUnpin for proef_core::emit::AssetRef
+impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::AssetRef
+impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::AssetRef
 pub struct proef_core::emit::FeatureAnchor
 pub proef_core::emit::FeatureAnchor::file: alloc::string::String
 pub proef_core::emit::FeatureAnchor::line: usize
@@ -358,8 +377,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for proef_core::emit::SidecarMap
 impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::SidecarMap
 pub const proef_core::emit::MAP_SCHEMA_VERSION: u32
 pub fn proef_core::emit::artifact_slug(&str, &str) -> alloc::string::String
+pub fn proef_core::emit::asset_root(&str) -> alloc::string::String
 pub fn proef_core::emit::emit(&proef_core::lower::LoweredScenario, &str, &proef_core::world::World) -> core::option::Option<proef_core::emit::Artifact>
-pub fn proef_core::emit::file_references(&str) -> alloc::vec::Vec<alloc::string::String>
 pub fn proef_core::emit::slugify(&str) -> alloc::string::String
 pub mod proef_core::engine
 pub enum proef_core::engine::DoctorStatus

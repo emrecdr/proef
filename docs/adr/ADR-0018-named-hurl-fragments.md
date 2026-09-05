@@ -240,3 +240,52 @@ two altitudes, and a second engine would have had its fragments linted and its i
 blocks not. Option *spellings* now live only in the engine that owns them. Option
 *baking* (`lower.rs`) still writes hurl syntax directly; the emitter is hurl-shaped by
 ADR-0010 and is a separate question this amendment does not address.
+
+## Amendment — 2026-09-05 (a fragment's file assets are its own, and staging is what delivers them)
+
+"The same bytes run under stock `hurl` and under proef" was stated for the entry's
+*text*. It was never true for the files that text reads. hurl resolves `file,…;` — a
+request body, a multipart part, a file-valued assert, and `[Options] output:` — against
+the directory of the file that wrote the reference (`--file-root`, defaulting to the
+`.hurl` file's own parent). proef resolved every such reference against the **feature**,
+so a fragment's asset, sitting where its own author put it, was unreachable: the same
+file passed under stock `hurl` and failed under proef as exit 2, blaming the author for
+a path that was correct.
+
+Nothing worked around it. Moving the asset beside the feature breaks the standalone run
+this ADR exists to guarantee; a reaching `../` path is refused by hurl's sandbox; and
+the advice that refusal prints — *check --file-root option* — names a flag proef does not
+expose and no `proef.toml` key supplies.
+
+**Per-source resolution, delivered by staging.** Each asset is copied from beside the
+source that referenced it — the feature for an inline `hurl:` block, the fragment for a
+`ref:` — into that scenario's own asset root, which is then the engine's context dir.
+
+Two roots at once was the obvious alternative and is not available: hurl exposes **one
+context dir per run of entries and no per-entry override** (its 42 `OptionKind` variants
+contain no file-root), while a single batch may mix both body forms — measured, not
+assumed: an inline step and a `ref:` step in one macro lower to one batch. Honouring two
+roots would therefore mean splitting batches on the authoring layout, which trades away
+the "batch maximally" rule TECH-SPEC §5 derives from `run_entries` building its client
+per call. Staging keeps batching intact, and copying fixtures into the build output is
+the standard answer to exactly this problem.
+
+Three further consequences, each a correction rather than a cost:
+
+1. **The root is per scenario.** Flat staging was keyed by the asset's bare name, so two
+   features that each kept a `data.json` staged to one file — last writer wins, silently
+   — and the loser's artifact replayed against the other's bytes. `artifact_slug` already
+   refuses that trade for the `.hurl` text; the files it reads now match it. Two sources
+   claiming one name *within* a scenario, which no per-scenario root can separate, is
+   refused (`proef::run::asset_unstageable`).
+2. **Staging is load-bearing, so its failure is fatal.** A missing asset used to be
+   skipped in silence because the copy only fed the record. It now feeds the run, and a
+   file that did not arrive is a request reading nothing, not an incomplete record.
+3. **ADR-0010's promise widens.** "Artifacts are the executed input" held for text while
+   assets were read from the suite. The artifact directory is now the whole executed
+   input, and an artifact that reads a file says so in its replay line
+   (`--file-root assets/<slug>`). One that reads none is byte-identical to before, which
+   is why exactly one snapshot in the corpus moved.
+
+The sandbox also narrows: the context dir is a directory holding only what proef staged,
+rather than the suite tree it used to be (TECH-SPEC §13).

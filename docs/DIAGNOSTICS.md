@@ -111,6 +111,12 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `emit::invalid_artifact` | The emitted artifact does not parse with the engine's parser | |
 
+## `proef::run::*` — preparing a scenario to execute
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `run::asset_unstageable` | A `file,…;` asset could not be staged into the scenario's asset root: absent beside the source that names it, named by a path proef will not follow, or claimed by two sources at once | |
+
 ## `proef::config::*` — `proef.toml` loading
 
 | Code | Meaning | Corpus |
@@ -129,7 +135,7 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
 `pack::unreadable_fragment_file`, `pack::unread_bind_key`,
 `lower::unbound_placeholder`, `lower::multiline_bind`,
-`lower::secret_in_composite_bind`) are covered in
+`lower::secret_in_composite_bind`, `run::asset_unstageable`) are covered in
 `crates/proef-cli/tests/fragments.rs` rather than `tests/errors/`: they need a
 `[run] fragments` root, and the seeded corpus is deliberately config-independent.
 
@@ -137,7 +143,7 @@ The `config::*` codes are covered in `crates/proef-cli/tests/cli.rs` for the
 same reason: a broken `proef.toml` cannot live in the config-independent
 seeded corpus.
 
-30 of the 75 codes carry a seeded corpus case today; the corpus guard asserts
+30 of the 76 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
 

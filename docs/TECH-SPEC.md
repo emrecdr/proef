@@ -452,8 +452,12 @@ via `insert_secret`; redaction invariants (never in artifacts/events/reports/log
 property-tested; a `saveAs: global` capture whose value equals a known secret is
 refused (warned) — `.proef-state.json` is plaintext and never receives
 secret-derived material; sensitive files 0600; `proef doctor` reports store/key
-health. `context_dir` confines file bodies (hurl's own
-sandbox option). No telemetry.
+health. `context_dir` confines file bodies (hurl's own sandbox option) to the
+scenario's staged asset root — a directory holding only what proef put there,
+so the sandbox is narrower than the suite it used to be. Assets are staged from
+beside the source that referenced them (feature for inline, fragment for
+`ref:`), which is hurl's own per-file rule; references must be plain relative
+paths, and one name may come from only one source per scenario. No telemetry.
 
 ## 14. Dependencies (exact at M0; policy: latest stable at adoption, Renovate-managed)
 
