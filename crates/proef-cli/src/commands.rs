@@ -1313,6 +1313,7 @@ pub fn artifacts(
         Ok(front) => front,
         Err(code) => return code,
     };
+    let project_root = config.root();
 
     if let Err(err) = std::fs::create_dir_all(out_dir) {
         crate::render::errln!("error: cannot create {}: {err}", out_dir.display());
@@ -1351,10 +1352,21 @@ pub fn artifacts(
                     return ExitCode::SystemError;
                 }
             }
-            // Copy referenced `file,…;` assets next to the artifact so stock
-            // `hurl --test <file>` replays without proef's context root.
+            // Stage referenced `file,…;` assets into this scenario's asset
+            // root — the same layout a run uses, and the one the emitted
+            // `--file-root` in the replay line names — so stock `hurl --test`
+            // replays the hand-off unchanged. Each comes from beside the
+            // source that referenced it, feature or fragment (ADR-0018).
+            let asset_dir = out_dir.join(proef_core::emit::asset_root(&artifact.slug));
             let root = crate::fsutil::parent_dir(Path::new(feature.file.path.as_str()));
-            if let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, &root, out_dir) {
+            if let Err(err) = crate::assets::stage_assets(
+                &artifact.assets,
+                crate::assets::AssetRoots {
+                    feature: &root,
+                    project: project_root,
+                },
+                &asset_dir,
+            ) {
                 crate::render::errln!("error: {}.hurl: {err}", artifact.slug);
                 return match err {
                     crate::assets::AssetCopyError::Unsafe(_) => ExitCode::UserError,

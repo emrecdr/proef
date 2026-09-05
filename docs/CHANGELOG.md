@@ -374,6 +374,51 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Fixed
 
+- **A `file,…;` body in a `ref:` fragment resolves where its author put it.**
+  hurl resolves a file body against *the directory of the file that wrote the
+  reference* — its `--file-root` default, and the same rule Karate, pytest and
+  Jest use for fixtures. proef resolved every asset against the **feature**,
+  and a fragment lives in another tree entirely (`[run] fragments`), so the
+  same bytes passed under stock `hurl` and failed under proef, as exit 2,
+  blaming the author for a path that was correct. Nothing worked around it:
+  moving the file beside the feature breaks the standalone run ADR-0018
+  exists to guarantee, a reaching `../` path is refused by hurl's own sandbox,
+  and the advice that refusal prints — "check --file-root option" — names a
+  flag proef does not expose.
+
+  Each asset is now staged from beside the source that referenced it, feature
+  or fragment, into that scenario's own asset root, which is what the engine
+  gets as its context dir. Staging rather than two roots because hurl offers
+  **one context dir per run of entries and no per-entry override**, while a
+  single batch may mix both body forms — measured, not assumed: an inline step
+  and a `ref:` step in one macro lower to one batch. Copying fixtures into the
+  build output is the standard answer to exactly this, and it costs no extra
+  copy: the record already copied these files, just from the wrong root.
+
+- **Two scenarios' assets no longer overwrite each other.** Staging was flat
+  and keyed by the asset's bare name, so two features that each keep a
+  `data.json` beside them staged to one file — last writer wins, with "0
+  warning(s)" — and the loser's artifact replayed against the other's bytes.
+  `artifact_slug` already refuses that trade for the `.hurl` text, deriving
+  from the feature's whole path so two same-named scenarios cannot collide;
+  the files it *reads* now get the same treatment. An artifact that reads a
+  file says so in its replay line (`--file-root assets/<slug>`); one that does
+  not is byte-identical to before. Two sources claiming one name inside a
+  single scenario — the case a per-scenario root cannot separate — is refused
+  rather than narrowed.
+
+  A missing asset is also an error now instead of a silent skip. It had to
+  become one: the staged root is what the engine reads, so a file that quietly
+  failed to arrive is no longer an incomplete record but a request reading
+  nothing.
+
+  Breaking (library): `emit::file_references` is replaced by
+  `Artifact::assets`, a `Vec<AssetRef>` carrying each reference *with the
+  source that wrote it* — the provenance a whole-artifact text scan destroys,
+  and the whole reason the bug was expressible. `emit::asset_root` names the
+  staging directory for the three call sites that must agree on it. New
+  diagnostic: `proef::run::asset_unstageable`.
+
 - **A `--run-id` record is findable again (ADR-0021).** `--run-id pr-1234`
   writes a perfectly good record, and every command that resolves *the latest
   run* — `explain`, `diff`, `flaky`, `report`, `--rerun` — enumerated by the

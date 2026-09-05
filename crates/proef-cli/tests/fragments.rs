@@ -1075,3 +1075,122 @@ fn fragments_check_refuses_to_pass_with_no_corpus_configured() {
         String::from_utf8_lossy(&gate.stderr)
     );
 }
+
+/// A fragment whose entry sends a `file,…;` body, and the asset beside it —
+/// which is where hurl resolves one, and therefore the only place a backend
+/// team would put it.
+const UPLOAD_CORPUS: &str = "\
+# @proef admin.upload
+POST {{base}}/upload
+Content-Type: application/json
+file,payload.json;
+HTTP 201
+";
+
+const UPLOAD_PACK: &str = r#"bind:
+  base: ${url:base}
+macros:
+  upload:
+    match: "the operator uploads the payload"
+    steps:
+      - ref: admin.upload
+"#;
+
+const UPLOAD_FEATURE: &str =
+    "Feature: F\n  Scenario: S\n    When the operator uploads the payload\n";
+
+/// A project whose fragment sends a file body. `asset` is written beside the
+/// fragment unless `place_asset` says otherwise — the missing-file case needs
+/// the same project with the file absent.
+fn upload_project(place_asset: bool) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
+    std::fs::create_dir_all(root.join("tests/hurl")).unwrap();
+    std::fs::write(
+        root.join("proef.toml"),
+        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n\
+         [url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("tests/hurl/admin.hurl"), UPLOAD_CORPUS).unwrap();
+    std::fs::write(root.join("tests/features/packs/api.yaml"), UPLOAD_PACK).unwrap();
+    std::fs::write(root.join("tests/features/a.feature"), UPLOAD_FEATURE).unwrap();
+    if place_asset {
+        // Beside the *fragment*, not beside the feature: the two are different
+        // trees, and this is the one stock `hurl` reads.
+        std::fs::write(
+            root.join("tests/hurl/payload.json"),
+            "{\"from\":\"beside the fragment\"}\n",
+        )
+        .unwrap();
+    }
+    dir
+}
+
+/// **The dual-runner claim, extended to file bodies.** hurl resolves
+/// `file,…;` against the directory of the file that wrote the reference. A
+/// fragment lives under `[run] fragments`, a feature under `[run] suite`, so
+/// resolving every asset against the feature made the same bytes pass under
+/// stock `hurl` and fail under proef — with an exit-2 diagnostic blaming the
+/// author for a path that was correct.
+#[test]
+fn a_fragment_file_body_resolves_the_same_under_both_runners() {
+    let fixture = Fixture::start().unwrap();
+    let dir = upload_project(true);
+
+    proef_in(dir.path(), &fixture)
+        .args(["test", "--format", "json"])
+        .assert()
+        .code(0);
+
+    let Some(hurl) = stock_hurl() else {
+        eprintln!("note: no `hurl` on PATH — the stock-runner half of this proof was skipped");
+        return;
+    };
+    let vars = dir.path().join("vars.txt");
+    std::fs::write(&vars, format!("base={}\n", fixture.base_url)).unwrap();
+    let out = std::process::Command::new(hurl)
+        .arg("--test")
+        .arg("--no-color")
+        .arg("--variables-file")
+        .arg(&vars)
+        .arg(dir.path().join("tests/hurl/admin.hurl"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "the same fragment must pass under stock hurl:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// An asset that is not where its own source says it is fails *before* the
+/// request, naming the directory it was looked for in. It used to be skipped
+/// in silence, so the run reached hurl with an empty context root and the
+/// error arrived as "file can not be read" against the artifact.
+#[test]
+fn a_fragment_asset_that_is_absent_is_named_before_the_request() {
+    let fixture = Fixture::start().unwrap();
+    let dir = upload_project(false);
+
+    let out = proef_in(dir.path(), &fixture)
+        .args(["test"])
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("proef::run::asset_unstageable") || text.contains("payload.json"),
+        "the failure must name the asset: {text}"
+    );
+    assert!(
+        text.contains("fragment"),
+        "and say which kind of source it resolves beside: {text}"
+    );
+}

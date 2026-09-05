@@ -26,7 +26,7 @@ pub const MAP_SCHEMA_VERSION: u32 = 1;
 /// One scenario's emitted artifact set.
 #[derive(Debug, Clone)]
 pub struct Artifact {
-    /// File-safe artifact name: `<feature-stem>--<scenario-slug>`.
+    /// File-safe artifact name: `<feature-path>--<scenario-slug>`.
     pub slug: String,
     /// The canonical `.hurl` text — the executed input (ADR-0010).
     pub hurl_text: String,
@@ -34,6 +34,34 @@ pub struct Artifact {
     pub map: SidecarMap,
     /// `<slug>.vars` content, when globals or secrets are referenced.
     pub vars: Option<String>,
+    /// Every `file,…;` asset the artifact reads, each carrying the source that
+    /// referenced it. The caller stages these into the scenario's asset root
+    /// before the run — see [`AssetRef`] for why provenance travels with the
+    /// name rather than being re-derived from the text.
+    pub assets: Vec<AssetRef>,
+}
+
+/// One `file,…;` asset an artifact reads, and where it resolves from.
+///
+/// hurl resolves a file body against **the directory of the file that wrote
+/// the reference** (`--file-root`, defaulting to the `.hurl` file's own
+/// parent). A proef artifact is assembled from two kinds of source, so one
+/// root cannot serve both: an inline `hurl:` block's assets sit beside the
+/// *feature*, while a `ref:` fragment's sit beside the *fragment* — which is
+/// the only reading under which the same fragment bytes run under stock
+/// `hurl` and under proef, as ADR-0018 requires.
+///
+/// So the reference carries its origin instead of being scanned back out of
+/// the finished text, where the two are indistinguishable. The core names the
+/// source; the caller — which is the half that may touch a filesystem — turns
+/// the name into a directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetRef {
+    /// The path exactly as written between `file,` and `;`.
+    pub name: String,
+    /// The fragment that referenced it, qualified `file.hurl#name`
+    /// (ADR-0018), or `None` for an inline `hurl:` block.
+    pub fragment: Option<String>,
 }
 
 /// Sidecar map: entry ↔ feature anchors (TECH-SPEC §4.5, schema v1).
@@ -146,6 +174,8 @@ pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Op
         .iter()
         .find(|(_, _, s)| matches!(s.payload, StepPayload::HurlEntries(_)))?;
 
+    let assets = collect_assets(&steps);
+
     let mut text = String::new();
     let mut line = 0usize;
     let push_line = |text: &mut String, line: &mut usize, content: &str| {
@@ -167,6 +197,12 @@ pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Op
     let mut replay = format!("# replay: hurl --test {slug}.hurl");
     if has_vars {
         let _ = write!(replay, " --variables-file {slug}.vars");
+    }
+    // Only when the scenario actually reads a file: a replay line is read by
+    // humans, and a flag that changes nothing for the overwhelming majority
+    // of artifacts is noise in every one of them.
+    if !assets.is_empty() {
+        let _ = write!(replay, " --file-root {}", asset_root(&slug));
     }
     for variable in scenario.secrets.keys() {
         // Placeholders, never values (ADR-0005) — the human fills them in.
@@ -232,6 +268,7 @@ pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Op
             entries,
         },
         vars: has_vars.then(|| vars_content(scenario, &slug, world)),
+        assets,
         slug,
     })
 }
@@ -394,11 +431,62 @@ fn starts_entry_line(trimmed: &str) -> bool {
     is_response_line(trimmed) || is_method_line(trimmed)
 }
 
+/// Every `file,…;` asset the scenario's entries read, each tagged with the
+/// source that referenced it.
+///
+/// Walked per step rather than scanned back out of the finished artifact: once
+/// the entries are concatenated, an inline block's `file,x;` and a fragment's
+/// are the same six characters, and they resolve against different directories
+/// ([`AssetRef`]).
+///
+/// One known edge: an `expect:` macro's asserts are merged into the *previous*
+/// entry's text (ADR-0004), so a `file,…;` inside one is attributed to the
+/// request step that owns those lines. That is the step whose body they became
+/// part of, and the only provenance the merged text still has.
+fn collect_assets(steps: &[(usize, usize, &crate::step::LoweredStep)]) -> Vec<AssetRef> {
+    let mut assets: Vec<AssetRef> = Vec::new();
+    for (_, _, step) in steps {
+        let StepPayload::HurlEntries(payload) = &step.payload else {
+            continue;
+        };
+        for name in file_refs_in(payload) {
+            let asset = AssetRef {
+                name,
+                fragment: step.fragment.clone(),
+            };
+            if !assets.contains(&asset) {
+                assets.push(asset);
+            }
+        }
+    }
+    assets
+}
+
+/// A scenario's asset root, relative to the artifact directory.
+///
+/// One function, so the agreement is structural — exactly as with
+/// [`artifact_slug`]: the emitter writes this path into the replay line, the
+/// CLI stages files into it and points the engine's `--file-root` at it, and
+/// the three only agree because all three derive it here.
+///
+/// Per **scenario**, not one shared directory, and that is the whole point.
+/// A flat asset directory is keyed by the asset's own name, so two features
+/// that each keep their own `data.json` beside them resolve to one staged
+/// file — last writer wins, silently, and the loser's artifact then replays
+/// against the wrong bytes. `artifact_slug` already refuses that trade for
+/// the `.hurl` text itself; the files it reads get the same treatment.
+#[must_use]
+pub fn asset_root(slug: &str) -> String {
+    format!("assets/{slug}")
+}
+
 /// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
-/// the artifact text. Stock `hurl --test <file>` resolves them relative to the
-/// `.hurl` file, so callers copy these next to emitted artifacts to keep the
-/// hand-off self-contained (ADR-0010).
-pub fn file_references(hurl_text: &str) -> Vec<String> {
+/// one entry's text.
+///
+/// Per entry rather than per artifact: the finished text has lost which
+/// source wrote each reference, and that is what decides the directory it
+/// resolves against ([`AssetRef`]).
+fn file_refs_in(hurl_text: &str) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     for line in hurl_text.lines() {
         let mut rest = line;
@@ -745,8 +833,22 @@ mod tests {
     fn file_references_finds_file_bodies_and_multipart_parts() {
         let text = "POST http://x/upload\n[Multipart]\nphoto: file,fixture.jpg;\nHTTP 201\n\nPOST http://x/raw\nfile,payload.bin;\nHTTP 200\n";
         assert_eq!(
-            file_references(text),
+            file_refs_in(text),
             vec!["fixture.jpg".to_owned(), "payload.bin".to_owned()]
+        );
+    }
+
+    /// The asset root is per scenario, and the slug is what separates them —
+    /// two features keeping their own `data.json` must not stage into one
+    /// directory. Pinned here because three call sites agree only by deriving
+    /// it from this function.
+    #[test]
+    fn the_asset_root_is_scoped_to_one_scenario() {
+        assert_eq!(asset_root("suite-a-x--upload"), "assets/suite-a-x--upload");
+        assert_ne!(
+            asset_root(&artifact_slug("suite/a/x.feature", "upload")),
+            asset_root(&artifact_slug("suite/b/x.feature", "upload")),
+            "same scenario name under different features must not share a root"
         );
     }
 

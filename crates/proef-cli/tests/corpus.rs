@@ -518,28 +518,49 @@ fn artifact_corpus_is_deterministic_and_snapshot_locked() {
         names.len(),
         35,
         "12 scenarios × (.hurl + .map.json) + 10 secret-referencing .vars \
-         + 1 copied file asset: {names:?}"
+         + the `assets/` staging root: {names:?}"
     );
+    // Staged under the referencing scenario's own root, not flat beside the
+    // artifacts. Flat is keyed by the asset's bare name, so two features that
+    // each keep a `data.json` resolved to one staged file and the loser
+    // replayed against the other's bytes — silently.
+    let staged = dir_a.join(proef_core::emit::asset_root(
+        "tests-features-520-api-breadth--an-attachment-file-is-uploaded-as-multipart",
+    ));
     assert!(
-        names.iter().any(|n| n == "fixture.jpg"),
-        "referenced file bodies ship next to the artifacts: {names:?}"
+        staged.join("fixture.jpg").is_file(),
+        "a referenced file body ships in its scenario's asset root: {}",
+        staged.display()
     );
 
     for name in &names {
+        // The staging root is a directory, checked on its own below.
+        if name == "assets" {
+            continue;
+        }
         let content_a = std::fs::read(dir_a.join(name)).unwrap();
         let content_b = std::fs::read(dir_b.join(name)).unwrap();
         assert_eq!(content_a, content_b, "`{name}` must be byte-deterministic");
-        if std::path::Path::new(name)
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("jpg"))
-        {
-            continue; // binary asset — determinism-checked above, not snapshotted
-        }
         insta::assert_snapshot!(
             format!("artifact__{name}"),
             String::from_utf8(content_a).unwrap()
         );
     }
+
+    // Staged assets are part of the hand-off, so they get the determinism the
+    // rest of the emission has — by bytes, not snapshotted: one is a JPEG.
+    assert_eq!(
+        std::fs::read(staged.join("fixture.jpg")).unwrap(),
+        std::fs::read(
+            dir_b
+                .join(proef_core::emit::asset_root(
+                    "tests-features-520-api-breadth--an-attachment-file-is-uploaded-as-multipart"
+                ))
+                .join("fixture.jpg")
+        )
+        .unwrap(),
+        "a staged asset must be byte-identical across two emissions"
+    );
 }
 
 #[test]
