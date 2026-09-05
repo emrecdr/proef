@@ -1279,6 +1279,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::pack::PackSource
 pub fn proef_core::pack::builtin_sources() -> alloc::vec::Vec<proef_core::pack::PackSource>
 pub fn proef_core::pack::json_schema(&[proef_core::engine::StepKindSpec]) -> serde_json::value::Value
 pub fn proef_core::pack::load(&[proef_core::pack::PackSource], &proef_core::pack::FragmentCorpus, &[proef_core::engine::StepKindSpec]) -> core::result::Result<proef_core::pack::PackSet, proef_core::diag::FrontError>
+pub fn proef_core::pack::split_qualified(&str) -> (core::option::Option<&str>, &str)
 pub mod proef_core::provider
 pub struct proef_core::provider::ProviderError(pub alloc::string::String)
 impl core::clone::Clone for proef_core::provider::ProviderError

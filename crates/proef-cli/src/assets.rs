@@ -56,15 +56,14 @@ impl AssetRoots<'_> {
         let Some(fragment) = &asset.fragment else {
             return self.feature.to_path_buf();
         };
-        let file = fragment
-            .split_once('#')
-            .map_or(&**fragment, |(file, _)| file);
+        // The reader that lives beside the writer (`Fragment::qualified`), so
+        // the separator stays one decision rather than three.
+        let (file, _) = proef_core::pack::split_qualified(fragment);
+        let file = file.unwrap_or(fragment);
         let anchored = self
             .project
             .map_or_else(|| PathBuf::from(file), |root| root.join(file));
-        anchored
-            .parent()
-            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+        crate::fsutil::parent_dir(&anchored)
     }
 }
 

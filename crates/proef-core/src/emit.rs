@@ -830,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn file_references_finds_file_bodies_and_multipart_parts() {
+    fn file_refs_in_finds_file_bodies_and_multipart_parts() {
         let text = "POST http://x/upload\n[Multipart]\nphoto: file,fixture.jpg;\nHTTP 201\n\nPOST http://x/raw\nfile,payload.bin;\nHTTP 200\n";
         assert_eq!(
             file_refs_in(text),

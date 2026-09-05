@@ -392,8 +392,12 @@ Regrouping preserved every entry and its order within its kind.
   **one context dir per run of entries and no per-entry override**, while a
   single batch may mix both body forms — measured, not assumed: an inline step
   and a `ref:` step in one macro lower to one batch. Copying fixtures into the
-  build output is the standard answer to exactly this, and it costs no extra
-  copy: the record already copied these files, just from the wrong root.
+  build output is the standard answer to exactly this, and it adds no copy
+  *operation*: the record already copied these files once per scenario, just
+  into a shared directory instead of the right one. What it does change is the
+  footprint — an asset N scenarios read is now N files in the run record
+  rather than one, which is the same fact as the collision below, seen from
+  the disk's side rather than the reader's.
 
 - **Two scenarios' assets no longer overwrite each other.** Staging was flat
   and keyed by the asset's bare name, so two features that each keep a
@@ -412,11 +416,20 @@ Regrouping preserved every entry and its order within its kind.
   failed to arrive is no longer an incomplete record but a request reading
   nothing.
 
+  `[Options] output:` resolves through the same root, so the root is created
+  for every scenario rather than by the staging loop — which never runs for a
+  scenario that reads no file body. A response written that way now lands
+  inside the run record, where a run's outputs belong, instead of in the
+  feature's own directory.
+
   Breaking (library): `emit::file_references` is replaced by
   `Artifact::assets`, a `Vec<AssetRef>` carrying each reference *with the
   source that wrote it* — the provenance a whole-artifact text scan destroys,
   and the whole reason the bug was expressible. `emit::asset_root` names the
-  staging directory for the three call sites that must agree on it. New
+  staging directory for the three call sites that must agree on it, and
+  `pack::split_qualified` is now the one reader of the `file.hurl#name` form
+  `Fragment::qualified` writes — there were two, resolving a `ref:` and a
+  `use:`, and staging assets was about to make a third in another crate. New
   diagnostic: `proef::run::asset_unstageable`.
 
 - **A `--run-id` record is findable again (ADR-0021).** `--run-id pr-1234`

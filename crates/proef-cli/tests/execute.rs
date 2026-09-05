@@ -4359,3 +4359,76 @@ fn an_aborted_setup_leaves_no_weights_naming_its_own_scenarios() {
         std::fs::read_to_string(&timings).unwrap_or_default()
     );
 }
+
+/// `[Options] output:` resolves through the scenario's context dir, so that
+/// directory has to exist even when nothing is staged into it.
+///
+/// The staged asset root became the engine's `--file-root`, and creating it
+/// was left to the staging loop — which never runs for a scenario that reads
+/// no `file,…;` body. hurl opens an `output:` path with `create(true)` and no
+/// parent creation, so such a scenario failed as a *system* fault where it had
+/// previously written into the feature's own directory. It now lands inside
+/// the run record, which is where a run's outputs belong.
+#[test]
+fn an_output_option_writes_into_the_run_record_without_a_staged_asset() {
+    let fixture = Fixture::start().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(root.join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        root.join("suite/o.feature"),
+        "Feature: F\n  Scenario: S\n    When the client saves the response\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("suite/packs/o.yaml"),
+        "macros:\n  save:\n    match: the client saves the response\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/health\n          [Options]\n          \
+         output: saved.json\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    proef_in(root, &fixture)
+        .args(["test", "suite"])
+        .assert()
+        .code(0);
+
+    let mut written = Vec::new();
+    for entry in walkdir(&root.join(".proef-runs")) {
+        if entry.file_name().is_some_and(|name| name == "saved.json") {
+            written.push(entry);
+        }
+    }
+    assert_eq!(
+        written.len(),
+        1,
+        "the response body must be written exactly once, inside the run record: {written:?}"
+    );
+    // And never into the suite the author wrote.
+    assert!(
+        !root.join("suite/saved.json").exists(),
+        "an `output:` must not land in the source tree"
+    );
+}
+
+/// Every file under `dir`, recursively — a local walk so the test needs no
+/// dependency for one assertion.
+fn walkdir(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found
+}

@@ -1099,22 +1099,16 @@ macros:
 const UPLOAD_FEATURE: &str =
     "Feature: F\n  Scenario: S\n    When the operator uploads the payload\n";
 
-/// A project whose fragment sends a file body. `asset` is written beside the
-/// fragment unless `place_asset` says otherwise — the missing-file case needs
-/// the same project with the file absent.
+/// A project whose fragment sends a file body — [`project`] plus its own
+/// feature, and the asset written beside the fragment unless `place_asset`
+/// says otherwise (the missing-file case wants the same project without it).
+///
+/// Built on `project` rather than beside it: the scaffold's shape is one
+/// fact, and a second copy of it is a `proef.toml` key that gets added in one
+/// place and forgotten in the other.
 fn upload_project(place_asset: bool) -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = project(UPLOAD_CORPUS, UPLOAD_PACK);
     let root = dir.path();
-    std::fs::create_dir_all(root.join("tests/features/packs")).unwrap();
-    std::fs::create_dir_all(root.join("tests/hurl")).unwrap();
-    std::fs::write(
-        root.join("proef.toml"),
-        "[run]\nsuite = \"tests/features\"\nfragments = \"tests/hurl\"\n\
-         [url]\nbase = \"${env:PROEF_BASE_URL}\"\n",
-    )
-    .unwrap();
-    std::fs::write(root.join("tests/hurl/admin.hurl"), UPLOAD_CORPUS).unwrap();
-    std::fs::write(root.join("tests/features/packs/api.yaml"), UPLOAD_PACK).unwrap();
     std::fs::write(root.join("tests/features/a.feature"), UPLOAD_FEATURE).unwrap();
     if place_asset {
         // Beside the *fragment*, not beside the feature: the two are different
