@@ -200,7 +200,11 @@ impl HurlSession {
             builder.cookie_input_file(Some(path.display().to_string()));
         }
         if let Some(file_root) = &self.file_root {
-            // Confine file bodies to the feature's directory (§13).
+            // Confine file bodies and `output:` targets to the scenario's
+            // staged asset root (§13) — a directory holding only what the CLI
+            // put there, which is narrower than the suite tree this used to
+            // name, and the only root under which an inline block's assets and
+            // a `ref:` fragment's both resolve as their authors wrote them.
             let current = std::env::current_dir().unwrap_or_else(|_| ".".into());
             builder.context_dir(&hurl::util::path::ContextDir::new(&current, file_root));
         }

@@ -4,7 +4,7 @@ expression: "String::from_utf8(content_a).unwrap()"
 ---
 # proef artifact — An attachment file is uploaded as multipart
 # source: tests/features/520_api_breadth.feature:16
-# replay: hurl --test tests-features-520-api-breadth--an-attachment-file-is-uploaded-as-multipart.hurl
+# replay: hurl --test tests-features-520-api-breadth--an-attachment-file-is-uploaded-as-multipart.hurl --file-root assets/tests-features-520-api-breadth--an-attachment-file-is-uploaded-as-multipart
 
 # tests/features/520_api_breadth.feature:17 — the attachment file is uploaded
 POST http://127.0.0.1:8787/upload

@@ -577,6 +577,7 @@ pub fn execute(
             scenario_file_filter,
             rerun_set.as_ref(),
             &artifacts_dir,
+            config.root(),
         );
         // `--shard I/N` — applied AFTER every other filter, so a shard is always
         // "shard of what you selected" (the pinned filter→shard order): the same
@@ -1433,7 +1434,16 @@ fn run_phase(
         }
     };
 
-    let specs = build_specs(&front, None, None, None, None, None, artifacts_dir);
+    let specs = build_specs(
+        &front,
+        None,
+        None,
+        None,
+        None,
+        None,
+        artifacts_dir,
+        config.root(),
+    );
     if specs.is_empty() {
         crate::render::errln!(
             "error: {label} feature `{}` has no scenarios",
@@ -1695,8 +1705,13 @@ fn shard_bucket(file: &str, name: &str, count: u32) -> u32 {
 
 /// Build one `ScenarioSpec` per tag-selected scenario. The prepare closure
 /// re-lowers with the **live** World (ADR-0005 lower-time globals), emits the
-/// artifact, writes it into the run dir, and hands the same bytes to the
-/// engine (ADR-0010).
+/// artifact, stages its assets, writes it into the run dir, and hands the same
+/// bytes to the engine (ADR-0010).
+///
+/// `project_root` is what a fragment's recorded `file.hurl#name` resolves
+/// against, and so where a `ref:` step's assets are staged from; `None` when
+/// no config is in scope.
+#[allow(clippy::too_many_arguments)]
 fn build_specs(
     front: &FrontEnd,
     tags: Option<&proef_core::tags::TagExpr>,
@@ -1705,6 +1720,7 @@ fn build_specs(
     scenario_file_filter: Option<&str>,
     rerun_set: Option<&crate::record::RerunFilter>,
     artifacts_dir: &Path,
+    project_root: Option<&Path>,
 ) -> Vec<ScenarioSpec> {
     let mut specs = Vec::new();
     for feature in &front.features {
@@ -1746,37 +1762,62 @@ fn build_specs(
             let feature_file = Arc::clone(&feature_arc);
             let stem = Arc::clone(&stem);
             let artifacts_dir = artifacts_dir.to_path_buf();
-            let prepare: runner::PrepareFn = Box::new(move |world| {
-                let ctx = LowerCtx {
-                    feature: &feature_file,
-                    packs: &packs,
-                    kind_to_engine: &kind_to_engine,
-                    env: &env,
-                    config_vars: &config_vars,
-                    run_id: &run_id,
-                    world,
-                    mode: ResolveMode::Strict,
-                };
-                let lowered = lower::lower(&bound, &ctx)?;
-                let artifact = emit::emit(&lowered, &stem, world).map(|artifact| {
-                    let root = crate::fsutil::parent_dir(Path::new(feature_file.path.as_str()));
-                    write_run_record(artifact, &artifacts_dir, &root)
-                });
-                Ok(Prepared {
-                    batches: lowered.batches,
-                    artifact,
-                    secret_bindings: lowered.secrets,
+            // The scenario's own asset root, derived from the same two
+            // functions the emitter writes into the replay line — the spec
+            // needs it before `prepare` has run, and `artifact_slug` is pure,
+            // so both sides compute it rather than one telling the other.
+            let asset_dir = artifacts_dir.join(emit::asset_root(&emit::artifact_slug(
+                &feature.file.path,
+                &scenario.lowered.name,
+            )));
+            let project_root = project_root.map(Path::to_path_buf);
+            // One name for one directory: what assets are staged into *is* the
+            // `file_root` the engine gets, and the clone exists only because
+            // the closure takes its copy by move while the spec keeps the
+            // original.
+            let prepare: runner::PrepareFn = {
+                let asset_dir = asset_dir.clone();
+                Box::new(move |world| {
+                    let ctx = LowerCtx {
+                        feature: &feature_file,
+                        packs: &packs,
+                        kind_to_engine: &kind_to_engine,
+                        env: &env,
+                        config_vars: &config_vars,
+                        run_id: &run_id,
+                        world,
+                        mode: ResolveMode::Strict,
+                    };
+                    let lowered = lower::lower(&bound, &ctx)?;
+                    let artifact = stage_and_record(
+                        &lowered,
+                        world,
+                        &stem,
+                        Path::new(feature_file.path.as_str()),
+                        &asset_dir,
+                        &artifacts_dir,
+                        project_root.as_deref(),
+                    )?;
+                    Ok(Prepared {
+                        batches: lowered.batches,
+                        artifact,
+                        secret_bindings: lowered.secrets,
+                    })
                 })
-            });
+            };
             specs.push(ScenarioSpec {
                 file: Arc::clone(&file_arc),
                 name: Arc::from(scenario.lowered.name.as_str()),
                 line: scenario.lowered.line,
                 skip: crate::front::reserved::skip_reason(&scenario.lowered.tags).map(Arc::from),
                 tags: scenario.lowered.tags.clone().into(),
-                file_root: Some(crate::fsutil::parent_dir(Path::new(
-                    feature.file.path.as_str(),
-                ))),
+                // The staged asset root, not the feature's directory. A
+                // scenario is assembled from sources in different trees — an
+                // inline block beside the feature, a `ref:` fragment under
+                // `[run] fragments` — and hurl offers exactly one context dir
+                // per run of entries, with no per-entry override. Staging is
+                // what lets both resolve as their own author wrote them.
+                file_root: Some(asset_dir),
                 // Selected by the same expression language `--tags` uses, over
                 // the same accumulated tags, so "which scenarios are exclusive"
                 // is answered exactly as "which scenarios are selected".
@@ -1789,12 +1830,63 @@ fn build_specs(
     specs
 }
 
+/// Emit one scenario's artifact, stage the files it reads into its context
+/// dir, and write the run record — the whole of what `prepare` does once the
+/// scenario has lowered.
+///
+/// The directory is created whether or not anything is staged into it. It is
+/// the engine's `--file-root`, and `[Options] output:` resolves through the
+/// same root while hurl opens that path with `create(true)` and no parent
+/// creation — so leaving the directory to the staging loop broke a scenario
+/// that writes a response but reads no file body, which previously wrote into
+/// the feature's own directory.
+///
+/// Staging failure is fatal to the scenario, unlike the record writes below
+/// it: a file that did not land is not an incomplete record (a warning) but a
+/// request that will read the wrong bytes or none at all.
+#[allow(clippy::too_many_arguments)]
+fn stage_and_record(
+    lowered: &lower::LoweredScenario,
+    world: &proef_core::world::World,
+    stem: &str,
+    feature_path: &Path,
+    asset_dir: &Path,
+    artifacts_dir: &Path,
+    project_root: Option<&Path>,
+) -> Result<Option<ArtifactRef>, Vec<proef_core::diag::Diag>> {
+    let fault = |detail: String| {
+        vec![proef_core::diag::Diag::error(
+            "proef::run::asset_unstageable",
+            format!("scenario `{}`: {detail}", lowered.name),
+        )]
+    };
+    std::fs::create_dir_all(asset_dir)
+        .map_err(|err| fault(format!("cannot create {}: {err}", asset_dir.display())))?;
+    let Some(artifact) = emit::emit(lowered, stem, world) else {
+        return Ok(None);
+    };
+    crate::assets::stage_assets(
+        &artifact.assets,
+        crate::assets::AssetRoots {
+            feature: &crate::fsutil::parent_dir(feature_path),
+            project: project_root,
+        },
+        asset_dir,
+    )
+    .map_err(|err| fault(err.to_string()))?;
+    Ok(Some(write_run_record(artifact, artifacts_dir)))
+}
+
 /// Write one scenario's run-dir record — the `.hurl`/`.map.json`/`.vars`
-/// sidecars plus any referenced assets — and hand back the artifact the
-/// engine executes against. The run dir holds the exact executed bytes.
-/// Record writes are best-effort (the run proceeds) but never silent — the
-/// record is the debugging surface.
-fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path) -> ArtifactRef {
+/// sidecars — and hand back the artifact the engine executes against. The run
+/// dir holds the exact executed bytes. Record writes are best-effort (the run
+/// proceeds) but never silent — the record is the debugging surface.
+///
+/// Assets are **not** written here. They are staged before this is reached,
+/// because the staged directory is the engine's context root: a file that is
+/// merely missing from the record costs a reader some context, while one
+/// missing from the root costs the run its meaning.
+fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path) -> ArtifactRef {
     write_or_warn(
         &artifacts_dir.join(format!("{}.hurl", artifact.slug)),
         &artifact.hurl_text,
@@ -1813,13 +1905,6 @@ fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path, root: &Path)
     }
     if let Some(vars) = &artifact.vars {
         write_or_warn(&artifacts_dir.join(format!("{}.vars", artifact.slug)), vars);
-    }
-    // Referenced `file,…;` assets ride along so the run-dir artifact replays
-    // under stock hurl (ADR-0010 hand-off). The run itself is unaffected
-    // (the engine reads bodies from the suite, fenced by its context dir) —
-    // an incomplete run record is a warning, not a failure.
-    if let Err(err) = crate::assets::copy_assets(&artifact.hurl_text, root, artifacts_dir) {
-        crate::render::errln!("warning: run record for {}.hurl: {err}", artifact.slug);
     }
     ArtifactRef {
         slug: Arc::from(artifact.slug.as_str()),

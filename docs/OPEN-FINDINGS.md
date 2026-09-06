@@ -29,6 +29,115 @@ was re-checked against `main` on **2026-08-10**.
 
 ---
 
+## Ingested — the hurl-coverage audit (2026-09-05), validated claim-by-claim
+
+**The question:** can every hurl test case now be wrapped in Gherkin? Answered
+by enumerating hurl 8.0.1's own surface from its AST — 8 section kinds, 7 body
+byte kinds (5 multiline variants incl. GraphQL), 42 options — and checking each
+against both body forms. Coverage is near-total *by construction*: the fragment
+scanner implements hurl's own `Visitor`, so it has no per-construct enumeration
+to fall out of date, and only 4 of the 42 options are constrained at all (the
+ADR-0007 budget rules on `retry`/`repeat`/`delay`/`retry-interval`).
+
+**Shipped:** the two defects the audit found — a `file,…;` body in a `ref:`
+fragment was unresolvable, and staged assets collided across scenarios. See
+the ADR-0018 amendment of the same date.
+
+**A premise of the audit's own first pass that did not survive validation.**
+Path-valued options were reported as sharing the file-body defect. They do not:
+`runner/options.rs` never consults `context_dir`, so `cacert`, `client-cert`,
+`client-key` and `netrc-file` reach curl as raw CWD-relative strings under both
+runners, identically. `[Options] output:` *is* context-dir mediated
+(`runner/output.rs`), via a later path than the option table — which is what
+made the first reading look right.
+
+### Open — the two remaining gaps are by design, and stay that way
+
+**H1. One `ref:` names one entry.** A `.hurl` file is usually one test case
+spanning several chained entries; wrapping it means annotating each entry and
+writing one `ref:` step per entry. Deliberate (ADR-0018 fixes the annotation at
+one entry, permanently) and *not silent*: `proef fragments` prints
+`UNANNOTATED — not referenceable` per entry with its line, and
+`--require-annotated` exits 1. Declined rather than open: a multi-entry `ref:`
+would have to decide where the run ends, which is the orchestration ADR-0018
+keeps in YAML.
+
+**H2. A cross-entry `[Options] variable:` does not carry into a fragment.**
+hurl's `variable:` assigns into one shared set that persists forward, so a
+corpus file whose first entry declares `variable: term=ok` and whose second
+reads `{{term}}` runs standalone but is refused by proef at `--dry-run`
+(`proef::lower::unbound_placeholder`). Correct as it stands: a fragment is
+independently runnable by definition, so its inputs must be satisfiable
+without a neighbour having run first. The refusal is early, names the variable,
+and offers the fix that *preserves* standalone runnability — give the fragment
+its own `[Options] variable:`. Worth a porting note in AUTHORING if adopters
+hit it; not worth weakening the check.
+
+**H3. `--dry-run` does not notice a missing `file,…;` asset.** Verified: a
+suite whose asset has been deleted still reports `dry-run OK`. A missing file
+is statically knowable and `--dry-run` is the gate CI runs before standing an
+environment up, so catching it there is the right end state. Deliberately not
+done in the same change as the staging fix, for two reasons worth writing
+down. `dry_run` has its own path and never calls `build_specs`, so the check
+would be *second* code walking artifacts for assets — which "one way to do one
+thing" says should instead be one shared checker both paths call. And the
+reference corpus is run from temp working directories with settings passed by
+environment (TESTING-STRATEGY), so a new filesystem requirement at validation
+time needs its own regression pass over those tests before it can be trusted.
+Until then the run-time failure is early (before the request is sent), names
+the file and the directory it was sought in, and cannot be reached silently.
+
+**H4. The `file,…;` scan in `proef-core` is hurl grammar the grammar guard
+cannot see.** `emit::file_refs_in` finds asset references by scanning for the
+literal `"file,"` and a closing `;`. That is engine syntax living in core, and
+`source_guards.rs::hurl_grammar_in_core_is_the_closed_set_the_adr_names`
+does not catch it: `engine_grammar_kind` classifies fences, `HTTP`,
+`[Section]` headers, method lines and `key: value` options, and a body
+reference matches none of those — so the literal is neither on the sanctioned
+list nor detected as missing from it. Pre-existing, not introduced by the
+staging change (`git show` confirms the scan body is byte-identical to the
+former `file_references`), which is why it was not fixed alongside it. Two
+ways out, both real work: widen `engine_grammar_kind` so the set is closed
+over the shapes ADR-0002 names rather than the shapes the guard happens to
+classify — the same correction the method-line arm already records — or move
+the scan behind the seam, where `proef-engine-hurl`'s `Visitor` already reads
+filenames from hurl's own AST (`fragment.rs`, `visit_filename`). The second is
+the ADR-0002 answer; it needs a `StepKindSpec` entry beside `validate`,
+`fragments` and `options`, and hurl_core supplies the hooks for it already
+(`visit_file` for `Bytes::File`, `visit_filename_param`/`visit_filename_value`
+for multipart parts — `hurl_core-8.0.1/src/ast/visit.rs`).
+
+Two consequences of the text scan worth recording with it. It cannot tell a
+real `file,…;` body from the same six characters inside a JSON or text
+assertion body. And `collect_assets` only inspects `StepPayload::HurlEntries`,
+never `StepPayload::Structured` — the variant reserved for a future non-hurl
+engine — so the *root* (`assets/<slug>/`, per scenario) generalizes while the
+*recognition* of what belongs in it does not. ADR-0002's acceptance test
+("adding an engine leaves `proef-core` diff-empty") is what would catch that,
+and the seam above is what would satisfy it.
+
+**H5. A fragment's directory is re-derived from its display name, inverting
+`SourceNaming` without its canonicalize fallback.** `assets.rs::AssetRoots::
+source_dir` turns a recorded `file.hurl#name` back into a directory by
+splitting the qualifier and joining against the project root. But that name is
+produced once, at what the codebase calls the naming boundary
+(`front::read_corpus` → `naming.name(&path)`), and `SourceNaming::relative` is
+more than a strip: it falls back to comparing canonical forms precisely
+because a lexical-only version already shipped a bug (a suite reached through
+a symlink — macOS `/tmp` → `/private/tmp` — silently failed to match, R11-9).
+The inverse here has no such fallback. The two agree today because both are
+seeded from `config.root()` and discovery walks from that same root, so only
+the lexical case is exercised; nothing enforces that they stay inverses, and
+`AssetRoots`' unit tests hand-build the struct rather than going through a
+real `SourceNaming`. The deeper fix is to carry the resolved source directory
+through the data model — `Fragment`/`ScannedFragment` holding the real
+`PathBuf` beside `file: String`, threaded onto `AssetRef` — so staging is a
+lookup rather than a re-parse. Not done here because it is a data-model change
+across three crates, and because the record must keep carrying the portable
+*name*: the resolved path would have to travel beside it, never replace it.
+
+---
+
 ## Ingested — validation round 19 (2026-09-02), validated claim-by-claim
 
 An external round against v0.15.0+v0.16.0 (66 commits). Every finding was

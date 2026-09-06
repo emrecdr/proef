@@ -405,12 +405,29 @@ impl Fragment {
     /// what a run record carries so it can be read back long after the pack
     /// that named it changed.
     ///
-    /// Next to [`PackSet::find_fragment`], which parses the same form via
-    /// `pack_ref_matches`: producing it 400 lines from where it is consumed is
-    /// how the two stop agreeing on what the separator means.
+    /// Next to [`split_qualified`], which parses the same form: producing it
+    /// far from where it is consumed is how the two stop agreeing on what the
+    /// separator means.
     #[must_use]
     pub fn qualified(&self) -> String {
         format!("{}#{}", self.file, self.name)
+    }
+}
+
+/// Split a qualified reference into `(file or pack, name)` — the reader for
+/// the form [`Fragment::qualified`] writes, and the one `use:` accepts too.
+/// `None` on the left when the reference carries no qualifier at all.
+///
+/// One reader, because there were three: [`PackSet::find_use_target`] and
+/// [`PackSet::find_fragment`] each split to resolve a target, and a caller
+/// that needs only the file half — to find the directory a fragment's assets
+/// live beside — was about to be a third, in another crate. The separator is
+/// one decision; every place that takes it apart now reads it here.
+#[must_use]
+pub fn split_qualified(reference: &str) -> (Option<&str>, &str) {
+    match reference.split_once('#') {
+        Some((qualifier, name)) => (Some(qualifier), name),
+        None => (None, reference),
     }
 }
 
@@ -426,26 +443,20 @@ impl PackSet {
 
     /// Resolve a `use:` target (`name` or `pack.yaml#name`) to a macro.
     pub fn find_use_target(&self, target: &str) -> Option<&Macro> {
-        match target.split_once('#') {
-            Some((pack_ref, name)) => self
-                .macros
-                .get(name)
-                .filter(|m| pack_ref_matches(&m.pack, pack_ref)),
-            None => self.macros.get(target),
-        }
+        let (pack_ref, name) = split_qualified(target);
+        self.macros
+            .get(name)
+            .filter(|m| pack_ref.is_none_or(|r| pack_ref_matches(&m.pack, r)))
     }
 
     /// Resolve a `ref:` target (`name` or `file.hurl#name`) to a fragment —
     /// the same two spellings `use:` accepts, qualified the same way, because
     /// they answer the same question.
     pub fn find_fragment(&self, target: &str) -> Option<&Fragment> {
-        match target.split_once('#') {
-            Some((file_ref, name)) => self
-                .fragments
-                .get(name)
-                .filter(|f| pack_ref_matches(&f.file, file_ref)),
-            None => self.fragments.get(target),
-        }
+        let (file_ref, name) = split_qualified(target);
+        self.fragments
+            .get(name)
+            .filter(|f| file_ref.is_none_or(|r| pack_ref_matches(&f.file, r)))
     }
 }
 
@@ -852,7 +863,23 @@ impl Diag {
 
 #[cfg(test)]
 mod tests {
-    use super::{Admit, CorpusBudget, FragmentCorpus};
+    use super::{Admit, CorpusBudget, FragmentCorpus, split_qualified};
+
+    /// The separator round-trips with the writer, and an unqualified reference
+    /// is a bare name rather than an empty qualifier — the distinction both
+    /// resolvers filter on.
+    #[test]
+    fn a_qualified_reference_splits_back_into_what_wrote_it() {
+        assert_eq!(
+            split_qualified("admin/upload.hurl#upload"),
+            (Some("admin/upload.hurl"), "upload")
+        );
+        assert_eq!(split_qualified("upload"), (None, "upload"));
+        // A name may not contain the separator (`an_annotation_name_containing
+        // _a_hash_is_refused`), so the first `#` is the only one that can
+        // divide a well-formed reference.
+        assert_eq!(split_qualified("f.hurl#a#b"), (Some("f.hurl"), "a#b"));
+    }
 
     /// The corpus bound, exhaustively — the accumulation case included, which
     /// an end-to-end test could only reach by writing 64 MiB.

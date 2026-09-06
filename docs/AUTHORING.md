@@ -277,6 +277,30 @@ silently from that entry on (hurl's `variable:` assigns into one shared set),
 so `proef::lower::bind_shadows_capture` names it — rename the binding if the
 capture was the point.
 
+### Where a `file,…;` asset lives
+
+A file body — a request body, a multipart part, or a `file,…;` an assert
+compares against — sits **beside the source that names it**:
+
+| The step is | The file goes | Because |
+|---|---|---|
+| `hurl: \|` (inline) | beside the **feature** | the suite is one unit; `tests/features/fixture.jpg` serves `tests/features/*.feature` |
+| `ref: <name>` | beside the **fragment** | that is where stock `hurl` looks, so the file keeps running on its own |
+
+This is hurl's own rule (its `--file-root` defaults to the `.hurl` file's
+directory), and the one Karate, pytest and Jest use for fixtures. You never
+set a root: proef stages each asset from its own source into the run's
+`artifacts/assets/<slug>/`, and the emitted artifact carries the matching
+`--file-root` in its replay line, so the hand-off runs unchanged under stock
+`hurl`.
+
+Two consequences worth knowing. The path must be a plain relative one — no
+leading `/`, no `..` — because it names a file inside your suite, not a
+location on the machine. And a missing file fails the scenario *before* the
+request, naming the directory it was looked for in
+(`proef::run::asset_unstageable`), rather than letting hurl report an
+unreadable body against the artifact.
+
 ## Recipes — the three shapes every real suite needs
 
 ### Log in, then use the token
