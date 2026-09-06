@@ -103,8 +103,15 @@ timeout-ms = 60000
 
 `--run-id` accepts any single path component, and a run named that way writes
 a perfectly good record that `explain`, `diff`, `flaky`, `report` and
-`--rerun` all find — "the latest run" is resolved by *when a run started*, not
-by the shape of its directory name (ADR-0021).
+`--rerun` all find — a directory is a record because it **holds** an
+`events.jsonl`, not because of the shape of its name (ADR-0021).
+
+"The latest run" is resolved by time rather than by spelling, and where that
+time comes from differs by name: a generated id is a uuid-v7, which carries the
+moment proef minted it, while a custom id carries no time at all and orders by
+the directory's modification time instead. Both are wall-clock, so the two
+compare directly — but a custom-id record that is later copied or restored
+sorts by *that* moment, not by when it ran.
 
 What a custom id changes is rotation: proef deletes only **uuid-named**
 directories, so `[run] keep-runs` will never reclaim `.proef-runs/pr-1234/`.

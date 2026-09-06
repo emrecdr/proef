@@ -531,6 +531,45 @@ Regrouping preserved every entry and its order within its kind.
   The claim was reasoning, not measurement, which is the failure this whole
   section of the changelog exists to record.
 
+### Internal
+
+- **A fixture that spells the record by hand can no longer drift off the
+  schema.** `explain`'s truncated-record test wrote its stream as three JSON
+  string literals, and all three had drifted: a `scenarios` count on the head,
+  a `schema` on the body events, a `line` on the close. `Event` carries none of
+  them. Nothing failed and nothing could — the reader has no
+  `deny_unknown_fields`, so a stale key parses cleanly and is dropped, and a
+  fixture built to assert "a record holding one passed scenario" was
+  three-quarters describing a format proef has never written. It is typed now,
+  through the helpers its two neighbours already use.
+
+  The class is closed by a sixth `source_guards.rs` rule: every string literal
+  in the workspace that parses as a JSON object tagged `event` must
+  deserialize as an `Event`, and every key in it must matter — **a key is
+  phantom when deleting it yields the same `Event`.** Inertness rather than an
+  inventory, so it stays correct through renames, `#[serde(default)]` and
+  `skip_serializing_if`, none of which a key-set comparison survives.
+  Substring assertions against records proef actually emitted
+  (`"event":"run_finished","passed":1`) are skipped by construction — they are
+  not objects, and they check the opposite direction.
+
+- **Each doc check now lives in the half of the gate that its own rule
+  names.** `tests/docs.rs` holds the checks that need a built binary (they ask
+  clap, rather than parsing help text into a model that could drift);
+  `xtask docs-check` holds the ones that read files. The changelog-heading
+  check added moments earlier read one file and parsed headings, so it sat in
+  the wrong half — and the cost was concrete rather than tidy: it never ran in
+  the fast doc-only CI step, only under a full nextest that had to build a
+  binary it did not use.
+
+- **A PR that changes source now has to record itself.** `RELEASING.md` has
+  always said that every landed change adds an `[Unreleased]` line in the
+  commit series that lands it, and nothing checked it — this very entry is the
+  one that was missed. Measured before being written: across the previous 21
+  source-touching merges the rule would have fired exactly once, on exactly the
+  commit that broke it, so the check earns its place by count rather than by
+  argument.
+
 ## [0.16.0] - 2026-08-31 (the surfaces tell the truth: an eight-wave improvement programme, and the round that found what it missed)
 > Supersedes **0.15.0**, which was cut (`release: v0.15.0`, 2026-08-25) but never
 > tagged or published — its changes are all here, and crates.io goes 0.14.0 →

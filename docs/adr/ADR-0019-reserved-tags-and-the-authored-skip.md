@@ -1,10 +1,10 @@
 # ADR-0019 — Reserved tags and the authored skip
 
-## Status
+**Status:** Accepted · **Date:** 2026-08-24
 
-Accepted (2026-08-24). Emerged from the Robot Framework capability audit
-(OPEN-FINDINGS, "RF wave 2"); every design fact below was verified against the
-tree or reproduced empirically before acceptance.
+Emerged from the Robot Framework capability audit (OPEN-FINDINGS, "RF wave 2");
+every design fact below was verified against the tree or reproduced empirically
+before acceptance.
 
 ## Context
 

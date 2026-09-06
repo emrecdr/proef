@@ -106,6 +106,58 @@ jobs:
         run: cargo run -p proef --locked -- doctor
 
   # PR fuzz smoke (TESTING-STRATEGY): 30 s per target; the full run is nightly.
+  changelog:
+    # RELEASING.md: "every landed change adds a line [to `[Unreleased]`] in the
+    # same commit series that lands it." Nothing enforced it, and the rule was
+    # broken exactly once — by the commit series that added the guard for the
+    # changelog's *shape*, which is a fair illustration of why prose is not a
+    # gate.
+    #
+    # Sized before it was written: across the 21 source-touching merges
+    # preceding it, this rule would have fired once, on that one commit. Pure
+    # test and pure perf changes all carried an entry, so "source changed"
+    # tracks "worth recording" closely here — which is a fact about this
+    # repository's habits, not a general law, and the escape hatch exists for
+    # where it stops being true.
+    name: changelog entry
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base commit has to be present to diff against it; the default
+          # shallow fetch has only the merge ref.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: a change that lands records itself
+        env:
+          # Via `env`, never interpolated into `run` — a PR title is attacker
+          # -controlled text and `${{ }}` in a shell body is a template
+          # injection (zizmor flags it, correctly).
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE...$HEAD")"
+          source_changed="$(printf '%s\n' "$changed" | grep -E '^(crates|xtask)/.*\.rs$' || true)"
+          if [ -z "$source_changed" ]; then
+            echo "no Rust source changed — nothing to record"; exit 0
+          fi
+          if printf '%s\n' "$changed" | grep -qx 'docs/CHANGELOG.md'; then
+            echo "source changed and docs/CHANGELOG.md changed with it"; exit 0
+          fi
+          case "$TITLE" in
+            *"[no changelog]"*)
+              echo "::notice::source changed with no changelog entry, waived by [no changelog] in the title"
+              exit 0 ;;
+          esac
+          echo "::error file=docs/CHANGELOG.md::This PR changes Rust source but adds no [Unreleased] entry. RELEASING.md: every landed change adds a line there in the same commit series that lands it. If this genuinely is not worth recording, put [no changelog] in the PR title."
+          printf '%s\n' "$source_changed" | sed 's/^/  /'
+          exit 1
+
   fuzz-smoke:
     name: fuzz smoke (30s/target)
     timeout-minutes: 20
