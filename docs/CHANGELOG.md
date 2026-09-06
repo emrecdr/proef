@@ -13,6 +13,8 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
+
 ### Added
 
 - **`[http] cookie-store = false` runs the whole suite cookie-less** — hurl
