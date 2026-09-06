@@ -394,6 +394,39 @@ build requirement).
       (library): `emit::artifact_slug` keeps its signature while its first
       argument changes meaning from stem to feature path — a break the API gate
       cannot see
+- [x] the hurl-coverage audit → v0.17.0 (#164–#166) — the question was whether
+      every hurl test case can now be wrapped in Gherkin. Answered by
+      enumerating hurl 8.0.1's surface from its own AST (8 section kinds, 7 body
+      byte kinds, 42 options) and checking each against both body forms:
+      coverage is near-total *by construction*, because the fragment scanner
+      implements hurl's own `Visitor` and has no per-construct enumeration to
+      fall out of date, and only 4 of the 42 options are constrained at all
+      (ADR-0007's budget rules). Two defects fell out. A `file,…;` body in a
+      `ref:` fragment was unreachable — hurl resolves one against the directory
+      of the file that *wrote* the reference, proef resolved every one against
+      the feature, so the same bytes passed under stock `hurl` and failed under
+      proef as exit 2, with no workaround (the sandbox refuses a reaching `../`,
+      and the advice it prints names a `--file-root` flag proef does not
+      expose). And staging was flat, so two features each keeping a `data.json`
+      staged over one another — last writer wins, silently, while
+      `artifact_slug` had already refused that same trade for the `.hurl` text.
+      Both closed by staging each asset from beside the source that named it
+      into the scenario's own asset root, which is then the engine's context
+      dir: hurl offers one context dir per run of entries and no per-entry
+      override, while a single batch may mix both body forms — measured, an
+      inline step and a `ref:` step lower to one batch — so two roots at once
+      was never available. A `/simplify` round then caught a regression the fix
+      had itself introduced (`[Options] output:` resolves through the same root,
+      which the staging loop only created when there was something to stage) and
+      collapsed the third hand-rolled split of `file.hurl#name` into
+      `pack::split_qualified`. Left open deliberately, in OPEN-FINDINGS H1–H5:
+      one `ref:` names one entry, a cross-entry `[Options] variable:` does not
+      carry into a fragment, `--dry-run` does not yet notice a missing asset,
+      and the `file,…;` scan is engine grammar in core that the ADR-0002 guard
+      cannot classify. Breaking (library): `emit::file_references` →
+      `Artifact::assets` carrying each reference with the source that wrote it,
+      plus `emit::asset_root`; the canonical artifact format moved, since an
+      artifact that reads a file now names its `--file-root` in the replay line
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.
