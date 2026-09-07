@@ -161,6 +161,11 @@ pub fn execute(
     external_cancel: Option<CancellationToken>,
 ) -> ExitCode {
     let started = std::time::Instant::now();
+    // Installed before anything else runs — the front end, the run-dir
+    // creation, the record — so no window is left where a signal takes the
+    // process default and kills the run mid-write. Under `--watch` the loop
+    // owns the handler and hands us its token instead.
+    let cancel = external_cancel.unwrap_or_else(install_interrupt);
     // Resolve the active environment once. All three calls consult `env_profile`,
     // so any of them surfaces an unknown `--env` (user error); the match below
     // reports the first such error.
@@ -360,16 +365,37 @@ pub fn execute(
         return ExitCode::SystemError;
     }
 
-    // Reporters: console (stdout + run.log tee) and the JSONL record.
-    let events_file = match std::fs::File::create(run_dir.join("events.jsonl")) {
-        Ok(file) => file,
+    // Reporters: console (stdout + run.log tee) and the JSONL record. Both
+    // run-dir writers go through `LatchedFile`, because their reporters
+    // swallow write errors by design; only the record's flag reaches the
+    // exit code — see `LatchedFile` for the split.
+    let (events_file, record_failed) = match std::fs::File::create(run_dir.join("events.jsonl")) {
+        Ok(file) => LatchedFile::new(
+            file,
+            "error",
+            "events.jsonl",
+            "the run record is incomplete",
+        ),
         Err(err) => {
             crate::render::errln!("error: cannot create events.jsonl: {err}");
             return ExitCode::SystemError;
         }
     };
     let log_file = match std::fs::File::create(run_dir.join("run.log")) {
-        Ok(file) => Some(file),
+        Ok(file) => {
+            // The mirror's flag is deliberately dropped: creation of run.log
+            // is already warn-and-continue, and a mid-run write failure keeps
+            // the same contract — one warning, verdict untouched. The full
+            // truth is `events.jsonl`, whose latch above is the one that
+            // escalates.
+            let (file, _mirror_failed) = LatchedFile::new(
+                file,
+                "warning",
+                "run.log",
+                "the console mirror is truncated",
+            );
+            Some(file)
+        }
         Err(err) => {
             // Best-effort mirror — the run proceeds, but never silently.
             crate::render::errln!(
@@ -408,25 +434,6 @@ pub fn execute(
     // (ADR-0015): the clock and thread-id reads live here, at the CLI edge, so
     // the core stays sans-IO. `stamp` runs on the emitting worker thread.
     let sink = stamp_scenario_timing(proef_core::report::sink(reporters, redactions.clone()));
-
-    // Ctrl-C: first = graceful cancel, second = hard exit (ADR-0007). Under
-    // `--watch` the loop owns the handler and hands us its token instead.
-    let cancel = external_cancel.unwrap_or_else(|| {
-        let cancel = CancellationToken::new();
-        let handler_token = cancel.clone();
-        let once = AtomicBool::new(false);
-        let _ = ctrlc::set_handler(move || {
-            if once.swap(true, Ordering::SeqCst) {
-                crate::render::errln!("\nsecond interrupt — hard exit");
-                std::process::exit(crate::INTERRUPT_EXIT_CODE);
-            }
-            crate::render::errln!(
-                "\ninterrupt — cancelling after current batches (Ctrl-C again to force)"
-            );
-            handler_token.cancel();
-        });
-        cancel
-    });
 
     // `--max-fail`: wrapped after the timing stamp so every emitter flows
     // through it. Semantics live on `trip_on_max_fail` itself.
@@ -689,7 +696,8 @@ pub fn execute(
             let teardown_cancel = CancellationToken::new();
             if cancel.is_cancelled() {
                 crate::render::errln!(
-                    "cleaning up — running teardown after the interrupt (Ctrl-C again to skip)"
+                    "cleaning up — running teardown after the interrupt \
+                     (a second interrupt hard-exits, dropping the reports)"
                 );
             }
             match run_phase(
@@ -962,16 +970,19 @@ pub fn execute(
             note_scaffold_state(&config_vars, &summary, path);
         }
 
-        // Fold the JUnit-write failure in BEFORE anything serializes the verdict.
-        // It used to be applied as a `return` after the machine-readable body had
-        // already been printed, so `--format json` reported an `exit_code` the
-        // process then exited past — a body that disagrees with its own program is
-        // worse than no body, because a consumer has no way to notice.
-        let exit = if reports_failed {
-            ExitCode::SystemError
-        } else {
-            exit
-        };
+        // Fold delivery failures in BEFORE anything serializes the verdict.
+        // The report half used to be applied as a `return` after the
+        // machine-readable body had already been printed, so `--format json`
+        // reported an `exit_code` the process then exited past — a body that
+        // disagrees with its own program is worse than no body, because a
+        // consumer has no way to notice. The record half reads the
+        // `events.jsonl` latch, which is settled by here: `drop(record)`
+        // above wrote (or failed to write) the final `run_finished` already.
+        let exit = escalate_environment_failures(
+            exit,
+            reports_failed,
+            record_failed.load(Ordering::Relaxed),
+        );
 
         (exit, summary, non_gating)
     };
@@ -1576,13 +1587,19 @@ fn write_ci_reports(
             }
         }
     }
-    crate::ci_reports::write_github_summary(
+    // The one sink here that used to be fire-and-forget: a job whose reviewer
+    // reads the summary page must not see exit 0 over a page that is not
+    // there (same rule as JUnit and CTRF above).
+    if let Err(message) = crate::ci_reports::write_github_summary(
         verdict.summary,
         verdict.tag_links,
         run_id,
         verdict.metadata,
         redactions,
-    );
+    ) {
+        crate::render::errln!("error: {message}");
+        reports_failed = true;
+    }
     // GitHub annotations render each failure in the PR diff gutter. They are
     // stdout workflow commands, so emit only under Actions and only when the
     // human report (not `--format json`) owns stdout.
@@ -1953,6 +1970,121 @@ fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
     }
 }
 
+/// A run-dir writer whose failure is *noticed*: the first failed write or
+/// flush prints one line and latches the shared flag; every error still
+/// propagates to the caller (which may ignore it — the latch has already
+/// fired). Exists because the JSONL record's reporter deliberately swallows
+/// write results (a reporter cannot meaningfully report its own channel
+/// dying), so this wrapper is the last place a failed record write is
+/// visible — the same division of labour as `Tee` and `note_stdout_failure`
+/// for the console. What the caller does with the flag sets the severity:
+/// `events.jsonl` folds into the exit code (ADR-0008 — the JSONL record *is*
+/// the record, and a truncated record must not exit by its verdict);
+/// `run.log` does not (its creation is already best-effort, warn-and-run).
+struct LatchedFile<W: Write> {
+    inner: W,
+    failed: std::sync::Arc<AtomicBool>,
+    severity: &'static str,
+    name: &'static str,
+    aftermath: &'static str,
+}
+
+impl<W: Write> LatchedFile<W> {
+    fn new(
+        inner: W,
+        severity: &'static str,
+        name: &'static str,
+        aftermath: &'static str,
+    ) -> (Self, std::sync::Arc<AtomicBool>) {
+        let failed = std::sync::Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                inner,
+                failed: std::sync::Arc::clone(&failed),
+                severity,
+                name,
+                aftermath,
+            },
+            failed,
+        )
+    }
+
+    fn note(&self, err: &std::io::Error) {
+        if !self.failed.swap(true, Ordering::Relaxed) {
+            crate::render::errln!(
+                "{}: cannot write {}: {err} — {}",
+                self.severity,
+                self.name,
+                self.aftermath
+            );
+        }
+    }
+}
+
+impl<W: Write> Write for LatchedFile<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf).inspect_err(|err| self.note(err))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush().inspect_err(|err| self.note(err))
+    }
+}
+
+/// The environment-failure escalation, in one place so it can be pinned: a
+/// report or record proef could not deliver is a system fault whatever the
+/// run's own verdict was — a consumer reading a truncated `events.jsonl` (or
+/// a CI job gating on a `JUnit` file that is not there) must not see the exit
+/// code of a run that delivered everything.
+fn escalate_environment_failures(
+    exit: ExitCode,
+    reports_failed: bool,
+    record_failed: bool,
+) -> ExitCode {
+    if reports_failed || record_failed {
+        ExitCode::SystemError
+    } else {
+        exit
+    }
+}
+
+/// Install the two-stage interrupt for a plain `proef test` (ADR-0007): the
+/// first signal cancels gracefully — in-flight batches finish, the rest
+/// record as skipped, teardown still runs, the reports are written — and the
+/// second hard-exits. With ctrlc's `termination` feature the handler also
+/// fires on SIGTERM/SIGHUP (Unix), so a CI job timeout or `docker stop` gets
+/// the graceful path instead of a truncated record. The callback carries no
+/// signal identity, so the hard-exit code is 130 for every second signal —
+/// the exit contract's point is that it is none of 0/1/2/3 and not a 101.
+fn install_interrupt() -> CancellationToken {
+    let cancel = CancellationToken::new();
+    let handler_token = cancel.clone();
+    let once = AtomicBool::new(false);
+    let installed = ctrlc::set_handler(move || {
+        if once.swap(true, Ordering::SeqCst) {
+            // No print before the exit: the handler runs on ctrlc's own
+            // thread, and stderr's lock may be held by a worker blocked on a
+            // full pipe — a print here can wedge the escape hatch behind the
+            // very stall it exists to escape. The exit code says what
+            // happened; the first signal's notice already named the deal.
+            std::process::exit(crate::INTERRUPT_EXIT_CODE);
+        }
+        crate::render::errln!(
+            "\ninterrupt — cancelling after current batches (a second interrupt hard-exits)"
+        );
+        handler_token.cancel();
+    });
+    if let Err(err) = installed {
+        // Same rule as `watch::install_interrupt`: a session without working
+        // cancellation must say so once, not proceed as if the token could
+        // ever fire.
+        crate::render::errln!(
+            "warning: interrupt handling unavailable ({err}) — a signal will kill the run mid-write"
+        );
+    }
+    cancel
+}
+
 /// Console output tee'd into `run.log` (§11 — the human-readable run record).
 ///
 /// The third field says whether the console leg is **stdout**. It matters on
@@ -1961,8 +2093,14 @@ fn rotate_runs(runs_dir: &Path, current_run: &str, keep: usize) {
 /// place a failed console write is visible — and output proef could not
 /// deliver must not look like success. A disk filling *mid-run* used to
 /// truncate the human report while the run still exited by its verdict; a
-/// disk already full at start was caught. The latch closes the gap.
-struct Tee(Box<dyn Write + Send>, Option<std::fs::File>, bool);
+/// disk already full at start was caught. The stdout latch closes the
+/// console leg's gap; the mirror leg is a `LatchedFile`, which warns once
+/// and keeps the run's verdict (its own doc says why the two differ).
+struct Tee(
+    Box<dyn Write + Send>,
+    Option<LatchedFile<std::fs::File>>,
+    bool,
+);
 
 impl Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -1984,7 +2122,9 @@ impl Write for Tee {
             // console may carry ANSI color for a terminal, and a log file
             // full of escape bytes is the classic grep/less pollution. The
             // strip is byte-safe on partial writes — codes the reporter
-            // emits arrive whole within one `writeln!`.
+            // emits arrive whole within one `writeln!`. The dropped result
+            // is deliberate: `LatchedFile` has already warned and latched,
+            // and a mirror failure must not fail the console write.
             let _ = file.write_all(&strip_ansi_escapes::strip(&buf[..written]));
         }
         Ok(written)
@@ -2026,10 +2166,82 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).unwrap();
+        let (file, _failed) = super::LatchedFile::new(file, "warning", "run.log", "truncated");
         let mut tee = super::Tee(Box::new(std::io::sink()), Some(file), false);
         tee.write_all(b"\x1b[31m2 failed\x1b[0m plain\n").unwrap();
         tee.flush().unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "2 failed plain\n");
+    }
+
+    /// A writer that fails every call — the disk-full stand-in.
+    struct BrokenPipe;
+    impl std::io::Write for BrokenPipe {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("no space left on device"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("no space left on device"))
+        }
+    }
+
+    /// The record's writer must *notice* a failed write: latch the shared
+    /// flag (once — later failures stay quiet) and still propagate the
+    /// error. The reporter above it is allowed to ignore the result
+    /// precisely because this layer already recorded it.
+    #[test]
+    fn a_failed_record_write_latches_and_propagates() {
+        use std::io::Write as _;
+        use std::sync::atomic::Ordering;
+        let (mut writer, failed) =
+            super::LatchedFile::new(BrokenPipe, "error", "events.jsonl", "incomplete");
+        assert!(!failed.load(Ordering::Relaxed), "latch must start clear");
+        assert!(writer.write(b"x").is_err(), "the error must propagate");
+        assert!(failed.load(Ordering::Relaxed), "the first failure latches");
+        assert!(writer.flush().is_err(), "later failures still propagate");
+        assert!(failed.load(Ordering::Relaxed), "and the latch stays set");
+    }
+
+    /// A clean writer never trips the latch, and bytes pass through intact.
+    #[test]
+    fn a_clean_record_write_leaves_the_latch_clear() {
+        use std::io::Write as _;
+        use std::sync::atomic::Ordering;
+        let mut sink = Vec::new();
+        {
+            let (mut writer, failed) =
+                super::LatchedFile::new(&mut sink, "error", "events.jsonl", "incomplete");
+            writer.write_all(b"line\n").unwrap();
+            writer.flush().unwrap();
+            assert!(!failed.load(Ordering::Relaxed));
+        }
+        assert_eq!(sink, b"line\n");
+    }
+
+    /// The delivery-failure fold, pinned combinationally: either failure —
+    /// a CI report proef could not write, or a truncated run record — turns
+    /// any verdict into a system error; neither failing leaves the verdict
+    /// alone.
+    #[test]
+    fn delivery_failures_escalate_any_verdict_to_system_error() {
+        use proef_core::error::ExitCode;
+        for verdict in [
+            ExitCode::Success,
+            ExitCode::TestFailure,
+            ExitCode::UserError,
+        ] {
+            assert_eq!(
+                super::escalate_environment_failures(verdict, false, false),
+                verdict,
+                "no failure must not touch the verdict"
+            );
+            for (reports, record) in [(true, false), (false, true), (true, true)] {
+                assert_eq!(
+                    super::escalate_environment_failures(verdict, reports, record),
+                    ExitCode::SystemError,
+                    "reports_failed={reports} record_failed={record}"
+                );
+            }
+        }
     }
 
     /// The permutation is a contract like the shard assignment below: seeded
@@ -2393,6 +2605,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("run.log");
         let file = std::fs::File::create(&path).expect("create");
+        let (file, _failed) = super::LatchedFile::new(file, "warning", "run.log", "truncated");
         let mut tee = Tee(Box::new(ShortWriter(Vec::new())), Some(file), false);
 
         tee.write_all(b"abcdefghij").expect("write_all");

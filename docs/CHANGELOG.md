@@ -13,6 +13,56 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Added
+
+- **SIGTERM and SIGHUP now take the graceful path** (ctrlc's `termination`
+  feature): a CI job timeout or `docker stop` cancels the run — in-flight
+  batches finish, the rest record as skipped, teardown runs, the reports are
+  written, and the record closes with a `cancelled` `run_finished` — where it
+  used to kill the process mid-write and leave a truncated record with no
+  tail. A second signal still hard-exits 130 (the handler carries no signal
+  identity, so the code is 130 for every second signal). Pinned by
+  `sigterm_cancels_gracefully_and_the_record_completes` and — for the first
+  time anywhere — an exit-130 assertion,
+  `a_second_interrupt_hard_exits_with_130`.
+
+### Fixed
+
+- **A run-record write that fails now reaches the exit code.** The JSONL
+  reporter deliberately swallows write results (a reporter cannot report its
+  own channel dying), and `events.jsonl` was handed a bare `File` — so a disk
+  filling *mid-run* truncated the record while the run still exited by its
+  verdict, the exact class the v0.6–v0.8 series closed for the console. The
+  record's writer now latches its first failure (one stderr line, run
+  continues) and the exit funnel turns it into a system error, the same shape
+  as the stdout latch and the JUnit-write fold — unified in one pinned
+  function, `escalate_environment_failures`. `run.log`'s mirror keeps its
+  own contract (creation is warn-and-continue, so a mid-run failure warns
+  once and leaves the verdict alone — previously it was silent).
+
+- **The GitHub step summary can fail again.** It was the only CI sink that
+  couldn't: a failed open or write vanished while JUnit and CTRF failures
+  re-classify the exit — so the page a reviewer actually reads could be
+  missing on a green exit. `write_github_summary` now returns the error and
+  the caller folds it into the same `reports_failed` path as its siblings.
+
+- **A custom `--run-id` no longer collapses the JUnit report identity onto
+  the nil uuid.** ADR-0021 made non-uuid run ids first-class, but the report
+  uuid was `parse_str(...).unwrap_or(nil)` — every `--run-id ci` run emitted
+  `00000000-…`, colliding in any consumer keyed on it. A non-uuid id now
+  derives a stable UUIDv5 from its bytes (a uuid id passes through verbatim).
+
+- **The interrupt window and the interrupt's own words.** The handler is
+  installed at the top of `execute` — before the front end, the run dir and
+  the record exist — so no startup window takes the process default any
+  more. Its installation failure is a printed warning (it was silently
+  ignored, unlike `--watch`'s handler). The second-signal path no longer
+  prints before exiting: the print took stderr's lock, which a worker
+  blocked on a full pipe can hold, wedging the escape hatch behind the very
+  stall it exists to escape. And the teardown notice said "Ctrl-C again to
+  skip" when a second interrupt actually hard-exits dropping every report —
+  it now says what happens.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added
