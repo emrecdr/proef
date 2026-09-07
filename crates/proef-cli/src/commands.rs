@@ -350,10 +350,7 @@ pub fn doctor(
     // Warn, never Fail: the engine is embedded, so a run needs no `hurl`
     // binary — but ADR-0018's replay promise ("the same bytes run under
     // stock hurl") and the emitted `# replay:` hints do.
-    let (status, detail) = match std::process::Command::new("hurl")
-        .arg("--version")
-        .output()
-    {
+    let (status, detail) = match std::process::Command::new("hurl").arg("--version").output() {
         Ok(out) if out.status.success() => {
             let version = String::from_utf8_lossy(&out.stdout);
             let first = version.lines().next().unwrap_or("hurl").to_owned();
@@ -361,7 +358,8 @@ pub fn doctor(
         }
         _ => (
             DoctorStatus::Warn,
-            "not on PATH — artifacts and `ref:` fragments replay under stock hurl              only when it is installed"
+            "not on PATH — artifacts and `ref:` fragments replay under stock hurl \
+             only when it is installed"
                 .to_owned(),
         ),
     };

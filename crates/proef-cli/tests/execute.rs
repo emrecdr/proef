@@ -1328,6 +1328,103 @@ fn an_all_skipped_suite_exits_zero() {
     let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(body["skipped"], 2, "{body}");
     assert_eq!(body["passed"], 0, "{body}");
+    // The two keys the body used to drop (0.18 survey) are always present now,
+    // even at their zero/false — a script can read them unconditionally.
+    assert_eq!(body["warned"], 0, "{body}");
+    assert_eq!(body["cancelled"], false, "{body}");
+}
+
+/// A tag that looks like a reserved one but is not exactly it warns with the
+/// spelling it likely meant (0.18 survey: `@quarantined` silently gated the
+/// build). End-to-end so the wiring through `front::run` is proven, and it
+/// names the code `proef::tags::reserved_tag_typo` for the source guard.
+#[test]
+fn a_reserved_tag_typo_warns_with_a_did_you_mean() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @quarantined\n  Scenario: meant to be quarantined\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    // `--dry-run` renders warnings without a network — the warning is a
+    // front-end finding, so it surfaces at validation.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--dry-run"])
+        .assert()
+        .code(0); // a warning does not fail the run
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("proef::tags::reserved_tag_typo"),
+        "the diagnostic code must appear:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("@quarantine"),
+        "the did-you-mean must name the intended tag:\n{stderr}"
+    );
+}
+
+/// A warned scenario (an `optional:` step failed) must be *visible* in the
+/// machine sinks, not folded into `passed` (0.18 survey: warned was invisible
+/// everywhere but the HTML report). `test --format json` counts it, JUnit
+/// notes it in system-out, CTRF flags it under `extra`.
+#[test]
+fn a_warned_scenario_is_visible_in_every_machine_sink() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: warns\n    When the flaky probe is optional\n",
+    )
+    .unwrap();
+    // An `optional:` step that fails warns the scenario without failing it.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  flaky:\n    match: the flaky probe is optional\n    steps:\n      \
+         - optional: true\n        hurl: |\n          GET ${url:base}/health\n          HTTP 404\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--junit",
+            "report.junit.xml",
+            "--ctrf",
+            "report.ctrf.json",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(0); // warned does not gate
+    let body: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&assert.get_output().stdout).trim()).unwrap();
+    assert_eq!(
+        body["warned"], 1,
+        "test --format json must count the warning:\n{body}"
+    );
+    assert_eq!(body["passed"], 1, "a warned scenario still passed:\n{body}");
+
+    let junit = std::fs::read_to_string(cwd.path().join("report.junit.xml")).unwrap();
+    assert!(
+        junit.contains("warned (non-gating)"),
+        "JUnit must note the warning in system-out:\n{junit}"
+    );
+    let ctrf: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cwd.path().join("report.ctrf.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        ctrf["results"]["tests"][0]["extra"]["warned"], true,
+        "CTRF must flag the warning under extra:\n{ctrf}"
+    );
 }
 
 /// A quarantined failure reaches JUnit as skipped-with-message, so the

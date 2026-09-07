@@ -78,6 +78,34 @@ pub fn write_junit(
         .map_err(|err| format!("cannot serialize JUnit report: {err}"))
 }
 
+/// The `JUnit` `<system-out>` note for a passing/warned case, if it earns one.
+///
+/// A flaky pass records the attempt count; a warned scenario (an `optional:`
+/// step failed, or a `saveAs: global` promotion was refused) is a `success`
+/// in `JUnit`'s model — there is no warned status — but must not read as
+/// spotless (0.18 survey: warned was invisible in every machine sink but
+/// HTML). The note makes it visible without changing the pass/fail counts a
+/// gate reads.
+fn system_out_note(outcome: &ScenarioOutcome, redactions: &Redactions) -> Option<String> {
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(attempts) = flaky_pass_attempts(outcome) {
+        notes.push(format!("passed on attempt {attempts}"));
+    }
+    if outcome.status == Status::Warned {
+        let detail = outcome
+            .steps
+            .iter()
+            .find(|s| s.status == Status::Warned)
+            .and_then(|s| s.detail.as_deref())
+            .map_or_else(
+                || "an optional step failed or a global promotion was refused".to_owned(),
+                |d| redactions.apply(d),
+            );
+        notes.push(format!("warned (non-gating): {detail}"));
+    }
+    (!notes.is_empty()).then(|| notes.join("\n"))
+}
+
 /// The attempt count a scenario finally passed on, if it went green only after
 /// retries — the single home for the "flaky pass?" query (`JUnit` + job summary).
 fn flaky_pass_attempts(outcome: &ScenarioOutcome) -> Option<u32> {
@@ -214,10 +242,8 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     case.extra
         .insert("file".into(), redactions.apply(&outcome.file).into());
     case.set_time(outcome.cost());
-    // Honest flaky reporting: a scenario that passed only after retries records
-    // the attempt count instead of looking identical to a clean pass.
-    if let Some(attempts) = flaky_pass_attempts(outcome) {
-        case.set_system_out(format!("passed on attempt {attempts}"));
+    if let Some(note) = system_out_note(outcome, redactions) {
+        case.set_system_out(note);
     }
     case
 }

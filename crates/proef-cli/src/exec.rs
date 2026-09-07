@@ -1048,11 +1048,26 @@ fn emit_machine_body(
                 .iter()
                 .map(|(key, value)| (redactions.apply(key), redactions.apply(value)))
                 .collect();
+            // `warned` and `cancelled` were the two counts the body dropped
+            // (0.18 survey): a warned scenario (an `optional:` step failed, or
+            // a `saveAs: global` promotion was refused) folds into `passed`
+            // on `RunSummary`, and `cancelled` was recorded in `run_finished`
+            // but never surfaced here — so a script could not tell a spotless
+            // run from one with warnings, nor a complete run from a cancelled
+            // one. Additive keys: a pipeline reading the original five is
+            // unaffected.
+            let warned = summary
+                .outcomes
+                .iter()
+                .filter(|o| o.status == proef_core::step::Status::Warned)
+                .count();
             let json = serde_json::json!({
                 "run_id": head.run_id,
                 "passed": summary.passed,
+                "warned": warned,
                 "failed": summary.failed,
                 "skipped": summary.skipped,
+                "cancelled": summary.cancelled,
                 "exit_code": exit.code(),
                 "events": run_dir.join("events.jsonl").display().to_string(),
                 "env": head.env,
