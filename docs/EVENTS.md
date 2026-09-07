@@ -16,8 +16,9 @@ optional fields may appear, existing fields never change meaning or vanish.
 Consumers must ignore unknown variants and unknown fields.
 
 **Truncated records.** A record whose last line is *not* `run_finished` is a
-run that did not finish — a hard interrupt (second Ctrl-C, exit 130), a kill,
-or a crash. Treat it as **partial**: the scenarios present did happen, but the
+run that did not finish — a hard interrupt (second signal, exit 130), a
+SIGKILL, or a crash. (A single SIGTERM/SIGHUP is a graceful *cancellation*:
+the record closes normally with `run_finished` + `cancelled`.) Treat it as **partial**: the scenarios present did happen, but the
 totals were never written and no verdict was reached. `explain`, `report` and
 `diff` classify these and say "run incomplete" rather than reporting a total
 they cannot know. Consumers should do the same rather than inferring zero.

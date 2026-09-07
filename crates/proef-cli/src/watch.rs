@@ -144,8 +144,9 @@ fn same_file(path: &Path, config: &Path) -> bool {
 /// `/private/var` aliasing, and would silently stop matching when it did not.
 /// [`RunsDirs`] covers a `[run] runs-dir` that is not a dot-directory and so is
 /// not already skipped.
-/// Install the watch loop's two-stage interrupt (ADR-0007): the first Ctrl-C
-/// cancels whichever run is current and ends the watch after it; the second
+/// Install the watch loop's two-stage interrupt (ADR-0007): the first signal
+/// (Ctrl-C, or SIGTERM/SIGHUP via ctrlc's `termination` feature) cancels
+/// whichever run is current and ends the watch after it; the second
 /// hard-exits.
 fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationToken>>) {
     let stop = Arc::clone(stop);
@@ -153,7 +154,9 @@ fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationTok
     let pressed = AtomicBool::new(false);
     let handler = ctrlc::set_handler(move || {
         if pressed.swap(true, Ordering::SeqCst) {
-            crate::render::errln!("\nsecond interrupt — hard exit");
+            // No print before the exit — stderr's lock may be held by a
+            // blocked writer, and a print here can wedge the escape hatch
+            // (same rule as `exec::install_interrupt`).
             std::process::exit(crate::INTERRUPT_EXIT_CODE);
         }
         crate::render::errln!(

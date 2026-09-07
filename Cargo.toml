@@ -59,8 +59,10 @@ clap_complete = "4.6"
 clap_mangen = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
 miette = { version = "7", features = ["fancy"] }
-uuid = { version = "1", features = ["v7"] }
-ctrlc = "3"
+uuid = { version = "1", features = ["v5", "v7"] }
+# `termination` widens the handler to SIGTERM/SIGHUP (Unix): a CI job timeout
+# or `docker stop` cancels gracefully instead of killing the record mid-write.
+ctrlc = { version = "3", features = ["termination"] }
 toml = "1"
 quick-junit = "0.7"
 quick-xml = "=0.41.0" # dev-only JUnit round-parse; pinned to quick-junit 0.7's in-tree copy so the lock carries one generation
