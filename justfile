@@ -39,6 +39,24 @@ perf:
 audit:
     cargo audit
 
+# Line coverage over the whole workspace via cargo-llvm-cov + nextest
+# (install once: `cargo install cargo-llvm-cov`). Advisory, not a gate: the
+# 2026 norm is a *ratchet* (fail only if coverage drops), not a fixed
+# threshold — see docs/TESTING-STRATEGY.md. `just cover` prints the summary;
+# `just cover-html` opens a browsable report. Doctests are excluded (nextest
+# does not run them); the number is line coverage of the unit + integration
+# suites.
+cover:
+    cargo llvm-cov nextest --workspace --summary-only
+
+cover-html:
+    cargo llvm-cov nextest --workspace --html --open
+
+# Emit lcov for a CI coverage service (Codecov/Coveralls) — used by the
+# optional coverage job, not by `just gates`.
+cover-lcov:
+    cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+
 doctor:
     cargo run -p proef -- doctor
 
