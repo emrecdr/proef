@@ -13,6 +13,7 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+
 ### Added
 
 - **SIGTERM and SIGHUP now take the graceful path** (ctrlc's `termination`
@@ -25,6 +26,24 @@ Regrouping preserved every entry and its order within its kind.
   `sigterm_cancels_gracefully_and_the_record_completes` and — for the first
   time anywhere — an exit-130 assertion,
   `a_second_interrupt_hard_exits_with_130`.
+
+- **`test --format json` and `explain --format json` now report `warned` and
+  `cancelled`.** A warned scenario (an `optional:` step failed, or a `saveAs:
+  global` promotion was refused) folded into `passed`, and `cancelled` — in
+  the record's `run_finished` — was surfaced by neither, so a script could
+  not tell a spotless run from one with warnings, nor a complete run from a
+  cancelled one, and the two JSON surfaces disagreed on how to say "did not
+  finish" (0.18 survey). Both keys are additive and always present.
+  `warned` also becomes visible in JUnit (a `<system-out>` note, the status
+  stays `success` since JUnit has no warned) and CTRF (an `extra.warned`
+  flag) — it was previously visible only in the HTML report.
+
+- **A tag that looks like a reserved one but is not exactly it now warns**
+  (`proef::tags::reserved_tag_typo`). `@quarantined`, `@skipped`, `@Skip`
+  matched no reserved tag and silently did nothing — a scenario the author
+  believed was quarantined gated the build. The warning names the spelling
+  it likely meant, tuned to catch the real typos without firing on
+  legitimate short tags (`ship`, `slip`, `step`).
 
 ### Fixed
 
@@ -167,6 +186,9 @@ Regrouping preserved every entry and its order within its kind.
   from the `#[ignore]`d ratio guard); and a watch test's fixed shared temp
   path (`temp_dir()/proef-watch-alias-test` + `remove_dir_all`) — the one
   cross-*process* race nextest cannot cover — moved to a unique `tempdir`.
+
+- **`proef doctor` no longer prints fourteen literal spaces mid-sentence**
+  (a lost line continuation in the "hurl not on PATH" note).
 
 ### Breaking
 

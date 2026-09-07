@@ -189,6 +189,13 @@ fn test_value(
                 test["retries"] = entries.len().into();
                 test["retryAttempts"] = entries.into();
             }
+            // CTRF has no "warned" status (its set is passed/failed/skipped/
+            // pending/other), so a warned scenario is `passed` — but must not
+            // read as spotless (0.18 survey). The flag rides `extra`, the one
+            // namespace §4.4 permits outside the defined keys.
+            if outcome.status == Status::Warned {
+                test["extra"] = serde_json::json!({ "warned": true });
+            }
         }
         (Status::Skipped, _) => {
             test["status"] = "skipped".into();

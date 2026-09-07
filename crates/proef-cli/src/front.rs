@@ -46,6 +46,48 @@ pub(crate) mod reserved {
             }
         })
     }
+
+    /// The reserved tags recognized by exact match — the vocabulary a
+    /// near-miss could have meant. `skip:reason` is a form of `skip`.
+    const RESERVED: &[&str] = &["quarantine", "skip"];
+
+    /// If `tag` looks like a typo of a reserved tag, the tag it likely meant.
+    ///
+    /// Reserved tags are matched **exactly** (ADR-0014 keeps tags dumb data),
+    /// so `@quarantined` silently means nothing — a scenario the author
+    /// believes is quarantined gates the build, or one believed skipped runs.
+    /// Every other near-miss in the loader gets did-you-mean; this one, whose
+    /// failure is *silent*, had none (0.18 survey). Conservative on purpose —
+    /// a warning, never an error, and tuned to catch the real typos
+    /// (`@quarantined`, `@skipped`, `@Skip`) without firing on legitimate
+    /// tags: a short reserved word like `skip` cannot use a raw edit-distance
+    /// threshold (`ship`, `slip`, `step` are all one edit away), so only a
+    /// case fold or a plural/tense suffix counts for it, while the long
+    /// `quarantine` can afford a distance-2 backstop.
+    pub(crate) fn near_miss(tag: &str) -> Option<&'static str> {
+        // The real spellings are never typos of themselves.
+        if RESERVED.contains(&tag) || tag.starts_with("skip:") {
+            return None;
+        }
+        let lower = tag.to_ascii_lowercase();
+        for &reserved in RESERVED {
+            if lower == reserved {
+                return Some(reserved); // a case-only difference (`Skip`, `QUARANTINE`)
+            }
+            if lower
+                .strip_prefix(reserved)
+                .is_some_and(|suffix| matches!(suffix, "s" | "d" | "ed" | "ping" | "ped" | "pped"))
+            {
+                return Some(reserved); // `skipped`, `quarantined`, `skipping`
+            }
+        }
+        // `quarantine` is long enough that anything within two edits is a
+        // typo of it, not an unrelated tag (`quarentine`, `quarantin`).
+        if lower != "quarantine" && proef_core::matcher::levenshtein(&lower, "quarantine") <= 2 {
+            return Some("quarantine");
+        }
+        None
+    }
 }
 
 /// One fully-processed feature.
@@ -272,6 +314,24 @@ pub fn run(
         });
     }
 
+    // A tag that looks like a reserved one but is not exactly it silently
+    // means nothing — warn, with the spelling it likely meant. Over the
+    // authored scenario tags, anchored on the scenario header line.
+    for feature in &features {
+        for scenario in &feature.file.scenarios {
+            for tag in &scenario.tags {
+                if let Some(intended) = reserved::near_miss(tag) {
+                    warnings.push(reserved_tag_typo_warning(
+                        &feature.file,
+                        scenario.line,
+                        tag,
+                        intended,
+                    ));
+                }
+            }
+        }
+    }
+
     // Bind/parse warnings travel inside diags; split them out.
     let (errors, softs): (Vec<_>, Vec<_>) = diags
         .into_iter()
@@ -295,6 +355,42 @@ pub fn run(
         all.extend(warnings);
         Err(FrontError::Diagnostics(all))
     }
+}
+
+/// The did-you-mean warning for a tag that looks like a reserved one,
+/// anchored on the scenario header line so an editor lands the reader on the
+/// right scenario.
+fn reserved_tag_typo_warning(file: &FeatureFile, line: usize, tag: &str, intended: &str) -> Diag {
+    // The byte span of the 1-based header line within the normalized source,
+    // newline excluded — the tags sit just above it, and the header is the
+    // stable anchor the reader recognizes.
+    let mut offset = 0usize;
+    for (index, text) in file.source.split_inclusive('\n').enumerate() {
+        if index + 1 == line {
+            let end = offset + text.trim_end_matches('\n').len();
+            return Diag::warning(
+                "proef::tags::reserved_tag_typo",
+                format!(
+                    "tag `@{tag}` is not a reserved tag and has no effect — did you mean `@{intended}`? \
+                     Reserved tags match exactly (`@quarantine`, `@skip`, `@skip:<reason>`)."
+                ),
+            )
+            .with_source(file.path.clone(), Arc::clone(&file.source))
+            .with_span(proef_core::diag::Span::clamped(offset, end, file.source.len()))
+            .with_help(format!(
+                "rename it to `@{intended}`, or remove it if the effect was not intended"
+            ));
+        }
+        offset += text.len();
+    }
+    // Line out of range (shouldn't happen): a spanless but still-named warning.
+    Diag::warning(
+        "proef::tags::reserved_tag_typo",
+        format!(
+            "tag `@{tag}` is not a reserved tag and has no effect — did you mean `@{intended}`?"
+        ),
+    )
+    .with_source(file.path.clone(), Arc::clone(&file.source))
 }
 
 /// A path as it appears in events, artifacts, and diagnostics: always
@@ -845,8 +941,46 @@ pub fn warn_if_exclusive_matches_nothing(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{SourceNaming, discover_features, pack_files};
+    use super::{SourceNaming, discover_features, pack_files, reserved};
     use std::path::{Path, PathBuf};
+
+    /// `proef::tags::reserved_tag_typo` — the near-miss detector. The named
+    /// typos the survey found must fire; legitimate tags must not; and the
+    /// real spellings are never typos of themselves.
+    #[test]
+    fn reserved_tag_typos_are_caught_without_false_positives() {
+        // The survey's named cases.
+        assert_eq!(reserved::near_miss("quarantined"), Some("quarantine"));
+        assert_eq!(reserved::near_miss("quarentine"), Some("quarantine"));
+        assert_eq!(reserved::near_miss("Quarantine"), Some("quarantine"));
+        assert_eq!(reserved::near_miss("skipped"), Some("skip"));
+        assert_eq!(reserved::near_miss("Skip"), Some("skip"));
+        assert_eq!(reserved::near_miss("SKIP"), Some("skip"));
+
+        // The real spellings and a valid `skip:reason` are never typos.
+        assert_eq!(reserved::near_miss("quarantine"), None);
+        assert_eq!(reserved::near_miss("skip"), None);
+        assert_eq!(reserved::near_miss("skip:migration"), None);
+
+        // Legitimate unrelated tags — especially short ones a raw
+        // edit-distance rule would wrongly flag against `skip`.
+        for legit in [
+            "smoke",
+            "slow",
+            "wip",
+            "ship",
+            "slip",
+            "step",
+            "api",
+            "skipper-lane",
+        ] {
+            assert_eq!(
+                reserved::near_miss(legit),
+                None,
+                "`{legit}` must not be flagged as a reserved-tag typo"
+            );
+        }
+    }
 
     /// The naming rule, case by case. Each line is a spelling that reaches a
     /// durable artifact, so each is a contract rather than an implementation
