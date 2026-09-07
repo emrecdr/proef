@@ -34,8 +34,13 @@ pub fn render(
         let directive = if outcome.status == Status::Skipped {
             // The reason travels in the directive: the authored tag
             // spelling, or the mechanical cause; "not run" only when a
-            // pre-reason record left nothing better to say.
-            format!(" # SKIP {}", outcome.reason.as_deref().unwrap_or("not run"))
+            // pre-reason record left nothing better to say. Masked like its
+            // twins — the event stream, JUnit and CTRF all redact the same
+            // reason field; TAP was the one holdout (0.18 survey).
+            format!(
+                " # SKIP {}",
+                redactions.apply(outcome.reason.as_deref().unwrap_or("not run"))
+            )
         } else if failed && quarantined {
             " # TODO quarantined".to_owned()
         } else {
@@ -44,7 +49,7 @@ pub fn render(
         let _ = writeln!(
             out,
             "{verb} {point} - {}{directive}",
-            describe(&outcome.name)
+            describe(&redactions.apply(&outcome.name))
         );
         if failed && let Some(detail) = failure_detail(outcome) {
             // A YAML literal block (`|`) carries the message with no escaping.
@@ -201,6 +206,22 @@ mod tests {
             &Redactions::new(std::iter::once("hunter2".to_owned())),
         );
         assert!(!tap.contains("hunter2"), "secret must not reach TAP: {tap}");
+    }
+
+    /// The scenario name and skip reason pass the masker too (0.18 survey —
+    /// TAP was the one sink letting `reason` through while events, `JUnit` and
+    /// CTRF all redacted it).
+    #[test]
+    fn name_and_skip_reason_pass_the_masker() {
+        let mut skipped = outcome("f.feature", "posts hunter2", Status::Skipped, None);
+        skipped.reason = Some(std::sync::Arc::from("@skip:hunter2-rotation"));
+        let tap = render(
+            &[skipped],
+            &[],
+            &Redactions::new(std::iter::once("hunter2".to_owned())),
+        );
+        assert!(!tap.contains("hunter2"), "{tap}");
+        assert!(tap.contains("***"), "{tap}");
     }
 
     /// The authored reason rides the SKIP directive; reason-less outcomes

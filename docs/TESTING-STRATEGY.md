@@ -154,9 +154,17 @@ analysis), `xtask docs-check`, `proef doctor` smoke, public-api snapshot, fuzz s
 check (§8). The complexity ratios run as their own step, alone, for the reason §7 gives. Snapshot tests (`insta`) run inside nextest —
 a drifted snapshot fails there, no separate step. Nightly: full fuzz (10 min/target),
 canary, cargo-audit (advisories against unchanged code — deny covers PRs).
-Coverage: **not measured in CI today** (filed as P13). A `cargo llvm-cov` PR comment
-remains the intended shape when it lands — informational, no hard gate pre-1.0; this
-paragraph previously described it as already running.
+Coverage: **measurable on demand, not gated in CI** (P13's local half). `just cover`
+runs `cargo llvm-cov nextest` over the workspace (`just cover-html` for a browsable
+report, `just cover-lcov` for a CI service's lcov); the number today is ~90% line
+coverage of the unit + integration suites (doctests excluded — nextest does not run
+them). When a CI coverage job lands it must be a **ratchet, not a fixed threshold** —
+the 2026 norm and the only kind that suits a pre-1.0 codebase: fail a PR only if
+coverage *drops*, never on an arbitrary floor, and keep it informational (a PR comment)
+rather than a hard merge gate. A fixed percentage gate is explicitly the wrong shape
+here; it punishes honest additions of hard-to-cover error paths and invites coverage
+theater. The `xtask` binary's low number is expected — it is automation exercised by
+running it, not by unit tests.
 
 ## 4. Test data management
 

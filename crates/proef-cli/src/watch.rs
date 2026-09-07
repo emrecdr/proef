@@ -144,8 +144,9 @@ fn same_file(path: &Path, config: &Path) -> bool {
 /// `/private/var` aliasing, and would silently stop matching when it did not.
 /// [`RunsDirs`] covers a `[run] runs-dir` that is not a dot-directory and so is
 /// not already skipped.
-/// Install the watch loop's two-stage interrupt (ADR-0007): the first Ctrl-C
-/// cancels whichever run is current and ends the watch after it; the second
+/// Install the watch loop's two-stage interrupt (ADR-0007): the first signal
+/// (Ctrl-C, or SIGTERM/SIGHUP via ctrlc's `termination` feature) cancels
+/// whichever run is current and ends the watch after it; the second
 /// hard-exits.
 fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationToken>>) {
     let stop = Arc::clone(stop);
@@ -153,7 +154,9 @@ fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationTok
     let pressed = AtomicBool::new(false);
     let handler = ctrlc::set_handler(move || {
         if pressed.swap(true, Ordering::SeqCst) {
-            crate::render::errln!("\nsecond interrupt — hard exit");
+            // No print before the exit — stderr's lock may be held by a
+            // blocked writer, and a print here can wedge the escape hatch
+            // (same rule as `exec::install_interrupt`).
             std::process::exit(crate::INTERRUPT_EXIT_CODE);
         }
         crate::render::errln!(
@@ -481,9 +484,13 @@ mod tests {
     /// while feature edits kept working, so the loop looked alive.
     #[test]
     fn the_config_matches_through_an_alias_not_just_an_exact_path() {
-        let dir = std::env::temp_dir().join("proef-watch-alias-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        // A unique temp dir per run, not a fixed shared name: the previous
+        // `temp_dir().join("proef-watch-alias-test")` + `remove_dir_all` was
+        // the one cross-*process* race nextest's process-per-test isolation
+        // cannot cover — a retry, two concurrent runs, or two checkouts on
+        // one machine would wipe each other's fixture mid-test (0.18 survey).
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         let config = dir.join("proef.toml");
         std::fs::write(&config, "[run]\n").unwrap();
 
@@ -502,8 +509,6 @@ mod tests {
         let decoy = other.join("proef.toml");
         std::fs::write(&decoy, "[run]\n").unwrap();
         assert!(!same_file(&resolved, &decoy));
-
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The runaway-loop regression. A rerun re-reads the config, so

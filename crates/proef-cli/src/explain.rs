@@ -200,8 +200,19 @@ fn machine_summary(
         // read: a truncated record whose totals are counted rather than read,
         // and a pre-0.6.0 one whose recorded totals meant something else.
         "complete": rec.completion != RunCompletion::Incomplete,
+        // `cancelled` and `warned` mirror `test --format json` (0.18 survey):
+        // the two surfaces disagreed on how to say "this run did not finish",
+        // and `warned` was invisible on both. `cancelled` reads the tail's own
+        // flag; `complete` stays the distinct "was the record even written"
+        // signal (a cancelled run is complete — it has a run_finished).
+        "cancelled": rec.completion == RunCompletion::Cancelled,
         "legacy_per_phase_totals": rec.legacy_multi_pair,
         "passed": passed,
+        "warned": rec
+            .scenarios
+            .iter()
+            .filter(|(_, run)| run.status == Status::Warned)
+            .count(),
         "failed": failed,
         "skipped": skipped,
         "steps": steps,

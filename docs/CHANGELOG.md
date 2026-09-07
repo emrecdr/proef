@@ -13,7 +13,37 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+
 ### Added
+
+- **SIGTERM and SIGHUP now take the graceful path** (ctrlc's `termination`
+  feature): a CI job timeout or `docker stop` cancels the run — in-flight
+  batches finish, the rest record as skipped, teardown runs, the reports are
+  written, and the record closes with a `cancelled` `run_finished` — where it
+  used to kill the process mid-write and leave a truncated record with no
+  tail. A second signal still hard-exits 130 (the handler carries no signal
+  identity, so the code is 130 for every second signal). Pinned by
+  `sigterm_cancels_gracefully_and_the_record_completes` and — for the first
+  time anywhere — an exit-130 assertion,
+  `a_second_interrupt_hard_exits_with_130`.
+
+- **`test --format json` and `explain --format json` now report `warned` and
+  `cancelled`.** A warned scenario (an `optional:` step failed, or a `saveAs:
+  global` promotion was refused) folded into `passed`, and `cancelled` — in
+  the record's `run_finished` — was surfaced by neither, so a script could
+  not tell a spotless run from one with warnings, nor a complete run from a
+  cancelled one, and the two JSON surfaces disagreed on how to say "did not
+  finish" (0.18 survey). Both keys are additive and always present.
+  `warned` also becomes visible in JUnit (a `<system-out>` note, the status
+  stays `success` since JUnit has no warned) and CTRF (an `extra.warned`
+  flag) — it was previously visible only in the HTML report.
+
+- **A tag that looks like a reserved one but is not exactly it now warns**
+  (`proef::tags::reserved_tag_typo`). `@quarantined`, `@skipped`, `@Skip`
+  matched no reserved tag and silently did nothing — a scenario the author
+  believed was quarantined gated the build. The warning names the spelling
+  it likely meant, tuned to catch the real typos without firing on
+  legitimate short tags (`ship`, `slip`, `step`).
 
 - **`proef flaky` gains the 2026-field statistical guards** (0.18 survey §6),
   each a pure fold over the JSONL history already retained — no new state, no
@@ -39,7 +69,158 @@ Regrouping preserved every entry and its order within its kind.
     commit`). `broken≠flaky`, transition-counting, and the quarantine
     lifecycle were already present and are unchanged.
 
+### Fixed
+
+- **A run-record write that fails now reaches the exit code.** The JSONL
+  reporter deliberately swallows write results (a reporter cannot report its
+  own channel dying), and `events.jsonl` was handed a bare `File` — so a disk
+  filling *mid-run* truncated the record while the run still exited by its
+  verdict, the exact class the v0.6–v0.8 series closed for the console. The
+  record's writer now latches its first failure (one stderr line, run
+  continues) and the exit funnel turns it into a system error, the same shape
+  as the stdout latch and the JUnit-write fold — unified in one pinned
+  function, `escalate_environment_failures`. `run.log`'s mirror keeps its
+  own contract (creation is warn-and-continue, so a mid-run failure warns
+  once and leaves the verdict alone — previously it was silent).
+
+- **The GitHub step summary can fail again.** It was the only CI sink that
+  couldn't: a failed open or write vanished while JUnit and CTRF failures
+  re-classify the exit — so the page a reviewer actually reads could be
+  missing on a green exit. `write_github_summary` now returns the error and
+  the caller folds it into the same `reports_failed` path as its siblings.
+
+- **A custom `--run-id` no longer collapses the JUnit report identity onto
+  the nil uuid.** ADR-0021 made non-uuid run ids first-class, but the report
+  uuid was `parse_str(...).unwrap_or(nil)` — every `--run-id ci` run emitted
+  `00000000-…`, colliding in any consumer keyed on it. A non-uuid id now
+  derives a stable UUIDv5 from its bytes (a uuid id passes through verbatim).
+
+- **The interrupt window and the interrupt's own words.** The handler is
+  installed at the top of `execute` — before the front end, the run dir and
+  the record exist — so no startup window takes the process default any
+  more. Its installation failure is a printed warning (it was silently
+  ignored, unlike `--watch`'s handler). The second-signal path no longer
+  prints before exiting: the print took stderr's lock, which a worker
+  blocked on a full pipe can hold, wedging the escape hatch behind the very
+  stall it exists to escape. And the teardown notice said "Ctrl-C again to
+  skip" when a second interrupt actually hard-exits dropping every report —
+  it now says what happens.
+
+- **Asset staging no longer depends on the working directory.** A feature's
+  `file,…;` assets were resolved by joining its portable *name* against the
+  cwd — but a name's anchor (the project root, or the caller's own typed
+  spelling) is not in the string, so a typed-absolute or config-written
+  suite path run from any subdirectory failed staging with exit 2, blaming
+  the author for a correct file (the feature-side twin of OPEN-FINDINGS
+  H5). The resolved discovery path now travels beside the name
+  (`LoadedFeature::read_from`) and staging resolves beside the file the
+  parser actually read — the H5 prescription, applied to the feature side.
+  Reproduced before the fix and re-verified after, from a subdirectory,
+  against the reference corpus; a new integration test pins a project under
+  a path with spaces and non-ASCII segments, which nothing in the suite had
+  ever exercised.
+
+- **`--sarif` line numbers survive a `cd`, and byte-match the parser.** The
+  SARIF writer re-read each source from disk by its portable name to count
+  lines — from any subdirectory every read failed and `startLine` silently
+  vanished, annotating nothing; the re-read could also disagree with the
+  span by exactly the parser's normalization. Lines now come from the
+  diagnostic's own carried source text — the same normalized bytes the span
+  indexes. (On Windows, an absolute out-of-project `uri` also spells its
+  separators as a URI requires.)
+
+- **Staging's two symlink edges.** An existing symlink at a staging
+  destination was written *through* — `fs::copy` follows links, so the
+  bytes landed wherever it pointed, outside the root built to contain
+  them; it is now replaced. A *source* symlink stays followed, deliberately:
+  stock `hurl` follows it too, and refusing would break the dual-runner
+  rule (the module doc now says so).
+
+- **Asset names that are one file to the filesystem are refused.** The
+  duplicate-name guard keyed on the raw reference string, so `Data.json`
+  and `data.json` — one file on macOS and Windows — silently last-writer-won,
+  the very overwrite the per-scenario root was built to end. The check now
+  runs on the canonical path the copy actually landed on, which is exact on
+  every platform: a case-sensitive volume keeps both files legitimately, and
+  nothing fires.
+
+- **Artifact slugs cap at 120 bytes.** The slug flattens the feature's whole
+  directory path into one filename component, and `assets/<slug>/` repeats
+  it as a directory — so path depth became filename length, and a deep tree
+  or a long scenario name (multi-byte scripts at a quarter of the visible
+  characters) sailed past NAME_MAX and failed the write. Over the cap, the
+  tail is a hash of the whole uncapped slug, so two names differing only
+  past the cut still name two artifacts; every slug the existing corpus has
+  is under the cap and unchanged byte-for-byte.
+
+- **The ADR-0007 budget family is closed over its inputs, and bounded as a
+  product.** `[Options] max-time:` was *read* by the budget calculator (as
+  the entry's timeout) while invisible to the lint — `max-time: 100000h`
+  was lint-clean and produced a multi-year watchdog budget; it now carries
+  the duration cap, and a test pins the rule the hole broke (every option
+  the budget reads must be one the lint can see). `retry-interval:` — the
+  one uncapped multiplicand — carries the cap too. And because individually
+  capped values still compose into an unbounded product (`retry: 10_000` ×
+  a 30 s timeout is ~83 lint-clean hours, saturating to `Duration::MAX`,
+  whose deadline addition panicked as a phantom "scenario thread panicked"
+  fault), the computed batch budget now clamps to an absolute four-hour
+  ceiling and the dispatcher's deadline arithmetic can no longer overflow.
+  ADR-0007 carries the amendment.
+
+- **`[http] timeout-ms = 0` is refused.** libcurl reads zero as *no*
+  timeout, so the value opted a suite into exactly the unbounded hang the
+  default exists to defend against — while reading like "immediately".
+  Exit 2, in whichever table it appears.
+
+- **Every sink that renders run values now routes identities through the
+  secret masker.** The event stream masks `scenario`, `file`, `tags` and the
+  skip `reason` under an explicit no-exemptions rule ("a field exempted
+  because it can't contain one is how that stops being true later"), and five
+  sinks bypassed it for the same fields (0.18 survey): the GitHub annotation
+  `title=`/`file=` lines (written to CI stdout), TAP's skip reason and
+  scenario name, CTRF's `name`/`suite`/`filePath`/`tags`, JUnit's
+  suite/testcase identity and `file` attribute, and `timings.json` — the one
+  sink that took no `Redactions` at all, in the file whose documented
+  workflow is being archived and shared across a CI matrix. Structural
+  mitigations (secrets lower to `{{name}}`; the engine pre-redacts details)
+  made a live leak unlikely, but the boundary rule was unenforced; a
+  per-sink leak test now pins each, and a whole-run sweep asserts a reflected
+  secret reaches no file any sink writes.
+
+- **`proef lsp` honours `--env`.** The global flag was parsed and then
+  silently dropped for `lsp`, so `proef lsp --env staging` analysed the
+  default profile while runs used staging — the editor/runner drift R10-1
+  closed for `--config`. And the workspace-root re-resolution (for an editor
+  launched outside the project) re-loaded the config to find the root but
+  dropped the `${url:…}`/`${vars:…}` scope it had computed, analysing the
+  right tree against the wrong directory's config; the scope now travels with
+  the root it belongs to.
+
+- **A CTRF report cannot gain a key the spec would reject.** CTRF §4.4 makes
+  consumers reject any key outside the defined set (unless under `extra`),
+  and the spec moved five times in 2026 — so an additive field is a hard
+  break. A test pins the exact allowed key sets.
+
+- **De-flaked three tests** (0.18 survey): the abandoned-scenario record-gate
+  test waited on a 500 ms blind sleep that passed vacuously on a loaded
+  runner — it now polls a drop latch set strictly after the worker's final
+  emit attempt, so it tests the dropped event on every machine; the
+  bounded-runtime smoke test's wall-clock assertion is widened and documented
+  as the "generous upper bound" class TESTING-STRATEGY §7 sanctions (distinct
+  from the `#[ignore]`d ratio guard); and a watch test's fixed shared temp
+  path (`temp_dir()/proef-watch-alias-test` + `remove_dir_all`) — the one
+  cross-*process* race nextest cannot cover — moved to a unique `tempdir`.
+
+- **`proef doctor` no longer prints fourteen literal spaces mid-sentence**
+  (a lost line continuation in the "hurl not on PATH" note).
+
 ### Breaking
+
+- **Library:** `proef_lsp::RootResolver` now returns a `ResolvedRoot`
+  (`root` + `disk` + `config_vars`) instead of a `(PathBuf, Box<dyn
+  SourceProvider>)` tuple, so the re-resolved config scope reaches the
+  server. `proef-cli`'s `lsp::run` takes the `--env` value.
+  `timings::render` takes a `&Redactions`.
 
 - **`proef flaky`'s `new` verdict is renamed `insufficient-data`** (its
   `--format json` `verdict` key and human label), matching the 2026 vocabulary

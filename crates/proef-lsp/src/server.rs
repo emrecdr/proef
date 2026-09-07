@@ -65,8 +65,25 @@ pub struct ServerConfig {
     pub resolve_root: Option<RootResolver>,
 }
 
+/// What [`ServerConfig::resolve_root`] hands back for the client's announced
+/// workspace: the suite root, a provider over it — and the config scope
+/// re-read for *that* root. The scope joined late (0.18 survey): the
+/// callback already re-loaded the config to find the root, then dropped the
+/// `${url:…}`/`${vars:…}` values it had computed — so an editor launched
+/// outside the project analysed the right tree against the launch
+/// directory's scope, the exact runner/editor divergence this module's
+/// header calls worse than no diagnostics.
+pub struct ResolvedRoot {
+    /// The suite root to analyse.
+    pub root: PathBuf,
+    /// A provider over that root.
+    pub disk: Box<dyn SourceProvider + Send>,
+    /// The `${url:…}` / `${vars:…}` scope for that root's config.
+    pub config_vars: BTreeMap<String, String>,
+}
+
 /// See [`ServerConfig::resolve_root`]. `FnOnce`: the handshake happens once.
-pub type RootResolver = Box<dyn FnOnce(&Path) -> (PathBuf, Box<dyn SourceProvider + Send>) + Send>;
+pub type RootResolver = Box<dyn FnOnce(&Path) -> ResolvedRoot + Send>;
 
 /// Failure modes of the LSP event loop.
 #[derive(Debug)]
@@ -162,9 +179,10 @@ pub fn run(mut cfg: ServerConfig) -> Result<(), ServerError> {
     if let Some(client_root) = client_root(&init_params)
         && let Some(resolve) = cfg.resolve_root.take()
     {
-        let (root, disk) = resolve(&client_root);
-        cfg.root = root;
-        cfg.disk = disk;
+        let resolved = resolve(&client_root);
+        cfg.root = resolved.root;
+        cfg.disk = resolved.disk;
+        cfg.config_vars = resolved.config_vars;
     }
 
     main_loop(&connection, &cfg)?;

@@ -160,15 +160,24 @@ fn test_value(
     quarantined: bool,
     redactions: &Redactions,
 ) -> serde_json::Value {
+    // Identity and tags go through the masker like the failure fields: the
+    // event stream redacts `scenario`, `file` and `tags` under its
+    // no-exemptions rule, and these are the same values on a different sink
+    // (0.18 survey — CTRF was one of five sinks bypassing the boundary).
     let mut test = serde_json::json!({
-        "name": outcome.name.as_ref(),
+        "name": redactions.apply(&outcome.name),
         "status": "other",
         "duration": u64::try_from(outcome.cost().as_millis()).unwrap_or(u64::MAX),
-        "suite": [outcome.file.as_ref()],
-        "filePath": outcome.file.as_ref(),
+        "suite": [redactions.apply(&outcome.file)],
+        "filePath": redactions.apply(&outcome.file),
     });
     if !outcome.tags.is_empty() {
-        test["tags"] = serde_json::json!(outcome.tags.as_ref());
+        let tags: Vec<String> = outcome
+            .tags
+            .iter()
+            .map(|tag| redactions.apply(tag))
+            .collect();
+        test["tags"] = serde_json::json!(tags);
     }
 
     match (outcome.status, &outcome.fault) {
@@ -179,6 +188,13 @@ fn test_value(
                 test["flaky"] = true.into();
                 test["retries"] = entries.len().into();
                 test["retryAttempts"] = entries.into();
+            }
+            // CTRF has no "warned" status (its set is passed/failed/skipped/
+            // pending/other), so a warned scenario is `passed` — but must not
+            // read as spotless (0.18 survey). The flag rides `extra`, the one
+            // namespace §4.4 permits outside the defined keys.
+            if outcome.status == Status::Warned {
+                test["extra"] = serde_json::json!({ "warned": true });
             }
         }
         (Status::Skipped, _) => {
@@ -350,6 +366,109 @@ mod tests {
         assert_eq!(tests[0]["filePath"], "a.feature");
         assert_eq!(tests[0]["suite"][0], "a.feature");
         assert_eq!(tests[0]["tags"][0], "smoke");
+    }
+
+    /// The CTRF spec (§4.4) makes consumers **reject** any key outside the
+    /// defined set unless it sits under `extra`, and the spec moved five
+    /// times in 2026 — so a well-meant additive field is a hard break, not a
+    /// soft one. Pin the exact top-level and per-test key sets: a new key
+    /// fails here, forcing a deliberate choice (define it, or namespace it
+    /// under `extra`) rather than shipping a report a strict consumer drops.
+    #[test]
+    fn the_key_set_is_the_one_the_spec_allows() {
+        let body = report(
+            vec![outcome("a.feature", "red", Status::Failed, Some("boom"))],
+            &[],
+        );
+        let top: std::collections::BTreeSet<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            top,
+            ["reportFormat", "specVersion", "results"]
+                .into_iter()
+                .collect(),
+            "top-level keys must be exactly the spec's required set"
+        );
+        let results: std::collections::BTreeSet<&str> = body["results"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            results,
+            ["tool", "summary", "tests"].into_iter().collect(),
+            "results keys must be exactly tool/summary/tests"
+        );
+        let test_keys: std::collections::BTreeSet<&str> = body["results"]["tests"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        // Every key here is a CTRF-defined test field (name/status/duration/
+        // suite/filePath/message/trace/tags/retries/flaky/retryAttempts) — no
+        // stray key outside the spec, and nothing that should ride `extra`.
+        let allowed: std::collections::BTreeSet<&str> = [
+            "name",
+            "status",
+            "duration",
+            "suite",
+            "filePath",
+            "message",
+            "trace",
+            "tags",
+            "retries",
+            "flaky",
+            "retryAttempts",
+            "extra",
+        ]
+        .into_iter()
+        .collect();
+        assert!(
+            test_keys.is_subset(&allowed),
+            "a test object carries a key the spec does not define (and not under `extra`): {:?}",
+            test_keys.difference(&allowed).collect::<Vec<_>>()
+        );
+    }
+
+    /// Identity and tags pass the masker (0.18 survey — `name`, `suite`,
+    /// `filePath` and `tags` bypassed it while the event stream masked the
+    /// same values).
+    #[test]
+    fn identity_and_tags_pass_the_masker() {
+        let summary = RunSummary {
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: false,
+            outcomes: vec![outcome(
+                "suite/hunter2.feature",
+                "posts hunter2 upstream",
+                Status::Passed,
+                None,
+            )],
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ctrf.json");
+        super::write(
+            &summary,
+            None,
+            &[],
+            &[],
+            "run-1",
+            SystemTime::now(),
+            &path,
+            &Redactions::new(["hunter2".to_owned()]),
+        )
+        .unwrap();
+        let json = std::fs::read_to_string(&path).unwrap();
+        assert!(!json.contains("hunter2"), "{json}");
+        assert!(json.contains("***"), "{json}");
     }
 
     /// The failure channel split `JUnit` uses, in CTRF vocabulary: the

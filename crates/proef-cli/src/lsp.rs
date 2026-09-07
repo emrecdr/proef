@@ -58,7 +58,7 @@ fn load_config(
     })
 }
 
-pub fn run(explicit_config: Option<std::path::PathBuf>) -> ExitCode {
+pub fn run(explicit_config: Option<std::path::PathBuf>, env_flag: Option<String>) -> ExitCode {
     // Engine-derived step kinds + kind→engine routing, assembled exactly as a
     // normal run does (front::run) so packs validate and lower identically —
     // one implementation of this mapping, not a divergent copy. Empty kinds
@@ -72,13 +72,20 @@ pub fn run(explicit_config: Option<std::path::PathBuf>) -> ExitCode {
     // A malformed PROEF_ENV must stop the server from starting rather than
     // silently analyse against the wrong config profile — an editor showing
     // diagnostics from the wrong environment is the "reports the wrong
-    // cause" failure this module exists to avoid.
-    let active_env = match crate::envvar::read("PROEF_ENV") {
-        Ok(value) => value,
-        Err(message) => {
-            crate::render::errln!("error: {message}");
-            return ExitCode::UserError;
-        }
+    // cause" failure this module exists to avoid. The `--env` flag outranks
+    // the variable, exactly as it does for a run — the global flag was
+    // parsed and then silently ignored here (0.18 survey), so
+    // `proef lsp --env staging` analysed the default profile while runs
+    // used staging: the same editor/runner drift `--config` closed (R10-1).
+    let active_env = match env_flag {
+        Some(value) => Some(value),
+        None => match crate::envvar::read("PROEF_ENV") {
+            Ok(value) => value,
+            Err(message) => {
+                crate::render::errln!("error: {message}");
+                return ExitCode::UserError;
+            }
+        },
     };
 
     // Root at the configured suite ([run] suite, else the tests/ convention),
@@ -148,7 +155,26 @@ pub fn run(explicit_config: Option<std::path::PathBuf>) -> ExitCode {
             );
             let disk: Box<dyn proef_core::provider::SourceProvider + Send> =
                 Box::new(DiskSourceProvider::new(root.clone()).with_fragments(config.fragments()));
-            (root, disk)
+            // The scope travels with the root it belongs to. This closure
+            // used to re-load the config, take its root — and drop the
+            // `${url:…}`/`${vars:…}` values it had just computed, so an
+            // editor launched outside the project analysed the right tree
+            // against the launch directory's scope (0.18 survey). Same
+            // env-profile resolution as startup; a bad profile degrades to
+            // an empty scope with a note, keeping the server up.
+            let config_vars = config
+                .config_vars(active_env.as_deref())
+                .unwrap_or_else(|err| {
+                    crate::render::errln!(
+                        "warning: proef lsp analysing without config vars: {err}"
+                    );
+                    BTreeMap::new()
+                });
+            proef_lsp::ResolvedRoot {
+                root,
+                disk,
+                config_vars,
+            }
         })),
     };
 
