@@ -314,6 +314,85 @@ mod tests {
         assert_eq!(back, event);
     }
 
+    /// Serialization is total over the schema: every variant, every field
+    /// populated. `JsonlReporter` leans on this — its `if let Ok` arm is not
+    /// a swallowed failure precisely because this test pins that the arm
+    /// cannot miss (plain fields, string keys; `serde_json` only fails on
+    /// shapes this enum cannot express).
+    #[test]
+    fn every_event_variant_serializes() {
+        let step = StepRef {
+            file: Arc::from("suite/a.feature"),
+            line: 3,
+            text: Arc::from("a step"),
+        };
+        let events = [
+            Event::RunStarted {
+                schema: EVENT_SCHEMA_VERSION,
+                run_id: Arc::from("run-1"),
+                env: Some(Arc::from("staging")),
+                metadata: std::collections::BTreeMap::from([("k".to_owned(), "v".to_owned())]),
+                shuffled: true,
+                rerun_of: Some(Arc::from("run-0")),
+            },
+            Event::ScenarioStarted {
+                scenario: Arc::from("S"),
+                file: Arc::from("suite/a.feature"),
+                timestamp_ms: Some(1),
+                worker: Some(0),
+                phase: Some(Arc::from("setup")),
+                exclusive: true,
+            },
+            Event::BatchStarted {
+                scenario: Arc::from("S"),
+                engine: Arc::from("hurl"),
+                steps: 2,
+            },
+            Event::EntryRunning {
+                scenario: Arc::from("S"),
+                engine: Arc::from("hurl"),
+                entry: 0,
+                retry: 1,
+            },
+            Event::StepFinished {
+                scenario: Arc::from("S"),
+                engine: Arc::from("hurl"),
+                step,
+                status: Status::Failed,
+                attempts: 2,
+                duration_ms: 5,
+                captures: vec!["id".to_owned()],
+                fragment: Some("f.hurl#a".to_owned()),
+                label: Some("named".to_owned()),
+                detail: Some("boom".to_owned()),
+                attempt_details: vec!["attempt 1".to_owned()],
+                reproduce_hint: Some("curl …".to_owned()),
+            },
+            Event::ScenarioFinished {
+                scenario: Arc::from("S"),
+                file: Arc::from("suite/a.feature"),
+                status: Status::Skipped,
+                timestamp_ms: Some(9),
+                worker: Some(0),
+                phase: Some(Arc::from("teardown")),
+                reason: Some(Arc::from("@skip:flaky")),
+                tags: vec!["api".to_owned()],
+            },
+            Event::RunFinished {
+                passed: 1,
+                failed: 1,
+                skipped: 1,
+                cancelled: true,
+            },
+        ];
+        for event in &events {
+            assert!(
+                serde_json::to_string(event).is_ok(),
+                "serialization must be total: {event:?}"
+            );
+        }
+    }
+
     #[test]
     fn sink_fans_out_borrowed_events() {
         use std::sync::atomic::{AtomicUsize, Ordering};

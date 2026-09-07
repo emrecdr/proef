@@ -398,11 +398,23 @@ impl ProjectConfig {
             );
         }
 
+        let timeout_ms = env_http
+            .and_then(|http| http.timeout_ms)
+            .or(self.http.timeout_ms)
+            .unwrap_or(base.timeout_ms);
+        // Zero is not a timeout: libcurl reads 0 as *no* timeout, so a
+        // stalled request would hang its batch until the watchdog abandons
+        // the thread — the exact failure the default exists to defend
+        // against, opted into by a value that reads like "immediately".
+        if timeout_ms == 0 {
+            return Err(
+                "[http] timeout-ms = 0 disables the timeout entirely (libcurl reads zero as \
+                 unlimited) — set a positive value, or omit the key for the default"
+                    .to_owned(),
+            );
+        }
         Ok(HttpDefaults {
-            timeout_ms: env_http
-                .and_then(|http| http.timeout_ms)
-                .or(self.http.timeout_ms)
-                .unwrap_or(base.timeout_ms),
+            timeout_ms,
             follow_location: pick_bool(|http| http.follow_location, base.follow_location),
             max_redirs: env_http
                 .and_then(|http| http.max_redirs)
@@ -645,6 +657,24 @@ mod tests {
         let scope = config.config_vars(None).unwrap();
         assert_eq!(scope["url:base"], "http://localhost:3000");
         assert_eq!(scope["vars:apiVersion"], "v1");
+    }
+
+    /// libcurl reads a zero timeout as *no* timeout, so `timeout-ms = 0`
+    /// silently opted a suite into exactly the unbounded hang the default
+    /// exists to defend against (0.18 survey) — refused as a user error now,
+    /// in whichever table it appears.
+    #[test]
+    fn a_zero_timeout_is_refused_not_unlimited() {
+        let base = parse("[http]\ntimeout-ms = 0\n");
+        let err = base.http_defaults(None).unwrap_err();
+        assert!(err.contains("timeout-ms = 0"), "{err}");
+
+        let env = parse("[env.staging.http]\ntimeout-ms = 0\n");
+        assert!(env.http_defaults(Some("staging")).is_err());
+        assert!(
+            env.http_defaults(None).is_ok(),
+            "the base profile never selected the zero and must stay usable"
+        );
     }
 
     #[test]

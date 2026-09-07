@@ -130,6 +130,12 @@ Severity is **error** (fails validation/exit 2) unless marked *warning*.
 |---|---|---|
 | `source::unreadable` | A discovered feature or pack source could not be read (surfaced by `analyze_suite`; the CLI treats an unreadable file as a system fault instead) | |
 
+## `proef::tags::*` — reserved-tag recognition
+
+| Code | Meaning | Corpus |
+|---|---|---|
+| `tags::reserved_tag_typo` | A tag looks like a reserved one (`@quarantine`, `@skip`) but is not exactly it, so it has no effect — a warning with the spelling it likely meant | |
+
 ## Coverage note
 
 The fragment-file codes (`pack::duplicate_fragment`, `pack::bad_annotation`,
@@ -143,9 +149,12 @@ The `config::*` codes are covered in `crates/proef-cli/tests/cli.rs` for the
 same reason: a broken `proef.toml` cannot live in the config-independent
 seeded corpus.
 
-30 of the 76 codes carry a seeded corpus case today; the corpus guard asserts
+30 of the 77 codes carry a seeded corpus case today; the corpus guard asserts
 a minimum, not parity. When you add a diagnostic, add its code here and prefer
 seeding a `tests/errors/<area>__<name>/` case alongside it.
+`tags::reserved_tag_typo` is a *warning* (a near-miss is not an error), so it
+cannot live in `tests/errors/` — that corpus fails dry-run by design — and is
+covered by a unit test instead.
 
 Every row here is a code some code path actually emits. That was not free: this
 file used to carry a `pack::load` row for a defensive case that never had a code

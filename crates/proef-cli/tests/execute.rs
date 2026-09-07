@@ -1328,6 +1328,103 @@ fn an_all_skipped_suite_exits_zero() {
     let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
     assert_eq!(body["skipped"], 2, "{body}");
     assert_eq!(body["passed"], 0, "{body}");
+    // The two keys the body used to drop (0.18 survey) are always present now,
+    // even at their zero/false — a script can read them unconditionally.
+    assert_eq!(body["warned"], 0, "{body}");
+    assert_eq!(body["cancelled"], false, "{body}");
+}
+
+/// A tag that looks like a reserved one but is not exactly it warns with the
+/// spelling it likely meant (0.18 survey: `@quarantined` silently gated the
+/// build). End-to-end so the wiring through `front::run` is proven, and it
+/// names the code `proef::tags::reserved_tag_typo` for the source guard.
+#[test]
+fn a_reserved_tag_typo_warns_with_a_did_you_mean() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  @quarantined\n  Scenario: meant to be quarantined\n    When the suite probes health\n",
+    )
+    .unwrap();
+    std::fs::write(cwd.path().join("suite/packs/p.yaml"), PROBE_PACK).unwrap();
+
+    // `--dry-run` renders warnings without a network — the warning is a
+    // front-end finding, so it surfaces at validation.
+    let assert = proef_in(cwd.path(), &fixture)
+        .args(["test", "suite", "--dry-run"])
+        .assert()
+        .code(0); // a warning does not fail the run
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("proef::tags::reserved_tag_typo"),
+        "the diagnostic code must appear:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("@quarantine"),
+        "the did-you-mean must name the intended tag:\n{stderr}"
+    );
+}
+
+/// A warned scenario (an `optional:` step failed) must be *visible* in the
+/// machine sinks, not folded into `passed` (0.18 survey: warned was invisible
+/// everywhere but the HTML report). `test --format json` counts it, JUnit
+/// notes it in system-out, CTRF flags it under `extra`.
+#[test]
+fn a_warned_scenario_is_visible_in_every_machine_sink() {
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: warns\n    When the flaky probe is optional\n",
+    )
+    .unwrap();
+    // An `optional:` step that fails warns the scenario without failing it.
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  flaky:\n    match: the flaky probe is optional\n    steps:\n      \
+         - optional: true\n        hurl: |\n          GET ${url:base}/health\n          HTTP 404\n",
+    )
+    .unwrap();
+
+    let assert = proef_in(cwd.path(), &fixture)
+        .args([
+            "test",
+            "suite",
+            "--junit",
+            "report.junit.xml",
+            "--ctrf",
+            "report.ctrf.json",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(0); // warned does not gate
+    let body: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&assert.get_output().stdout).trim()).unwrap();
+    assert_eq!(
+        body["warned"], 1,
+        "test --format json must count the warning:\n{body}"
+    );
+    assert_eq!(body["passed"], 1, "a warned scenario still passed:\n{body}");
+
+    let junit = std::fs::read_to_string(cwd.path().join("report.junit.xml")).unwrap();
+    assert!(
+        junit.contains("warned (non-gating)"),
+        "JUnit must note the warning in system-out:\n{junit}"
+    );
+    let ctrf: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(cwd.path().join("report.ctrf.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        ctrf["results"]["tests"][0]["extra"]["warned"], true,
+        "CTRF must flag the warning under extra:\n{ctrf}"
+    );
 }
 
 /// A quarantined failure reaches JUnit as skipped-with-message, so the
@@ -2139,8 +2236,17 @@ fn runaway_scenarios_are_bounded() {
         .args(["test", "suite"])
         .assert()
         .code(3);
+    // A *generous upper bound*, not a ratio — TESTING-STRATEGY §7 keeps that
+    // distinction: a ratio drifts under the suite's own parallelism and must
+    // run alone (`just perf`, the `#[ignore]`d complexity guard), but a
+    // boundedness smoke test is exactly the "wall time as a generous upper
+    // bound" the strategy sanctions in the ordinary suite. 60s over a 500 ms
+    // timeout is ~120× headroom, so a loaded runner cannot flake it while a
+    // genuinely unbounded run (a lost timeout, the pre-fix `/slow` hang)
+    // still trips it. The exit code is the real assertion; this only proves
+    // it arrived promptly.
     assert!(
-        started.elapsed().as_secs() < 15,
+        started.elapsed().as_secs() < 60,
         "bounded: took {:?}",
         started.elapsed()
     );
@@ -2670,6 +2776,85 @@ fn an_encoded_reflection_of_a_secret_never_reaches_the_record() {
     for text in [&console, &events, &log] {
         assert!(!text.contains(API_TOKEN), "raw secret leaked");
     }
+}
+
+/// The whole-sink sweep (0.18 survey): a reflected secret must reach *no
+/// file any sink writes* — JUnit, CTRF, the GitHub step summary, timings,
+/// the record, the mirror, TAP stdout. The per-sink unit tests pin each
+/// masker call; this pins that no sink ever leaves the set. Fails on
+/// purpose so the failure-detail paths — where the reflection actually
+/// travels — are all exercised.
+#[test]
+fn a_reflected_secret_reaches_no_sink_file() {
+    const ENCODED: &str = "Zml4dHVyZS10b2tlbg==";
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: the token comes back encoded\n    \
+         When the token is introspected\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  introspect:\n    match: the token is introspected\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/api/v1/token/introspect\n          \
+         Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          \
+         [Asserts]\n          jsonpath \"$.token_b64\" == \"will-not-match\"\n",
+    )
+    .unwrap();
+
+    let summary_path = cwd.path().join("gh-summary.md");
+    let assert = proef_in(cwd.path(), &fixture)
+        .env("GITHUB_STEP_SUMMARY", &summary_path)
+        .args([
+            "test",
+            "suite",
+            "--junit",
+            "report.junit.xml",
+            "--ctrf",
+            "report.ctrf.json",
+            "--format",
+            "tap",
+        ])
+        .assert()
+        .code(1);
+
+    let tap_stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let run_dir = latest_run_dir(cwd.path());
+    let mut swept = vec![("tap stdout".to_owned(), tap_stdout)];
+    for name in ["events.jsonl", "run.log", "timings.json"] {
+        swept.push((
+            name.to_owned(),
+            std::fs::read_to_string(run_dir.join(name)).unwrap_or_default(),
+        ));
+    }
+    for name in ["report.junit.xml", "report.ctrf.json"] {
+        swept.push((
+            name.to_owned(),
+            std::fs::read_to_string(cwd.path().join(name)).unwrap_or_default(),
+        ));
+    }
+    swept.push((
+        "gh summary".to_owned(),
+        std::fs::read_to_string(&summary_path).unwrap_or_default(),
+    ));
+    let mut masked_somewhere = false;
+    for (name, text) in &swept {
+        assert!(
+            !text.is_empty() || name == "run.log",
+            "sink `{name}` produced nothing — the sweep would be vacuous"
+        );
+        assert!(!text.contains(ENCODED), "encoded secret in {name}:\n{text}");
+        assert!(!text.contains(API_TOKEN), "raw secret in {name}:\n{text}");
+        masked_somewhere |= text.contains("***");
+    }
+    assert!(
+        masked_somewhere,
+        "no sink rendered a masked detail — the reflection never travelled and this proved nothing"
+    );
 }
 
 /// TESTING-STRATEGY fixture cases: the negative-path endpoints have
@@ -3953,6 +4138,240 @@ fn teardown_runs_after_the_pool_is_interrupted() {
     assert!(
         errors.contains("cleaning up"),
         "the operator must be told cleanup is running:\n{errors}"
+    );
+}
+
+/// Real checkouts live under paths with spaces and non-ASCII segments
+/// (`C:\Users\Jan de Vries\…`, a `café` directory) — and until this test,
+/// nothing in the suite exercised either. Discovery, emission, and asset
+/// staging must all survive such a root.
+#[test]
+fn a_project_under_a_space_and_utf8_path_stages_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("café spatie").join("proef proj");
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(root.join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        root.join("suite/upload.feature"),
+        "Feature: F\n  Scenario: uploads a file\n    When the file is uploaded\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("suite/packs/p.yaml"),
+        "macros:\n  up:\n    match: the file is uploaded\n    steps:\n      \
+         - hurl: |\n          POST ${url:base}/upload\n          file,data.bin;\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("suite/data.bin"), b"asset bytes").unwrap();
+
+    let out = dir.path().join("out");
+    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(&root)
+        .env("NO_COLOR", "1")
+        // `artifacts` sends nothing; the value only has to resolve.
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["artifacts", "suite", "-o"])
+        .arg(&out)
+        .args(["--run-id", "probe"])
+        .assert()
+        .success();
+    let staged = out
+        .join(proef_core::emit::asset_root(
+            &proef_core::emit::artifact_slug("suite/upload.feature", "uploads a file"),
+        ))
+        .join("data.bin");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        b"asset bytes",
+        "the asset must stage from beside the feature under a space/UTF-8 root"
+    );
+}
+
+/// A CI job timeout or `docker stop` delivers SIGTERM, not Ctrl-C. With
+/// ctrlc's `termination` feature that is the same graceful path: the run
+/// cancels, the record closes with `run_finished` + `cancelled`, and the
+/// exit is the cancelled-run verdict — not a killed process and a truncated
+/// `events.jsonl` with no tail.
+#[cfg(unix)]
+#[test]
+fn sigterm_cancels_gracefully_and_the_record_completes() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: slow one\n    When the slow thing happens\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  slow:\n    match: the slow thing happens\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/slow\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stderr = child.stderr.take().unwrap();
+    let errors = std::thread::spawn(move || {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut stderr, &mut buf).ok();
+        buf
+    });
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut seen = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            reader.read_line(&mut line).unwrap() > 0,
+            "process ended before the run started:\n{seen}"
+        );
+        seen.push_str(&line);
+        if line.contains("running 1 scenario(s)") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let mut rest = String::new();
+    while reader.read_line(&mut rest).unwrap() > 0 {}
+    seen.push_str(&rest);
+    let status = child.wait().unwrap();
+    let errors = errors.join().unwrap();
+
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "a SIGTERM'd run is a *cancelled* run (exit 1), not a killed \
+         process:\nstdout:\n{seen}\nstderr:\n{errors}"
+    );
+    assert!(
+        seen.contains("cancelled"),
+        "the termination signal must land as a cancellation:\n{seen}"
+    );
+    // The record must have closed properly: a `run_finished` tail marked
+    // cancelled, not a truncated stream a reader banners as incomplete.
+    let runs_dir = cwd.path().join(".proef-runs");
+    let record_dir = std::fs::read_dir(&runs_dir)
+        .expect("runs dir exists")
+        .filter_map(Result::ok)
+        .find(|e| e.path().join("events.jsonl").is_file())
+        .expect("one run record exists")
+        .path();
+    let record = std::fs::read_to_string(record_dir.join("events.jsonl")).unwrap();
+    let tail = record.lines().last().expect("record has lines");
+    assert!(
+        tail.contains(r#""event":"run_finished""#) && tail.contains(r#""cancelled":true"#),
+        "the record's tail must be a cancelled run_finished, got:\n{tail}"
+    );
+}
+
+/// The escape hatch: a second interrupt hard-exits with 130 (128+SIGINT),
+/// outside the 0/1/2/3 contract — pinned here because until now no test
+/// asserted the code at all.
+#[cfg(unix)]
+#[test]
+fn a_second_interrupt_hard_exits_with_130() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: slow one\n    When the slow thing happens\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  slow:\n    match: the slow thing happens\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/slow\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Phase 1: wait on STDOUT for the running banner (the run is in flight),
+    // then send the first interrupt.
+    let stdout = child.stdout.take().unwrap();
+    let mut out = BufReader::new(stdout);
+    let mut seen = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            out.read_line(&mut line).unwrap() > 0,
+            "process ended before the run started:\n{seen}"
+        );
+        seen.push_str(&line);
+        if line.contains("running 1 scenario(s)") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    // Phase 2: from here stdout must keep draining (a full pipe would wedge
+    // the child), while STDERR carries the handler's own notice — reading
+    // until it appears proves the first signal landed, so the second below
+    // is genuinely second.
+    let drained = std::thread::spawn(move || {
+        let mut rest = String::new();
+        std::io::Read::read_to_string(&mut out, &mut rest).ok();
+        rest
+    });
+    let stderr = child.stderr.take().unwrap();
+    let mut errs = BufReader::new(stderr);
+    let mut notices = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            errs.read_line(&mut line).unwrap() > 0,
+            "process ended before the interrupt notice:\n{notices}"
+        );
+        notices.push_str(&line);
+        if line.contains("interrupt — cancelling") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let status = child.wait().unwrap();
+    drained.join().ok();
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "a second interrupt is the 128+SIGINT hard exit:\nstderr:\n{notices}"
     );
 }
 

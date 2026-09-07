@@ -32,6 +32,16 @@ use proef_core::event::{Event, EventSink};
 use proef_core::step::{BatchResult, Status, StepBatch, StepOutcome};
 use proef_core::world::{Value as WorldValue, World};
 
+/// The absolute ceiling on a computed batch budget (ADR-0007 amendment,
+/// 0.18 survey). Every per-value cap is individually finite, but their
+/// *product* is not: `retry: 10_000` times a 30 s timeout is lint-clean and
+/// ~83 hours, and a saturated sum reaches `Duration::MAX` — which the
+/// dispatcher's `Instant + budget` addition cannot represent. Four hours
+/// bounds every batch this tool exists for (API calls with finite retries)
+/// while turning a runaway product into an ordinary watchdog abandonment
+/// with a truthful message.
+const MAX_BATCH_BUDGET: Duration = Duration::from_hours(4);
+
 /// Margin added to every computed batch budget (ADR-0007).
 const BUDGET_MARGIN: Duration = Duration::from_secs(5);
 
@@ -701,25 +711,13 @@ impl EngineSession for HurlSession {
         for entries in self.entries_per_step(ordinal, batch.steps.len()) {
             for index in entries {
                 let entry = parsed.entries.get(index)?;
-                // `?` on any of these: a `{{…}}` placeholder (or an infinite
-                // count) means this batch cannot be estimated, and the
-                // orchestrator's documented fallback is a better answer than a
-                // confident under-count that abandons a healthy scenario.
-                let (retries, interval) = entry_retry(entry)?;
-                let timeout = entry_timeout(entry, default_timeout)?;
-                let delay = entry_delay(entry)?;
-                // Saturating throughout: user-authored durations must never
-                // panic the budget math (they cap at Duration::MAX instead).
-                let attempts = retries.saturating_add(1);
-                let per_run = timeout
-                    .saturating_mul(attempts)
-                    .saturating_add(interval.saturating_mul(retries))
-                    .saturating_add(delay.saturating_mul(attempts));
-                // `repeat:` runs the whole entry (with its retries) N times.
-                budget = budget.saturating_add(per_run.saturating_mul(entry_repeat(entry)?));
+                budget = budget.saturating_add(entry_budget(entry, default_timeout)?);
             }
         }
-        Some(budget.saturating_add(BUDGET_MARGIN))
+        // The ceiling closes what the per-value caps cannot: individually
+        // lint-clean values whose *product* is unbounded (see
+        // `MAX_BATCH_BUDGET`).
+        Some(budget.saturating_add(BUDGET_MARGIN).min(MAX_BATCH_BUDGET))
     }
 
     fn finish(&mut self) -> Result<(), EngineError> {
@@ -1077,6 +1075,27 @@ fn entry_options(entry: &hurl_core::ast::Entry) -> impl Iterator<Item = &OptionK
         .flatten()
 }
 
+/// One entry's contribution to a batch budget: `timeout × attempts +
+/// interval × retries + delay × attempts`, the whole thing times `repeat:`.
+/// `None` when a `{{…}}` placeholder (or an infinite count) makes the entry
+/// unestimatable — the orchestrator's documented fallback is a better answer
+/// than a confident under-count that abandons a healthy scenario. Saturating
+/// throughout: user-authored durations must never panic the budget math
+/// (they cap at `Duration::MAX`, which [`MAX_BATCH_BUDGET`] then bounds).
+/// A free function so the product arithmetic is testable without a session.
+fn entry_budget(entry: &hurl_core::ast::Entry, default_timeout: Duration) -> Option<Duration> {
+    let (retries, interval) = entry_retry(entry)?;
+    let timeout = entry_timeout(entry, default_timeout)?;
+    let delay = entry_delay(entry)?;
+    let attempts = retries.saturating_add(1);
+    let per_run = timeout
+        .saturating_mul(attempts)
+        .saturating_add(interval.saturating_mul(retries))
+        .saturating_add(delay.saturating_mul(attempts));
+    // `repeat:` runs the whole entry (with its retries) N times.
+    Some(per_run.saturating_mul(entry_repeat(entry)?))
+}
+
 /// Per-entry `[Options]` retry (finite by pack lint) and interval.
 /// `(retries, interval)` for an entry, or `None` when a `{{…}}` placeholder
 /// makes it unknowable.
@@ -1420,6 +1439,48 @@ mod budget_tests {
         assert_eq!(entry_retry(&plain).map(|(r, _)| r), Some(0));
         assert_eq!(entry_delay(&plain), Some(std::time::Duration::ZERO));
         assert_eq!(entry_repeat(&plain), Some(1));
+    }
+
+    /// Every per-value cap is individually finite, but their *product* is
+    /// not: `retry: 9999` at a 30 s timeout is lint-clean and ~83 hours, and
+    /// pathological combinations saturate to `Duration::MAX` — which the
+    /// dispatcher's `Instant + budget` cannot represent. The ceiling turns
+    /// both into an ordinary bounded watchdog budget (ADR-0007 amendment,
+    /// 0.18 survey).
+    #[test]
+    fn a_runaway_budget_product_clamps_to_the_ceiling() {
+        use super::{BUDGET_MARGIN, MAX_BATCH_BUDGET, entry_budget};
+        use std::time::Duration;
+        let default_timeout = Duration::from_secs(30);
+        let runaway = first_entry("GET http://x\n[Options]\nretry: 9999\nHTTP 200\n");
+        let product = entry_budget(&runaway, default_timeout).unwrap();
+        assert!(
+            product > MAX_BATCH_BUDGET,
+            "the premise: lint-clean values compose past the ceiling ({product:?})"
+        );
+        // The exact expression `batch_budget` applies to the summed products.
+        let budget = product.saturating_add(BUDGET_MARGIN).min(MAX_BATCH_BUDGET);
+        assert_eq!(budget, MAX_BATCH_BUDGET, "the ceiling must hold");
+        // And the ceiling itself is representable in deadline arithmetic —
+        // `Instant + budget` on the clamped value cannot overflow.
+        let deadline = std::time::Instant::now().checked_add(budget);
+        assert!(deadline.is_some(), "a clamped budget makes a real deadline");
+    }
+
+    /// `max-time:` was the one budget input the lint could not see while the
+    /// calculator read it (0.18 survey): pin that a literal reaches the
+    /// estimate and a placeholder stays unestimatable.
+    #[test]
+    fn max_time_reaches_the_estimate() {
+        use super::entry_timeout;
+        use std::time::Duration;
+        let entry = first_entry("GET http://x\n[Options]\nmax-time: 5000\nHTTP 200\n");
+        assert_eq!(
+            entry_timeout(&entry, Duration::from_secs(30)),
+            Some(Duration::from_secs(5))
+        );
+        let templated = first_entry("GET http://x\n[Options]\nmax-time: {{t}}\nHTTP 200\n");
+        assert_eq!(entry_timeout(&templated, Duration::from_secs(30)), None);
     }
 
     /// Short details pass through byte-identical — the cap must never touch

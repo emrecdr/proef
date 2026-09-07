@@ -66,18 +66,33 @@ pub type Weights = BTreeMap<(String, String), u64>;
 /// and `--rerun` key on — so a weights file and a shard filter can never
 /// disagree about what a scenario *is*.
 #[must_use]
-pub fn render(summary: &RunSummary) -> String {
+pub fn render(summary: &RunSummary, redactions: &proef_core::report::Redactions) -> String {
     // Built as the very `Weights` map `read` returns, which buys two things: the
     // writer and the reader cannot drift apart about the shape, and rows come
     // out ordered by identity rather than by completion order without a sort —
     // the file is an input to a deterministic split, so two runs of the same
     // suite must differ only where the measurements did.
+    //
+    // Identities go through the masker like every persisted string — this was
+    // the one sink with no `Redactions` at all (0.18 survey), in the file
+    // whose documented workflow is *being archived and shared* across a CI
+    // matrix. The trade is explicit: a row whose identity carried a secret
+    // masks to a key the live suite won't match, so that one scenario falls
+    // back to frozen-hash placement — the same behaviour as a scenario added
+    // after the timings were captured, and strictly better than shipping the
+    // secret.
     let weights: Weights = summary
         .outcomes
         .iter()
         .map(|outcome| {
             let ms = u64::try_from(outcome.cost().as_millis()).unwrap_or(u64::MAX);
-            ((outcome.file.to_string(), outcome.name.to_string()), ms)
+            (
+                (
+                    redactions.apply(&outcome.file),
+                    redactions.apply(&outcome.name),
+                ),
+                ms,
+            )
         })
         .collect();
     let rows: Vec<serde_json::Value> = weights
@@ -318,10 +333,41 @@ mod tests {
             skipped: 0,
             cancelled: false,
         };
-        std::fs::write(&path, super::render(&summary)).unwrap();
+        let redactions = proef_core::report::Redactions::default();
+        std::fs::write(&path, super::render(&summary, &redactions)).unwrap();
         assert!(
             read(&path).unwrap().is_empty(),
             "an empty run has no weights"
         );
+    }
+
+    /// The one sink that had no `Redactions` at all (0.18 survey): a secret
+    /// reflected into an identity masks in the archived file, at the explicit
+    /// price of that one row falling back to hash placement.
+    #[test]
+    fn identities_pass_the_masker_before_the_archive() {
+        use proef_core::runner::{RunSummary, ScenarioOutcome};
+        let outcome = ScenarioOutcome {
+            file: "suite/x.feature".into(),
+            name: "posts hunter2 to the api".into(),
+            line: 2,
+            status: proef_core::step::Status::Passed,
+            reason: None,
+            tags: std::sync::Arc::from(Vec::new()),
+            steps: Vec::new(),
+            fault: None,
+            artifact_slug: None,
+        };
+        let summary = RunSummary {
+            outcomes: vec![outcome],
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+            cancelled: false,
+        };
+        let redactions = proef_core::report::Redactions::new(["hunter2".to_owned()]);
+        let rendered = super::render(&summary, &redactions);
+        assert!(!rendered.contains("hunter2"), "{rendered}");
+        assert!(rendered.contains("***"), "{rendered}");
     }
 }

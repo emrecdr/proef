@@ -350,10 +350,7 @@ pub fn doctor(
     // Warn, never Fail: the engine is embedded, so a run needs no `hurl`
     // binary — but ADR-0018's replay promise ("the same bytes run under
     // stock hurl") and the emitted `# replay:` hints do.
-    let (status, detail) = match std::process::Command::new("hurl")
-        .arg("--version")
-        .output()
-    {
+    let (status, detail) = match std::process::Command::new("hurl").arg("--version").output() {
         Ok(out) if out.status.success() => {
             let version = String::from_utf8_lossy(&out.stdout);
             let first = version.lines().next().unwrap_or("hurl").to_owned();
@@ -361,7 +358,8 @@ pub fn doctor(
         }
         _ => (
             DoctorStatus::Warn,
-            "not on PATH — artifacts and `ref:` fragments replay under stock hurl              only when it is installed"
+            "not on PATH — artifacts and `ref:` fragments replay under stock hurl \
+             only when it is installed"
                 .to_owned(),
         ),
     };
@@ -1358,7 +1356,10 @@ pub fn artifacts(
             // replays the hand-off unchanged. Each comes from beside the
             // source that referenced it, feature or fragment (ADR-0018).
             let asset_dir = out_dir.join(proef_core::emit::asset_root(&artifact.slug));
-            let root = crate::fsutil::parent_dir(Path::new(feature.file.path.as_str()));
+            // The directory the feature was read from, never its portable
+            // name — the name's anchor does not survive a `cd`
+            // (`LoadedFeature::read_from`).
+            let root = crate::fsutil::parent_dir(&feature.read_from);
             if let Err(err) = crate::assets::stage_assets(
                 &artifact.assets,
                 crate::assets::AssetRoots {

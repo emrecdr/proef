@@ -760,6 +760,13 @@ impl<W: Write + Send> JsonlReporter<W> {
 
 impl<W: Write + Send> Reporter for JsonlReporter<W> {
     fn on_event(&mut self, event: &Event) {
+        // The `if let Ok` is not a swallowed failure: `Event` serialization is
+        // total (plain fields, string keys — pinned by
+        // `event::tests::every_event_variant_serializes`), so the arm cannot
+        // miss. The *write* results are deliberately dropped here — a reporter
+        // cannot meaningfully report its own channel dying — and the CLI hands
+        // this reporter a latching writer so a failed record write still
+        // reaches the exit code (`exec::LatchedFile`).
         if let Ok(json) = serde_json::to_string(event) {
             let _ = writeln!(self.out, "{json}");
         }
