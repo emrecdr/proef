@@ -1771,6 +1771,12 @@ fn build_specs(
                 &scenario.lowered.name,
             )));
             let project_root = project_root.map(Path::to_path_buf);
+            // The directory the feature was *read from* — staging's anchor.
+            // Never derived from `feature.file.path`: that is the portable
+            // name, whose anchor (project root, or the caller's own typed
+            // spelling) the string does not carry, so resolving it from an
+            // arbitrary cwd finds nothing (`LoadedFeature::read_from`).
+            let feature_dir = crate::fsutil::parent_dir(&feature.read_from);
             // One name for one directory: what assets are staged into *is* the
             // `file_root` the engine gets, and the clone exists only because
             // the closure takes its copy by move while the spec keeps the
@@ -1793,7 +1799,7 @@ fn build_specs(
                         &lowered,
                         world,
                         &stem,
-                        Path::new(feature_file.path.as_str()),
+                        &feature_dir,
                         &asset_dir,
                         &artifacts_dir,
                         project_root.as_deref(),
@@ -1849,7 +1855,7 @@ fn stage_and_record(
     lowered: &lower::LoweredScenario,
     world: &proef_core::world::World,
     stem: &str,
-    feature_path: &Path,
+    feature_dir: &Path,
     asset_dir: &Path,
     artifacts_dir: &Path,
     project_root: Option<&Path>,
@@ -1868,7 +1874,7 @@ fn stage_and_record(
     crate::assets::stage_assets(
         &artifact.assets,
         crate::assets::AssetRoots {
-            feature: &crate::fsutil::parent_dir(feature_path),
+            feature: feature_dir,
             project: project_root,
         },
         asset_dir,
