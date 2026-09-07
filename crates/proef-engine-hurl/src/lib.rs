@@ -54,9 +54,17 @@ fn recognise_option(key: &str) -> Option<RawOption> {
         // `repeat` is exactly as unbounded as an infinite `retry`.
         "repeat" => (None, Some(RawOptionValue::Count)),
         "delay" => (Some("delay"), Some(RawOptionValue::Duration)),
-        // Part of the retry policy for double-declaration purposes; its own
-        // value carries no separate cap.
-        "retry-interval" => (Some("retry"), None),
+        // Part of the retry policy for double-declaration purposes — and its
+        // value multiplies into the batch budget (`retries × interval`), so
+        // it carries the duration cap like every other budget input. It was
+        // the one uncapped multiplicand (0.18 survey).
+        "retry-interval" => (Some("retry"), Some(RawOptionValue::Duration)),
+        // No YAML twin. The budget calculator has always *read* `max-time`
+        // as the entry's timeout, while the lint could not see it at all —
+        // so `max-time: 100000h` was lint-clean and produced a multi-year
+        // batch budget the watchdog dutifully honoured (ADR-0007 amendment,
+        // 0.18 survey). Capped like every duration the budget consumes.
+        "max-time" => (None, Some(RawOptionValue::Duration)),
         _ => return None,
     };
     Some(RawOption { family, value })
@@ -196,6 +204,32 @@ mod tests {
         assert_eq!(factory.id(), "hurl");
         assert_eq!(factory.step_kinds().len(), 1);
         assert_eq!(factory.step_kinds()[0].prefix, "hurl");
+    }
+
+    /// Every option the budget calculator *reads* must be one the lint can
+    /// *see* — `max-time` was read (as the entry's timeout) while invisible
+    /// to the recogniser, so `max-time: 100000h` was lint-clean and produced
+    /// a multi-year watchdog budget; `retry-interval` multiplied into the
+    /// budget with no value cap (ADR-0007 amendment, 0.18 survey).
+    #[test]
+    fn every_budget_input_carries_a_value_rule() {
+        use proef_core::engine::RawOptionValue;
+        for key in ["retry", "repeat", "delay", "retry-interval", "max-time"] {
+            let option = recognise_option(key)
+                .unwrap_or_else(|| panic!("`{key}` must be recognised — the budget reads it"));
+            assert!(
+                option.value.is_some(),
+                "`{key}` feeds the budget and must carry a value cap"
+            );
+        }
+        assert!(matches!(
+            recognise_option("max-time").unwrap().value,
+            Some(RawOptionValue::Duration)
+        ));
+        assert!(matches!(
+            recognise_option("retry-interval").unwrap().value,
+            Some(RawOptionValue::Duration)
+        ));
     }
 
     /// The doc on [`EMBEDDED_HURL_VERSION`] promises lockstep with the Cargo

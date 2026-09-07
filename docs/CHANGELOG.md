@@ -13,6 +13,27 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The ADR-0007 budget family is closed over its inputs, and bounded as a
+  product.** `[Options] max-time:` was *read* by the budget calculator (as
+  the entry's timeout) while invisible to the lint — `max-time: 100000h`
+  was lint-clean and produced a multi-year watchdog budget; it now carries
+  the duration cap, and a test pins the rule the hole broke (every option
+  the budget reads must be one the lint can see). `retry-interval:` — the
+  one uncapped multiplicand — carries the cap too. And because individually
+  capped values still compose into an unbounded product (`retry: 10_000` ×
+  a 30 s timeout is ~83 lint-clean hours, saturating to `Duration::MAX`,
+  whose deadline addition panicked as a phantom "scenario thread panicked"
+  fault), the computed batch budget now clamps to an absolute four-hour
+  ceiling and the dispatcher's deadline arithmetic can no longer overflow.
+  ADR-0007 carries the amendment.
+
+- **`[http] timeout-ms = 0` is refused.** libcurl reads zero as *no*
+  timeout, so the value opted a suite into exactly the unbounded hang the
+  default exists to defend against — while reading like "immediately".
+  Exit 2, in whichever table it appears.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added
