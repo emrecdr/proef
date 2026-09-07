@@ -23,7 +23,7 @@ pub fn write_junit(
     redactions: &Redactions,
 ) -> Result<(), String> {
     let mut report = Report::new("proef");
-    report.set_uuid(uuid::Uuid::parse_str(run_id).unwrap_or_else(|_| uuid::Uuid::nil()));
+    report.set_uuid(report_uuid(run_id));
 
     // A failed teardown's outcomes ride along as their own suite (named by
     // the phase feature file, like #78's setup) — a JUnit-gated pipeline used
@@ -213,30 +213,52 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     case
 }
 
+/// The `JUnit` report's identity. A run id is not always a uuid (ADR-0021 made
+/// custom `--run-id` names first-class): a non-uuid id derives a stable v5
+/// uuid from its bytes, so `--run-id ci` runs keep a distinct, reproducible
+/// report identity instead of all collapsing onto the nil uuid — which is
+/// what every custom-id run used to emit, colliding in any consumer that
+/// keys on it.
+fn report_uuid(run_id: &str) -> uuid::Uuid {
+    uuid::Uuid::parse_str(run_id)
+        .unwrap_or_else(|_| uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, run_id.as_bytes()))
+}
+
 /// Append the run summary to `$GITHUB_STEP_SUMMARY` when running in Actions
 /// (US-8/G7). Failures list their feature anchor and detail.
+///
+/// Fallible for the same reason `write_junit` is: a reviewer reads this page
+/// where they would have read the `JUnit` file, so a summary proef could not
+/// deliver must reach the exit code, not vanish (the caller folds an `Err`
+/// into `reports_failed`). Absence of the env var is not a failure — it just
+/// means this is not an Actions job.
 pub fn write_github_summary(
     summary: &RunSummary,
     tag_links: &std::collections::BTreeMap<String, String>,
     run_id: &str,
     metadata: &std::collections::BTreeMap<String, String>,
     redactions: &Redactions,
-) {
+) -> Result<(), String> {
+    use std::io::Write as _;
     let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") else {
-        return;
+        return Ok(());
     };
     let body = summary_body(summary, tag_links, run_id, metadata);
-    if let Ok(mut file) = std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
-        .open(path)
-    {
-        use std::io::Write as _;
-        // One pass over the final body covers names and details alike; the
-        // cap runs after redaction so the budget is measured on the bytes
-        // actually written.
-        let _ = writeln!(file, "{}", capped_summary(redactions.apply(&body)));
-    }
+        .open(&path)
+        .map_err(|err| {
+            format!(
+                "cannot open GitHub step summary {}: {err}",
+                std::path::Path::new(&path).display()
+            )
+        })?;
+    // One pass over the final body covers names and details alike; the
+    // cap runs after redaction so the budget is measured on the bytes
+    // actually written.
+    writeln!(file, "{}", capped_summary(redactions.apply(&body)))
+        .map_err(|err| format!("cannot write GitHub step summary: {err}"))
 }
 
 /// The summary's markdown, separated from the file append so it can be asserted
@@ -818,6 +840,35 @@ mod escaping_tests {
         assert_eq!(enc_cell("plain"), "plain");
         // A newline ends the row outright.
         assert_eq!(enc_cell("two\nlines"), "two lines");
+    }
+}
+
+#[cfg(test)]
+mod report_uuid_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    /// Custom run ids (ADR-0021) must keep distinct, stable report
+    /// identities — every non-uuid id used to collapse onto the nil uuid,
+    /// colliding in any `JUnit` consumer keyed on it.
+    #[test]
+    fn a_custom_run_id_derives_a_stable_distinct_uuid() {
+        let ci = super::report_uuid("ci");
+        let pr = super::report_uuid("pr-42");
+        assert_eq!(ci, super::report_uuid("ci"), "same id, same uuid");
+        assert_ne!(ci, pr, "different ids must not collide");
+        assert_ne!(ci, uuid::Uuid::nil(), "never the nil uuid");
+        assert_ne!(pr, uuid::Uuid::nil(), "never the nil uuid");
+    }
+
+    /// A run id that already is a uuid passes through unchanged — the
+    /// derivation exists for the ids that are not.
+    #[test]
+    fn a_uuid_run_id_passes_through_verbatim() {
+        let id = "0192f7a4-9c3e-7000-8000-000000000000";
+        assert_eq!(
+            super::report_uuid(id),
+            uuid::Uuid::parse_str(id).expect("test id is a uuid")
+        );
     }
 }
 
