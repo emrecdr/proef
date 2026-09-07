@@ -663,9 +663,20 @@ fn spawn_scenario(
                 &events,
                 &cancel,
                 |budget| {
+                    // `Instant + Duration` panics on overflow, and the budget
+                    // is engine-supplied: a saturated `Duration::MAX` here
+                    // surfaced as a phantom "scenario thread panicked" System
+                    // fault from a user-authored value (0.18 survey). The
+                    // hurl engine clamps its own budgets, so the fallback is
+                    // a defensive floor for any engine that does not: a year
+                    // out is "no deadline this run" without the panic.
+                    let now = Instant::now();
+                    let deadline = now
+                        .checked_add(budget)
+                        .unwrap_or_else(|| now + Duration::from_hours(365 * 24));
                     let _ = heartbeat_tx.send(Msg::BatchBegin {
                         scenario: index,
-                        deadline: Instant::now() + budget,
+                        deadline,
                     });
                 },
             )
