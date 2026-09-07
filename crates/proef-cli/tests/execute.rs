@@ -2139,8 +2139,17 @@ fn runaway_scenarios_are_bounded() {
         .args(["test", "suite"])
         .assert()
         .code(3);
+    // A *generous upper bound*, not a ratio — TESTING-STRATEGY §7 keeps that
+    // distinction: a ratio drifts under the suite's own parallelism and must
+    // run alone (`just perf`, the `#[ignore]`d complexity guard), but a
+    // boundedness smoke test is exactly the "wall time as a generous upper
+    // bound" the strategy sanctions in the ordinary suite. 60s over a 500 ms
+    // timeout is ~120× headroom, so a loaded runner cannot flake it while a
+    // genuinely unbounded run (a lost timeout, the pre-fix `/slow` hang)
+    // still trips it. The exit code is the real assertion; this only proves
+    // it arrived promptly.
     assert!(
-        started.elapsed().as_secs() < 15,
+        started.elapsed().as_secs() < 60,
         "bounded: took {:?}",
         started.elapsed()
     );
@@ -2670,6 +2679,85 @@ fn an_encoded_reflection_of_a_secret_never_reaches_the_record() {
     for text in [&console, &events, &log] {
         assert!(!text.contains(API_TOKEN), "raw secret leaked");
     }
+}
+
+/// The whole-sink sweep (0.18 survey): a reflected secret must reach *no
+/// file any sink writes* — JUnit, CTRF, the GitHub step summary, timings,
+/// the record, the mirror, TAP stdout. The per-sink unit tests pin each
+/// masker call; this pins that no sink ever leaves the set. Fails on
+/// purpose so the failure-detail paths — where the reflection actually
+/// travels — are all exercised.
+#[test]
+fn a_reflected_secret_reaches_no_sink_file() {
+    const ENCODED: &str = "Zml4dHVyZS10b2tlbg==";
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "# baseURL: ${env:PROEF_BASE_URL}\nFeature: F\n  Scenario: the token comes back encoded\n    \
+         When the token is introspected\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  introspect:\n    match: the token is introspected\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/api/v1/token/introspect\n          \
+         Authorization: Bearer ${secret:apiToken}\n          HTTP 200\n          \
+         [Asserts]\n          jsonpath \"$.token_b64\" == \"will-not-match\"\n",
+    )
+    .unwrap();
+
+    let summary_path = cwd.path().join("gh-summary.md");
+    let assert = proef_in(cwd.path(), &fixture)
+        .env("GITHUB_STEP_SUMMARY", &summary_path)
+        .args([
+            "test",
+            "suite",
+            "--junit",
+            "report.junit.xml",
+            "--ctrf",
+            "report.ctrf.json",
+            "--format",
+            "tap",
+        ])
+        .assert()
+        .code(1);
+
+    let tap_stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let run_dir = latest_run_dir(cwd.path());
+    let mut swept = vec![("tap stdout".to_owned(), tap_stdout)];
+    for name in ["events.jsonl", "run.log", "timings.json"] {
+        swept.push((
+            name.to_owned(),
+            std::fs::read_to_string(run_dir.join(name)).unwrap_or_default(),
+        ));
+    }
+    for name in ["report.junit.xml", "report.ctrf.json"] {
+        swept.push((
+            name.to_owned(),
+            std::fs::read_to_string(cwd.path().join(name)).unwrap_or_default(),
+        ));
+    }
+    swept.push((
+        "gh summary".to_owned(),
+        std::fs::read_to_string(&summary_path).unwrap_or_default(),
+    ));
+    let mut masked_somewhere = false;
+    for (name, text) in &swept {
+        assert!(
+            !text.is_empty() || name == "run.log",
+            "sink `{name}` produced nothing — the sweep would be vacuous"
+        );
+        assert!(!text.contains(ENCODED), "encoded secret in {name}:\n{text}");
+        assert!(!text.contains(API_TOKEN), "raw secret in {name}:\n{text}");
+        masked_somewhere |= text.contains("***");
+    }
+    assert!(
+        masked_somewhere,
+        "no sink rendered a masked detail — the reflection never travelled and this proved nothing"
+    );
 }
 
 /// TESTING-STRATEGY fixture cases: the negative-path endpoints have

@@ -10,4 +10,4 @@ pub mod documents;
 pub mod features;
 pub mod server;
 
-pub use server::{ServerConfig, ServerError, Transport, run};
+pub use server::{ResolvedRoot, ServerConfig, ServerError, Transport, run};

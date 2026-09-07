@@ -904,7 +904,7 @@ pub fn execute(
         // write timings must never change a run's verdict.
         write_or_warn(
             &run_dir.join("timings.json"),
-            crate::timings::render(&summary),
+            crate::timings::render(&summary, &redactions),
         );
 
         // CI reports (US-8): JUnit XML + GitHub job summary.

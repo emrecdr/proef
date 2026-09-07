@@ -917,7 +917,7 @@ fn main() -> std::process::ExitCode {
             Err(code) => code,
             Ok(()) => fmt::fmt(&path, check),
         },
-        Command::Lsp => lsp::run(config_path.map(std::path::Path::to_path_buf)),
+        Command::Lsp => lsp::run(config_path.map(std::path::Path::to_path_buf), env),
     };
     let code = final_exit(code, render::stdout_failed());
     std::process::ExitCode::from(code.code())

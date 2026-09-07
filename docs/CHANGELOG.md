@@ -129,6 +129,53 @@ Regrouping preserved every entry and its order within its kind.
   default exists to defend against — while reading like "immediately".
   Exit 2, in whichever table it appears.
 
+- **Every sink that renders run values now routes identities through the
+  secret masker.** The event stream masks `scenario`, `file`, `tags` and the
+  skip `reason` under an explicit no-exemptions rule ("a field exempted
+  because it can't contain one is how that stops being true later"), and five
+  sinks bypassed it for the same fields (0.18 survey): the GitHub annotation
+  `title=`/`file=` lines (written to CI stdout), TAP's skip reason and
+  scenario name, CTRF's `name`/`suite`/`filePath`/`tags`, JUnit's
+  suite/testcase identity and `file` attribute, and `timings.json` — the one
+  sink that took no `Redactions` at all, in the file whose documented
+  workflow is being archived and shared across a CI matrix. Structural
+  mitigations (secrets lower to `{{name}}`; the engine pre-redacts details)
+  made a live leak unlikely, but the boundary rule was unenforced; a
+  per-sink leak test now pins each, and a whole-run sweep asserts a reflected
+  secret reaches no file any sink writes.
+
+- **`proef lsp` honours `--env`.** The global flag was parsed and then
+  silently dropped for `lsp`, so `proef lsp --env staging` analysed the
+  default profile while runs used staging — the editor/runner drift R10-1
+  closed for `--config`. And the workspace-root re-resolution (for an editor
+  launched outside the project) re-loaded the config to find the root but
+  dropped the `${url:…}`/`${vars:…}` scope it had computed, analysing the
+  right tree against the wrong directory's config; the scope now travels with
+  the root it belongs to.
+
+- **A CTRF report cannot gain a key the spec would reject.** CTRF §4.4 makes
+  consumers reject any key outside the defined set (unless under `extra`),
+  and the spec moved five times in 2026 — so an additive field is a hard
+  break. A test pins the exact allowed key sets.
+
+- **De-flaked three tests** (0.18 survey): the abandoned-scenario record-gate
+  test waited on a 500 ms blind sleep that passed vacuously on a loaded
+  runner — it now polls a drop latch set strictly after the worker's final
+  emit attempt, so it tests the dropped event on every machine; the
+  bounded-runtime smoke test's wall-clock assertion is widened and documented
+  as the "generous upper bound" class TESTING-STRATEGY §7 sanctions (distinct
+  from the `#[ignore]`d ratio guard); and a watch test's fixed shared temp
+  path (`temp_dir()/proef-watch-alias-test` + `remove_dir_all`) — the one
+  cross-*process* race nextest cannot cover — moved to a unique `tempdir`.
+
+### Breaking
+
+- **Library:** `proef_lsp::RootResolver` now returns a `ResolvedRoot`
+  (`root` + `disk` + `config_vars`) instead of a `(PathBuf, Box<dyn
+  SourceProvider>)` tuple, so the re-resolved config scope reaches the
+  server. `proef-cli`'s `lsp::run` takes the `--env` value.
+  `timings::render` takes a `&Redactions`.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added
