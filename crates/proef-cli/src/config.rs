@@ -80,6 +80,9 @@ pub struct ProjectConfig {
     /// `[sla]` table — the opt-in run-level latency budget.
     #[serde(default)]
     pub sla: SlaTable,
+    /// `[flaky]` table — the statistical guards `proef flaky` applies.
+    #[serde(default)]
+    pub flaky: FlakyTable,
     /// `[url]` table — URL variables (`${url:base}`, `${url:admin}`, …).
     #[serde(default)]
     pub url: BTreeMap<String, String>,
@@ -201,6 +204,25 @@ pub struct SlaTable {
     /// Maximum single-step duration ceiling.
     #[serde(rename = "max-ms")]
     pub max_ms: Option<u64>,
+}
+
+/// `[flaky]` — the statistical guards `proef flaky` applies. Project-wide, not
+/// env-scoped: a flakiness threshold is a policy about the suite's history,
+/// not a fact about an environment. Absent keys take `FlakyThresholds`'
+/// defaults; `--min-samples`/`--recovery-runs`/`--outage-rate` override.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FlakyTable {
+    /// Minimum observed runs before a scenario is classified (default 10).
+    #[serde(rename = "min-samples")]
+    pub min_samples: Option<usize>,
+    /// Trailing clean runs that resolve a flagged scenario (default 5).
+    #[serde(rename = "recovery-runs")]
+    pub recovery_runs: Option<usize>,
+    /// A run failing over this share of suite scenarios is an outage,
+    /// excluded (default 0.8).
+    #[serde(rename = "outage-rate")]
+    pub outage_rate: Option<f64>,
 }
 
 /// An `[env.<name>]` profile: per-environment overrides that deep-merge over the
@@ -427,6 +449,20 @@ impl ProjectConfig {
             p95_ms: env_sla.and_then(|sla| sla.p95_ms).or(self.sla.p95_ms),
             max_ms: env_sla.and_then(|sla| sla.max_ms).or(self.sla.max_ms),
         })
+    }
+
+    /// The `[flaky]` thresholds, each key falling back to the built-in default
+    /// (`FlakyThresholds::default`). Not env-scoped: a flakiness policy is
+    /// about the suite's history, not an environment. CLI flags override on
+    /// top, in `main`.
+    #[must_use]
+    pub fn flaky_thresholds(&self) -> crate::flaky::FlakyThresholds {
+        let base = crate::flaky::FlakyThresholds::default();
+        crate::flaky::FlakyThresholds {
+            min_samples: self.flaky.min_samples.unwrap_or(base.min_samples),
+            recovery_runs: self.flaky.recovery_runs.unwrap_or(base.recovery_runs),
+            outage_rate: self.flaky.outage_rate.unwrap_or(base.outage_rate),
+        }
     }
 
     /// The effective job count (flag > `[env.<name>.run]` > `[run]` > available

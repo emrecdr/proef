@@ -24,6 +24,7 @@ pub mod error;
 pub mod event;
 pub mod fake;
 pub mod feature;
+pub mod fingerprint;
 pub mod html;
 pub mod lower;
 pub mod matcher;

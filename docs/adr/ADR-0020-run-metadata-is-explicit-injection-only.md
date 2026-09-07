@@ -54,6 +54,32 @@ door.
    never told is a secret matches no needle, the same standing as any CLI
    argument.
 
+## Amendment (2026-09-07) — a computed input fingerprint is not harvested metadata
+
+`proef flaky`'s equivalence-class fingerprint (the `inputs.json` sidecar)
+prompted the obvious question: does §1 forbid it? It does not, and the
+boundary is worth stating so the next reader does not re-litigate it.
+
+§1 forbids proef from **harvesting an environment fact** — reading git state,
+the hostname, or CI variables and putting them in the record. The input
+fingerprint reads none of those. It is a hash of proef's **own inputs** — the
+feature sources, the loaded macros and fragments, the resolved config scope —
+the same category as the artifact slug (`emit::artifact_slug`) or the shard
+hash: a *derived identifier* over data proef already holds, not a fact lifted
+from the surrounding machine. Derived identifiers have never been in scope
+here; ADR-0020 governs `[meta]`/`--meta` **metadata**, which this is not.
+
+The git-commit case remains exactly as §1 requires: a user who wants
+commit-based grouping **hands the commit over** (`--meta commit=$(git rev-parse
+HEAD)`, §1's own worked example) and `proef flaky --by commit` groups on it.
+proef never runs git itself. So the survey's "git tree SHA equivalence class"
+splits cleanly along this ADR's own axis — a computed fingerprint proef may
+derive, plus a commit the user may hand over — and needs no new decision.
+
+The sidecar is a derived aid like `timings.json`, not a second record
+(ADR-0008): the JSONL event stream remains the only record format, and the
+event schema is untouched (no `run_started` field was added).
+
 ## Consequences
 
 - `run_started` gains `env`, `metadata`, `shuffled` — additive,

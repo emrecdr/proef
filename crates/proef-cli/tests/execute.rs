@@ -143,6 +143,23 @@ fn reference_corpus_runs_green_with_same_bytes_artifacts() {
     let log = std::fs::read_to_string(run_dir.join("run.log")).unwrap();
     assert!(log.contains("summary: 12 passed"), "{log}");
 
+    // The input fingerprint sidecar (`proef flaky`'s equivalence class): a
+    // real run writes it, with a 128-bit (32-hex) fingerprint over the run's
+    // own inputs.
+    let inputs: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(run_dir.join("inputs.json")).unwrap())
+            .unwrap();
+    let fingerprint = inputs["fingerprint"].as_str().unwrap();
+    assert_eq!(
+        fingerprint.len(),
+        32,
+        "128-bit fingerprint as hex: {inputs}"
+    );
+    assert!(
+        fingerprint.chars().all(|c| c.is_ascii_hexdigit()),
+        "{inputs}"
+    );
+
     // Attempt counts are the flake-proof axis (TESTING-STRATEGY §5): the
     // fixture makes items visible on the 2nd poll, so the retried step
     // reports exactly 2 attempts — and a multi-entry step never inflates

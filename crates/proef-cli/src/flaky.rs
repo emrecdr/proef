@@ -36,6 +36,38 @@ use proef_core::step::Status;
 
 use crate::record::{self, Key, label};
 
+/// The statistical guards a verdict applies — the 2026-field discipline that
+/// separates a real flakiness signal from noise (0.18 survey §6). Every value
+/// is a pure parameter of the fold, so the whole classification stays a
+/// function of (records, thresholds).
+#[derive(Clone, Copy)]
+pub struct FlakyThresholds {
+    /// The minimum observed runs before a scenario is classified at all.
+    /// Below it, `InsufficientData` — a verdict on thin data is worse than
+    /// none (the industry default is 10; Trunk refuses a call at n=8).
+    pub min_samples: usize,
+    /// The length of the trailing all-clean run that resolves a `Flaky` or
+    /// `Latent` scenario back to `Healthy` — the anti-flap hysteresis. A
+    /// scenario that flapped historically holds its flag until it has earned
+    /// this many consecutive clean passes (Trunk's recovery window).
+    pub recovery_runs: usize,
+    /// A run whose share of failing suite scenarios exceeds this is an
+    /// environment outage, not evidence about any one scenario, and its
+    /// observations are excluded entirely (Trunk's Infrastructure Failure
+    /// Protection — the failure mode most likely to bite an HTTP runner).
+    pub outage_rate: f64,
+}
+
+impl Default for FlakyThresholds {
+    fn default() -> Self {
+        Self {
+            min_samples: 10,
+            recovery_runs: 5,
+            outage_rate: 0.8,
+        }
+    }
+}
+
 /// One observed run of one scenario — everything a verdict reads.
 struct Observation {
     failed: bool,
@@ -88,17 +120,40 @@ impl History {
         crate::sla::percentile(&sorted, 95).unwrap_or(0)
     }
 
-    /// The classification, from the derived counts. Transition-counting rather
-    /// than fail-rate is the load-bearing choice: F,F,P,P is a fix that stuck
-    /// (one transition), not a flake — fail-rate cannot tell those apart.
-    fn verdict(&self) -> Verdict {
+    /// The trailing run is all clean (passed, no retry) for `n` observations —
+    /// the hysteresis signal that a historically-unstable scenario has earned
+    /// its way back to `Healthy`. `false` when there are fewer than `n`
+    /// observations, so a scenario cannot resolve before it has had the
+    /// chance to prove it.
+    fn clean_tail(&self, n: usize) -> bool {
+        n > 0
+            && self.runs.len() >= n
+            && self.runs[self.runs.len() - n..]
+                .iter()
+                .all(|o| !o.failed && !o.retried)
+    }
+
+    /// The classification, from the derived counts and the statistical
+    /// guards. Transition-counting rather than fail-rate is the load-bearing
+    /// choice: F,F,P,P is a fix that stuck (one transition), not a flake —
+    /// fail-rate cannot tell those apart. On top of that (0.18 survey §6): a
+    /// minimum-sample floor refuses a verdict on thin data, and hysteresis
+    /// holds a flag until a clean recovery tail, so a scenario cannot flap
+    /// `flaky`↔`healthy` between adjacent runs.
+    fn verdict(&self, t: &FlakyThresholds) -> Verdict {
+        // A verdict on thin data is noise wearing a table — refuse to
+        // classify below the floor (the outage guard has already excluded
+        // non-evidence runs, so this counts real observations).
+        if self.observed() < t.min_samples {
+            return Verdict::InsufficientData;
+        }
         // Quarantine is asked first because it changes what a result *means*,
         // not just how urgent it is. A quarantined scenario's failures gate
         // nothing, so nobody is looking at them: always-failing under
         // quarantine is a test that has been switched off and left in the
         // suite, which is the failure mode quarantine itself is prone to and
         // the one no pass/fail history can show.
-        if self.quarantined && self.observed() >= 2 {
+        if self.quarantined {
             if self.fails() == self.observed() {
                 return Verdict::Disabled;
             }
@@ -106,14 +161,21 @@ impl History {
                 return Verdict::Recovered;
             }
         }
-        if self.transitions() >= 2 {
+        // Broken outranks flaky and is checked before the recovery tail:
+        // failing every run is a consistent problem, not instability, and a
+        // clean tail cannot apply to a scenario that never passed.
+        if self.fails() == self.observed() {
+            return Verdict::Broken;
+        }
+        // Hysteresis: a scenario that flapped or passed-only-on-retry holds
+        // that flag until it has earned a trailing clean run of
+        // `recovery_runs`, at which point it resolves to Healthy. Without
+        // this, a scenario hovering at the boundary flips verdict every run.
+        let recovered = self.clean_tail(t.recovery_runs);
+        if self.transitions() >= 2 && !recovered {
             Verdict::Flaky
-        } else if self.pass_on_retry() > 0 {
+        } else if self.pass_on_retry() > 0 && !recovered {
             Verdict::Latent
-        } else if self.observed() >= 2 && self.fails() == self.observed() {
-            Verdict::Broken
-        } else if self.observed() < 2 {
-            Verdict::New
         } else {
             Verdict::Healthy
         }
@@ -122,7 +184,7 @@ impl History {
 
 /// The verdict, ordered by how urgently a human should look at it — the
 /// listing sorts by this, worst first.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Verdict {
     /// Quarantined and failing every observed run — switched off, not flaky.
     Disabled,
@@ -134,8 +196,8 @@ enum Verdict {
     Broken,
     /// Quarantined but green throughout the window — the tag can come off.
     Recovered,
-    /// Seen in fewer than two runs — no history to judge yet.
-    New,
+    /// Seen in fewer than `min-samples` runs — not enough data to judge.
+    InsufficientData,
     Healthy,
 }
 
@@ -147,7 +209,7 @@ impl Verdict {
             Self::Latent => "passes only on retry (latent)",
             Self::Broken => "always failing (broken, not flaky)",
             Self::Recovered => "green throughout — the @quarantine can come off",
-            Self::New => "new — not enough history",
+            Self::InsufficientData => "insufficient data — below the sample floor",
             Self::Healthy => "healthy",
         }
     }
@@ -160,7 +222,7 @@ impl Verdict {
             Self::Latent => "latent",
             Self::Broken => "broken",
             Self::Recovered => "recovered",
-            Self::New => "new",
+            Self::InsufficientData => "insufficient-data",
             Self::Healthy => "healthy",
         }
     }
@@ -170,7 +232,12 @@ impl Verdict {
 /// informational, like `explain`; a store with fewer than two records is a
 /// user error (`2`), the same refusal `diff` gives, because a verdict over
 /// one run would be noise wearing a table.
-pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode {
+pub fn flaky(
+    runs_root: &Path,
+    output_json: bool,
+    by: Option<&str>,
+    thresholds: FlakyThresholds,
+) -> ExitCode {
     let runs = record::all_runs(runs_root);
     if runs.len() < 2 {
         crate::render::errln!(
@@ -181,10 +248,13 @@ pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode 
         return ExitCode::UserError;
     }
 
-    // Keyed by (context, file, scenario). Without `--by` every run lands in
-    // one unnamed context, which is exactly the old single-bucket fold.
+    // Keyed by (context, file, scenario). The default context is the run's
+    // input fingerprint (0.18 survey §6): a pack or `proef.toml` edit changes
+    // what a scenario *is*, so runs of different inputs must not share a
+    // window. Under `--by` the caller's grouping wins instead.
     let mut histories: BTreeMap<(String, Key), History> = BTreeMap::new();
     let mut unreadable = 0usize;
+    let mut outages = 0usize;
     for dir in &runs {
         let rec = match record::read_record(dir) {
             Ok(rec) => rec,
@@ -199,7 +269,21 @@ pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode 
                 continue;
             }
         };
-        let context = by.map_or_else(String::new, |key| run_context(&rec, key));
+        // A run where too many suite scenarios failed is an environment
+        // outage (a fixture or staging incident), not evidence about any one
+        // scenario — exclude it wholesale, or a single outage would mark the
+        // whole suite broken.
+        if is_outage(&rec, thresholds.outage_rate) {
+            outages += 1;
+            continue;
+        }
+        let context = match by {
+            Some(key) => run_context(&rec, key),
+            // The fingerprint sidecar (`inputs.json`); absent on records that
+            // predate the field, which then share the empty-string window —
+            // the old single-bucket behaviour, so old records still fold.
+            None => read_fingerprint(dir).unwrap_or_default(),
+        };
         for (key, run) in rec.scenarios {
             if !run.is_suite() || run.status == Status::Skipped {
                 // A phase is not a suite scenario (ADR-0014); a skipped row is
@@ -222,14 +306,15 @@ pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode 
         }
     }
 
-    // The two-run floor re-applies over what was actually *readable* — with
-    // enough unreadable dirs the survivors can dip below it, and a verdict
-    // over one run is the noise the floor exists to refuse.
-    let readable = runs.len() - unreadable;
-    if readable < 2 {
+    // The two-run floor re-applies over runs that were actually *evidence* —
+    // readable and not an outage. With enough of either excluded the
+    // survivors can dip below it, and a verdict over one run is the noise the
+    // floor exists to refuse.
+    let counted = runs.len() - unreadable - outages;
+    if counted < 2 {
         crate::render::errln!(
-            "error: need at least two readable runs for a flakiness verdict; \
-             {readable} readable of {} under {}",
+            "error: need at least two usable runs for a flakiness verdict; \
+             {counted} usable of {} under {} ({unreadable} unreadable, {outages} outage)",
             runs.len(),
             runs_root.display()
         );
@@ -237,15 +322,22 @@ pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode 
     }
     if unreadable > 0 {
         crate::render::errln!(
-            "note: verdicts cover {readable} of {} runs ({unreadable} unreadable, listed above)",
+            "note: verdicts cover {counted} of {} runs ({unreadable} unreadable, listed above)",
             runs.len()
+        );
+    }
+    if outages > 0 {
+        crate::render::errln!(
+            "note: {outages} run(s) excluded as environment outages \
+             (over {:.0}% of suite scenarios failed) — not evidence about any one scenario",
+            thresholds.outage_rate * 100.0
         );
     }
 
     let mut rows: Vec<((String, Key), History)> = histories.into_iter().collect();
     rows.sort_by(|a, b| {
-        a.1.verdict()
-            .cmp(&b.1.verdict())
+        a.1.verdict(&thresholds)
+            .cmp(&b.1.verdict(&thresholds))
             .then_with(|| a.0.cmp(&b.0))
     });
 
@@ -261,14 +353,54 @@ pub fn flaky(runs_root: &Path, output_json: bool, by: Option<&str>) -> ExitCode 
                 "pass_on_retry": h.pass_on_retry(),
                 "p95_ms": h.p95_ms(),
                 "quarantined": h.quarantined,
-                "verdict": h.verdict().key(),
+                "verdict": h.verdict(&thresholds).key(),
             });
             crate::render::outln!("{object}");
         }
         return ExitCode::Success;
     }
-    render_table(&rows, runs.len(), runs_root, by);
+    render_table(&rows, runs.len(), runs_root, by, &thresholds);
     ExitCode::Success
+}
+
+/// Is this run an environment outage — a run where the share of failing suite
+/// scenarios exceeds `rate`? Such a run says nothing about any one scenario's
+/// stability (the environment fell over), so its observations are excluded.
+/// A run with no suite scenarios (an aborted setup) is not an outage — there
+/// is nothing to have failed.
+fn is_outage(record: &record::Record, rate: f64) -> bool {
+    let suite: Vec<&record::ScenarioRun> = record
+        .scenarios
+        .values()
+        .filter(|run| run.is_suite() && run.status != Status::Skipped)
+        .collect();
+    if suite.is_empty() {
+        return false;
+    }
+    let failed = suite
+        .iter()
+        .filter(|run| run.status == Status::Failed)
+        .count();
+    // Compare as a ratio without an f64 cast that clippy flags for precision:
+    // `failed/total > rate` ⟺ `failed > rate*total`, and a scenario count
+    // never approaches f64's mantissa limit.
+    #[allow(clippy::cast_precision_loss)]
+    let over = f64::from(u32::try_from(failed).unwrap_or(u32::MAX))
+        > rate * f64::from(u32::try_from(suite.len()).unwrap_or(u32::MAX));
+    over
+}
+
+/// The run's input fingerprint from its `inputs.json` sidecar, or `None` when
+/// the file is absent (a record that predates the field) or unreadable. A
+/// bounded read: the sidecar is a few dozen bytes, so no ceiling is needed
+/// beyond the filesystem's.
+fn read_fingerprint(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("inputs.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value
+        .get("fingerprint")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned)
 }
 
 /// The context value a run belongs to under `--by <key>`: the active `--env`
@@ -293,6 +425,7 @@ fn render_table(
     runs: usize,
     runs_root: &Path,
     by: Option<&str>,
+    thresholds: &FlakyThresholds,
 ) {
     crate::render::outln!(
         "flakiness over {runs} run(s) under {} (window = [run] keep-runs)\n",
@@ -326,12 +459,12 @@ fn render_table(
             h.transitions(),
             h.pass_on_retry(),
             h.p95_ms(),
-            h.verdict().word(),
+            h.verdict(thresholds).word(),
         );
     }
     let flagged = rows
         .iter()
-        .filter(|(_, h)| matches!(h.verdict(), Verdict::Flaky | Verdict::Latent))
+        .filter(|(_, h)| matches!(h.verdict(thresholds), Verdict::Flaky | Verdict::Latent))
         .count();
     if flagged > 0 {
         crate::render::outln!(
@@ -349,7 +482,7 @@ fn render_table(
             per_scenario
                 .entry(key)
                 .or_default()
-                .insert(history.verdict().key());
+                .insert(history.verdict(thresholds).key());
         }
         let split: Vec<String> = per_scenario
             .iter()
@@ -379,7 +512,7 @@ fn render_table(
     // or it did.
     let disabled = rows
         .iter()
-        .filter(|(_, h)| h.verdict() == Verdict::Disabled)
+        .filter(|(_, h)| h.verdict(thresholds) == Verdict::Disabled)
         .count();
     if disabled > 0 {
         crate::render::outln!(
@@ -389,12 +522,134 @@ fn render_table(
     }
     let recovered = rows
         .iter()
-        .filter(|(_, h)| h.verdict() == Verdict::Recovered)
+        .filter(|(_, h)| h.verdict(thresholds) == Verdict::Recovered)
         .count();
     if recovered > 0 {
         crate::render::outln!(
             "{recovered} quarantined scenario(s) were green throughout — drop the \
              `@quarantine` so they gate again"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FlakyThresholds, History, Observation, Verdict};
+
+    /// Build a history from a pass/fail/retry string: `.` pass, `F` fail,
+    /// `r` pass-on-retry. Oldest first.
+    fn history(pattern: &str, quarantined: bool) -> History {
+        let runs = pattern
+            .chars()
+            .map(|c| Observation {
+                failed: c == 'F',
+                retried: c == 'r',
+                duration_ms: 1,
+            })
+            .collect();
+        History { runs, quarantined }
+    }
+
+    fn t(min_samples: usize, recovery_runs: usize) -> FlakyThresholds {
+        FlakyThresholds {
+            min_samples,
+            recovery_runs,
+            outage_rate: 0.8,
+        }
+    }
+
+    /// The floor: below `min_samples` a scenario is insufficient-data, whatever
+    /// its pattern; at the floor it classifies (0.18 survey §6).
+    #[test]
+    fn the_sample_floor_refuses_a_verdict_on_thin_data() {
+        // Nine flapping runs, floor 10 → insufficient-data.
+        let nine = history("F.F.F.F.F", false);
+        assert_eq!(nine.verdict(&t(10, 5)), Verdict::InsufficientData);
+        // Ten → the flapper is now classifiable.
+        let ten = history("F.F.F.F.F.", false);
+        assert_eq!(ten.verdict(&t(10, 5)), Verdict::Flaky);
+    }
+
+    /// Hysteresis: a flapper holds its flag until a trailing clean run of
+    /// `recovery_runs`; one short of it still reads flaky.
+    #[test]
+    fn hysteresis_holds_a_flag_until_the_recovery_tail() {
+        // Flapped early, then a clean tail of exactly 5 → resolves to healthy.
+        let recovered = history("F.F.F.....", false);
+        assert_eq!(
+            recovered.verdict(&t(2, 5)),
+            Verdict::Healthy,
+            "a full clean recovery tail resolves the flag"
+        );
+        // A clean tail of only 4 (one short) → the flag holds.
+        let holding = history("F.F.FF....", false);
+        assert_eq!(
+            holding.verdict(&t(2, 5)),
+            Verdict::Flaky,
+            "one short of the recovery tail keeps the flag"
+        );
+    }
+
+    /// Broken outranks flaky and is unaffected by the recovery tail — failing
+    /// every run is a consistent problem, and no clean tail can apply.
+    #[test]
+    fn broken_is_not_flaky_and_ignores_recovery() {
+        let broken = history("FFFFFFFFFF", false);
+        assert_eq!(broken.verdict(&t(10, 5)), Verdict::Broken);
+    }
+
+    /// Quarantine lifecycle still classifies above the floor.
+    #[test]
+    fn quarantine_states_survive_the_floor() {
+        let disabled = history("FFFFFFFFFF", true);
+        assert_eq!(disabled.verdict(&t(10, 5)), Verdict::Disabled);
+        let recovered = history("..........", true);
+        assert_eq!(recovered.verdict(&t(10, 5)), Verdict::Recovered);
+    }
+
+    /// The outage guard: a run failing over `outage_rate` of its suite
+    /// scenarios is excluded; a run at or below it is evidence.
+    #[test]
+    fn an_outage_run_is_excluded_from_evidence() {
+        use crate::record::{Record, RunCompletion, ScenarioRun};
+        use proef_core::step::Status;
+        use std::collections::BTreeMap;
+
+        fn run(status: Status) -> ScenarioRun {
+            ScenarioRun {
+                status,
+                phase: None,
+                reason: None,
+                tags: Vec::new(),
+                steps: BTreeMap::new(),
+            }
+        }
+        let record = |statuses: &[Status]| Record {
+            env: None,
+            metadata: BTreeMap::new(),
+            rerun_of: None,
+            completion: RunCompletion::Completed,
+            legacy_multi_pair: false,
+            totals: None,
+            scenarios: statuses
+                .iter()
+                .enumerate()
+                .map(|(i, s)| ((format!("f{i}"), format!("s{i}")), run(*s)))
+                .collect(),
+        };
+        // 3 of 4 failed = 75% ≤ 80% → not an outage.
+        let ok = record(&[
+            Status::Failed,
+            Status::Failed,
+            Status::Failed,
+            Status::Passed,
+        ]);
+        assert!(!super::is_outage(&ok, 0.8));
+        // 5 of 5 failed = 100% > 80% → outage.
+        let down = record(&[Status::Failed; 5]);
+        assert!(super::is_outage(&down, 0.8));
+        // No suite scenarios (an aborted setup) is never an outage.
+        let empty = record(&[]);
+        assert!(!super::is_outage(&empty, 0.8));
     }
 }

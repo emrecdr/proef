@@ -65,6 +65,18 @@ fn write_run_in(root: &Path, n: usize, body: &str, cancelled: bool, head_extra: 
     std::fs::write(dir.join("events.jsonl"), format!("{head}\n{body}{tail}\n")).unwrap();
 }
 
+/// Write a run carrying an `inputs.json` fingerprint sidecar — the default
+/// equivalence class `flaky` keys on.
+fn write_run_with_fingerprint(root: &Path, n: usize, body: &str, fingerprint: &str) {
+    write_run(root, n, body, false);
+    let dir = root.join(format!(".proef-runs/0198f3c1-0000-7000-8000-{n:012}"));
+    std::fs::write(
+        dir.join("inputs.json"),
+        format!(r#"{{"schema":1,"fingerprint":"{fingerprint}"}}"#),
+    )
+    .unwrap();
+}
+
 /// The research prototype's history, in four files: `flappy` fails on runs 2
 /// and 4 (three transitions), `retried` always passes on attempt 3, `steady`
 /// just passes, `broken` always fails — plus `settled`, which failed twice
@@ -95,7 +107,10 @@ fn the_four_verdict_classes_are_told_apart() {
     let cwd = tempfile::tempdir().unwrap();
     seeded_history(cwd.path());
 
-    let assert = proef(cwd.path()).args(["flaky"]).assert().code(0);
+    let assert = proef(cwd.path())
+        .args(["flaky", "--min-samples", "2"])
+        .assert()
+        .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
     let verdict_of = |name: &str| -> String {
@@ -131,7 +146,7 @@ fn json_output_carries_the_counts_behind_the_verdict() {
     seeded_history(cwd.path());
 
     let assert = proef(cwd.path())
-        .args(["flaky", "--format", "json"])
+        .args(["flaky", "--min-samples", "2", "--format", "json"])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -185,7 +200,7 @@ fn a_skipped_row_is_not_stability_evidence() {
     );
 
     let assert = proef(cwd.path())
-        .args(["flaky", "--format", "json"])
+        .args(["flaky", "--min-samples", "2", "--format", "json"])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -201,7 +216,10 @@ fn fewer_than_two_runs_is_a_user_error() {
     let cwd = tempfile::tempdir().unwrap();
     std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
     write_run(cwd.path(), 1, &scenario_events("only", "passed", 1), false);
-    let assert = proef(cwd.path()).args(["flaky"]).assert().code(2);
+    let assert = proef(cwd.path())
+        .args(["flaky", "--min-samples", "2"])
+        .assert()
+        .code(2);
     let err = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(err.contains("need at least two runs"), "{err}");
 }
@@ -232,7 +250,10 @@ fn a_quarantined_scenario_is_told_apart_from_a_merely_broken_one() {
         write_run(cwd.path(), n, &body, false);
     }
 
-    let assert = proef(cwd.path()).args(["flaky"]).assert().code(0);
+    let assert = proef(cwd.path())
+        .args(["flaky", "--min-samples", "2"])
+        .assert()
+        .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     let row = |name: &str| -> String {
         out.lines()
@@ -260,7 +281,7 @@ fn a_quarantined_scenario_is_told_apart_from_a_merely_broken_one() {
     // The machine surface carries the fact the verdict turns on, so a CI job
     // can gate on it without parsing the table.
     let assert = proef(cwd.path())
-        .args(["flaky", "--format", "json"])
+        .args(["flaky", "--min-samples", "2", "--format", "json"])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -310,7 +331,10 @@ fn splitting_by_context_separates_a_flapper_from_an_environment() {
     }
 
     // Pooled, `envy` looks like a classic flapper.
-    let assert = proef(cwd.path()).args(["flaky"]).assert().code(0);
+    let assert = proef(cwd.path())
+        .args(["flaky", "--min-samples", "2"])
+        .assert()
+        .code(0);
     let pooled = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         pooled
@@ -323,7 +347,7 @@ fn splitting_by_context_separates_a_flapper_from_an_environment() {
     // Split by environment, each context is internally consistent — and the
     // callout names the scenario whose verdict depends on where it ran.
     let assert = proef(cwd.path())
-        .args(["flaky", "--by", "env"])
+        .args(["flaky", "--min-samples", "2", "--by", "env"])
         .assert()
         .code(0);
     let split = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -354,7 +378,15 @@ fn splitting_by_context_separates_a_flapper_from_an_environment() {
 
     // An arbitrary `[meta]` key segments the same way `env` does.
     let assert = proef(cwd.path())
-        .args(["flaky", "--by", "runner", "--format", "json"])
+        .args([
+            "flaky",
+            "--min-samples",
+            "2",
+            "--by",
+            "runner",
+            "--format",
+            "json",
+        ])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
@@ -371,9 +403,81 @@ fn splitting_by_context_separates_a_flapper_from_an_environment() {
 
     // A run that never set the key is its own bucket, not silently merged.
     let assert = proef(cwd.path())
-        .args(["flaky", "--by", "absent", "--format", "json"])
+        .args([
+            "flaky",
+            "--min-samples",
+            "2",
+            "--by",
+            "absent",
+            "--format",
+            "json",
+        ])
         .assert()
         .code(0);
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(out.contains(r#""absent":"(unset)""#), "{out}");
+}
+
+/// The input fingerprint is the default equivalence class (0.18 survey §6): a
+/// scenario's runs under one fingerprint are one window, and runs under a
+/// different fingerprint (a pack/config edit changed the inputs) are a
+/// separate window — so a scenario that flapped only because its inputs
+/// changed is not called flaky.
+#[test]
+fn the_fingerprint_separates_windows_across_an_input_change() {
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), "[run]\nsuite = \"suite\"\n").unwrap();
+
+    // Four runs of `s`: all passed under fingerprint A, all passed under
+    // fingerprint B (a config edit between them). Within each window the
+    // scenario is steady; the pass/fail line never flaps. If the windows were
+    // merged the verdict would still be healthy, so to *prove* separation we
+    // make it fail under B only — a real flap if merged, but two clean
+    // windows if separated.
+    for n in 1..=3 {
+        write_run_with_fingerprint(cwd.path(), n, &scenario_events("s", "passed", 1), "aaaa");
+    }
+    for n in 4..=6 {
+        write_run_with_fingerprint(cwd.path(), n, &scenario_events("s", "failed", 1), "bbbb");
+    }
+
+    // `--outage-rate 1.0` isolates this from the outage guard: with a single
+    // scenario, an all-fail window would otherwise read as a 100%-failure
+    // outage and be excluded. This test is about the fingerprint.
+    let assert = proef(cwd.path())
+        .args([
+            "flaky",
+            "--min-samples",
+            "2",
+            "--outage-rate",
+            "1.0",
+            "--format",
+            "json",
+        ])
+        .assert()
+        .code(0);
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let rows: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    // Two rows for `s` — one per fingerprint window — neither flaky: window A
+    // is all-pass (healthy), window B is all-fail (broken). A single merged
+    // window would instead be one flaky row (P,P,P,F,F,F flaps once — not
+    // even flaky — but critically it would be *one* row, not two).
+    let s_rows: Vec<&serde_json::Value> = rows.iter().filter(|r| r["scenario"] == "s").collect();
+    assert_eq!(
+        s_rows.len(),
+        2,
+        "the two fingerprint windows must be separate rows:\n{stdout}"
+    );
+    let verdicts: std::collections::BTreeSet<&str> = s_rows
+        .iter()
+        .map(|r| r["verdict"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        verdicts,
+        ["broken", "healthy"].into_iter().collect(),
+        "one window healthy, one broken — never merged into flaky:\n{stdout}"
+    );
 }

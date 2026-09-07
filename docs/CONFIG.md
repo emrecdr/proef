@@ -93,6 +93,9 @@ timeout-ms = 60000
 | `[http] cookie-store` | `true` | `false` runs the suite cookie-less (hurl's `--no-cookie-store`): no `Set-Cookie` is kept, none is replayed — how a stateless API is *proven* stateless. Run-wide only — hurl has no per-entry spelling for it at all |
 | `[sla] p95-ms` | *(unset)* | 95th-percentile per-step duration ceiling; unset = no gate |
 | `[sla] max-ms` | *(unset)* | slowest single-step ceiling; unset = no gate |
+| `[flaky] min-samples` | `10` | minimum observed runs before `proef flaky` classifies a scenario (else `insufficient-data`) |
+| `[flaky] recovery-runs` | `5` | trailing clean runs that resolve a flagged scenario to healthy (hysteresis) |
+| `[flaky] outage-rate` | `0.8` | a run failing over this share of suite scenarios is an environment outage, excluded from the history |
 | `[url] <key>` | *(none)* | URL variables, referenced as `${url:<key>}` |
 | `[vars] <key>` | *(none)* | non-secret variables, referenced as `${vars:<key>}` |
 | `[meta] <key>` | *(none)* | run metadata recorded in the run head; `[env.<name>.meta]` overrides it, `--meta` flags win (ADR-0020) |

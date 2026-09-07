@@ -13,6 +13,41 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Added
+
+- **`proef flaky` gains the 2026-field statistical guards** (0.18 survey §6),
+  each a pure fold over the JSONL history already retained — no new state, no
+  gating mode (advisory stays the design):
+  - **A minimum-sample floor** (`--min-samples` / `[flaky] min-samples`,
+    default 10): below it a scenario is `insufficient-data` rather than
+    classified, because a verdict on thin data is worse than none.
+  - **Hysteresis** (`--recovery-runs` / `[flaky] recovery-runs`, default 5): a
+    flapping or latent scenario holds its flag until it earns a trailing clean
+    run, so it cannot oscillate `flaky`↔`healthy` between adjacent runs.
+  - **An environment-outage guard** (`--outage-rate` / `[flaky] outage-rate`,
+    default 0.8): a run where over this share of suite scenarios failed is an
+    environment incident, not evidence about any one scenario, and is excluded
+    — so a single fixture or staging outage cannot mark the whole suite broken.
+  - **An input-fingerprint equivalence class** — the default key. Each run
+    writes an `inputs.json` sidecar carrying a hash of what it *executes*
+    (feature sources + loaded macros/fragments + the resolved
+    `${url:…}`/`${vars:…}` scope), so a pack, feature, or `proef.toml` edit
+    correctly ends the comparison window instead of silently mixing runs of
+    different inputs. It is a proef-*computed* fact about proef's own inputs,
+    **not harvested** from the environment (ADR-0020 unchanged — git-commit
+    grouping stays handed-over via `--meta commit=…` and `proef flaky --by
+    commit`). `broken≠flaky`, transition-counting, and the quarantine
+    lifecycle were already present and are unchanged.
+
+### Breaking
+
+- **`proef flaky`'s `new` verdict is renamed `insufficient-data`** (its
+  `--format json` `verdict` key and human label), matching the 2026 vocabulary
+  and the new sample-floor meaning — a MINOR break for a consumer keyed on the
+  old spelling. The default per-scenario floor also rises from 2 to 10 runs,
+  so a scenario with fewer than 10 runs now reads `insufficient-data` where it
+  previously received a verdict (`--min-samples 2` restores the old behaviour).
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added
