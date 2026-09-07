@@ -157,8 +157,33 @@ enum Misbehavior {
     Hang,
 }
 
-struct MisbehavingFactory(Misbehavior);
-struct MisbehavingSession(Misbehavior);
+struct MisbehavingFactory(Misbehavior, Option<Arc<std::sync::atomic::AtomicBool>>);
+struct MisbehavingSession(Misbehavior, Option<Arc<std::sync::atomic::AtomicBool>>);
+
+impl MisbehavingFactory {
+    fn new(behavior: Misbehavior) -> Self {
+        Self(behavior, None)
+    }
+
+    /// A factory whose sessions set `dropped` when the worker thread is done
+    /// with them — which is *strictly after* the worker's final emit attempt
+    /// (`run_scenario` emits, then drops the session). Polling that latch is
+    /// how the abandoned-thread test waits for the exact event it must prove
+    /// was dropped, instead of sleeping a fixed interval and hoping. Carried
+    /// through the factory, not a thread-local: `open` runs on the worker
+    /// thread, where a test-thread-local would be empty.
+    fn signalling(behavior: Misbehavior, dropped: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self(behavior, Some(dropped))
+    }
+}
+
+impl Drop for MisbehavingSession {
+    fn drop(&mut self) {
+        if let Some(flag) = &self.1 {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+}
 
 impl EngineFactory for MisbehavingFactory {
     fn id(&self) -> &'static str {
@@ -176,7 +201,7 @@ impl EngineFactory for MisbehavingFactory {
     fn open(&self, _ctx: &ScenarioCtx) -> Result<Box<dyn EngineSession>, EngineError> {
         match self.0 {
             Misbehavior::OpenFails => Err(EngineError::infra("mock open failure")),
-            other => Ok(Box::new(MisbehavingSession(other))),
+            other => Ok(Box::new(MisbehavingSession(other, self.1.clone()))),
         }
     }
 }
@@ -448,7 +473,7 @@ fn optional_batch_error_does_not_rereport_later_batches() {
 fn engine_panic_is_contained_as_a_system_fault() {
     let ok: OnBatch = Arc::new(|_, _, _, _| {});
     let engines = engines(vec![
-        Box::new(MisbehavingFactory(Misbehavior::Panic)),
+        Box::new(MisbehavingFactory::new(Misbehavior::Panic)),
         Box::new(MockFactory {
             id: "mock",
             on_batch: ok,
@@ -485,7 +510,9 @@ fn engine_panic_is_contained_as_a_system_fault() {
 /// engine id no factory claims is the same class.
 #[test]
 fn open_failure_and_unknown_engine_are_system_faults() {
-    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::OpenFails))]);
+    let engines = engines(vec![Box::new(MisbehavingFactory::new(
+        Misbehavior::OpenFails,
+    ))]);
     let store = Arc::new(Mutex::new(GlobalStore::new()));
 
     let summary = run(
@@ -529,7 +556,7 @@ fn open_failure_and_unknown_engine_are_system_faults() {
 /// token so the detached thread stops (observed via the polled hang ending).
 #[test]
 fn watchdog_abandons_a_hung_scenario() {
-    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::Hang))]);
+    let engines = engines(vec![Box::new(MisbehavingFactory::new(Misbehavior::Hang))]);
     let store = Arc::new(Mutex::new(GlobalStore::new()));
     let mut config = config(1);
     config.default_batch_budget = Duration::from_millis(50);
@@ -620,7 +647,11 @@ fn cancelled_run_is_never_success() {
 /// thread needs a further ~20ms poll tick just to notice cancellation).
 #[test]
 fn abandoned_scenario_emits_nothing_after_run_finished() {
-    let engines = engines(vec![Box::new(MisbehavingFactory(Misbehavior::Hang))]);
+    let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let engines = engines(vec![Box::new(MisbehavingFactory::signalling(
+        Misbehavior::Hang,
+        Arc::clone(&dropped),
+    ))]);
     let store = Arc::new(Mutex::new(GlobalStore::new()));
     let mut config = config(1);
     config.default_batch_budget = Duration::from_millis(50);
@@ -650,9 +681,22 @@ fn abandoned_scenario_emits_nothing_after_run_finished() {
         &CancellationToken::new(),
     );
 
-    // Give the abandoned thread time to reach its next boundary and try to
-    // emit. Without the gate it appends here; with it, nothing arrives.
-    std::thread::sleep(Duration::from_millis(500));
+    // Wait for the abandoned thread to actually finish — its session drops
+    // strictly after its final emit attempt — rather than sleeping a fixed
+    // interval and hoping it got there. A blind sleep passes vacuously on a
+    // loaded runner where the late emit has not happened yet; polling the
+    // drop latch waits for exactly the event the gate must have dropped, so
+    // the assertion below tests something on every machine. Bounded so a
+    // genuine hang fails loudly instead of blocking the suite.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !dropped.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(
+            Instant::now() < deadline,
+            "the abandoned worker never finished — it should have observed \
+             cancellation and dropped its session"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
     let events = seen.lock().unwrap().clone();
     let tail = events
