@@ -116,6 +116,18 @@ engine — so the *root* (`assets/<slug>/`, per scenario) generalizes while the
 ("adding an engine leaves `proef-core` diff-empty") is what would catch that,
 and the seam above is what would satisfy it.
 
+**H5 — updated 2026-09-07.** The 0.18 survey found and reproduced the
+*feature-side twin* of this finding, worse than the fragment side it
+records: the feature's staging root was `parent_dir(portable name)` resolved
+against the **cwd**, so a typed-absolute or config-written suite path run
+from any subdirectory failed staging with exit 2 (a name's anchor — project
+root, or as-typed — is not recoverable from the string). Closed by exactly
+the fix this entry prescribes, applied to the feature side: the resolved
+discovery path travels beside the name (`LoadedFeature::read_from`) and
+staging is a lookup, not a re-parse. The fragment side below still resolves
+by name-join (correct while both are seeded from `config.root()`, per the
+original analysis) and this entry stays open for it.
+
 **H5. A fragment's directory is re-derived from its display name, inverting
 `SourceNaming` without its canonicalize fallback.** `assets.rs::AssetRoots::
 source_dir` turns a recorded `file.hurl#name` back into a directory by

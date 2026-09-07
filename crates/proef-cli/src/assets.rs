@@ -35,7 +35,11 @@ impl std::fmt::Display for AssetCopyError {
 /// Where each kind of source keeps its assets.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct AssetRoots<'a> {
-    /// Directory of the feature file — the root for inline `hurl:` blocks.
+    /// Directory the feature file was **read from** — the root for inline
+    /// `hurl:` blocks. An IO path (`LoadedFeature::read_from`'s parent),
+    /// never the portable display name: a name's anchor (project root, or
+    /// the caller's own typed spelling) is not in the string, so resolving
+    /// one against the working directory breaks from any subdirectory.
     pub feature: &'a Path,
     /// The project root (the directory holding `proef.toml`), which is what
     /// a fragment's recorded name is relative to. `None` when no config is in
@@ -75,6 +79,14 @@ impl AssetRoots<'_> {
 /// source is an **error**, not a skip — this root is what the engine reads
 /// during the run, so a quietly absent file becomes a failing request whose
 /// message blames the author for a path that was correct.
+///
+/// A *source* that is a symlink is followed, deliberately: stock `hurl`
+/// follows it too, and refusing would make the same bytes pass under one
+/// runner and fail under the other — the divergence class ADR-0018's
+/// dual-runner rule exists to prevent. The *destination* is proef's own
+/// directory, where a symlink has no legitimate author: writing through one
+/// would land bytes outside the asset root, so an existing link is removed
+/// before the copy.
 pub(crate) fn stage_assets(
     assets: &[AssetRef],
     roots: AssetRoots<'_>,
@@ -85,6 +97,13 @@ pub(crate) fn stage_assets(
     // failure the per-scenario root exists to end, so it is refused rather
     // than narrowed.
     let mut claimed: BTreeMap<&str, PathBuf> = BTreeMap::new();
+    // The same refusal for names the *filesystem* will not keep apart:
+    // `Data.json` and `data.json` are two keys above but one file on a
+    // case-insensitive volume (macOS, Windows), and NFC/NFD spellings of one
+    // name likewise converge — so the check is on the canonical path the
+    // copy actually landed on, which is exact on every platform without
+    // guessing the volume's rules.
+    let mut landed: BTreeMap<PathBuf, String> = BTreeMap::new();
     for asset in assets {
         let name = asset.name.as_str();
         let reference = Path::new(name);
@@ -131,12 +150,42 @@ pub(crate) fn stage_assets(
                 AssetCopyError::Io(format!("cannot create {}: {err}", parent.display()))
             })?;
         }
+        // Never write *through* a pre-existing symlink in the staging root:
+        // `fs::copy` follows it and the bytes land wherever it points —
+        // outside the very root that exists to contain them. Nothing
+        // legitimate puts links here (the root is proef-owned and staged
+        // fresh), so one found is removed, not honoured.
+        if target
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.file_type().is_symlink())
+        {
+            std::fs::remove_file(&target).map_err(|err| {
+                AssetCopyError::Io(format!(
+                    "cannot replace symlink at {}: {err}",
+                    target.display()
+                ))
+            })?;
+        }
         std::fs::copy(&source, &target).map_err(|err| {
             AssetCopyError::Io(format!(
                 "cannot stage asset `{name}` to {}: {err}",
                 target.display()
             ))
         })?;
+        // Post-copy, the canonical destination says which file the platform
+        // actually used; two reference spellings converging on it is the
+        // last-writer-wins overwrite the raw-string map above cannot see.
+        if let Ok(canonical) = target.canonicalize() {
+            if let Some(previous) = landed.get(&canonical)
+                && previous != name
+            {
+                return Err(AssetCopyError::Unsafe(format!(
+                    "asset references `{previous}` and `{name}` are one file on this filesystem ({}) — rename one, or the staged bytes would be whichever was copied last",
+                    canonical.display()
+                )));
+            }
+            landed.insert(canonical, name.to_owned());
+        }
     }
     Ok(())
 }
@@ -295,6 +344,73 @@ mod tests {
         assert!(
             message.contains("absent.json") && message.contains("feature"),
             "the message must name the file and where it was looked for: {message}"
+        );
+    }
+
+    /// The staging root is proef-owned: an existing symlink there must be
+    /// replaced, never written *through* — `fs::copy` follows links, so the
+    /// bytes would land wherever the link points, outside the root built to
+    /// contain them.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_symlink_is_replaced_not_written_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("suite")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("suite/data.json"), b"STAGED-BYTES").unwrap();
+        std::fs::write(root.join("victim.json"), b"UNTOUCHED").unwrap();
+        std::os::unix::fs::symlink(root.join("victim.json"), root.join("out/data.json")).unwrap();
+        stage_assets(
+            &[inline("data.json")],
+            roots(&root.join("suite"), None),
+            &root.join("out"),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("victim.json")).unwrap(),
+            b"UNTOUCHED",
+            "the link's target must never receive the copy"
+        );
+        let staged = root.join("out/data.json");
+        assert!(
+            !staged.symlink_metadata().unwrap().file_type().is_symlink(),
+            "the destination must be a regular file after staging"
+        );
+        assert_eq!(std::fs::read(&staged).unwrap(), b"STAGED-BYTES");
+    }
+
+    /// Two reference spellings the raw-string map keeps apart can be one
+    /// file to the filesystem (case-insensitive volumes; NFC/NFD). The
+    /// canonical-destination check refuses the overwrite where it actually
+    /// happens, so it is exact per platform — on a case-sensitive volume
+    /// both files legitimately coexist and nothing fires, which is why this
+    /// test only runs where the collision exists.
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    fn two_spellings_that_are_one_file_here_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("suite")).unwrap();
+        std::fs::create_dir_all(root.join("hurl")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        std::fs::write(root.join("suite/Data.json"), b"FEATURE").unwrap();
+        std::fs::write(root.join("hurl/data.json"), b"FRAGMENT").unwrap();
+        let err = stage_assets(
+            &[
+                inline("Data.json"),
+                from_fragment("data.json", "hurl/up.hurl#up"),
+            ],
+            roots(&root.join("suite"), Some(root)),
+            &root.join("out"),
+        )
+        .unwrap_err();
+        let AssetCopyError::Unsafe(message) = err else {
+            panic!("a filesystem-level collision is the author's to resolve");
+        };
+        assert!(
+            message.contains("one file"),
+            "the message must say the two spellings converge: {message}"
         );
     }
 

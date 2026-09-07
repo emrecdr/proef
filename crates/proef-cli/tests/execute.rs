@@ -3956,6 +3956,52 @@ fn teardown_runs_after_the_pool_is_interrupted() {
     );
 }
 
+/// Real checkouts live under paths with spaces and non-ASCII segments
+/// (`C:\Users\Jan de Vries\…`, a `café` directory) — and until this test,
+/// nothing in the suite exercised either. Discovery, emission, and asset
+/// staging must all survive such a root.
+#[test]
+fn a_project_under_a_space_and_utf8_path_stages_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("café spatie").join("proef proj");
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(root.join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        root.join("suite/upload.feature"),
+        "Feature: F\n  Scenario: uploads a file\n    When the file is uploaded\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("suite/packs/p.yaml"),
+        "macros:\n  up:\n    match: the file is uploaded\n    steps:\n      \
+         - hurl: |\n          POST ${url:base}/upload\n          file,data.bin;\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("suite/data.bin"), b"asset bytes").unwrap();
+
+    let out = dir.path().join("out");
+    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(&root)
+        .env("NO_COLOR", "1")
+        // `artifacts` sends nothing; the value only has to resolve.
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["artifacts", "suite", "-o"])
+        .arg(&out)
+        .args(["--run-id", "probe"])
+        .assert()
+        .success();
+    let staged = out
+        .join(proef_core::emit::asset_root(
+            &proef_core::emit::artifact_slug("suite/upload.feature", "uploads a file"),
+        ))
+        .join("data.bin");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        b"asset bytes",
+        "the asset must stage from beside the feature under a space/UTF-8 root"
+    );
+}
+
 /// A CI job timeout or `docker stop` delivers SIGTERM, not Ctrl-C. With
 /// ctrlc's `termination` feature that is the same graceful path: the run
 /// cancels, the record closes with `run_finished` + `cancelled`, and the

@@ -63,6 +63,53 @@ Regrouping preserved every entry and its order within its kind.
   skip" when a second interrupt actually hard-exits dropping every report —
   it now says what happens.
 
+- **Asset staging no longer depends on the working directory.** A feature's
+  `file,…;` assets were resolved by joining its portable *name* against the
+  cwd — but a name's anchor (the project root, or the caller's own typed
+  spelling) is not in the string, so a typed-absolute or config-written
+  suite path run from any subdirectory failed staging with exit 2, blaming
+  the author for a correct file (the feature-side twin of OPEN-FINDINGS
+  H5). The resolved discovery path now travels beside the name
+  (`LoadedFeature::read_from`) and staging resolves beside the file the
+  parser actually read — the H5 prescription, applied to the feature side.
+  Reproduced before the fix and re-verified after, from a subdirectory,
+  against the reference corpus; a new integration test pins a project under
+  a path with spaces and non-ASCII segments, which nothing in the suite had
+  ever exercised.
+
+- **`--sarif` line numbers survive a `cd`, and byte-match the parser.** The
+  SARIF writer re-read each source from disk by its portable name to count
+  lines — from any subdirectory every read failed and `startLine` silently
+  vanished, annotating nothing; the re-read could also disagree with the
+  span by exactly the parser's normalization. Lines now come from the
+  diagnostic's own carried source text — the same normalized bytes the span
+  indexes. (On Windows, an absolute out-of-project `uri` also spells its
+  separators as a URI requires.)
+
+- **Staging's two symlink edges.** An existing symlink at a staging
+  destination was written *through* — `fs::copy` follows links, so the
+  bytes landed wherever it pointed, outside the root built to contain
+  them; it is now replaced. A *source* symlink stays followed, deliberately:
+  stock `hurl` follows it too, and refusing would break the dual-runner
+  rule (the module doc now says so).
+
+- **Asset names that are one file to the filesystem are refused.** The
+  duplicate-name guard keyed on the raw reference string, so `Data.json`
+  and `data.json` — one file on macOS and Windows — silently last-writer-won,
+  the very overwrite the per-scenario root was built to end. The check now
+  runs on the canonical path the copy actually landed on, which is exact on
+  every platform: a case-sensitive volume keeps both files legitimately, and
+  nothing fires.
+
+- **Artifact slugs cap at 120 bytes.** The slug flattens the feature's whole
+  directory path into one filename component, and `assets/<slug>/` repeats
+  it as a directory — so path depth became filename length, and a deep tree
+  or a long scenario name (multi-byte scripts at a quarter of the visible
+  characters) sailed past NAME_MAX and failed the write. Over the cap, the
+  tail is a hash of the whole uncapped slug, so two names differing only
+  past the cut still name two artifacts; every slug the existing corpus has
+  is under the cap and unchanged byte-for-byte.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added
