@@ -4141,6 +4141,240 @@ fn teardown_runs_after_the_pool_is_interrupted() {
     );
 }
 
+/// Real checkouts live under paths with spaces and non-ASCII segments
+/// (`C:\Users\Jan de Vries\…`, a `café` directory) — and until this test,
+/// nothing in the suite exercised either. Discovery, emission, and asset
+/// staging must all survive such a root.
+#[test]
+fn a_project_under_a_space_and_utf8_path_stages_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("café spatie").join("proef proj");
+    std::fs::create_dir_all(root.join("suite/packs")).unwrap();
+    std::fs::write(root.join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        root.join("suite/upload.feature"),
+        "Feature: F\n  Scenario: uploads a file\n    When the file is uploaded\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("suite/packs/p.yaml"),
+        "macros:\n  up:\n    match: the file is uploaded\n    steps:\n      \
+         - hurl: |\n          POST ${url:base}/upload\n          file,data.bin;\n          HTTP 200\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("suite/data.bin"), b"asset bytes").unwrap();
+
+    let out = dir.path().join("out");
+    assert_cmd::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(&root)
+        .env("NO_COLOR", "1")
+        // `artifacts` sends nothing; the value only has to resolve.
+        .env("PROEF_BASE_URL", "http://127.0.0.1:1")
+        .args(["artifacts", "suite", "-o"])
+        .arg(&out)
+        .args(["--run-id", "probe"])
+        .assert()
+        .success();
+    let staged = out
+        .join(proef_core::emit::asset_root(
+            &proef_core::emit::artifact_slug("suite/upload.feature", "uploads a file"),
+        ))
+        .join("data.bin");
+    assert_eq!(
+        std::fs::read(&staged).unwrap(),
+        b"asset bytes",
+        "the asset must stage from beside the feature under a space/UTF-8 root"
+    );
+}
+
+/// A CI job timeout or `docker stop` delivers SIGTERM, not Ctrl-C. With
+/// ctrlc's `termination` feature that is the same graceful path: the run
+/// cancels, the record closes with `run_finished` + `cancelled`, and the
+/// exit is the cancelled-run verdict — not a killed process and a truncated
+/// `events.jsonl` with no tail.
+#[cfg(unix)]
+#[test]
+fn sigterm_cancels_gracefully_and_the_record_completes() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: slow one\n    When the slow thing happens\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  slow:\n    match: the slow thing happens\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/slow\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stderr = child.stderr.take().unwrap();
+    let errors = std::thread::spawn(move || {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut stderr, &mut buf).ok();
+        buf
+    });
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+    let mut seen = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            reader.read_line(&mut line).unwrap() > 0,
+            "process ended before the run started:\n{seen}"
+        );
+        seen.push_str(&line);
+        if line.contains("running 1 scenario(s)") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let mut rest = String::new();
+    while reader.read_line(&mut rest).unwrap() > 0 {}
+    seen.push_str(&rest);
+    let status = child.wait().unwrap();
+    let errors = errors.join().unwrap();
+
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "a SIGTERM'd run is a *cancelled* run (exit 1), not a killed \
+         process:\nstdout:\n{seen}\nstderr:\n{errors}"
+    );
+    assert!(
+        seen.contains("cancelled"),
+        "the termination signal must land as a cancellation:\n{seen}"
+    );
+    // The record must have closed properly: a `run_finished` tail marked
+    // cancelled, not a truncated stream a reader banners as incomplete.
+    let runs_dir = cwd.path().join(".proef-runs");
+    let record_dir = std::fs::read_dir(&runs_dir)
+        .expect("runs dir exists")
+        .filter_map(Result::ok)
+        .find(|e| e.path().join("events.jsonl").is_file())
+        .expect("one run record exists")
+        .path();
+    let record = std::fs::read_to_string(record_dir.join("events.jsonl")).unwrap();
+    let tail = record.lines().last().expect("record has lines");
+    assert!(
+        tail.contains(r#""event":"run_finished""#) && tail.contains(r#""cancelled":true"#),
+        "the record's tail must be a cancelled run_finished, got:\n{tail}"
+    );
+}
+
+/// The escape hatch: a second interrupt hard-exits with 130 (128+SIGINT),
+/// outside the 0/1/2/3 contract — pinned here because until now no test
+/// asserted the code at all.
+#[cfg(unix)]
+#[test]
+fn a_second_interrupt_hard_exits_with_130() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let fixture = Fixture::start().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(cwd.path().join("suite/packs")).unwrap();
+    std::fs::write(cwd.path().join("proef.toml"), BASE_URL_CONFIG).unwrap();
+    std::fs::write(
+        cwd.path().join("suite/case.feature"),
+        "Feature: F\n  Scenario: slow one\n    When the slow thing happens\n",
+    )
+    .unwrap();
+    std::fs::write(
+        cwd.path().join("suite/packs/p.yaml"),
+        "macros:\n  slow:\n    match: the slow thing happens\n    steps:\n      \
+         - hurl: |\n          GET ${url:base}/slow\n          HTTP 200\n",
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("proef"))
+        .current_dir(cwd.path())
+        .env("NO_COLOR", "1")
+        .env("PROEF_BASE_URL", &fixture.base_url)
+        .args(["test", "suite"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Phase 1: wait on STDOUT for the running banner (the run is in flight),
+    // then send the first interrupt.
+    let stdout = child.stdout.take().unwrap();
+    let mut out = BufReader::new(stdout);
+    let mut seen = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            out.read_line(&mut line).unwrap() > 0,
+            "process ended before the run started:\n{seen}"
+        );
+        seen.push_str(&line);
+        if line.contains("running 1 scenario(s)") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    // Phase 2: from here stdout must keep draining (a full pipe would wedge
+    // the child), while STDERR carries the handler's own notice — reading
+    // until it appears proves the first signal landed, so the second below
+    // is genuinely second.
+    let drained = std::thread::spawn(move || {
+        let mut rest = String::new();
+        std::io::Read::read_to_string(&mut out, &mut rest).ok();
+        rest
+    });
+    let stderr = child.stderr.take().unwrap();
+    let mut errs = BufReader::new(stderr);
+    let mut notices = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(
+            errs.read_line(&mut line).unwrap() > 0,
+            "process ended before the interrupt notice:\n{notices}"
+        );
+        notices.push_str(&line);
+        if line.contains("interrupt — cancelling") {
+            break;
+        }
+    }
+    std::process::Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+
+    let status = child.wait().unwrap();
+    drained.join().ok();
+    assert_eq!(
+        status.code(),
+        Some(130),
+        "a second interrupt is the 128+SIGINT hard exit:\nstderr:\n{notices}"
+    );
+}
+
 /// A mixed suite+phase failure must label the phase block. The label was
 /// derived from the whole report (`failed == 0`), so it appeared only while
 /// *every* failure was a phase failure — and vanished the moment a suite

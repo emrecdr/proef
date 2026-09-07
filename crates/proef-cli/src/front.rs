@@ -94,6 +94,18 @@ pub(crate) mod reserved {
 pub struct LoadedFeature {
     /// The parsed feature (tags, source).
     pub file: FeatureFile,
+    /// Where the feature was actually read from — discovery's IO path, kept
+    /// beside the portable *name* in `file.path` because the two answer
+    /// different questions and only one of them survives a `cd`. The name is
+    /// anchored at the project root **or** spelled as typed (R12-1's naming
+    /// boundary is deliberately one-way), so re-deriving an IO path from it
+    /// resolves against the working directory and breaks from any
+    /// subdirectory — which is exactly how a `file,…;` asset beside the
+    /// feature became unreadable under a typed-absolute or config-written
+    /// suite path (the feature-side twin of OPEN-FINDINGS H5). Asset staging
+    /// resolves beside *this* path, the file the parser read, exactly like
+    /// stock hurl.
+    pub read_from: PathBuf,
     /// Processed scenarios, in authored order.
     pub scenarios: Vec<ProcessedScenario>,
 }
@@ -295,7 +307,11 @@ pub fn run(
                 Err(errs) => diags.extend(errs),
             }
         }
-        features.push(LoadedFeature { file, scenarios });
+        features.push(LoadedFeature {
+            file,
+            read_from: feature_path,
+            scenarios,
+        });
     }
 
     // A tag that looks like a reserved one but is not exactly it silently

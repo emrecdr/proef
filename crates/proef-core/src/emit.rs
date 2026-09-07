@@ -148,7 +148,39 @@ pub fn artifact_slug(feature_file: &str, scenario: &str) -> String {
     } else {
         base
     };
-    format!("{base}--{}", slugify(scenario))
+    cap_slug(format!("{base}--{}", slugify(scenario)))
+}
+
+/// Byte ceiling for one slug. The slug flattens the feature's whole
+/// directory path into a single filename component, and `asset_root` repeats
+/// it as a directory name — so an uncapped slug converts path *depth* into
+/// filename *length*, and a deep tree or a long scenario name (multi-byte
+/// scripts get there at a quarter of the visible characters) sails past
+/// `NAME_MAX` (255 bytes on the mainstream filesystems) and fails the artifact
+/// write. 120 leaves the doubled form plus a run-dir prefix inside every
+/// mainstream limit.
+const MAX_SLUG_BYTES: usize = 120;
+
+/// Enforce [`MAX_SLUG_BYTES`]: an over-long slug keeps its head and replaces
+/// the tail with a hash of the *whole* uncapped slug, so two names that
+/// differ only past the cut still name two artifacts (ADR-0010's
+/// no-silent-collision rule — a plain truncation would merge them). Under
+/// the cap the slug passes through untouched, which is every slug the
+/// existing corpus has — the canonical format does not move for them.
+fn cap_slug(slug: String) -> String {
+    if slug.len() <= MAX_SLUG_BYTES {
+        return slug;
+    }
+    let tag = format!("-{:016x}", crate::fake::fnv1a(slug.as_bytes()));
+    let keep = MAX_SLUG_BYTES - tag.len();
+    let mut head: &str = &slug;
+    // Truncate on a char boundary at or below the budget.
+    let mut cut = keep;
+    while !head.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    head = &head[..cut];
+    format!("{head}{tag}")
 }
 
 /// Emit one scenario's artifact set. `None` when the scenario lowers to no
@@ -588,6 +620,48 @@ mod tests {
         // The extension is not in the name: every feature carries it, so it
         // would be noise in every artifact filename.
         assert!(!a.contains("feature-feature"), "{a}");
+    }
+
+    /// The slug flattens path depth into filename length, so a deep tree or a
+    /// long scenario name must cap — with a hash of the whole uncapped slug
+    /// as the tail, so two names differing only past the cut still name two
+    /// artifacts (a plain truncation would silently merge them, the ADR-0010
+    /// collision this module just finished closing for same-named stems).
+    #[test]
+    fn an_over_long_slug_caps_below_name_max_without_colliding() {
+        let deep = "a/".repeat(90) + "x.feature";
+        let a = artifact_slug(
+            &deep,
+            &format!("{} variant one", "shared prefix ".repeat(12)),
+        );
+        let b = artifact_slug(
+            &deep,
+            &format!("{} variant two", "shared prefix ".repeat(12)),
+        );
+        assert!(a.len() <= MAX_SLUG_BYTES, "{} bytes: {a}", a.len());
+        assert!(b.len() <= MAX_SLUG_BYTES, "{} bytes: {b}", b.len());
+        assert_ne!(a, b, "names differing past the cut must not merge");
+        assert_eq!(
+            a,
+            artifact_slug(
+                &deep,
+                &format!("{} variant one", "shared prefix ".repeat(12))
+            ),
+            "the capped name is a pure function of the inputs"
+        );
+        // The asset root doubles the slug as a directory name; the cap is what
+        // keeps that inside a filesystem's per-component budget too.
+        assert!(asset_root(&a).len() <= MAX_SLUG_BYTES + "assets/".len());
+    }
+
+    /// Multi-byte scripts reach the byte ceiling at a fraction of the visible
+    /// characters, and the cut must land on a char boundary — a mid-char
+    /// truncation would panic.
+    #[test]
+    fn a_multibyte_slug_caps_on_a_char_boundary() {
+        let slug = artifact_slug("suite/x.feature", &"café-ötje-".repeat(40));
+        assert!(slug.len() <= MAX_SLUG_BYTES, "{} bytes", slug.len());
+        assert!(slug.is_char_boundary(slug.len()));
     }
 
     /// A path with no directory still names cleanly, and a path that yields no

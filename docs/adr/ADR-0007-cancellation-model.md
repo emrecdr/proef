@@ -51,6 +51,40 @@ bounded grace on the exclusive fill gate while detached threads report alive,
 which buys a rare guarantee with a per-exclusive-scenario delay every run pays.
 Revisit if the isolation guarantee ever has to be absolute.
 
+## Amendment (2026-09-07) — the budget family is closed over its inputs, and bounded as a product
+
+The 0.18 survey found three holes in the value-cap regime, one of them the
+exact shape this ADR exists to prevent:
+
+- **`max-time:` was read by the budget calculator and invisible to the
+  lint.** `entry_timeout` has always taken a literal `max-time:` as the
+  entry's timeout, while the option recogniser did not know the key — so
+  `[Options] max-time: 100000h` was lint-clean and produced a multi-year
+  batch budget the watchdog dutifully honoured. It now carries the duration
+  cap like every budget input, and a test pins the rule the hole broke:
+  *every option the budget reads must be one the lint can see*
+  (`every_budget_input_carries_a_value_rule`).
+- **`retry-interval:` multiplied into the budget with no value cap.** It was
+  in the recogniser for double-declaration purposes only; it now carries the
+  duration cap.
+- **Individually capped values compose into an unbounded product.**
+  `retry: 10_000` (at the count cap) times a 30 s timeout is ~83 hours,
+  lint-clean; saturated arithmetic reaches `Duration::MAX`, whose
+  `Instant + budget` addition panics — contained by the dispatcher's
+  `catch_unwind`, but reported as a phantom "scenario thread panicked"
+  system fault from a user-authored value. Two closures: the computed batch
+  budget clamps to an absolute ceiling of **four hours**
+  (`MAX_BATCH_BUDGET` — generous for any batch of API calls with finite
+  retries, and a truthful watchdog abandonment for a runaway product), and
+  the dispatcher's deadline arithmetic uses `checked_add` with a far-future
+  fallback, so an engine that ever hands core an unclamped budget degrades
+  to "no deadline" rather than a panic.
+
+In the same family: `[http] timeout-ms = 0` was accepted and means *no
+timeout* to libcurl — the exact unbounded hang the default defends against,
+opted into by a value that reads like "immediately". Refused as a user error
+now.
+
 ## Alternatives considered
 
 Killing scenario threads — unsound in Rust (no safe thread kill). Running each batch in

@@ -1830,7 +1830,8 @@ mod tests {
             "retry" => (Some("retry"), Some(RawOptionValue::Count)),
             "repeat" => (None, Some(RawOptionValue::Count)),
             "delay" => (Some("delay"), Some(RawOptionValue::Duration)),
-            "retry-interval" => (Some("retry"), None),
+            "retry-interval" => (Some("retry"), Some(RawOptionValue::Duration)),
+            "max-time" => (None, Some(RawOptionValue::Duration)),
             _ => return None,
         };
         Some(RawOption { family, value })
@@ -1938,6 +1939,14 @@ mod tests {
             ("retry: -1", "proef::pack::retry_not_finite"),
             ("repeat: -1", "proef::pack::retry_not_finite"),
             ("delay: 99999999", "proef::pack::delay_unbounded"),
+            // The two the family was missing (0.18 survey): `retry-interval`
+            // multiplies into the budget uncapped, and `max-time` fed the
+            // budget calculator while the lint could not see the key at all —
+            // `max-time: 100000h` was lint-clean and produced a multi-year
+            // watchdog budget.
+            ("retry-interval: 99999999", "proef::pack::delay_unbounded"),
+            ("max-time: 99999999", "proef::pack::delay_unbounded"),
+            ("max-time: 100000h", "proef::pack::delay_unbounded"),
         ] {
             let diags = diags_of(
                 &[source(

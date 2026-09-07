@@ -1356,7 +1356,10 @@ pub fn artifacts(
             // replays the hand-off unchanged. Each comes from beside the
             // source that referenced it, feature or fragment (ADR-0018).
             let asset_dir = out_dir.join(proef_core::emit::asset_root(&artifact.slug));
-            let root = crate::fsutil::parent_dir(Path::new(feature.file.path.as_str()));
+            // The directory the feature was read from, never its portable
+            // name — the name's anchor does not survive a `cd`
+            // (`LoadedFeature::read_from`).
+            let root = crate::fsutil::parent_dir(&feature.read_from);
             if let Err(err) = crate::assets::stage_assets(
                 &artifact.assets,
                 crate::assets::AssetRoots {

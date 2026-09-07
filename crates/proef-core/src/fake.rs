@@ -36,8 +36,9 @@ impl SplitMix64 {
     }
 }
 
-/// 64-bit FNV-1a, turning strings into seeds.
-fn fnv1a(bytes: &[u8]) -> u64 {
+/// 64-bit FNV-1a, turning strings into seeds — and, in `emit`, an over-long
+/// slug's tail into a stable disambiguator (one implementation, two readers).
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for &b in bytes {
         hash ^= u64::from(b);

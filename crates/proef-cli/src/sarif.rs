@@ -5,7 +5,7 @@
 //! serializer to `render::print_all(&[Diag])`; dry-run diagnostics resolve no
 //! secrets, so nothing here needs redaction.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use proef_core::diag::{Diag, Severity};
@@ -20,18 +20,7 @@ pub fn write(diags: &[&Diag], path: &Path) -> Result<(), String> {
         .into_iter()
         .map(|id| serde_json::json!({ "id": id }))
         .collect();
-    // Byte offsets alone upload fine and annotate nothing: GitHub keys inline
-    // annotations on `startLine`. Sources are read once each, here at the IO
-    // edge, and only to count newlines — `Diag` keeps carrying byte spans.
-    let mut sources: BTreeMap<&str, Option<String>> = BTreeMap::new();
-    for diag in diags {
-        if let Some(name) = &diag.source_name {
-            sources
-                .entry(name.as_str())
-                .or_insert_with(|| std::fs::read_to_string(name).ok());
-        }
-    }
-    let results: Vec<serde_json::Value> = diags.iter().map(|d| result(d, &sources)).collect();
+    let results: Vec<serde_json::Value> = diags.iter().map(|d| result(d)).collect();
     let sarif = serde_json::json!({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -59,7 +48,7 @@ fn line_of(text: &str, offset: usize) -> usize {
         + 1
 }
 
-fn result(diag: &Diag, sources: &BTreeMap<&str, Option<String>>) -> serde_json::Value {
+fn result(diag: &Diag) -> serde_json::Value {
     let level = match diag.severity {
         Severity::Error => "error",
         Severity::Warning => "warning",
@@ -80,13 +69,23 @@ fn result(diag: &Diag, sources: &BTreeMap<&str, Option<String>>) -> serde_json::
             "byteOffset": span.start,
             "byteLength": span.end.saturating_sub(span.start),
         });
-        // Line numbers only when the source could actually be read — a guessed
-        // line is worse than none, since the annotation would land on innocent
-        // code and read as authoritative.
-        if let Some(Some(text)) = sources.get(name.as_str()) {
+        // Lines come from the diagnostic's own carried source — the same
+        // normalized text the byte span indexes into. The previous re-read
+        // from disk resolved the portable name against the working
+        // directory, so from any subdirectory every read failed and
+        // `startLine` silently vanished (annotating nothing); it could also
+        // disagree with the span by exactly the parser's normalization
+        // (BOM strip, appended trailing newline). The carried text can do
+        // neither.
+        if let Some(text) = &diag.source_text {
             region["startLine"] = line_of(text, span.start).into();
             region["endLine"] = line_of(text, span.end).into();
         }
+        // SARIF's `uri` is a URI reference: `/`-separated. Portable names
+        // already are; the one exception is an absolute out-of-project name
+        // on Windows, whose `\` is not a URI separator.
+        #[cfg(windows)]
+        let name = &name.replace('\\', "/");
         result["locations"] = serde_json::json!([{
             "physicalLocation": {
                 "artifactLocation": { "uri": name },
