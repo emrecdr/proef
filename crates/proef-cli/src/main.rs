@@ -288,6 +288,18 @@ enum Command {
         /// Split the history by run context: a `[meta]`/`--meta` key, or `env`
         #[arg(long = "by", value_name = "KEY")]
         by: Option<String>,
+        /// Minimum observed runs before a scenario is classified (else
+        /// `insufficient-data`); overrides `[flaky] min-samples` (default 10)
+        #[arg(long = "min-samples", value_name = "N")]
+        min_samples: Option<usize>,
+        /// Trailing clean runs that resolve a flagged scenario to healthy
+        /// (hysteresis); overrides `[flaky] recovery-runs` (default 5)
+        #[arg(long = "recovery-runs", value_name = "N")]
+        recovery_runs: Option<usize>,
+        /// A run failing over this share of suite scenarios is an environment
+        /// outage, excluded; overrides `[flaky] outage-rate` (default 0.8)
+        #[arg(long = "outage-rate", value_name = "RATE")]
+        outage_rate: Option<f64>,
     },
     /// Compare two run records: regressions, fixes, flakiness, perf deltas
     Diff {
@@ -882,10 +894,30 @@ fn main() -> std::process::ExitCode {
             Ok(config) => explain::explain(&config.runs_dir(), run_id.as_deref(), format.is_some()),
             Err(code) => code,
         },
-        Command::Flaky { format, by } => {
+        Command::Flaky {
+            format,
+            by,
+            min_samples,
+            recovery_runs,
+            outage_rate,
+        } => {
             let output_json = format.is_some();
             match load_config(config_path) {
-                Ok(config) => flaky::flaky(&config.runs_dir(), output_json, by.as_deref()),
+                Ok(config) => {
+                    // Config `[flaky]` provides the base, flags override — the
+                    // established precedence for every tunable.
+                    let mut thresholds = config.flaky_thresholds();
+                    if let Some(n) = min_samples {
+                        thresholds.min_samples = n;
+                    }
+                    if let Some(n) = recovery_runs {
+                        thresholds.recovery_runs = n;
+                    }
+                    if let Some(rate) = outage_rate {
+                        thresholds.outage_rate = rate;
+                    }
+                    flaky::flaky(&config.runs_dir(), output_json, by.as_deref(), thresholds)
+                }
                 Err(code) => code,
             }
         }

@@ -365,6 +365,13 @@ pub fn execute(
         return ExitCode::SystemError;
     }
 
+    // The input fingerprint sidecar, written before the run so it survives an
+    // interrupt: it is a fact about the inputs, not the outcome. `proef flaky`
+    // reads it as the default equivalence class, so a pack/feature/config edit
+    // ends the comparison window. Best-effort like `timings.json` — a missing
+    // sidecar only means those runs fold into the pre-fingerprint window.
+    write_or_warn(&run_dir.join("inputs.json"), input_fingerprint_json(&front));
+
     // Reporters: console (stdout + run.log tee) and the JSONL record. Both
     // run-dir writers go through `LatchedFile`, because their reporters
     // swallow write errors by design; only the record's flag reaches the
@@ -1949,6 +1956,43 @@ fn write_run_record(artifact: emit::Artifact, artifacts_dir: &Path) -> ArtifactR
         text: Arc::from(artifact.hurl_text.as_str()),
         map: Arc::new(artifact.map),
     }
+}
+
+/// The `inputs.json` sidecar body: the run's input fingerprint. The parts are
+/// everything that defines what the run *executes* — feature sources (sorted
+/// by path), the loaded macros and fragments (`BTreeMap` order), and the
+/// resolved `${url:…}`/`${vars:…}` scope — assembled deterministically so two
+/// runs of unchanged inputs fingerprint identically. proef-computed over
+/// proef's own inputs, never harvested from the environment (ADR-0020).
+fn input_fingerprint_json(front: &front::FrontEnd) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    // Features, in path order (already sorted). Path and source both matter:
+    // a rename changes identity, an edit changes content.
+    for feature in &front.features {
+        parts.push(format!("feature\0{}", feature.file.path));
+        parts.push(feature.file.source.to_string());
+    }
+    // Macros and fragments by name (BTreeMap order); Debug is a stable
+    // within-version representation of the parsed shape — a proef upgrade may
+    // change it, which correctly starts a fresh window rather than silently
+    // comparing across versions.
+    for (name, macro_def) in &front.packs.macros {
+        parts.push(format!("macro\0{name}"));
+        parts.push(format!("{macro_def:?}"));
+    }
+    for (name, fragment) in front.packs.fragments.iter() {
+        parts.push(format!("fragment\0{name}"));
+        parts.push(format!("{fragment:?}"));
+    }
+    // The injected config scope, already deep-merged for the active env.
+    for (key, value) in front.config_vars.iter() {
+        parts.push(format!("config\0{key}={value}"));
+    }
+    let fingerprint = proef_core::fingerprint::of(parts.iter().map(String::as_str));
+    format!(
+        "{}\n",
+        serde_json::json!({ "schema": 1, "fingerprint": fingerprint })
+    )
 }
 
 /// Best-effort run-record write: the run proceeds on failure, but never
