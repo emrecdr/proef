@@ -80,11 +80,16 @@ pub(crate) mod reserved {
             {
                 return Some(reserved); // `skipped`, `quarantined`, `skipping`
             }
-        }
-        // `quarantine` is long enough that anything within two edits is a
-        // typo of it, not an unrelated tag (`quarentine`, `quarantin`).
-        if lower != "quarantine" && proef_core::matcher::levenshtein(&lower, "quarantine") <= 2 {
-            return Some("quarantine");
+            // A raw edit-distance backstop, but only for a reserved word long
+            // enough to afford one: `skip` (4) has too many one-edit neighbours
+            // (`ship`, `slip`, `step`), while `quarantine` (10) does not. Keying
+            // the threshold on length keeps the `RESERVED` array the single
+            // source of truth — a future reserved tag earns fuzzy protection by
+            // its own length, with no new hardcoded branch to remember.
+            let max_dist = if reserved.len() >= 8 { 2 } else { 0 };
+            if max_dist > 0 && proef_core::matcher::levenshtein(&lower, reserved) <= max_dist {
+                return Some(reserved); // `quarentine`, `quarantin`
+            }
         }
         None
     }
@@ -363,34 +368,36 @@ pub fn run(
 fn reserved_tag_typo_warning(file: &FeatureFile, line: usize, tag: &str, intended: &str) -> Diag {
     // The byte span of the 1-based header line within the normalized source,
     // newline excluded — the tags sit just above it, and the header is the
-    // stable anchor the reader recognizes.
+    // stable anchor the reader recognizes. `None` if the line is out of range
+    // (shouldn't happen), which leaves the warning named but spanless.
     let mut offset = 0usize;
+    let mut span = None;
     for (index, text) in file.source.split_inclusive('\n').enumerate() {
         if index + 1 == line {
             let end = offset + text.trim_end_matches('\n').len();
-            return Diag::warning(
-                "proef::tags::reserved_tag_typo",
-                format!(
-                    "tag `@{tag}` is not a reserved tag and has no effect — did you mean `@{intended}`? \
-                     Reserved tags match exactly (`@quarantine`, `@skip`, `@skip:<reason>`)."
-                ),
-            )
-            .with_source(file.path.clone(), Arc::clone(&file.source))
-            .with_span(proef_core::diag::Span::clamped(offset, end, file.source.len()))
-            .with_help(format!(
-                "rename it to `@{intended}`, or remove it if the effect was not intended"
+            span = Some(proef_core::diag::Span::clamped(
+                offset,
+                end,
+                file.source.len(),
             ));
+            break;
         }
         offset += text.len();
     }
-    // Line out of range (shouldn't happen): a spanless but still-named warning.
-    Diag::warning(
+    let mut diag = Diag::warning(
         "proef::tags::reserved_tag_typo",
         format!(
-            "tag `@{tag}` is not a reserved tag and has no effect — did you mean `@{intended}`?"
+            "tag `@{tag}` is not a reserved tag and has no effect — did you mean `@{intended}`? \
+             Reserved tags match exactly (`@quarantine`, `@skip`, `@skip:<reason>`)."
         ),
     )
-    .with_source(file.path.clone(), Arc::clone(&file.source))
+    .with_source(file.path.clone(), Arc::clone(&file.source));
+    if let Some(span) = span {
+        diag = diag.with_span(span).with_help(format!(
+            "rename it to `@{intended}`, or remove it if the effect was not intended"
+        ));
+    }
+    diag
 }
 
 /// A path as it appears in events, artifacts, and diagnostics: always

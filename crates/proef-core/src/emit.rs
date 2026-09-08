@@ -173,14 +173,12 @@ fn cap_slug(slug: String) -> String {
     }
     let tag = format!("-{:016x}", crate::fake::fnv1a(slug.as_bytes()));
     let keep = MAX_SLUG_BYTES - tag.len();
-    let mut head: &str = &slug;
     // Truncate on a char boundary at or below the budget.
     let mut cut = keep;
-    while !head.is_char_boundary(cut) {
+    while !slug.is_char_boundary(cut) {
         cut -= 1;
     }
-    head = &head[..cut];
-    format!("{head}{tag}")
+    format!("{}{tag}", &slug[..cut])
 }
 
 /// Emit one scenario's artifact set. `None` when the scenario lowers to no

@@ -235,12 +235,14 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     // how that stops being true later"), and these are the same values on a
     // different sink (0.18 survey — JUnit was one of five sinks bypassing
     // the boundary).
+    // Redact `file` once and reuse it: `classname` and the `file` extra
+    // attribute carry the same value, and `apply` scans against every needle.
+    let file = redactions.apply(&outcome.file);
     let mut case = TestCase::new(redactions.apply(&outcome.name), status);
-    case.set_classname(redactions.apply(&outcome.file));
+    case.set_classname(file.clone());
     // GitLab reads a `file` attribute on the testcase for source linking;
     // quick-junit does not model it, so it rides the extra-attribute map.
-    case.extra
-        .insert("file".into(), redactions.apply(&outcome.file).into());
+    case.extra.insert("file".into(), file.into());
     case.set_time(outcome.cost());
     if let Some(note) = system_out_note(outcome, redactions) {
         case.set_system_out(note);

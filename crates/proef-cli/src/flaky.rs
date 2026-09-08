@@ -334,15 +334,21 @@ pub fn flaky(
         );
     }
 
-    let mut rows: Vec<((String, Key), History)> = histories.into_iter().collect();
-    rows.sort_by(|a, b| {
-        a.1.verdict(&thresholds)
-            .cmp(&b.1.verdict(&thresholds))
-            .then_with(|| a.0.cmp(&b.0))
-    });
+    // Classify once, here, then sort and render on the stored verdict. The
+    // verdict is a fold over the whole run slice, so recomputing it inside the
+    // comparator (twice per comparison) and again at each render site is the
+    // same answer paid for many times over.
+    let mut rows: Vec<((String, Key), History, Verdict)> = histories
+        .into_iter()
+        .map(|(key, history)| {
+            let verdict = history.verdict(&thresholds);
+            (key, history, verdict)
+        })
+        .collect();
+    rows.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
 
     if output_json {
-        for ((context, (file, scenario)), h) in &rows {
+        for ((context, (file, scenario)), h, verdict) in &rows {
             let object = serde_json::json!({
                 "context": by.map(|key| serde_json::json!({ key: context })),
                 "file": file,
@@ -353,13 +359,13 @@ pub fn flaky(
                 "pass_on_retry": h.pass_on_retry(),
                 "p95_ms": h.p95_ms(),
                 "quarantined": h.quarantined,
-                "verdict": h.verdict(&thresholds).key(),
+                "verdict": verdict.key(),
             });
             crate::render::outln!("{object}");
         }
         return ExitCode::Success;
     }
-    render_table(&rows, runs.len(), runs_root, by, &thresholds);
+    render_table(&rows, runs.len(), runs_root, by);
     ExitCode::Success
 }
 
@@ -369,25 +375,25 @@ pub fn flaky(
 /// A run with no suite scenarios (an aborted setup) is not an outage — there
 /// is nothing to have failed.
 fn is_outage(record: &record::Record, rate: f64) -> bool {
-    let suite: Vec<&record::ScenarioRun> = record
-        .scenarios
-        .values()
-        .filter(|run| run.is_suite() && run.status != Status::Skipped)
-        .collect();
-    if suite.is_empty() {
+    let mut total = 0u32;
+    let mut failed = 0u32;
+    for run in record.scenarios.values() {
+        if !run.is_suite() || run.status == Status::Skipped {
+            continue;
+        }
+        total += 1;
+        if run.status == Status::Failed {
+            failed += 1;
+        }
+    }
+    if total == 0 {
+        // No suite scenarios (an aborted setup): nothing to have failed.
         return false;
     }
-    let failed = suite
-        .iter()
-        .filter(|run| run.status == Status::Failed)
-        .count();
-    // Compare as a ratio without an f64 cast that clippy flags for precision:
-    // `failed/total > rate` ⟺ `failed > rate*total`, and a scenario count
-    // never approaches f64's mantissa limit.
-    #[allow(clippy::cast_precision_loss)]
-    let over = f64::from(u32::try_from(failed).unwrap_or(u32::MAX))
-        > rate * f64::from(u32::try_from(suite.len()).unwrap_or(u32::MAX));
-    over
+    // `failed/total > rate` ⟺ `failed > rate*total` (no division); the counts
+    // are small, so `f64::from` is a lossless widening — no cast for clippy to
+    // flag, and no `Vec` allocated just to count.
+    f64::from(failed) > rate * f64::from(total)
 }
 
 /// The run's input fingerprint from its `inputs.json` sidecar, or `None` when
@@ -421,11 +427,10 @@ fn run_context(record: &record::Record, key: &str) -> String {
 /// The human listing: header, one row per scenario worst-first, and the
 /// quarantine hand-off when anything was flagged.
 fn render_table(
-    rows: &[((String, Key), History)],
+    rows: &[((String, Key), History, Verdict)],
     runs: usize,
     runs_root: &Path,
     by: Option<&str>,
-    thresholds: &FlakyThresholds,
 ) {
     crate::render::outln!(
         "flakiness over {runs} run(s) under {} (window = [run] keep-runs)\n",
@@ -436,7 +441,7 @@ fn render_table(
     // context leads the label, so the same scenario's contexts sort together.
     let labels: Vec<String> = rows
         .iter()
-        .map(|((context, key), _)| match by {
+        .map(|((context, key), _, _)| match by {
             Some(_) => format!("[{context}] {}", label(key)),
             None => label(key),
         })
@@ -451,7 +456,7 @@ fn render_table(
         "pass-on-retry",
         "p95 ms",
     );
-    for ((_, h), name) in rows.iter().zip(&labels) {
+    for ((_, h, verdict), name) in rows.iter().zip(&labels) {
         crate::render::outln!(
             "{name:width$}  {:>4}  {:>5}  {:>11}  {:>13}  {:>6}  {}",
             h.observed(),
@@ -459,12 +464,12 @@ fn render_table(
             h.transitions(),
             h.pass_on_retry(),
             h.p95_ms(),
-            h.verdict(thresholds).word(),
+            verdict.word(),
         );
     }
     let flagged = rows
         .iter()
-        .filter(|(_, h)| matches!(h.verdict(thresholds), Verdict::Flaky | Verdict::Latent))
+        .filter(|(_, _, verdict)| matches!(verdict, Verdict::Flaky | Verdict::Latent))
         .count();
     if flagged > 0 {
         crate::render::outln!(
@@ -478,11 +483,8 @@ fn render_table(
     // single merged history can never reach.
     if by.is_some() {
         let mut per_scenario: BTreeMap<&Key, BTreeSet<&'static str>> = BTreeMap::new();
-        for ((_, key), history) in rows {
-            per_scenario
-                .entry(key)
-                .or_default()
-                .insert(history.verdict(thresholds).key());
+        for ((_, key), _, verdict) in rows {
+            per_scenario.entry(key).or_default().insert(verdict.key());
         }
         let split: Vec<String> = per_scenario
             .iter()
@@ -512,7 +514,7 @@ fn render_table(
     // or it did.
     let disabled = rows
         .iter()
-        .filter(|(_, h)| h.verdict(thresholds) == Verdict::Disabled)
+        .filter(|(_, _, verdict)| matches!(verdict, Verdict::Disabled))
         .count();
     if disabled > 0 {
         crate::render::outln!(
@@ -522,7 +524,7 @@ fn render_table(
     }
     let recovered = rows
         .iter()
-        .filter(|(_, h)| h.verdict(thresholds) == Verdict::Recovered)
+        .filter(|(_, _, verdict)| matches!(verdict, Verdict::Recovered))
         .count();
     if recovered > 0 {
         crate::render::outln!(

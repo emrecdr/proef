@@ -146,19 +146,13 @@ fn same_file(path: &Path, config: &Path) -> bool {
 /// not already skipped.
 /// Install the watch loop's two-stage interrupt (ADR-0007): the first signal
 /// (Ctrl-C, or SIGTERM/SIGHUP via ctrlc's `termination` feature) cancels
-/// whichever run is current and ends the watch after it; the second
-/// hard-exits.
+/// whichever run is current and ends the watch after it; the second hard-exits.
+/// The skeleton is shared with `proef test` ([`crate::exec::install_two_stage_interrupt`]);
+/// only the first-signal action — stop the loop, cancel the live token — differs.
 fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationToken>>) {
     let stop = Arc::clone(stop);
     let current = Arc::clone(current);
-    let pressed = AtomicBool::new(false);
-    let handler = ctrlc::set_handler(move || {
-        if pressed.swap(true, Ordering::SeqCst) {
-            // No print before the exit — stderr's lock may be held by a
-            // blocked writer, and a print here can wedge the escape hatch
-            // (same rule as `exec::install_interrupt`).
-            std::process::exit(crate::INTERRUPT_EXIT_CODE);
-        }
+    crate::exec::install_two_stage_interrupt(move || {
         crate::render::errln!(
             "\n[watch] interrupt — cancelling the current run, leaving watch (Ctrl-C again to force)"
         );
@@ -167,16 +161,6 @@ fn install_interrupt(stop: &Arc<AtomicBool>, current: &Arc<Mutex<CancellationTok
             token.cancel();
         }
     });
-    if let Err(err) = handler {
-        // Without the handler, the two-stage interrupt does not exist for
-        // this session: the first Ctrl-C takes the process default and
-        // truncates the run record. Rare, but a session without working
-        // cancellation must say so once.
-        crate::render::errln!(
-            "warning: Ctrl-C handling unavailable ({err}) — an interrupt will kill the \
-             run mid-write"
-        );
-    }
 }
 
 /// The watcher callback: decide whether one filesystem event warrants a
