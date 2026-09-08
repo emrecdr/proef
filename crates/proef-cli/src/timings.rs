@@ -86,10 +86,17 @@ pub fn render(summary: &RunSummary, redactions: &proef_core::report::Redactions)
         .iter()
         .map(|outcome| {
             let ms = u64::try_from(outcome.cost().as_millis()).unwrap_or(u64::MAX);
-            // Redact the whole outcome once (identity is all this sink reads
-            // today; `apply_outcome` keeps it masked if that ever grows).
-            let outcome = redactions.apply_outcome(outcome);
-            ((outcome.file.to_string(), outcome.name.to_string()), ms)
+            // Identity is all this sink renders, so mask just the two fields —
+            // no need to clone the whole outcome graph (every step included) to
+            // emit `{file, scenario}`. A new `ScenarioOutcome` field cannot
+            // reach this sink without someone editing the shape to read it.
+            (
+                (
+                    redactions.apply(&outcome.file),
+                    redactions.apply(&outcome.name),
+                ),
+                ms,
+            )
         })
         .collect();
     let rows: Vec<serde_json::Value> = weights
