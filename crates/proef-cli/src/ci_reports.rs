@@ -235,12 +235,6 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     // identity — deliberately not carried here at all: the failure detail
     // names the *artifact* line (the replayable thing), and the feature line
     // is one `proef explain` away. Consumers read `file`, not `line`.
-    // Identity fields go through the masker like every other string: the
-    // event stream masks `scenario` and `file` under an explicit
-    // no-exemptions rule ("a field exempted because it can't contain one is
-    // how that stops being true later"), and these are the same values on a
-    // different sink (0.18 survey — JUnit was one of five sinks bypassing
-    // the boundary).
     // `classname` and the `file` extra attribute carry the same value, and the
     // outcome is already masked by `apply_outcome` — reuse the field directly.
     let file = outcome.file.to_string();

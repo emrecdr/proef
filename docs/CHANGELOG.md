@@ -264,6 +264,15 @@ Regrouping preserved every entry and its order within its kind.
   message, which reaches only this path, is masked with the rest). Additive to
   the library surface (`pub fn Redactions::apply_outcome`).
 
+- **Redaction masking deduplicated to one primitive** (a follow-up `/simplify`
+  pass, no behaviour change). `apply_outcome`/`apply_step_outcome` were written
+  as siblings of `apply_event` but re-spelled its `Arc<str>` masking idiom inline
+  and dropped its clean-field optimization; a shared `mask_arc`/`mask_step_ref`
+  now backs all four maskers, so a clean field reuses its `Arc` instead of
+  reallocating (and `apply_step_finished` inherits the same win). `timings`
+  reverts to masking just the two identity fields it renders, rather than cloning
+  the whole outcome graph to read them.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added

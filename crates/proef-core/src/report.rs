@@ -8,6 +8,16 @@
 //! Secret values never enter events by construction (capture *names* only,
 //! engine-redacted details); [`Redactions`] is the defense-in-depth applied to
 //! every rendered string, property-tested in this module.
+//!
+//! [`Redactions`] masks **two** paths, not only the event stream:
+//! [`Redactions::apply_event`] for the JSONL record (and the HTML report that
+//! re-reads it), and [`Redactions::apply_outcome`] for the CI sinks (`JUnit`,
+//! CTRF, TAP, timings, the GitHub summary) that render from `RunSummary`
+//! instead. Those mask per-sink rather than at one shared boundary because each
+//! encodes differently (XML, JSON, workflow-command percent-encoding, TAP
+//! escaping) and must mask *before* its own encoding, and the GitHub sink masks
+//! its fully-assembled markdown body — which carries non-outcome text (run id,
+//! metadata, tag names) a per-outcome masker could not reach.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -89,6 +99,28 @@ impl Redactions {
         out
     }
 
+    /// Mask one `Arc<str>`, reusing the original `Arc` when nothing matched —
+    /// the common case, and the whole reason [`Self::applied`] returns an
+    /// `Option`. The single masker every field-level path shares:
+    /// [`Self::apply_event`], `apply_step_finished`, [`Self::apply_outcome`],
+    /// and `apply_step_outcome`.
+    fn mask_arc(&self, text: &Arc<str>) -> Arc<str> {
+        match self.applied(text) {
+            Some(redacted) => Arc::from(redacted),
+            None => Arc::clone(text),
+        }
+    }
+
+    /// Mask a [`StepRef`], shared by the event-stream and summary-path step
+    /// maskers so a new `StepRef` field is one edit, not two.
+    fn mask_step_ref(&self, step: &StepRef) -> StepRef {
+        StepRef {
+            file: self.mask_arc(&step.file),
+            line: step.line,
+            text: self.mask_arc(&step.text),
+        }
+    }
+
     /// No values to redact.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -108,12 +140,7 @@ impl Redactions {
     /// erode as the schema grows.
     pub fn apply_event(&self, event: &Event) -> Event {
         // Clean fields — nearly all of them — keep their original `Arc`.
-        let s = |text: &Arc<str>| -> Arc<str> {
-            match self.applied(text) {
-                Some(redacted) => Arc::from(redacted),
-                None => Arc::clone(text),
-            }
-        };
+        let s = |text: &Arc<str>| self.mask_arc(text);
         match event {
             Event::RunStarted {
                 schema,
@@ -206,7 +233,7 @@ impl Redactions {
     /// The `step_finished` half of [`Self::apply_event`], split out to keep
     /// the match readable: every text-bearing field masked, none exempted.
     fn apply_step_finished(&self, event: &Event) -> Event {
-        let s = |text: &Arc<str>| -> Arc<str> { Arc::from(self.apply(text).as_str()) };
+        let s = |text: &Arc<str>| self.mask_arc(text);
         let Event::StepFinished {
             scenario,
             engine,
@@ -227,11 +254,7 @@ impl Redactions {
         Event::StepFinished {
             scenario: s(scenario),
             engine: s(engine),
-            step: crate::step::StepRef {
-                file: s(&step.file),
-                line: step.line,
-                text: s(&step.text),
-            },
+            step: self.mask_step_ref(step),
             status: *status,
             attempts: *attempts,
             duration_ms: *duration_ms,
@@ -277,27 +300,20 @@ impl Redactions {
             fault,
             artifact_slug,
         } = outcome;
+        let s = |text: &Arc<str>| self.mask_arc(text);
         ScenarioOutcome {
-            file: Arc::from(self.apply(file).as_str()),
-            name: Arc::from(self.apply(name).as_str()),
+            file: s(file),
+            name: s(name),
             line: *line,
             status: *status,
-            reason: reason
-                .as_deref()
-                .map(|text| Arc::from(self.apply(text).as_str())),
-            tags: tags
-                .iter()
-                .map(|tag| self.apply(tag))
-                .collect::<Vec<_>>()
-                .into(),
+            reason: reason.as_ref().map(&s),
+            tags: tags.iter().map(|tag| self.apply(tag)).collect(),
             steps: steps
                 .iter()
                 .map(|step| self.apply_step_outcome(step))
                 .collect(),
             fault: fault.as_ref().map(|fault| self.apply_fault(fault)),
-            artifact_slug: artifact_slug
-                .as_deref()
-                .map(|text| Arc::from(self.apply(text).as_str())),
+            artifact_slug: artifact_slug.as_ref().map(&s),
         }
     }
 
@@ -316,11 +332,7 @@ impl Redactions {
             label,
         } = outcome;
         StepOutcome {
-            step: StepRef {
-                file: Arc::from(self.apply(&step.file).as_str()),
-                line: step.line,
-                text: Arc::from(self.apply(&step.text).as_str()),
-            },
+            step: self.mask_step_ref(step),
             status: *status,
             attempts: *attempts,
             duration: *duration,
