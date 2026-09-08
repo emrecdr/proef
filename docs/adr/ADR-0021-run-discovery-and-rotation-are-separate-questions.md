@@ -104,3 +104,10 @@ half was the undocumented half.
 - **Rotate custom-id directories too, and keep one predicate.** Rejected
   outright: it makes `runs-dir = "."` a data-loss configuration, which is the
   hazard `is_run_id` was written to prevent.
+
+## Erratum — 2026-09-06
+
+The JUnit report's own uuid still had the trap this ADR removed elsewhere: a
+non-uuid `--run-id` parsed to the nil uuid, so every `--run-id ci` run reported
+`00000000-…` and collided in any consumer keyed on it. A custom id now derives a
+stable UUIDv5 from its bytes; a uuid id passes through verbatim.

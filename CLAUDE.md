@@ -427,6 +427,40 @@ build requirement).
       `Artifact::assets` carrying each reference with the source that wrote it,
       plus `emit::asset_root`; the canonical artifact format moved, since an
       artifact that reads a file now names its `--file-root` in the replay line
+- [x] the 0.18 survey — waves A–F (#168–#175), then a `/simplify` pass over
+      them (#176, #178–#179); unreleased, cuts as 0.18.0. A check-the-world
+      round over the CI-consumer surfaces, run to exhaustion. Output proef
+      could not deliver never looks like success: the record's own write
+      failure latches into exit 3 through one fold
+      (`escalate_environment_failures`, beside the JUnit/CTRF and
+      GitHub-summary failures), SIGTERM/SIGHUP take the graceful cancel so a
+      CI job timeout leaves a complete record and its reports, and a custom
+      `--run-id` no longer collapses the JUnit identity onto the nil uuid.
+      Asset staging resolves beside the file the parser read wherever you
+      `cd` from — the feature-side twin of OPEN-FINDINGS H5, invisible to a
+      suite that only ever ran from the project root — with `--sarif` lines
+      from the carried source, the symlink and case-insensitive edges closed,
+      and artifact slugs capped at 120 bytes with a hash tail. The ADR-0007
+      budget family is closed over its inputs (`max-time:` was *read* by the
+      budget and invisible to the lint; `retry-interval:` was uncapped) and
+      bounded as a product: a four-hour batch ceiling, `[http] timeout-ms =
+      0` refused. Every RunSummary sink routes identities through the masker
+      — five had bypassed it, an unenforced boundary rather than a live leak
+      — later made structural by `Redactions::apply_outcome`, the exhaustive
+      twin of `apply_event`. `warned`/`cancelled` reach `--format json`,
+      JUnit and CTRF; a reserved-tag near-miss (`@quarantined`) warns instead
+      of silently gating the build; `proef lsp` honours `--env`. And `proef
+      flaky` gains the 2026 statistical guards — a sample floor (`new` →
+      `insufficient-data`, default 10), hysteresis, an environment-outage
+      guard, and an input-fingerprint equivalence class (`inputs.json`, a
+      proef-*computed* hash of the suite's own inputs; ADR-0020 clarified,
+      not amended). Design-first found the survey narrower than it read:
+      `broken≠flaky` already existed, and its git-SHA class split along
+      ADR-0020's axis. Coverage is measurable on demand (`just cover`, a
+      ratchet-not-threshold policy) and deliberately not a CI gate. Breaking
+      (library): `RootResolver` returns `ResolvedRoot`, `timings::render`
+      takes `&Redactions`; `flaky`'s `new` verdict is `insufficient-data`
+      and the default floor rises 2 → 10
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

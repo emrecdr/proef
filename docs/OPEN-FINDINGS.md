@@ -5,7 +5,7 @@ it. Each entry is self-contained: the evidence, the reasoning, and — where som
 declined — why.
 
 **Companion:** [IMPROVEMENT-PLAN](IMPROVEMENT-PLAN.md) is the *feature* roadmap (own
-numbering, 13 of 16 shipped) and stays separate because five ADRs cite it by section
+numbering, 14 of 16 shipped) and stays separate because five ADRs cite it by section
 number. [CHANGELOG](CHANGELOG.md) records what shipped, per release.
 
 **Provenance.** Three reviews fed this list, each validated claim-by-claim against the
@@ -22,10 +22,75 @@ tree and then retired into it:
 The review documents themselves were removed once their open items landed here; their
 full text, transcripts and citations are in git history (`git log --diff-filter=D
 -- docs/FIRST-RUN-UX-REVIEW.md docs/NON-TECHNICAL-UX-REVIEW.md`). The shipped/open split
-was re-checked against `main` on **2026-08-10**.
+was re-checked against `main` on **2026-09-08** (after the 0.18 series).
 
 **Read the citations as "start reading here", not as addresses.** They were accurate on
 2026-08-06 and files have moved since; locate symbols with `rg`, not line numbers.
+
+---
+
+## Ingested — the 0.18 survey (2026-09-06), validated then implemented
+
+A check-the-world round over the CI-consumer surfaces — delivery failures,
+signals, staging, the ADR-0007 budget family, the redaction boundary, the
+machine sinks, and the flaky predicates — executed as waves A–F (#168–#175)
+and then swept by a `/simplify` pass (#176, #178–#179). Recorded like every
+external round so its verdicts are not re-derived.
+
+**Premises that did not survive validation — do not re-raise as filed:**
+
+- **"The flaky predicates are missing."** The hardest one, `broken≠flaky`,
+  already existed in `flaky.rs`, with transition-counting, `latent`, and the
+  quarantine lifecycle. Four gaps remained (a sample floor, hysteresis, an
+  outage guard, an input equivalence class) — all pure folds over the retained
+  history, no new state, advisory by design. Designed first (#174, closed
+  unmerged once approved; its decisions: the fingerprint is the *default* key,
+  `new` → `insufficient-data` is a MINOR break, and ADR-0020 takes a
+  clarification rather than a new ADR), then shipped as #175.
+- **"Group flakiness by git tree SHA."** Collides with ADR-0020 (proef never
+  harvests git state). Split along the ADR's own axis: a proef-*computed*
+  input fingerprint (`inputs.json` — feature sources + loaded macros/fragments
+  + the resolved `[url]`/`[vars]` scope; a sidecar, so ADR-0008's schema stays
+  frozen where the design had proposed a `run_started` field) plus a
+  *handed-over* commit via `--meta commit=…` and `--by commit`.
+- **"Five sinks leak secrets."** They bypassed the masker for identity fields
+  only; secrets lower to `{{name}}` and the engine pre-redacts details, so no
+  live leak was found. An unenforced boundary, not a leak — closed per sink
+  (#171), then made structural (`Redactions::apply_outcome`, #178).
+- **"Adopt cargo-auditable, attestations, machete."** All already in place
+  (`release.yml`, `just gates`); the genuine gap was on-demand coverage
+  (#173).
+
+**Shipped:** #168 (the record's own write failure and the GitHub summary's
+reach exit 3; SIGTERM/SIGHUP graceful; a second signal exits 130 without
+printing; a UUIDv5 JUnit identity for a custom `--run-id`) · #169 (staging
+beside the file the parser read — the feature-side twin of H5, updated in
+place below; `--sarif` lines from the carried source; the symlink and
+case-insensitive edges; a 120-byte slug cap) · #170 (ADR-0007 amendment:
+`max-time:`/`retry-interval:` capped, a four-hour batch ceiling,
+`timeout-ms = 0` refused) · #171 (every sink masks identities; `lsp --env`;
+the CTRF key set pinned; three tests de-flaked) · #172 (`warned`/`cancelled`
+in `--format json`, JUnit and CTRF; `tags::reserved_tag_typo`) · #173
+(`just cover`, the ratchet policy) · #175 (the flaky guards).
+
+**Deferred, with dispositions:**
+
+- Restoring the Given/When/Then keyword and the `Rule` name into the
+  reporters — schema-additive, but it moves the pinned event snapshot: its
+  own review, unscheduled.
+- Removing the two fake-generator aliases — a breaking change; bundle it with
+  the next MINOR that already breaks.
+- `secret list --format json` and `macros --check` — surfaces the survey
+  wanted and nothing yet needs; build on a request.
+- A `cargo-mutants` CI job, an `llvm-cov` + coverage-service job, and the
+  immutable-releases repository setting — cannot be validated without
+  triggering CI, and their cadence and cost are a maintainer's decision. The
+  coverage job, when it lands, must be a ratchet (TESTING-STRATEGY §3).
+
+**Noted while simplifying, not filed:** the quarantine-match closure is
+spelled three times (`tap`, `ctrf`, `ci_reports`) — one helper would do; and
+`apply_outcome` clones an outcome even when the needle set is empty, a
+`Cow`/`is_empty` short-circuit away from free on a secret-free run.
 
 ---
 
@@ -313,8 +378,8 @@ failure latch (the deferred v0.6–v0.8 item, to its own written design);
 re-verdicted closed (the #146 cache had already closed it).
 
 **Still open from the survey, dispositions unchanged:** `[source-links]`
-(*build* verdict of 2026-09-01, unscheduled); P13 (nightly `llvm-cov` job —
-`cargo-llvm-cov` is already in the documented toolchain); the text-scan
+(*build* verdict of 2026-09-01, unscheduled); P13 (the CI `llvm-cov` job —
+its local half, `just cover`, shipped 2026-09-07 in #173); the text-scan
 honesty bundle (capture-name charset / ≤2-char methods / `key_line_spans`
 flag — see the deferred list); P12 (measure first, alone, per the
 complexity-guard lesson). Decision items untouched: E2's split-invocation
@@ -384,14 +449,14 @@ re-reported after it is fixed.
 | — | `fmt` trimmed the YAML skeleton, turning `--check` red outside its scope | #40 |
 | C1 | negative-case authoring had no signposted catalogue form | #43 |
 | C3 | `expect:` composition documented as a mechanism, never shown as the pattern | #43 |
-| R9-1 | no `proef fragments` listing — neither way a fragment dies had a denominator | (branch) |
-| §2.1 | a `bind:` key nothing reads passed silently — the one authoring mistake with no signal | (branch) |
-| §2.2 | `duplicate_fragment` said "in both `x` and `x`" and offered a remedy that cannot work | (branch) |
-| §2.3 | `unbound_placeholder` named two of ADR-0018's three supply routes | (branch) |
-| §3.1 | `doctor` did not know fragments exist — a path error surfaced as a name error | (branch) |
-| §3.2 | config discovery searches only up, undocumented; no way to name the file | (branch) |
-| §3.3 | `init` scaffolded only `hurl: |`, so `ref:` was invisible to the persona built for it | (branch) |
-| — | ADR-0007 value caps never crossed to fragments: `retry: -1` validated clean | (branch) |
+| R9-1 | no `proef fragments` listing — neither way a fragment dies had a denominator | 0.11.0 |
+| §2.1 | a `bind:` key nothing reads passed silently — the one authoring mistake with no signal | 0.11.0 |
+| §2.2 | `duplicate_fragment` said "in both `x` and `x`" and offered a remedy that cannot work | 0.11.0 |
+| §2.3 | `unbound_placeholder` named two of ADR-0018's three supply routes | 0.11.0 |
+| §3.1 | `doctor` did not know fragments exist — a path error surfaced as a name error | 0.11.0 |
+| §3.2 | config discovery searches only up, undocumented; no way to name the file | 0.11.0 |
+| §3.3 | `init` scaffolded only `hurl: |`, so `ref:` was invisible to the persona built for it | 0.11.0 |
+| — | ADR-0007 value caps never crossed to fragments: `retry: -1` validated clean | 0.11.0 |
 
 **Q7 is now closed** (#30): `fuzz_tag_expr` is in both fuzz loops as well as the
 compile gate.
@@ -1017,7 +1082,7 @@ targets `x.y.1` — the window opens ~2026-09-10.
 The review's P1/P2 and three P3s shipped in #48 and #50. What follows is what was
 verified and deliberately not built, so none of it depends on remembering.
 
-### R9-1 — `proef fragments` has no listing command
+### R9-1 — `proef fragments` has no listing command *(shipped)*
 
 `flows` lists scenarios and `macros` lists the vocabulary; nothing lists the
 corpus. There is no way to ask which fragments exist, which are referenced, or
@@ -1988,7 +2053,7 @@ interpretive" and it is; `report.html`, which the inventory genuinely omitted, w
 |---|---|
 | B10 | The canary would chase a hurl **prerelease** (no semver filter) — *shipped: the index parse (`latest_stable_in_index`) skips `-` versions, unit-pinned; build metadata needs no rule, crates.io refuses versions differing only by `+meta`* |
 | P12 | The matcher re-tokenizes per `(step, pattern)` pair on every bind *(performance)* |
-| P13 | No World snapshot/restore proptest; no CI workflow runs `llvm-cov` |
+| P13 | ~~No World snapshot/restore proptest~~ *(moot — that API was removed 2026-07-29, ADR-0005 errata; the store's live invariant is property-tested, `no_guarded_secret_ever_enters_the_global_store`)*; no CI workflow runs `llvm-cov` — *the local half shipped 2026-09-07 (#173): `just cover`/`cover-html`/`cover-lcov`; the CI job stays a maintainer's cadence/cost call and must be a ratchet, never a threshold (TESTING-STRATEGY §3)* |
 | Q1 | ~~structured payloads unreachable~~ *(premise false 2026-08-23: they parse, validate through the engine seam, lower and skip the hurl emitter — pinned by tests; `EngineLowering` was a review's name, never a symbol)* — what survives: no *registered* engine claims a structured kind, so the path runs only under test fixtures |
 | Q6 | ~~`html.rs` re-derives the emitter slug; four `file_stem()` sites~~ *(closed 2026-09-02 — the count was exactly right, four production sites, and the fix is structural rather than descriptive: `emit::feature_stem` and `emit::artifact_slug` are now the one definition of each, called by the emitter's own caller, the dispatcher's spec naming, the report's anchors/artifact links, and the editor analysis. The other premise had gone stale the other way: `ScenarioOutcome.artifact_slug` has carried the emitter's naming to runtime consumers since round 19, so "the schema carries no slug" no longer forced anyone to re-derive)* |
 
@@ -2029,9 +2094,9 @@ Found while fixing the above; each was validated and consciously left out of sco
   textual formatter; revisit if a fourth normalization rule is ever added to that loop.**
 - **The stdout latch's single-reader test isolation** is safe under the mandated nextest
   (one process per test) but is a convention, not an enforced invariant.
-- **A disk filling mid-run** still truncates the human console report without reaching the
-  exit code: `ConsoleReporter` drops write errors. A disk already full at start *is*
-  caught. Closing it needs a `note_stdout_failure()` in `Tee::write` when the console is
-  stdout — no core change.
+- ~~**A disk filling mid-run** still truncates the human console report without reaching
+  the exit code~~ *(closed: the console latch shipped in the 2026-09-02 series (#160), to its
+  own written design; the record's own writer got the same latch in #168, and both reach
+  exit 3 through `escalate_environment_failures`)*.
 - **Absent-secret fallthrough** ("an unset `PROEF_SECRET_<NAME>` still reads the store")
   is load-bearing and pinned only by an integration test, not a unit test.

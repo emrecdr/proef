@@ -80,8 +80,11 @@ dev fixture (`cargo run -p xtask -- fixture`) binds the default `${url:base}` po
 
 **"batch budget exceeded — scenario thread abandoned"** — the watchdog killed
 a batch that outran its computed budget (timeouts × attempts + delays +
-repeats + margin, ADR-0007). Usually a huge `retry:`/`delay:` (or the hurl-side `[Options] repeat:`) value
-(the pack lint caps literals). A `{{var}}`-driven
+repeats + margin, ADR-0007). Usually a huge `retry:`/`delay:` (or a hurl-side `[Options] repeat:`/
+`retry-interval:`/`max-time:`) value — the pack lint caps literals (counts at
+10 000, durations at one hour), and the computed budget itself clamps at four
+hours, so a lint-clean product that would otherwise run for days is abandoned
+at the ceiling. A `{{var}}`-driven
 `retry:`/`delay:`/`[Options] repeat:`/`max-time:` cannot be estimated at all — it resolves
 inside hurl at run time — so the batch falls back to the default budget
 (`[http] timeout` × 4, at least 60s) rather than to an estimate that assumes no

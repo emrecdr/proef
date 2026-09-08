@@ -316,7 +316,7 @@ pure prose:
 Precedence: defaults < `proef.toml` base < active `[env.<name>]` < flags (ADR-0012).
 Secrets resolve `PROEF_SECRET_<NAME>` env overrides before the encrypted store.
 Run records land under `.proef-runs/<run-id>/` (events.jsonl, run.log, artifacts,
-`timings.json`; 200-run rotation); the persistent World lives in
+`timings.json`, `inputs.json`; 200-run rotation); the persistent World lives in
 `.proef-state.json`.
 
 ## Workspace

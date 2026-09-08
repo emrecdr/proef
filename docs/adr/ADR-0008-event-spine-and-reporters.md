@@ -62,3 +62,15 @@ only because the cancel-skip path emits no start); `scenario_started` gained
 serialized only when present; `EVENT_SCHEMA_VERSION` stays 1.
 `run_started` further gained `env`/`metadata`/`shuffled` (ADR-0020) and
 `rerun_of` (the E2 rerun overlay) — same additive discipline.
+
+**2026-09-06 (0.18):** the record is now protected the way the console
+already was. `events.jsonl` was handed a bare `File`, so a disk filling
+mid-run truncated the record while the run exited by its verdict; the record's
+writer now latches its first failure and the exit funnel turns it into a system
+error (exit 3) through the same fold as the JUnit/CTRF and GitHub-summary write
+failures (`escalate_environment_failures`). A single SIGTERM/SIGHUP is a
+*cancellation* — the record closes normally with `run_finished` + `cancelled`
+— so only a second signal, a SIGKILL, or a crash leaves a truncated record
+(EVENTS.md). The sidecars that sit beside the record (`timings.json`,
+`inputs.json`) are derived aids, never a second record: the stream stays the
+only persisted format, and `EVENT_SCHEMA_VERSION` stays 1.

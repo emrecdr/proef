@@ -9,6 +9,12 @@ the one exception is a `--rerun`'s JUnit, whose carried base scenarios are
 reconstructed from the base *record* — see `rerun_of` below).
 Consume it with `jq`, a log shipper, or anything line-oriented.
 
+Two derived sidecars sit beside the record and are not records: `timings.json`
+(per-scenario durations, re-derivable from the stream, read back by
+`--shard-weights`) and `inputs.json` (the run's input fingerprint — a hash of
+proef's own inputs, `proef flaky`'s equivalence class, ADR-0020 amendment;
+absent on pre-0.18 records). Neither adds a variant or a field to the stream.
+
 Wire shape: serde-tagged with `"event"`, `snake_case` names. The first line is
 always `run_started` and declares `schema` (currently `1`); the last is
 `run_finished`. The schema is **additive-only**: new variants and new

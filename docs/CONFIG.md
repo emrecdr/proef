@@ -80,7 +80,7 @@ timeout-ms = 60000
 | `[run] setup` | *(unset)* | feature run **once before** the pool (suite setup); its `saveAs: global` reaches every scenario; a failure aborts the run |
 | `[run] teardown` | *(unset)* | feature run **once after** the pool (suite teardown), only if setup succeeded; its failure is a distinct exit 3 |
 | `[run] exclusive-tags` | *(unset)* | tag expression (same language as `--tags`) selecting scenarios that run with the pool to themselves; a malformed expression is exit 2 |
-| `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it |
+| `[http] timeout-ms` | `30000` | per-entry `[Options]` in a hurl block override it; `0` is refused (exit 2) — libcurl reads zero as *no* timeout, the unbounded hang the default exists to prevent |
 | `[http] follow-location` | `false` | per-entry `[Options]` override it |
 | `[http] max-redirs` | *(engine default)* | redirect ceiling; only reached when `follow-location` is on |
 | `[http] insecure` | `false` | skip TLS certificate verification. The run prints a warning naming the profile whenever this is on — a green run that verified nothing is not the same result, and nothing else would say so |

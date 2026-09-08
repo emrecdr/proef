@@ -276,8 +276,10 @@ the curl crate; sole FFI global write is libxml2's error handler set idempotentl
 XPath eval — exercised concurrently by upstream itself. Scenario-per-thread is safe.
 
 **Cancellation & budgets (ADR-0007).** No interrupt support exists upstream (verified);
-engine computes batch budget = Σ(timeout × (retry+1)) + intervals + margin; watchdog
-abandons over-budget scenario threads; token checked between batches only.
+engine computes batch budget = Σ(timeout × (retry+1)) + intervals + margin, clamped to a
+four-hour ceiling (`MAX_BATCH_BUDGET` — lint-clean values still compose into an unbounded
+product, ADR-0007 amendment); watchdog abandons over-budget scenario threads; token
+checked between batches only.
 
 **Failure detail.** Engine errors surface through hurl's own
 `DisplaySourceError::description` into `StepFinished.detail` (additive event
@@ -371,7 +373,7 @@ artifact path:span (from sidecar). Every diagnostic carries a stable code
 ## 10. CLI reference (v1)
 
 ```
-proef [--config PATH] <command>       # global: names the proef.toml to read
+proef [--config PATH] [--env NAME] <command>   # global: the proef.toml to read, the [env.<name>] profile
 proef init [dir]
 proef test [file|dir] [--env NAME] [--dry-run] [--tags EXPR] [--jobs N] [--junit path|auto]
                       [--format json|tap] [--watch] [--scenario NAME] [--scenario-file FILE]
@@ -383,7 +385,8 @@ proef artifacts [file|dir] -o DIR [--env NAME] [--run-id ID]
 proef schema [--add-to FILE…]  proef secret set|list|rm
 proef explain [run-id] [--format json]          proef doctor [--format json]
 proef diff [base] [new] [--fail-on-regression] [--format json]   # each side: run id, record dir, or events .jsonl
-proef flaky [--format json]                      # verdicts over the retained run history
+proef flaky [--format json] [--by KEY] [--min-samples N] [--recovery-runs N] [--outage-rate RATE]
+                      # verdicts over the retained run history, keyed by the input fingerprint
 proef report [run-id] [-o FILE]
 proef fmt <file|dir> [--check]
 proef lsp
@@ -409,12 +412,15 @@ no engine sessions, no network.
 ## 11. State & files
 
 `.proef-runs/<run-id>/` → `events.jsonl` (the record, ADR-0008), `run.log` (console tee),
-`artifacts/*.hurl|.map.json|.vars`, `report.html`, `report.junit.xml` (when requested);
+`artifacts/*.hurl|.map.json|.vars` (+ `artifacts/assets/<slug>/`, the staged file bodies),
+`timings.json` (per-scenario durations, read back by `--shard-weights`) and `inputs.json`
+(the input fingerprint, `proef flaky`'s equivalence class) — both derived sidecars, never a
+second record — `report.html`, `report.junit.xml` (when requested);
 `[run] keep-runs`-bounded
 rotation, default 200 (only uuid-named run records rotate; the in-flight run never does).
 `.proef-state.json` — persistent World: atomic temp+rename, 0600. `proef.toml` — project config:
 runner settings (`[run]` jobs/runs-dir/keep-runs/suite/fragments/setup/teardown/exclusive-tags,
-`[http]` timeouts, `[sla]` ceilings) + suite variables (`[url]`/`[vars]`) +
+`[http]` timeouts, `[sla]` ceilings, `[flaky]` verdict thresholds) + suite variables (`[url]`/`[vars]`) +
 run metadata (`[meta]`, ADR-0020) + report tag links (`[tag-links]`) +
 per-environment overrides (`[env.<name>]`); see docs/CONFIG.md, ADR-0012.
 

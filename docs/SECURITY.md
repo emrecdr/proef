@@ -23,15 +23,23 @@ attempt to defend a compromised host.
   ciphertext (`enc:v1:` envelope) — safe to commit and share.
 - Secret **values never appear in any sink**: artifacts carry `{{name}}`
   placeholders, events/logs/reports are value-redacted at the sink boundary
-  (property-tested), and a `saveAs: global` capture whose value equals a
+  (property-tested) — the event stream through one exhaustive `apply_event`,
+  and the CI sinks that render from the run summary (JUnit, CTRF, TAP,
+  `timings.json`, the GitHub summary and annotations) through its twin
+  `apply_outcome`, so a new text field cannot ship unmasked — and a
+  `saveAs: global` capture whose value equals a
   known secret is refused rather than persisted to the plaintext
   `.proef-state.json`.
 - Sensitive files (`.proef-secrets.json`, the key file, `.proef-state.json`)
   are created `0600`, private from the first byte. `proef doctor` warns when
   permissions have drifted.
-- Request file bodies are confined to the suite directory (hurl's
-  `context_dir` sandbox); artifact asset copying rejects absolute and `..`
-  paths.
+- Request file bodies are confined: every `file,…;` asset is staged from
+  beside the source that names it into the run's per-scenario asset root,
+  which is the engine's `context_dir` sandbox. A reference must be a plain
+  relative path (no leading `/`, no `..`); a symlink already sitting at a
+  staging destination is replaced rather than written through; and two
+  references that are one file to a case-insensitive filesystem are refused
+  rather than last-writer-won.
 - A **fragment corpus is read, never written** (ADR-0018). Pointing
   `[run] fragments` at `.hurl` files somebody else owns is one-directional:
   `proef fmt` refuses them in both discovery branches, and the declared root

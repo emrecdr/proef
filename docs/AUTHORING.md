@@ -79,6 +79,11 @@ Two tag names carry behavior; every other tag is yours (selection via
   still validates a skipped scenario (skip is not a validation waiver).
   In `[run] setup`/`teardown` features, reserved tags have no effect.
 
+A tag that is *almost* reserved — `@quarantined`, `@skipped`, `@Skip` — is an
+ordinary tag with no effect, and since 0.18 it warns (`tags::reserved_tag_typo`)
+with the spelling it likely meant, because a scenario its author believed
+quarantined would otherwise gate the build in silence.
+
 Conditional, data-dependent skipping is a *step* concern and stays in packs:
 `when:` guards a step, `optional:` soft-fails one, `retry:` bounds one.
 That split is deliberate and permanent — scenario prose stays declarative;
@@ -138,7 +143,12 @@ steps:
 
 `retry:`/`delay:` are baked into the entry's `[Options]` so the emitted
 artifact replays with identical semantics under stock hurl. `optional:` steps
-run as their own batch so a failure cannot poison neighbours.
+run as their own batch so a failure cannot poison neighbours. Raw `[Options]`
+written inside a `hurl:` block are linted by the same rules — `retry:`/`repeat:`
+finite and at most 10 000, `delay:`/`retry-interval:`/`max-time:` at most one
+hour, and a key declared both in YAML and in the block is refused
+(`pack::option_declared_twice`) — and whatever the values, a batch's watchdog
+budget never exceeds four hours (ADR-0007).
 
 **`expect:` macros** carry no requests: `status: 200` and/or raw `hurl:`
 assert lines merge into the *previous* request entry (a `Then` before any
@@ -299,7 +309,12 @@ leading `/`, no `..` — because it names a file inside your suite, not a
 location on the machine. And a missing file fails the scenario *before* the
 request, naming the directory it was looked for in
 (`proef::run::asset_unstageable`), rather than letting hurl report an
-unreadable body against the artifact.
+unreadable body against the artifact. Staging resolves beside the file the
+parser actually read, so the directory you run from does not matter; a symlink
+already at a staging destination is replaced, never written through; and two
+references that name one file on a case-insensitive filesystem (`Data.json` and
+`data.json` on macOS or Windows) are refused (`proef::run::asset_unstageable`)
+rather than silently last-writer-won.
 
 ## Recipes — the three shapes every real suite needs
 
@@ -589,8 +604,11 @@ holds ciphertext only and is gitignored by default; the key
 
 ## Artifacts — the executed input
 
-Every scenario emits `<feature>--<scenario>.hurl` — the exact bytes the
-engine executes — plus `.map.json` (artifact lines ↔ feature lines, batch and
+Every scenario emits `<feature-path>--<scenario>.hurl` — the feature's
+suite-relative path with its extension dropped, then the scenario, both
+slugified (so two same-named features in different directories cannot collide)
+and capped at 120 bytes with a hash tail — the exact bytes the engine executes
+— plus `.map.json` (artifact lines ↔ feature lines, batch and
 step indices) and `.vars` (referenced globals as values, secrets as names).
 The header's `# replay:` line is a complete stock-hurl command, including
 `--secret NAME=<value>` placeholders for you to fill. `proef artifacts <dir>
