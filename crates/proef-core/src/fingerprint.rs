@@ -19,10 +19,16 @@
 //! crypto-hash dependency in the sans-IO core. Parts are length-delimited so
 //! `["ab","c"]` and `["a","bc"]` cannot collide by concatenation.
 
+/// The canonical FNV-1a 64-bit offset basis, shared with [`crate::fake::fnv1a`]
+/// (which seeds fake data, and via `emit` disambiguates over-long slugs) so the
+/// crate has one FNV-1a primitive and one set of constants, not two copies.
+pub(crate) const FNV1A_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+
 /// FNV-1a over `bytes` with the given 64-bit offset basis; the multiplier is
 /// the standard FNV prime. Two different bases give two near-independent
-/// hashes, combined into the 128-bit fingerprint.
-fn fnv1a_with(bytes: &[u8], basis: u64) -> u64 {
+/// hashes, combined into the 128-bit fingerprint. The crate's single FNV-1a
+/// implementation — [`crate::fake::fnv1a`] is this at [`FNV1A_OFFSET_BASIS`].
+pub(crate) fn fnv1a_with(bytes: &[u8], basis: u64) -> u64 {
     let mut hash = basis;
     for &b in bytes {
         hash ^= u64::from(b);
@@ -44,7 +50,7 @@ pub fn of<'a>(parts: impl Iterator<Item = &'a str>) -> String {
         buf.extend_from_slice(&(part.len() as u64).to_le_bytes());
         buf.extend_from_slice(part.as_bytes());
     }
-    let h1 = fnv1a_with(&buf, 0xcbf2_9ce4_8422_2325);
+    let h1 = fnv1a_with(&buf, FNV1A_OFFSET_BASIS);
     let h2 = fnv1a_with(&buf, 0x9e37_79b9_7f4a_7c15);
     format!("{h1:016x}{h2:016x}")
 }

@@ -37,14 +37,11 @@ impl SplitMix64 {
 }
 
 /// 64-bit FNV-1a, turning strings into seeds — and, in `emit`, an over-long
-/// slug's tail into a stable disambiguator (one implementation, two readers).
+/// slug's tail into a stable disambiguator. A thin alias for the crate's single
+/// FNV-1a implementation ([`crate::fingerprint::fnv1a_with`]) at the canonical
+/// offset basis, so there is one loop and one set of constants — three readers.
 pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for &b in bytes {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    crate::fingerprint::fnv1a_with(bytes, crate::fingerprint::FNV1A_OFFSET_BASIS)
 }
 
 const FIRST_NAMES: &[&str] = &[

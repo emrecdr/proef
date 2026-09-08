@@ -229,6 +229,29 @@ Regrouping preserved every entry and its order within its kind.
   so a scenario with fewer than 10 runs now reads `insufficient-data` where it
   previously received a verdict (`--min-samples 2` restores the old behaviour).
 
+### Internal
+
+- **Post-0.18 `/simplify` cleanup — duplication the wave programme left
+  behind, collapsed with no behaviour change** (outputs byte-identical, no
+  public API moved):
+  - The input fingerprint's FNV-1a loop and `fake`'s were the same loop and
+    constants twice; now one `fingerprint::fnv1a_with` primitive, with
+    `fake::fnv1a` a thin alias at the canonical offset basis.
+  - `proef test` and `proef --watch` duplicated the whole two-stage-interrupt
+    skeleton (the once-latch, the second-signal hard-exit, the stderr-lock
+    rule); now one `install_two_stage_interrupt` taking the divergent
+    first-signal action as a closure.
+  - `proef flaky` recomputed each scenario's verdict at ~8 sites — twice per
+    comparison inside the sort; now classified once into a stored field, and
+    `render_table` no longer threads the thresholds through to recompute it.
+  - The reserved-tag typo warning derives its edit-distance threshold from
+    each reserved word's own length instead of hardcoding `quarantine`, so a
+    future reserved tag earns fuzzy protection automatically, and it builds
+    its diagnostic once rather than twice.
+  - `is_outage` counts without a throwaway `Vec` and drops a dead
+    precision-loss suppression; JUnit redacts a scenario's `file` once, not
+    twice; `emit::cap_slug` drops a redundant rebinding.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added

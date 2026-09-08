@@ -2113,40 +2113,50 @@ fn escalate_environment_failures(
     }
 }
 
+/// The two-stage interrupt skeleton (ADR-0007), shared by `proef test` and
+/// `proef --watch`: a once-latch, ctrlc's handler — which with the `termination`
+/// feature also fires on SIGTERM/SIGHUP (Unix), so a CI-job timeout or
+/// `docker stop` takes the graceful path instead of truncating the record — and
+/// the second-signal hard-exit. These parts are the same for every caller and
+/// the subtle part to get right, so they live in one place. `on_first` is the
+/// caller's graceful action for the *first* signal; the second always hard-exits
+/// with [`crate::INTERRUPT_EXIT_CODE`] (130 — none of the 0/1/2/3 verdict codes,
+/// and not a 101 panic), the callback carrying no signal identity.
+pub(crate) fn install_two_stage_interrupt(mut on_first: impl FnMut() + Send + 'static) {
+    let latched = AtomicBool::new(false);
+    let installed = ctrlc::set_handler(move || {
+        if latched.swap(true, Ordering::SeqCst) {
+            // No print before the exit: the handler runs on ctrlc's own thread,
+            // and stderr's lock may be held by a worker blocked on a full pipe —
+            // a print here can wedge the escape hatch behind the very stall it
+            // exists to escape. The exit code says what happened; the first
+            // signal's notice already named the deal.
+            std::process::exit(crate::INTERRUPT_EXIT_CODE);
+        }
+        on_first();
+    });
+    if let Err(err) = installed {
+        // A session without working cancellation must say so once, not proceed
+        // as if the token could ever fire.
+        crate::render::errln!(
+            "warning: interrupt handling unavailable ({err}) — a signal will kill the run mid-write"
+        );
+    }
+}
+
 /// Install the two-stage interrupt for a plain `proef test` (ADR-0007): the
-/// first signal cancels gracefully — in-flight batches finish, the rest
-/// record as skipped, teardown still runs, the reports are written — and the
-/// second hard-exits. With ctrlc's `termination` feature the handler also
-/// fires on SIGTERM/SIGHUP (Unix), so a CI job timeout or `docker stop` gets
-/// the graceful path instead of a truncated record. The callback carries no
-/// signal identity, so the hard-exit code is 130 for every second signal —
-/// the exit contract's point is that it is none of 0/1/2/3 and not a 101.
+/// first signal cancels gracefully — in-flight batches finish, the rest record
+/// as skipped, teardown still runs, the reports are written — and the second
+/// hard-exits.
 fn install_interrupt() -> CancellationToken {
     let cancel = CancellationToken::new();
     let handler_token = cancel.clone();
-    let once = AtomicBool::new(false);
-    let installed = ctrlc::set_handler(move || {
-        if once.swap(true, Ordering::SeqCst) {
-            // No print before the exit: the handler runs on ctrlc's own
-            // thread, and stderr's lock may be held by a worker blocked on a
-            // full pipe — a print here can wedge the escape hatch behind the
-            // very stall it exists to escape. The exit code says what
-            // happened; the first signal's notice already named the deal.
-            std::process::exit(crate::INTERRUPT_EXIT_CODE);
-        }
+    install_two_stage_interrupt(move || {
         crate::render::errln!(
             "\ninterrupt — cancelling after current batches (a second interrupt hard-exits)"
         );
         handler_token.cancel();
     });
-    if let Err(err) = installed {
-        // Same rule as `watch::install_interrupt`: a session without working
-        // cancellation must say so once, not proceed as if the token could
-        // ever fire.
-        crate::render::errln!(
-            "warning: interrupt handling unavailable ({err}) — a signal will kill the run mid-write"
-        );
-    }
     cancel
 }
 
