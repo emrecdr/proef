@@ -30,6 +30,11 @@ pub fn render(
         let quarantined = non_gating.iter().any(|(file, name)| {
             file.as_str() == outcome.file.as_ref() && name.as_str() == outcome.name.as_ref()
         });
+        // Redact the whole outcome once, after matching `@quarantine` on the
+        // raw identity — every rendered field below is then masked by the one
+        // exhaustive `apply_outcome` (0.18 survey: TAP was the last holdout).
+        let redacted = redactions.apply_outcome(outcome);
+        let outcome = &redacted;
         let verb = if failed { "not ok" } else { "ok" };
         let directive = if outcome.status == Status::Skipped {
             // The reason travels in the directive: the authored tag
@@ -37,10 +42,7 @@ pub fn render(
             // pre-reason record left nothing better to say. Masked like its
             // twins — the event stream, JUnit and CTRF all redact the same
             // reason field; TAP was the one holdout (0.18 survey).
-            format!(
-                " # SKIP {}",
-                redactions.apply(outcome.reason.as_deref().unwrap_or("not run"))
-            )
+            format!(" # SKIP {}", outcome.reason.as_deref().unwrap_or("not run"))
         } else if failed && quarantined {
             " # TODO quarantined".to_owned()
         } else {
@@ -49,13 +51,13 @@ pub fn render(
         let _ = writeln!(
             out,
             "{verb} {point} - {}{directive}",
-            describe(&redactions.apply(&outcome.name))
+            describe(&outcome.name)
         );
         if failed && let Some(detail) = failure_detail(outcome) {
             // A YAML literal block (`|`) carries the message with no escaping.
             let _ = writeln!(out, "  ---");
             let _ = writeln!(out, "  message: |");
-            for line in redactions.apply(&detail).lines() {
+            for line in detail.lines() {
                 let _ = writeln!(out, "    {line}");
             }
             let _ = writeln!(out, "  ...");

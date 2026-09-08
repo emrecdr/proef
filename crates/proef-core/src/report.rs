@@ -13,7 +13,8 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 
 use crate::event::{Event, EventSink};
-use crate::step::Status;
+use crate::runner::{Fault, ScenarioOutcome};
+use crate::step::{Status, StepOutcome, StepRef};
 
 /// Known secret values, replaced by `***` in every rendered string —
 /// **including their common encoded forms**.
@@ -251,6 +252,96 @@ impl Redactions {
                 .map(|text| self.apply(text))
                 .collect(),
             reproduce_hint: reproduce_hint.as_deref().map(|text| self.apply(text)),
+        }
+    }
+
+    /// One scenario outcome with every string field redacted — the
+    /// [`crate::runner::RunSummary`] path's equivalent of [`Self::apply_event`],
+    /// for the CI sinks (`JUnit`, CTRF, TAP, timings, the GitHub summary) that
+    /// render from the summary rather than the event stream. Exhaustive on
+    /// purpose: a new text field on [`ScenarioOutcome`] or [`StepOutcome`]
+    /// forces a redaction decision here, so ADR-0005 ("secrets reach no sink")
+    /// cannot erode as those types grow — the guarantee [`Self::apply_event`]
+    /// already gives the event half of the reporting surface, extended to the
+    /// other half. Redact once at the sink boundary, then render clean fields.
+    #[must_use]
+    pub fn apply_outcome(&self, outcome: &ScenarioOutcome) -> ScenarioOutcome {
+        let ScenarioOutcome {
+            file,
+            name,
+            line,
+            status,
+            reason,
+            tags,
+            steps,
+            fault,
+            artifact_slug,
+        } = outcome;
+        ScenarioOutcome {
+            file: Arc::from(self.apply(file).as_str()),
+            name: Arc::from(self.apply(name).as_str()),
+            line: *line,
+            status: *status,
+            reason: reason
+                .as_deref()
+                .map(|text| Arc::from(self.apply(text).as_str())),
+            tags: tags
+                .iter()
+                .map(|tag| self.apply(tag))
+                .collect::<Vec<_>>()
+                .into(),
+            steps: steps
+                .iter()
+                .map(|step| self.apply_step_outcome(step))
+                .collect(),
+            fault: fault.as_ref().map(|fault| self.apply_fault(fault)),
+            artifact_slug: artifact_slug
+                .as_deref()
+                .map(|text| Arc::from(self.apply(text).as_str())),
+        }
+    }
+
+    /// The per-step half of [`Self::apply_outcome`]: every text-bearing field
+    /// masked, none exempted (the no-exemptions rule of [`Self::apply_event`]).
+    fn apply_step_outcome(&self, outcome: &StepOutcome) -> StepOutcome {
+        let StepOutcome {
+            step,
+            status,
+            attempts,
+            duration,
+            detail,
+            attempt_details,
+            reproduce_hint,
+            fragment,
+            label,
+        } = outcome;
+        StepOutcome {
+            step: StepRef {
+                file: Arc::from(self.apply(&step.file).as_str()),
+                line: step.line,
+                text: Arc::from(self.apply(&step.text).as_str()),
+            },
+            status: *status,
+            attempts: *attempts,
+            duration: *duration,
+            detail: detail.as_deref().map(|text| self.apply(text)),
+            attempt_details: attempt_details
+                .iter()
+                .map(|text| self.apply(text))
+                .collect(),
+            reproduce_hint: reproduce_hint.as_deref().map(|text| self.apply(text)),
+            fragment: fragment.as_deref().map(|text| self.apply(text)),
+            label: label.as_deref().map(|text| self.apply(text)),
+        }
+    }
+
+    /// A non-test fault with its message redacted — a resolution error can echo
+    /// a value into `User`/`System` prose, and this field reaches the CI sinks
+    /// only through [`Self::apply_outcome`], never the event stream.
+    fn apply_fault(&self, fault: &Fault) -> Fault {
+        match fault {
+            Fault::User(message) => Fault::User(self.apply(message)),
+            Fault::System(message) => Fault::System(self.apply(message)),
         }
     }
 }
@@ -1190,6 +1281,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `apply_outcome` masks every string-bearing field of a `ScenarioOutcome`
+    /// and its steps — the `RunSummary`-path counterpart to the event stream's
+    /// exhaustive `apply_event`. A secret planted in each field (identity, tags,
+    /// the fault message, and every step string) must not survive, so a new
+    /// field cannot silently reach a CI sink unmasked (ADR-0005).
+    #[test]
+    fn apply_outcome_masks_every_field() {
+        const S: &str = "hunter2";
+        let redactions = Redactions::new([S.to_owned()]);
+        let step = StepOutcome {
+            step: StepRef {
+                file: Arc::from(format!("step-{S}.feature")),
+                line: 3,
+                text: Arc::from(format!("a step {S}")),
+            },
+            status: Status::Failed,
+            attempts: 2,
+            duration: std::time::Duration::from_millis(1),
+            detail: Some(format!("assert {S} failed")),
+            attempt_details: vec![format!("attempt {S}")],
+            reproduce_hint: Some(format!("curl {S}")),
+            fragment: Some(format!("frag-{S}.hurl#name")),
+            label: Some(format!("label {S}")),
+        };
+        let outcome = ScenarioOutcome {
+            file: Arc::from(format!("f-{S}.feature")),
+            name: Arc::from(format!("scenario {S}")),
+            line: 1,
+            status: Status::Failed,
+            reason: Some(Arc::from(format!("skipped {S}"))),
+            tags: Arc::from(vec![format!("tag-{S}")]),
+            steps: vec![step],
+            fault: Some(Fault::User(format!("missing secret {S}"))),
+            artifact_slug: Some(Arc::from(format!("slug-{S}"))),
+        };
+
+        let masked = redactions.apply_outcome(&outcome);
+
+        // Every string the outcome carries — the point is that none was
+        // overlooked, which a per-field spot-check could not prove.
+        let mut strings: Vec<String> = vec![
+            masked.file.to_string(),
+            masked.name.to_string(),
+            masked.reason.as_deref().unwrap_or_default().to_owned(),
+            masked
+                .artifact_slug
+                .as_deref()
+                .unwrap_or_default()
+                .to_owned(),
+            match &masked.fault {
+                Some(Fault::User(m) | Fault::System(m)) => m.clone(),
+                None => String::new(),
+            },
+        ];
+        strings.extend(masked.tags.iter().cloned());
+        for step in &masked.steps {
+            strings.push(step.step.file.to_string());
+            strings.push(step.step.text.to_string());
+            strings.push(step.detail.clone().unwrap_or_default());
+            strings.extend(step.attempt_details.iter().cloned());
+            strings.push(step.reproduce_hint.clone().unwrap_or_default());
+            strings.push(step.fragment.clone().unwrap_or_default());
+            strings.push(step.label.clone().unwrap_or_default());
+        }
+        for rendered in &strings {
+            assert!(
+                !rendered.contains(S),
+                "a field kept the secret: {rendered:?}"
+            );
+        }
+        // Non-string fields pass through verbatim.
+        assert!(matches!(masked.status, Status::Failed));
+        assert_eq!(masked.line, 1);
+        assert_eq!(masked.steps[0].attempts, 2);
     }
 
     #[test]
