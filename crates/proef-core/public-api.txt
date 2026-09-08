@@ -1359,6 +1359,7 @@ pub struct proef_core::report::Redactions(_)
 impl proef_core::report::Redactions
 pub fn proef_core::report::Redactions::apply(&self, &str) -> alloc::string::String
 pub fn proef_core::report::Redactions::apply_event(&self, &proef_core::event::Event) -> proef_core::event::Event
+pub fn proef_core::report::Redactions::apply_outcome(&self, &proef_core::runner::ScenarioOutcome) -> proef_core::runner::ScenarioOutcome
 pub fn proef_core::report::Redactions::is_empty(&self) -> bool
 pub fn proef_core::report::Redactions::new(impl core::iter::traits::collect::IntoIterator<Item = alloc::string::String>) -> Self
 pub fn proef_core::report::Redactions::taints(&self, &str) -> bool

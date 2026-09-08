@@ -252,6 +252,18 @@ Regrouping preserved every entry and its order within its kind.
     precision-loss suppression; JUnit redacts a scenario's `file` once, not
     twice; `emit::cap_slug` drops a redundant rebinding.
 
+- **Redaction centralized at one exhaustive boundary** (ADR-0005 hardening, no
+  behaviour change on clean output). The CI sinks (`JUnit`, CTRF, TAP, timings,
+  the GitHub summary) render from `RunSummary`, not the event stream, and each
+  masked its identity and failure strings field by field — correct today, but a
+  new field or sink could slip past unmasked. A new `Redactions::apply_outcome`
+  mirrors the event stream's exhaustive `apply_event`: it destructures
+  `ScenarioOutcome`/`StepOutcome` with no `..`, so a new text field fails to
+  compile until it is masked, and each sink now redacts an outcome once instead
+  of the ~10 scattered `apply` calls it used to sprinkle (a scenario's `fault`
+  message, which reaches only this path, is masked with the rest). Additive to
+  the library surface (`pub fn Redactions::apply_outcome`).
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added

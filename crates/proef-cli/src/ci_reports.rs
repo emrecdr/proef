@@ -86,7 +86,7 @@ pub fn write_junit(
 /// spotless (0.18 survey: warned was invisible in every machine sink but
 /// HTML). The note makes it visible without changing the pass/fail counts a
 /// gate reads.
-fn system_out_note(outcome: &ScenarioOutcome, redactions: &Redactions) -> Option<String> {
+fn system_out_note(outcome: &ScenarioOutcome) -> Option<String> {
     let mut notes: Vec<String> = Vec::new();
     if let Some(attempts) = flaky_pass_attempts(outcome) {
         notes.push(format!("passed on attempt {attempts}"));
@@ -99,7 +99,7 @@ fn system_out_note(outcome: &ScenarioOutcome, redactions: &Redactions) -> Option
             .and_then(|s| s.detail.as_deref())
             .map_or_else(
                 || "an optional step failed or a global promotion was refused".to_owned(),
-                |d| redactions.apply(d),
+                str::to_owned,
             );
         notes.push(format!("warned (non-gating): {detail}"));
     }
@@ -117,16 +117,24 @@ fn flaky_pass_attempts(outcome: &ScenarioOutcome) -> Option<u32> {
 }
 
 fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactions) -> TestCase {
+    // Redact the whole outcome once, here at the sink boundary, then render
+    // clean fields. The exhaustive `apply_outcome` is the single place a new
+    // text field must account for, replacing the per-field masking this
+    // function used to sprinkle through every arm (0.18 survey / ADR-0005).
+    // `quarantined` was matched on the raw identity by the caller.
+    let redacted = redactions.apply_outcome(outcome);
+    let outcome = &redacted;
     let status = match (outcome.status, &outcome.fault) {
         (Status::Passed | Status::Warned, _) => {
             let mut status = TestCaseStatus::success();
             // Flaky pass: each earlier failed attempt of a step that
             // ultimately passed becomes a `<flakyFailure>` (quick-junit
             // serializes reruns on a success as flakyFailure). Messages arrive
-            // engine-redacted; re-apply for defense in depth.
+            // engine-redacted, and `apply_outcome` re-masked them for defense
+            // in depth.
             for message in outcome.steps.iter().flat_map(|step| &step.attempt_details) {
                 let mut rerun = TestRerun::new(NonSuccessKind::Failure);
-                rerun.set_message(redactions.apply(message));
+                rerun.set_message(message.clone());
                 status.add_rerun(rerun);
             }
             status
@@ -145,7 +153,6 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                         .and_then(|s| s.detail.clone())
                 })
             {
-                let reason = redactions.apply(&reason);
                 // Attribute *and* text node, here and on every non-success
                 // below: Azure reads `message=` as the error-message field
                 // and the element text as the stack trace; GitLab parses
@@ -172,7 +179,7 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                 .filter_map(|s| s.detail.as_deref())
                 .collect::<Vec<_>>()
                 .join("; ");
-            let text = redactions.apply(&format!("quarantined failure (non-gating): {detail}"));
+            let text = format!("quarantined failure (non-gating): {detail}");
             status.set_message(text.clone());
             status.set_description(text);
             status
@@ -202,7 +209,6 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
                 ),
             };
             let mut status = TestCaseStatus::non_success(kind);
-            let message = redactions.apply(&message);
             status.set_message(message.clone());
             // The text node carries the message plus each failing step's
             // reproduce hint — the content channel has room the one-line
@@ -211,7 +217,7 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
             let mut description = message;
             for step in outcome.steps.iter().filter(|s| s.status == Status::Failed) {
                 if let Some(hint) = &step.reproduce_hint {
-                    let _ = write!(description, "\nreproduce: {}", redactions.apply(hint));
+                    let _ = write!(description, "\nreproduce: {hint}");
                 }
             }
             status.set_description(description);
@@ -235,16 +241,16 @@ fn test_case(outcome: &ScenarioOutcome, quarantined: bool, redactions: &Redactio
     // how that stops being true later"), and these are the same values on a
     // different sink (0.18 survey — JUnit was one of five sinks bypassing
     // the boundary).
-    // Redact `file` once and reuse it: `classname` and the `file` extra
-    // attribute carry the same value, and `apply` scans against every needle.
-    let file = redactions.apply(&outcome.file);
-    let mut case = TestCase::new(redactions.apply(&outcome.name), status);
+    // `classname` and the `file` extra attribute carry the same value, and the
+    // outcome is already masked by `apply_outcome` — reuse the field directly.
+    let file = outcome.file.to_string();
+    let mut case = TestCase::new(outcome.name.to_string(), status);
     case.set_classname(file.clone());
     // GitLab reads a `file` attribute on the testcase for source linking;
     // quick-junit does not model it, so it rides the extra-attribute map.
     case.extra.insert("file".into(), file.into());
     case.set_time(outcome.cost());
-    if let Some(note) = system_out_note(outcome, redactions) {
+    if let Some(note) = system_out_note(outcome) {
         case.set_system_out(note);
     }
     case
@@ -442,6 +448,10 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
     let mut out = String::new();
     let mut failing = 0usize;
     for outcome in &summary.outcomes {
+        // Redact each outcome once at the sink boundary (see `test_case`), then
+        // read clean fields — `file=`/`title=`/message all masked by construction.
+        let redacted = redactions.apply_outcome(outcome);
+        let outcome = &redacted;
         let annotation = outcome
             .steps
             .iter()
@@ -450,27 +460,24 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                 let detail = step.detail.as_deref().unwrap_or_default();
                 format!(
                     "::error file={},line={},title={}::{}",
-                    // `file=` and `title=` go through the masker like the
-                    // message: the event stream masks the same fields under
-                    // its no-exemptions rule, and this sink writes them to
-                    // CI stdout (0.18 survey).
-                    enc_prop(&redactions.apply(&step.step.file)),
+                    // `file=` and `title=` are masked with everything else by
+                    // the `apply_outcome` at the top of the loop — this sink
+                    // writes them to CI stdout (0.18 survey).
+                    enc_prop(&step.step.file),
                     step.step.line,
                     // GitHub caps `title` at 255 characters; scenario names
                     // and step text are free prose, so clip before encoding
                     // (encoding expands, never shrinks).
                     enc_prop(&clip_chars(
-                        &redactions.apply(&format!(
+                        &format!(
                             "{}: {}{}",
                             outcome.name,
                             step.step.text,
                             step_label(step.label.as_deref())
-                        )),
+                        ),
                         200
                     )),
-                    enc_msg(
-                        &redactions.apply(&format!("{detail}{}", via(step.fragment.as_deref())))
-                    ),
+                    enc_msg(&format!("{detail}{}", via(step.fragment.as_deref()))),
                 )
             })
             .or_else(|| {
@@ -479,10 +486,10 @@ pub fn github_annotations(summary: &RunSummary, redactions: &Redactions) -> Stri
                 let (Fault::System(message) | Fault::User(message)) = outcome.fault.as_ref()?;
                 Some(format!(
                     "::error file={},line={},title={}::{}",
-                    enc_prop(&redactions.apply(&outcome.file)),
+                    enc_prop(&outcome.file),
                     outcome.line,
-                    enc_prop(&clip_chars(&redactions.apply(&outcome.name), 200)),
-                    enc_msg(&redactions.apply(message)),
+                    enc_prop(&clip_chars(&outcome.name, 200)),
+                    enc_msg(message),
                 ))
             });
         if let Some(annotation) = annotation {

@@ -127,7 +127,7 @@ pub fn write(
 /// attempts happened and failed, that being what a retry *is*. Either way
 /// `retries` and `retryAttempts` agree by construction — the spec wants one
 /// entry per re-execution.
-fn retry_attempts(outcome: &ScenarioOutcome, redactions: &Redactions) -> Vec<serde_json::Value> {
+fn retry_attempts(outcome: &ScenarioOutcome) -> Vec<serde_json::Value> {
     let details: Vec<&String> = outcome
         .steps
         .iter()
@@ -146,7 +146,7 @@ fn retry_attempts(outcome: &ScenarioOutcome, redactions: &Redactions) -> Vec<ser
                 serde_json::json!({
                     "attempt": index + 1,
                     "status": "failed",
-                    "message": redactions.apply(message),
+                    "message": message.as_str(),
                 })
             })
             .collect()
@@ -160,30 +160,28 @@ fn test_value(
     quarantined: bool,
     redactions: &Redactions,
 ) -> serde_json::Value {
-    // Identity and tags go through the masker like the failure fields: the
-    // event stream redacts `scenario`, `file` and `tags` under its
-    // no-exemptions rule, and these are the same values on a different sink
-    // (0.18 survey — CTRF was one of five sinks bypassing the boundary).
+    // Redact the whole outcome once at the sink boundary, then read clean
+    // fields — identity, tags and every failure string are masked by the one
+    // exhaustive `apply_outcome` (0.18 survey — CTRF was one of five sinks that
+    // used to mask field by field). `quarantined` was matched on raw identity.
+    let redacted = redactions.apply_outcome(outcome);
+    let outcome = &redacted;
     let mut test = serde_json::json!({
-        "name": redactions.apply(&outcome.name),
+        "name": &*outcome.name,
         "status": "other",
         "duration": u64::try_from(outcome.cost().as_millis()).unwrap_or(u64::MAX),
-        "suite": [redactions.apply(&outcome.file)],
-        "filePath": redactions.apply(&outcome.file),
+        "suite": [&*outcome.file],
+        "filePath": &*outcome.file,
     });
     if !outcome.tags.is_empty() {
-        let tags: Vec<String> = outcome
-            .tags
-            .iter()
-            .map(|tag| redactions.apply(tag))
-            .collect();
+        let tags: Vec<String> = outcome.tags.to_vec();
         test["tags"] = serde_json::json!(tags);
     }
 
     match (outcome.status, &outcome.fault) {
         (Status::Passed | Status::Warned, _) => {
             test["status"] = "passed".into();
-            let entries = retry_attempts(outcome, redactions);
+            let entries = retry_attempts(outcome);
             if !entries.is_empty() {
                 test["flaky"] = true.into();
                 test["retries"] = entries.len().into();
@@ -211,7 +209,7 @@ fn test_value(
                         .and_then(|s| s.detail.clone())
                 });
             if let Some(reason) = reason {
-                test["message"] = redactions.apply(&reason).into();
+                test["message"] = reason.into();
             }
         }
         // ADR-0019: a quarantined test-failure does not gate the exit code,
@@ -227,9 +225,7 @@ fn test_value(
                 .filter_map(|s| s.detail.as_deref())
                 .collect::<Vec<_>>()
                 .join("; ");
-            test["message"] = redactions
-                .apply(&format!("quarantined failure (non-gating): {detail}"))
-                .into();
+            test["message"] = format!("quarantined failure (non-gating): {detail}").into();
         }
         (Status::Failed, fault) => {
             test["status"] = "failed".into();
@@ -251,14 +247,14 @@ fn test_value(
                     .collect::<Vec<_>>()
                     .join("; "),
             };
-            test["message"] = redactions.apply(&message).into();
+            test["message"] = message.into();
             // The trace channel has room the one-line message does not; as in
             // `JUnit`'s text node, it carries the reproduce hints — the
             // artifact a reader actually wants from a CI results page.
             let mut trace = String::new();
             for step in outcome.steps.iter().filter(|s| s.status == Status::Failed) {
                 if let Some(hint) = &step.reproduce_hint {
-                    let _ = writeln!(trace, "reproduce: {}", redactions.apply(hint));
+                    let _ = writeln!(trace, "reproduce: {hint}");
                 }
             }
             if !trace.is_empty() {
