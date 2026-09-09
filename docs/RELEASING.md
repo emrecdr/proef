@@ -126,7 +126,12 @@ The tag push triggers `.github/workflows/release.yml`, which:
    five archives (asset names must stay in sync with the `binstall` metadata in
    the `proef` package manifest);
 3. regenerates `Formula/proef.rb` in the `emrecdr/homebrew-proef` tap (deploy-key
-   auth via the `HOMEBREW_TAP_DEPLOY_KEY` repo secret).
+   auth via the `HOMEBREW_TAP_DEPLOY_KEY` repo secret) — **only when the tag is
+   newer than the version the tap already carries**. That step is gated on
+   nothing but "a tag was pushed" and rewrites the formula whole, so a tag
+   pushed late or out of order would downgrade every `brew upgrade`; it now
+   skips green instead, leaving the tap alone while the release still
+   publishes.
 
 `workflow_dispatch` runs build+attest only — a full matrix smoke without
 publishing. crates.io publication remains a deliberate manual `cargo publish`
@@ -279,7 +284,13 @@ one resolvable.
   covering the whole suite), `--console dotted|quiet`, `--shuffle` seeded by
   the run id, `reproduce_hint` into the record — breaking: quarantined
   failures reach JUnit as skipped-with-message, `--shard` re-deals (the hash
-  gained fmix64), tag atoms glob, JUnit identity is `classname`+`name`
+  gained fmix64), tag atoms glob, JUnit identity is `classname`+`name`.
+  **No `v0.15.0` tag was ever pushed** (found 2026-09-09): the release commit
+  is on `main` and this entry describes it, but `release.yml` starts on the
+  tag alone, so no GitHub Release, binaries or attestations exist for 0.15.0
+  and it is absent from `git tag`. 0.16.0 superseded it six days later.
+  Tagging it now would publish those artifacts retroactively from that commit;
+  the tap is safe either way since the forward-only guard above
 - `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
   never-run tail records as skipped, the record is a cancelled run `diff`
   refuses to certify), `--rerun` continues a cancelled run instead of a false

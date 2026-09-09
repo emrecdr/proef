@@ -282,6 +282,17 @@ Regrouping preserved every entry and its order within its kind.
   `cargo-mutants` job, a coverage-service job, immutable releases) are a
   maintainer's cadence/cost call and stay open in OPEN-FINDINGS.
 
+- **The Homebrew tap only moves forward.** The release workflow's tap job is
+  gated on nothing but "a tag was pushed" and rewrites `Formula/proef.rb`
+  whole, so a tag pushed late or out of order would regenerate the formula for
+  an older release and downgrade every `brew upgrade`. Not hypothetical:
+  v0.15.0 was released and never tagged, so backfilling that tag would have
+  walked the tap from 0.17.0 back to 0.15.0. The job now compares the tag
+  against the version the tap carries and skips green when it is not newer —
+  green, because publishing an old release's binaries is legitimate and the
+  correct outcome there is an untouched tap. The missing tag is recorded in
+  RELEASING.md's history.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added

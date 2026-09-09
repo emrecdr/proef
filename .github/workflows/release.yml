@@ -309,9 +309,31 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          mkdir -p tap/Formula
-          cp proef.rb tap/Formula/proef.rb
           cd tap
+          # The tap only ever moves forward. This job is gated on nothing but
+          # "a tag was pushed", and it overwrites the formula whole — so a tag
+          # pushed late or out of order regenerates it for an older release
+          # and downgrades every `brew upgrade`. Not hypothetical: v0.15.0 was
+          # released and never tagged (RELEASING.md history), so backfilling
+          # that tag today would have walked the tap from 0.17.0 back to
+          # 0.15.0.
+          #
+          # Skip green rather than fail: backfilling an old tag to publish its
+          # GitHub Release is legitimate, and the right outcome there is a
+          # published release with the tap left alone — a red run would report
+          # the job doing exactly its job as broken.
+          #
+          # `sort -V` orders the pair for the same reason xtask's `semver_key`
+          # does it for the canary: lexically, 0.9.0 outranks 0.10.0.
+          VERSION="${TAG#v}"
+          CURRENT="$(sed -n 's/^ *version "\(.*\)"$/\1/p' Formula/proef.rb 2>/dev/null || true)"
+          if [ -n "$CURRENT" ] && [ "$CURRENT" != "$VERSION" ] &&
+             [ "$(printf '%s\n%s\n' "$CURRENT" "$VERSION" | sort -V | tail -n1)" = "$CURRENT" ]; then
+            echo "::notice::tap carries $CURRENT; not regressing it to $VERSION"
+            exit 0
+          fi
+          mkdir -p Formula
+          cp ../proef.rb Formula/proef.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/proef.rb
