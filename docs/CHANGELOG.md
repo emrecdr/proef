@@ -13,6 +13,16 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Documentation
+
+- **The release history records every release again.** `RELEASING.md`'s History
+  section carried no entry for `v0.16.0` or `v0.17.0` and filed `v0.15.0`
+  between `v0.13.0` and `v0.14.0`; the order is repaired and all three versions
+  are present, `v0.18.0` included. The corpus also stops calling the 0.18 series
+  unreleased, and an `IMPROVEMENT-PLAN` pointer into CHANGELOG `[Unreleased]`
+  now names the releases that actually carried the work — `[Unreleased]` has
+  been cut several times since that sentence was written.
+
 ## [0.18.0] - 2026-09-09 (the CI-consumer surfaces: output proef could not deliver never looks like success)
 
 ### Added

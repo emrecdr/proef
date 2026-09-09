@@ -289,6 +289,15 @@ one resolvable.
   CI-baseline flow, the bundled libcurl gets a CVE floor no advisory scanner
   would catch, and a hung test is a five-minute failure instead of a five-day
   zombie
+- `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
+  never-run tail records as skipped, the record is a cancelled run `diff`
+  refuses to certify), `--rerun` continues a cancelled run instead of a false
+  green, `proef flaky` folds the retained history into verdicts (flapping by
+  transition-count, passes-only-on-retry, broken-not-flaky) completing the
+  detect→quarantine→resolve loop the `@quarantine` tag already anchored, and
+  `--shard I/N` partitions a matrix by a frozen identity hash so adding a
+  scenario never re-buckets the others — plus the reverse docs gate: every
+  subcommand must be documented, enforced rather than noticed
 - `v0.15.0` — validation rounds 17–18 + the Robot Framework capability audit:
   `@skip`/`@skip:reason` and `@quarantine` visible in every sink (ADR-0019),
   tag globs + per-tag report verdicts + `[tag-links]`, explicit run metadata
@@ -305,12 +314,50 @@ one resolvable.
   carries the changelog section, marked not-latest, with **no archives** — the
   only release without them. Not repaired by simply pushing the tag; the
   runbook above says which workflow a tag actually runs
-- `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
-  never-run tail records as skipped, the record is a cancelled run `diff`
-  refuses to certify), `--rerun` continues a cancelled run instead of a false
-  green, `proef flaky` folds the retained history into verdicts (flapping by
-  transition-count, passes-only-on-retry, broken-not-flaky) completing the
-  detect→quarantine→resolve loop the `@quarantine` tag already anchored, and
-  `--shard I/N` partitions a matrix by a frozen identity hash so adding a
-  scenario never re-buckets the others — plus the reverse docs gate: every
-  subcommand must be documented, enforced rather than noticed
+- `v0.16.0` — the surfaces tell the truth: an eight-wave improvement programme
+  (#112–#142) plus the round that found what it missed (#143–#150). CI-sink
+  conformance (JUnit detail into element content, an XML-1.0 control-character
+  boundary, real limits on the GitHub summary and annotations), a triageable
+  and linkable HTML report, console colour, shell completions and a man page in
+  every archive, a project-aware `doctor`, `explain`/`diff`/`doctor
+  --format json`, `--console failed`, `flaky --by`, `proef schema config`, and
+  the LSP wave — document symbols, hover, quick-fix code actions off a
+  structured `Diag::fix`, one analysis per edit rather than per keystroke, and a
+  panic guard on both message-loop entry points. Pack validation became linear
+  in the macro count (65× at 3200 macros) and the last unfuzzed parser gained a
+  target — breaking: `--output` split by meaning into `--format` (which format)
+  and `-o`/`--output` (which path), `World::set_global` returns a `#[must_use]
+  bool`, `ConsoleReporter::new` takes a `color` flag
+- `v0.17.0` — the environment a suite runs in, and the guards that keep its
+  claims true: `[http]` gained the keys that describe an environment rather than
+  a request (TLS `insecure`, proxy, mTLS cert/key, `max-redirs`, `user-agent`,
+  `cookie-store = false`), `--ctrf` renders the run off the same fold as JUnit,
+  `--shard-weights` balances a matrix by measured duration from one shared
+  `timings.json`, and the HTML report answers "what is slowest". The
+  hurl-coverage audit closed the two defects a `ref:` fragment could not work
+  around (#164–#166): a `file,…;` body resolves beside the file that wrote the
+  reference, and two features' same-named assets stop overwriting each other.
+  A `--run-id` record is findable again (ADR-0021), a disk filling *mid-run*
+  reaches the exit code, and the 23 diagnostic codes that had no test got one —
+  breaking: `emit::file_references` became `Artifact::assets` carrying each
+  reference with the source that wrote it, `emit::asset_root` is new,
+  `HttpDefaults` gained eight fields and lost `Copy`, and the canonical artifact
+  format moved (an artifact that reads a file now names its `--file-root` in the
+  replay line)
+- `v0.18.0` — the CI-consumer surfaces, run to exhaustion (#168–#179): output
+  proef could not deliver never looks like success. A run-record write failure
+  latches into exit 3 through one fold (`escalate_environment_failures`, beside
+  the JUnit/CTRF and GitHub-summary failures), SIGTERM/SIGHUP take the graceful
+  cancel so a CI job timeout leaves a complete record and its reports, and a
+  custom `--run-id` no longer collapses the JUnit identity onto the nil uuid.
+  Asset staging resolves beside the file the parser read wherever you `cd`
+  from, with `--sarif` lines from the carried source and the symlink and
+  case-insensitive staging edges closed. The ADR-0007 budget family is closed
+  over its inputs and bounded as a product (a four-hour batch ceiling, `[http]
+  timeout-ms = 0` refused), every `RunSummary` sink routes identities through
+  the masker, and `proef flaky` gained the 2026 statistical guards — a sample
+  floor, hysteresis, an environment-outage guard, and an input-fingerprint
+  equivalence class — breaking: `proef_lsp::RootResolver` returns a
+  `ResolvedRoot`, `timings::render` takes a `&Redactions`, and `flaky`'s `new`
+  verdict is renamed `insufficient-data` with its default sample floor rising
+  from 2 to 10
