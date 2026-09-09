@@ -13,6 +13,19 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Homebrew formula installs the man page and the shell completions.** Its
+  `def install` was `bin.install "proef"` and nothing else, so from 0.16.0 —
+  the release that started shipping `proef.1` and five `completions/` files in
+  every archive — until 0.18.0, `brew install proef` gave no `man proef` and no
+  tab completion, while binstall and a direct download gave both. The formula
+  is a heredoc inside `release.yml` and the archive is staged in a different
+  job, so nothing tied the two together and no gate could see the gap; the
+  render step now fails if the archive lacks a file the formula installs, and
+  the formula's own `test do` asserts the man page and completion landed.
+  Takes effect on the next tag: a tag runs the workflow from its own commit.
+
 ### Documentation
 
 - **The release history records every release again.** `RELEASING.md`'s History

@@ -257,6 +257,25 @@ jobs:
           ARM_LIN=$(sha "proef-${TAG}-aarch64-unknown-linux-gnu.tar.gz")
           INTEL_LIN=$(sha "proef-${TAG}-x86_64-unknown-linux-gnu.tar.gz")
 
+          # Everything `def install` names has to be in the archive. Nothing else
+          # ties the two together: the formula is a heredoc here and the staging
+          # step is elsewhere, so when 0.16.0 started shipping a man page and
+          # completions the formula was never taught to install them, and the
+          # gap shipped silently until 0.18.0. A missing file would otherwise
+          # surface as a failed `brew install` on a user's machine, with the tag
+          # already public. Fail here, where failing is still free.
+          # (The listing is captured first: piping `tar` into `grep -q` under
+          #  `pipefail` fails on SIGPIPE when grep exits early.)
+          probe="dist/proef-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
+          listing="$(tar tzf "$probe")"
+          for want in ./proef ./proef.1 ./completions/proef.bash \
+                      ./completions/proef.zsh ./completions/proef.fish; do
+            if ! printf '%s\n' "$listing" | grep -Fqx "$want"; then
+              echo "::error::$probe lacks $want, which Formula/proef.rb installs"
+              exit 1
+            fi
+          done
+
           cat > proef.rb <<RUBY
           class Proef < Formula
             desc "Declarative multi-engine e2e test runner: Gherkin prose over embedded hurl"
@@ -288,10 +307,20 @@ jobs:
 
             def install
               bin.install "proef"
+              man1.install "proef.1"
+              # clap_complete emits one file per shell and every archive carries
+              # all five; Homebrew has a standard location for three of them.
+              # elvish and powershell have nowhere here to go, so they stay in
+              # the archive for a user to place by hand.
+              bash_completion.install "completions/proef.bash" => "proef"
+              zsh_completion.install "completions/proef.zsh" => "_proef"
+              fish_completion.install "completions/proef.fish" => "proef.fish"
             end
 
             test do
-              assert_match "proef", shell_output("#{bin}/proef --version")
+              assert_match "proef #{version}", shell_output("#{bin}/proef --version")
+              assert_path_exists man1/"proef.1"
+              assert_path_exists bash_completion/"proef"
             end
           end
           RUBY
