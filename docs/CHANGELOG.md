@@ -273,6 +273,15 @@ Regrouping preserved every entry and its order within its kind.
   reverts to masking just the two identity fields it renders, rather than cloning
   the whole outcome graph to read them.
 
+- **Coverage is measurable on demand, and deliberately not a gate** (the local
+  half of P13, 0.18 survey). `just cover` / `cover-html` / `cover-lcov` run
+  `cargo-llvm-cov` over the workspace (~90 % line coverage of the unit +
+  integration suites today, `xtask` aside); TESTING-STRATEGY §3 records the
+  policy any CI half must follow — a ratchet that fails only on a drop, never a
+  fixed threshold. The gating CI adoptions the survey also listed (a
+  `cargo-mutants` job, a coverage-service job, immutable releases) are a
+  maintainer's cadence/cost call and stay open in OPEN-FINDINGS.
+
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 
 ### Added

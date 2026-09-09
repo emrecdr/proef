@@ -86,6 +86,12 @@ starts on defaults, because an editor offering less is better than one that will
 not boot. A **relative** path works, but prefer an absolute one — an editor's
 working directory is rarely the one you assume.
 
+`--env <name>` travels the same way (`proef lsp --env staging`, or `PROEF_ENV`):
+it selects the `[env.<name>]` profile the analysis resolves `${url:…}`/`${vars:…}`
+against, so the editor reports the `missing_config_var` a `staging` run would hit
+and not the one the default profile would. Before 0.18 the flag was accepted for
+`lsp` and silently dropped.
+
 ## File types served
 
 | Kind | Pattern | Typical editor filetype |

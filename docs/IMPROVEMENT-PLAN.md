@@ -111,10 +111,11 @@ list. Six meta-findings:
 
 ## 5. The validated roadmap (master table)
 
-**Status** is what exists in the tree, re-verified against `main` on 2026-08-10 —
+**Status** is what exists in the tree, re-verified against `main` on 2026-09-08 —
 `--help` for flags, source for the rest. **Verdict** is the 2026-07-31 judgement of
 whether the idea *fits the architecture*; it never meant "done", and reading it that
-way is why this table looked like a backlog when 13 of its 16 items had shipped.
+way is why this table looked like a backlog when, by 2026-08-10, 13 of its 16 items
+had shipped (14 today; one partial, one gated).
 
 Status: **shipped** · *partial* · open · gated (premise rejected).
 Verdict legend: ✅ FITS · ⚠️ NEEDS-ADAPTATION · 🚫 premise broken. Effort: S ≤ ~1 day ·
@@ -137,7 +138,7 @@ M ~days · L ~weeks.
 | 15 | `@quarantine` non-gating tag | **shipped** | ⚠️ (contract) | thread `gating:bool` core+cli | M | Tags must first reach `ScenarioSpec`/`ScenarioOutcome` (P1). `exit_code()` stays pure in core (`runner.rs:89`) and skips non-gating outcomes. Events still emit the scenario → **not hidden**. Extend the pinned assert_cmd tests; **never mask a `Fault::System` (exit 3)**. |
 | 3b | True `<flakyFailure>` with earlier-attempt detail | **shipped** | ⚠️ | schema + engine-hurl | M | Needs an *additive* `attempt_details` field (ADR-0008 additive-only) + engine-hurl collecting per-retry bodies before the final one. Bigger than 3a. |
 | 11 | `proef lsp` (feature/pack language server) | **shipped** | ✅ | new `proef-lsp` crate | L | All diagnostic substrate is headless/sans-IO already (`bind`, `pack::load`, `resolve` Probe mode, `matcher`). New: a sync `lsp-server` (tokio ban forbids async), a byte-offset→token API (not exposed), and a partial-results wrapper (bind/load are all-or-nothing today). Karate notably lacks good IDE support → differentiator. |
-| 13 | Impacted-only re-run (content-hash) | gated | 🚫 | — (gated) | L | No input hash exists; raw-input hashing is unsound (shared packs, `use:` nesting, config vars fan out). Honest fingerprint = per-scenario emitted `.hurl`, but it is not run-to-run stable (`run_id` in globals). Needs a determinism prerequisite first; silent-green risk. |
+| 13 | Impacted-only re-run (content-hash) | gated | 🚫 | — (gated) | L | No input hash exists; raw-input hashing is unsound (shared packs, `use:` nesting, config vars fan out). Honest fingerprint = per-scenario emitted `.hurl`, but it is not run-to-run stable (`run_id` in globals). Needs a determinism prerequisite first; silent-green risk. *2026-09-07: a suite-level input hash now exists (`inputs.json`, for `flaky` windows) — not per-scenario; still gated.* |
 
 ## 6. Prerequisites that unlock clusters
 
@@ -150,6 +151,11 @@ M ~days · L ~weeks.
   predicate.** Reused by `explain`, `--rerun` (#8), and `proef diff` (#12).
 - **P3 — a deterministic emitted-`.hurl` fingerprint** (stable run-to-run despite
   `run_id`). **Prerequisite for #13**; do not attempt #13 without it.
+  **2026-09-07:** `proef_core::fingerprint` now hashes a run's *whole* input set
+  (feature sources, loaded macros and fragments, the resolved `[url]`/`[vars]` scope)
+  into `inputs.json` — `proef flaky`'s equivalence class. Suite-level and deliberately
+  coarse (any edit ends a window), so it is not the per-scenario, `run_id`-independent
+  fingerprint #13 needs; P3 stands.
 
 ## 7. The one-canonical-way watch-list
 

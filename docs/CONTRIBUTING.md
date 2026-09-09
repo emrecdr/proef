@@ -12,7 +12,7 @@ it up automatically). One-time tools:
 ```bash
 cargo install cargo-nextest cargo-deny cargo-audit cargo-insta just
 # plus, for the full CI surface locally:
-cargo install cargo-fuzz cargo-public-api cargo-machete
+cargo install cargo-fuzz cargo-public-api cargo-machete cargo-llvm-cov   # llvm-cov: `just cover`
 ```
 
 Native build prerequisites (only `proef-engine-hurl` needs them):
@@ -34,9 +34,11 @@ cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked   # fuzz/ is 
 cargo machete                         # unused dependencies
 ```
 
-`just` carries aliases for the common ones. CI additionally runs
-`cargo machete`, `zizmor`, a fuzz smoke, and the hurl canary; `cargo audit`
-runs nightly.
+`just gates` runs the set above. CI additionally runs the `#[ignore]`d
+complexity guard alone (`just perf` — TESTING-STRATEGY §7), `zizmor`, a
+`proef doctor` smoke, a fuzz smoke, the hurl canary, a Windows gate, the
+docs-site build, and — on a pull request — the changelog self-recording check;
+`cargo audit` and the full fuzz run nightly.
 
 ## Rules that are easy to trip over
 
@@ -69,7 +71,9 @@ runs nightly.
 `docs/TESTING-STRATEGY.md` is normative. In short: everything is device- and
 network-free except the fixture integration suite
 (`cargo run -p xtask -- fixture` runs the dev API server standalone). Assert
-attempt counts and normalized event order, never wall-clock.
+attempt counts and normalized event order, never wall-clock. `just cover`
+measures line coverage on demand (`cargo-llvm-cov`; advisory, never a
+threshold — TESTING-STRATEGY §3).
 
 ## Commit messages
 

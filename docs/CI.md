@@ -110,8 +110,14 @@ proef diff path/to/base-events.jsonl          # vs the downloaded baseline
 
 ## Continuing a cancelled run
 
-A run stopped by `--max-fail` or a runner timeout records what it never
-reached. `proef test --rerun` re-runs the last run's failures *and* the
+A run stopped by `--max-fail`, a runner timeout, or a `docker stop` records what
+it never reached. SIGTERM and SIGHUP take the same graceful path as Ctrl-C:
+in-flight batches finish, the rest record as skipped, `[run] teardown` runs, the
+reports are written, and the record closes with `run_finished` + `cancelled`
+(exit 1) — so a timed-out job still leaves a complete record and its JUnit. Only
+a second signal (exit 130) or a SIGKILL truncates it.
+
+`proef test --rerun` re-runs the last run's failures *and* the
 scenarios it never got to — and its JUnit and HTML report cover the whole
 suite via the rerun overlay (`rerun_of` in the record), so one report stands
 for the composed result, never a false green.
@@ -135,3 +141,17 @@ pooled history cannot tell those apart: it reports the one conclusion the
 merged view can never reach, naming the scenarios whose verdict changes with
 where they ran. A run that never set the key is its own `(unset)` bucket rather
 than being folded in with the runs that did.
+
+Verdicts are keyed by the run's **input fingerprint** — `inputs.json` beside
+each record, a hash of the feature sources, the loaded macros and fragments,
+and the resolved `${url:…}`/`${vars:…}` scope — so a pack or config edit starts
+a fresh window instead of mixing runs of different inputs; `--by` splits within
+it. Three guards, each a `[flaky]` key with a flag twin (`CONFIG.md`): a
+scenario seen in fewer than `min-samples` runs (default 10) reads
+`insufficient-data` rather than earning a verdict — a fresh matrix needs ten
+records before the table says anything, and `--min-samples 2` restores the
+pre-0.18 floor; a flagged scenario stays flagged until `recovery-runs` (5)
+trailing clean runs, so it cannot flip between adjacent runs; and a run in
+which more than `outage-rate` (0.8) of the suite failed is an environment
+incident, excluded wholesale, so one staging outage cannot mark the suite
+broken.

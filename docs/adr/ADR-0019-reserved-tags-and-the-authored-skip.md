@@ -83,3 +83,11 @@ would have shipped a laundering bug, not a feature.
   unwritten: **control flow lives in packs** (`when:` conditional skip at
   step level, `optional:` soft-fail, finite `retry:`) — prose stays
   declarative; there is no scenario-level IF/WHILE/TRY and none is planned.
+
+- **2026-09-06:** a tag within a short edit distance of a reserved one
+  (`@quarantined`, `@skipped`, `@Skip`) stays an ordinary, inert tag — but it
+  now warns (`tags::reserved_tag_typo`) with the spelling it likely meant,
+  since a scenario its author believed quarantined would otherwise gate the
+  build in silence. Short reserved words get only a case-fold or a suffix
+  match (`ship`/`slip`/`step` are one edit from `skip`); the long `quarantine`
+  affords a distance-2 backstop.

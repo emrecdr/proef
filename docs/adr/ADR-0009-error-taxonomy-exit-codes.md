@@ -54,3 +54,15 @@ while a run is already cancelling (ADR-0007) — the shell's own convention for 
 signal-terminated process. This is a sanctioned OS-signal escape hatch, not a
 graceful outcome the fault-category model classifies, so it is intentionally
 **not** an `ExitCode` variant; `ExitCode` stays the total 0/1/2/3 mapping above.
+
+## Amendment — 2026-09-06 (every signal, and undelivered output)
+
+Ctrl-C, SIGTERM and SIGHUP all take the graceful cancel (ctrlc's
+`termination` feature), so a CI job timeout or `docker stop` is a cancelled
+run — exit 1 with a complete record — not a kill; the 130 hard exit above
+fires on a *second* signal of any of the three, and the handler carries no
+signal identity, so one code covers them all. And output proef could not
+deliver never looks like success: a failed write of the run record, of a
+JUnit or CTRF file, or of the GitHub step summary re-classifies the exit to
+`System` (3) through one fold, `escalate_environment_failures`, beside the
+stdout latch this taxonomy already covered.

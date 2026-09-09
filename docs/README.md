@@ -10,8 +10,8 @@ normative technical spec, the milestone plan, and the testing strategy. Written
 2026-07-28 from a validated research round (a working spike ran 5/5 scenarios green
 under both a prototype native runner and stock hurl 8.0.1 on identical generated
 artifacts); implementation has since delivered milestones M0–M5 and everything after
-them — external config and environments, the correctness series, v0.9.0, and named hurl
-fragments. Only M6 (a second engine) is unscheduled. The repo-root `CLAUDE.md` carries
+them — through v0.17.0 and the unreleased 0.18 series (the survey waves and their
+cleanup). Only M6 (a second engine) is unscheduled. The repo-root `CLAUDE.md` carries
 the live status. This corpus is also published as a website: <https://emrecdr.github.io/proef/>.
 
 ## Reading order
@@ -31,7 +31,7 @@ the live status. This corpus is also published as a website: <https://emrecdr.gi
 | 3 | [TECH-SPEC.md](TECH-SPEC.md) | How exactly is it built? Types, pipeline, schemas, verified seam facts | implementers |
 | 4 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | In what order, with what acceptance criteria? M0–M6 task breakdown, risks, runbooks | implementers |
 | 5 | [TESTING-STRATEGY.md](TESTING-STRATEGY.md) | How is every layer verified? | implementers |
-| — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: the *feature* roadmap, each item carrying a Status column (13 of 16 shipped) | maintainers |
+| — | [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) | Post-M5 competitive review: the *feature* roadmap, each item carrying a Status column (14 of 16 shipped) | maintainers |
 | — | [OPEN-FINDINGS.md](OPEN-FINDINGS.md) | **The worklist.** Every open defect and gap, whichever review found it, plus what shipped against each | maintainers |
 | — | [RELEASING.md](RELEASING.md) | Versioning policy and the release runbook | maintainers |
 | — | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, gates, and the rules that are easy to trip over | contributors |

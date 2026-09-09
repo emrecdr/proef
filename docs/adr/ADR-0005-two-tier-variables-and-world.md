@@ -55,6 +55,21 @@ round-trips would lose numbers/bools at engine boundaries.
 
 ## Errata
 
+**2026-09-07 (0.18):** the invariant's *reach* was found unenforced on one of
+its two paths. The event stream masks through `Redactions::apply_event`, an
+exhaustive destructure; the CI sinks that render from `RunSummary` (JUnit,
+CTRF, TAP, `timings.json`, the GitHub summary and annotations) masked failure
+detail, but five of them bypassed the masker for the identity fields
+(`scenario`, `file`, `tags`, the skip `reason`) — no live leak, since secrets
+lower to `{{name}}` and the engine pre-redacts details, but a boundary held by
+convention. Closed per sink (#171), then made structural (#178):
+`Redactions::apply_outcome` destructures `ScenarioOutcome`/`StepOutcome`
+without `..`, so a new text field fails to compile until it is masked, and each
+sink redacts one outcome after matching `@quarantine` on the raw identity.
+Per-sink rather than a wholesale `apply_summary`, because `RunSummary` also
+feeds `exit_code_excluding`, whose quarantine matching needs the unredacted
+identity.
+
 **2026-07-29 (v0.3.1):** the "secrets reach no sink" invariant now explicitly
 covers the persistent World: a `saveAs: global` capture whose value equals a
 known secret is refused (the owning step warns) — `.proef-state.json` is
