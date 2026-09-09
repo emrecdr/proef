@@ -175,6 +175,13 @@ are excluded by construction rather than by remembering to skip them. Each
 command waits for the registry before returning, which is what makes the next
 one resolvable.
 
+The registry does not carry every tag. 0.15.0, 0.16.0 and 0.17.0 were tagged and
+released on GitHub but never published, so crates.io goes 0.14.0 → 0.18.0
+(published 2026-09-09, from the tag, all four crates). Cargo resolves version
+*requirements* rather than sequences, so the gap costs a consumer nothing — it is
+recorded here so that a reader comparing `git tag` against the registry does not
+read it as a failed upload.
+
 ## History
 
 - `v0.1.0` — initial release (fresh history baseline, 2026-07-29)

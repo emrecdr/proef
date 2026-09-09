@@ -28,6 +28,13 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Documentation
 
+- **The runbook records that the registry skips three versions.** 0.15.0–0.17.0
+  were tagged and GitHub-released but never published, so crates.io moves
+  0.14.0 → 0.18.0. Noted in `RELEASING.md` so the gap does not read as a failed
+  upload. The long-standing `homepage` question in `OPEN-FINDINGS` is also
+  resolved: the field reached the registry with 0.18.0, exactly as that entry
+  predicted; `documentation` remains unset and still open.
+
 - **The release history records every release again.** `RELEASING.md`'s History
   section carried no entry for `v0.16.0` or `v0.17.0` and filed `v0.15.0`
   between `v0.13.0` and `v0.14.0`; the order is repaired and all three versions

@@ -540,7 +540,9 @@ before rendering them, so JSON is a second rendering rather than a second walk.
   carries no tags.
 - crates.io showing no `homepage` for 0.14.0 is publish lag — the field landed
   after that release was cut (verified by ancestry), and appears on the next
-  publish. `documentation` is still unset: for a binary crate that falls back
+  publish. **Confirmed 2026-09-09:** publishing 0.18.0 carried
+  `homepage = https://emrecdr.github.io/proef/` through, closing that half.
+  `documentation` is still unset: for a binary crate that falls back
   to a docs.rs library page rather than the book, worth setting deliberately.
 
 ### External triggers re-tested 2026-08-31 — all four hold
