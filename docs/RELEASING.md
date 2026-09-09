@@ -131,7 +131,11 @@ The tag push triggers `.github/workflows/release.yml`, which:
    nothing but "a tag was pushed" and rewrites the formula whole, so a tag
    pushed late or out of order would downgrade every `brew upgrade`; it now
    skips green instead, leaving the tap alone while the release still
-   publishes.
+   publishes. The formula installs the binary, its man page and the bash/zsh/fish
+   completions; from 0.16.0 until 0.18.0 it installed only the binary, so
+   Homebrew users silently got neither the man page nor completion while every
+   other channel did. The render step now checks the archive for each file the
+   formula claims to install, because nothing else connects the two.
 
 **A tag runs the workflow as it existed at the tagged commit**, not as it exists
 on `main` — the ordinary `push`-event rule, and the one that decides what
