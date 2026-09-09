@@ -290,8 +290,11 @@ Regrouping preserved every entry and its order within its kind.
   walked the tap from 0.17.0 back to 0.15.0. The job now compares the tag
   against the version the tap carries and skips green when it is not newer —
   green, because publishing an old release's binaries is legitimate and the
-  correct outcome there is an untouched tap. The missing tag is recorded in
-  RELEASING.md's history.
+  correct outcome there is an untouched tap. It guards **future** tags only: a
+  tag runs the workflow from its own commit, so one cut before this fix still
+  runs the unguarded job, and RELEASING now says to disable the workflow around
+  such a push. v0.15.0 was backfilled that way on 2026-09-09 — tag, and a
+  not-latest Release carrying the changelog section without archives.
 
 ## [0.17.0] - 2026-09-06 (the environment a suite runs in, and the guards that keep its claims true)
 

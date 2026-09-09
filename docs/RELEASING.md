@@ -133,6 +133,18 @@ The tag push triggers `.github/workflows/release.yml`, which:
    skips green instead, leaving the tap alone while the release still
    publishes.
 
+**A tag runs the workflow as it existed at the tagged commit**, not as it exists
+on `main` — the ordinary `push`-event rule, and the one that decides what
+backfilling a missing tag actually does. Patching `release.yml` therefore
+protects future tags only: a tag cut on a commit older than a fix runs the
+pipeline *without* it. This is not theoretical here. Backfilling `v0.15.0`
+(commit dated 2026-08-25) would have run that commit's unguarded tap job and
+walked the published formula from 0.17.0 back to 0.15.0, defeating the
+forward-only guard added in 0.18 — which lives on later commits and could not
+apply. The backfill was done with `gh workflow disable release.yml` around the
+push for exactly that reason, then the Release created by hand. **Disable the
+workflow before pushing any tag whose commit predates a release-pipeline fix.**
+
 `workflow_dispatch` runs build+attest only — a full matrix smoke without
 publishing. crates.io publication remains a deliberate manual `cargo publish`
 per crate in dependency order (core → engine-hurl → lsp → proef — `proef-lsp`
@@ -285,12 +297,14 @@ one resolvable.
   the run id, `reproduce_hint` into the record — breaking: quarantined
   failures reach JUnit as skipped-with-message, `--shard` re-deals (the hash
   gained fmix64), tag atoms glob, JUnit identity is `classname`+`name`.
-  **No `v0.15.0` tag was ever pushed** (found 2026-09-09): the release commit
-  is on `main` and this entry describes it, but `release.yml` starts on the
-  tag alone, so no GitHub Release, binaries or attestations exist for 0.15.0
-  and it is absent from `git tag`. 0.16.0 superseded it six days later.
-  Tagging it now would publish those artifacts retroactively from that commit;
-  the tap is safe either way since the forward-only guard above
+  **Its tag was missing for two weeks** (found 2026-09-09): the release commit
+  landed 2026-08-25 but `v0.15.0` was never pushed, and `release.yml` starts on
+  the tag alone — so the pipeline never ran and 0.15.0 had no GitHub Release,
+  binaries or attestations. Backfilled 2026-09-09 with the workflow disabled
+  for the push: the tag now points at the release commit and the Release
+  carries the changelog section, marked not-latest, with **no archives** — the
+  only release without them. Not repaired by simply pushing the tag; the
+  runbook above says which workflow a tag actually runs
 - `v0.14.0` — proef at CI scale: `--max-fail N` stops a run honestly (the
   never-run tail records as skipped, the record is a cancelled run `diff`
   refuses to certify), `--rerun` continues a cancelled run instead of a false
