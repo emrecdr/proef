@@ -428,7 +428,7 @@ build requirement).
       plus `emit::asset_root`; the canonical artifact format moved, since an
       artifact that reads a file now names its `--file-root` in the replay line
 - [x] the 0.18 survey — waves A–F (#168–#175), then a `/simplify` pass over
-      them (#176, #178–#179); unreleased, cuts as 0.18.0. A check-the-world
+      them (#176, #178–#179), released as 0.18.0 on 2026-09-09. A check-the-world
       round over the CI-consumer surfaces, run to exhaustion. Output proef
       could not deliver never looks like success: the record's own write
       failure latches into exit 3 through one fold

@@ -323,7 +323,7 @@ each Karate idea is an intentional call rather than an omission.
 
 ## 12. Round 2 — post-execution competitive re-review (2026-08-02)
 
-Round 1 (§1–§11) is largely shipped (see CHANGELOG `[Unreleased]`). Round 2 re-ran the
+Round 1 (§1–§11) is largely shipped (across the releases that followed). Round 2 re-ran the
 Karate + Cucumber + adjacent-landscape survey **against the post-execution codebase**, then
 put every surviving candidate through a **four-stream deep code-validation pass**
 (matcher/binding · reporting/events · lifecycle/i18n/snapshot · scope-boundary), mirroring
