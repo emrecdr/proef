@@ -13,6 +13,7 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-09 (the CI-consumer surfaces: output proef could not deliver never looks like success)
 
 ### Added
 
