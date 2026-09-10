@@ -548,6 +548,95 @@ fn check_changelog_kinds(failures: &mut Vec<String>) {
 /// The command-and-flag half of this lives in `crates/proef-cli/tests/docs.rs`
 /// instead, where `assert_cmd` guarantees a built binary — this task reads files
 /// and must stay runnable without one.
+/// No doc describing *today* may spell a machine format as `--output json`.
+///
+/// `--output`/`-o` names a **path** since the `--format` / `-o` split; the
+/// format flag is `--format`. [`check_examples`] cannot catch the stale
+/// spelling, because it parses a span only once it sees the literal token
+/// `proef` at a shell boundary — and these appear as bare
+/// `` `flows --output json` `` in prose, naming the subcommand without the
+/// binary. Three live normative documents drifted that way (two ADRs and
+/// `CLAUDE.md`) while the gate stayed silent.
+///
+/// Deliberately narrow rather than teaching the invocation parser to accept a
+/// bare subcommand: `` `diff --git a/x b/x` `` starts with a subcommand name
+/// and carries a flag, so the general rule would need an exception list, and an
+/// inventory that is a third exceptions stops reading as a closed set. This
+/// pattern needs none — `--output json` is not a valid invocation of anything.
+///
+/// An **allowlist**, because the split is not "which file" but "which tense".
+/// `CHANGELOG` and `RELEASING`'s release notes, and `OPEN-FINDINGS`' shipped
+/// table, quote the flag as it really was when that release shipped; rewriting
+/// them to match today is how a changelog stops being one. The documents below
+/// answer "what does proef do now", so in them the old spelling is simply
+/// wrong. ADRs are checked wholesale — every one of them describes a decision
+/// that is still in force.
+///
+/// **Why it lives here.** `tests/docs.rs` states its own charter: it holds the
+/// checks that need a *built binary*, because they ask clap rather than parsing
+/// help text. This one only reads files, so it belongs in the half that runs in
+/// the fast doc-only CI step — which is where it now runs, having previously
+/// been reachable only behind a full test build.
+fn check_output_path_spelling(docs: &[PathBuf], failures: &mut Vec<String>) {
+    const DESCRIBES_TODAY: &[&str] = &[
+        "README.md",
+        "CLAUDE.md",
+        "docs/TECH-SPEC.md",
+        "docs/CONFIG.md",
+        "docs/CI.md",
+        "docs/AUTHORING.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/EDITORS.md",
+        "docs/DIAGNOSTICS.md",
+        "docs/SECURITY.md",
+        "docs/TESTING-STRATEGY.md",
+        "docs/GETTING-STARTED.md",
+        "docs/WRITING-SCENARIOS.md",
+        "docs/INSTALL.md",
+    ];
+    // The ADRs come from `living_docs` rather than a second directory walk, so
+    // "which files are documentation" stays one answer.
+    let adrs = docs
+        .iter()
+        .filter(|path| path.starts_with("docs/adr"))
+        .cloned();
+    let mut named_read = 0usize;
+    for (file, is_named) in DESCRIBES_TODAY
+        .iter()
+        .map(|rel| (PathBuf::from(rel), true))
+        .chain(adrs.map(|path| (path, false)))
+    {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue; // a doc that does not exist here is caught below
+        };
+        if is_named {
+            named_read += 1;
+        }
+        let shown = file.to_string_lossy().replace('\\', "/");
+        for (number, line) in text.lines().enumerate() {
+            if line.contains("--output json") || line.contains("--output tap") {
+                failures.push(format!(
+                    "{shown}:{}: `--output` names a path, the machine format flag is \
+                     `--format` — {}",
+                    number + 1,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    // Counted over the allowlist alone. The original counted ADRs into the same
+    // total, so a renamed entry could be masked by the ADR directory being
+    // larger than the shortfall — which is the one failure this guard exists to
+    // catch: a rename must move the entry, never silently shrink the gate.
+    if named_read != DESCRIBES_TODAY.len() {
+        failures.push(format!(
+            "the --output allowlist names {} docs but only {named_read} were readable — a \
+             rename must move the entry, not silently shrink the gate",
+            DESCRIBES_TODAY.len()
+        ));
+    }
+}
+
 fn docs_check() -> ExitCode {
     let mut failures: Vec<String> = Vec::new();
     let tech_spec = std::fs::read_to_string("docs/TECH-SPEC.md").unwrap_or_default();
@@ -601,6 +690,7 @@ fn docs_check() -> ExitCode {
     let docs = living_docs();
     check_examples(&docs, &mut failures);
     check_links(&docs, &mut failures);
+    check_output_path_spelling(&docs, &mut failures);
 
     if failures.is_empty() {
         println!("docs-check: aligned");

@@ -579,7 +579,14 @@ impl RerunFilter {
 
 /// The scenarios `--rerun` should run: every failure — plus, on a **cancelled**
 /// record, every scenario the run never completed. A projection of
-/// [`read_record`] so there is one record reader, not two.
+/// [`parse_record`] over events the caller already holds.
+///
+/// Takes `&[Event]` rather than a directory because `--rerun` needs the same
+/// record twice — this filter, and the base the `JUnit` overlay reconstructs
+/// from — and [`read_record`]'s own documentation already names the rule that
+/// pairing used to break: a caller that also needs the raw events reads and
+/// parses once, rather than paying for a second read of a live run and risking
+/// two inconsistent views of it.
 ///
 /// The union is what makes fail-fast honest end to end. `--max-fail` (and
 /// Ctrl-C) stop a run early; the never-reached scenarios record as
@@ -597,8 +604,8 @@ impl RerunFilter {
 /// (ADR-0014): they are not in the pool `build_specs` filters, so returning
 /// one produced a run that matched nothing and blamed `--tags`/`--scenario`
 /// the user never passed. A phase re-runs by re-running the suite.
-pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
-    let record = read_record(record_dir)?;
+pub fn rerun_candidates(events: &[Event]) -> RerunCandidates {
+    let record = parse_record(events);
     let cancelled = record.completion == RunCompletion::Cancelled;
     // A record with no tail `RunFinished` cannot enumerate what it missed, so
     // the filter below flips to "run everything not proven finished". Kept
@@ -639,11 +646,11 @@ pub fn rerun_candidates(record_dir: &Path) -> Result<RerunCandidates, String> {
         queued: scenarios.iter().cloned().collect(),
         finished_when_truncated: truncated.then_some(finished),
     };
-    Ok(RerunCandidates {
+    RerunCandidates {
         scenarios,
         never_ran,
         filter,
-    })
+    }
 }
 
 /// Reconstruct suite-scenario outcomes from a base record's events, skipping
@@ -1043,7 +1050,7 @@ mod tests {
                 },
             ],
         );
-        let candidates = rerun_candidates(dir.path()).unwrap();
+        let candidates = rerun_candidates(&read_events(dir.path()).unwrap());
         let names: Vec<&str> = candidates
             .scenarios
             .iter()
