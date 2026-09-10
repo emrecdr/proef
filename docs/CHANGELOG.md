@@ -28,6 +28,22 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Documentation
 
+- **The worklist stops contradicting what shipped.** Three entries in
+  `OPEN-FINDINGS` still called CTRF declined or its trigger unfired — the
+  2026-08-31 external re-test, the RF audit's deferred list, and R3-5 under
+  "deferred, with the trigger named" — for the eight days after `--ctrf`
+  actually shipped (#160). R3-9, four bullets below R3-5 in that same list, was
+  annotated the moment it shipped — the convention the three missed. Two more claims
+  had outlived their facts: the shipped-changelog duplicate headers (no release
+  carries one now, and `check_changelog_kinds` fails if one returns) and the
+  machine-side note about Homebrew's Rust shadowing rustup. Filed at the same
+  time: `a_second_interrupt_hard_exits_with_130` failed once on Linux CI and
+  passed on a re-run of the same commit, so the evidence, the mechanism and the
+  fix shape are written down instead of left to the next re-run. And the stance
+  that a scenario-level `@retry` is deliberately absent — retry-until-green
+  hides a one-in-four defect 99.6% of the time — is stated in
+  `TESTING-STRATEGY` §5, which the worklist asked for and nobody had written.
+
 - **The runbook records that the registry skips three versions.** 0.15.0–0.17.0
   were tagged and GitHub-released but never published, so crates.io moves
   0.14.0 → 0.18.0. Noted in `RELEASING.md` so the gap does not read as a failed

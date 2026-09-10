@@ -182,6 +182,20 @@ bit-deterministic by construction. Integration layer: fixture delays are token-d
 only as generous upper bounds; parallel tests assert on Normalized event order, never
 raw interleaving. Any test needing "now" receives it as a parameter.
 
+**Retry-until-green is the anti-pattern, and that is why proef ships no
+scenario `@retry`.** A scenario-level retry is the headline feature of several
+runners and is deliberately absent here: re-running a test until it passes
+hides precisely the defects worth finding. A bug that fails one run in four
+survives three retries **99.6%** of the time (1 − 0.25⁴), so the suite reports
+green while the product is broken for a quarter of its users. proef's shape is
+detect-then-quarantine: `proef flaky` returns a verdict over run history,
+`@quarantine` stops a known flapper gating the build while keeping it visible
+in every sink (ADR-0019), and per-step `retry:` covers the case that is
+genuinely polling — a resource that becomes visible on the Nth attempt —
+rather than rerolling a verdict. proef's own suite is held to the same rule: a
+red test here is reproduced and filed, never re-run until it cooperates and
+then forgotten.
+
 ## 6. Every diagnostic code is named by a test
 
 `DIAGNOSTICS.md` calls codes "a contract: they never change meaning". A contract
