@@ -148,6 +148,7 @@ fn hurl_kinds() -> Vec<StepKindSpec> {
         validate: None,
         fragments: None,
         options: None,
+        assets: None,
     }]
 }
 

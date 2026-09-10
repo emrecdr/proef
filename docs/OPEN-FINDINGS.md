@@ -232,6 +232,30 @@ the ADR-0002 answer; it needs a `StepKindSpec` entry beside `validate`,
 (`visit_file` for `Bytes::File`, `visit_filename_param`/`visit_filename_value`
 for multipart parts — `hurl_core-8.0.1/src/ast/visit.rs`).
 
+**Closed 2026-09-10 — by the second way, and the first way as well.** The scan
+is now `StepKindSpec::assets`, a fourth engine hook beside `validate`,
+`fragments` and `options`; `emit()` takes `&[StepKindSpec]` to reach it and
+`FrontEnd` carries `kinds` beside the `kind_to_engine` table `registry` already
+documents as a pair that must not be re-derived apart. The guard was widened
+too, rather than left blind because nothing currently trips it: a bare
+lowercase keyword followed by a comma (`file,`, `hex,`, `base64,`) is now
+classified, and planting the literal back in `emit.rs` fails with
+`body "file," in emit.rs`. Two things this entry predicted came true on
+contact. The engine hooks are exactly the two named above — and the tempting
+third, `visit_filename`, is the wrong one: hurl routes the `[Options]` file
+paths through it, and `output:` names a file the run *writes*, so staging it
+would demand a source that cannot exist. And the AST reading fixed the defect
+this entry recorded as a consequence: `file,` inside a JSON body is no longer
+an asset. What this entry did *not* anticipate is that ADR-0002's amendment had
+miscounted — it says thirteen literals, and this was the fourteenth, missing
+for precisely the reason that amendment had already written down about the
+method line.
+
+The second consequence recorded below stands unchanged: `collect_assets` still
+inspects only `StepPayload::HurlEntries`, never `Structured`. Recognition is
+now the engine's, but *which payload variants carry assets at all* is still
+core's assumption.
+
 Two consequences of the text scan worth recording with it. It cannot tell a
 real `file,…;` body from the same six characters inside a JSON or text
 assertion body. And `collect_assets` only inspects `StepPayload::HurlEntries`,

@@ -139,6 +139,12 @@ pub struct FrontEnd {
     pub config_vars: Arc<BTreeMap<String, String>>,
     /// Step kind prefix → engine id.
     pub kind_to_engine: Arc<BTreeMap<String, String>>,
+    /// The registered step kinds, carried beside `kind_to_engine` for the
+    /// reason `registry` states of the pair: they are built from one
+    /// `engines()` walk, and a caller that re-derives one while using the other
+    /// can disagree with itself about which engine owns a kind. Execution-time
+    /// re-lowering needs these to ask an engine what its bodies read.
+    pub kinds: Arc<Vec<proef_core::engine::StepKindSpec>>,
     /// The run id used for this front-end pass.
     pub run_id: Arc<str>,
     /// How many pack sources loaded (builtin + project).
@@ -299,7 +305,7 @@ pub fn run(
             match lower::lower(&scenario, &ctx) {
                 Ok(lowered) => {
                     warnings.extend(lowered.warnings.iter().cloned());
-                    let artifact = emit::emit(&lowered, &display, &world);
+                    let artifact = emit::emit(&lowered, &display, &world, &kinds);
                     if let Some(artifact) = &artifact {
                         validate_artifact(artifact, &lowered, &kinds, &mut diags);
                     }
@@ -351,6 +357,7 @@ pub fn run(
             env,
             config_vars,
             kind_to_engine,
+            kinds: Arc::new(kinds),
             run_id,
             packs_loaded,
             warnings,

@@ -303,6 +303,7 @@ mod tests {
         validate: None,
         fragments: None,
         options: None,
+        assets: None,
     }];
 
     fn packs() -> PackSet {

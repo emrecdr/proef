@@ -1446,6 +1446,7 @@ mod tests {
         validate: Some(deny),
         fragments: None,
         options: None,
+        assets: None,
     }];
 
     /// A whitespace-only `hurl:` fragment with no `status:` carries no assert
@@ -1567,6 +1568,7 @@ mod tests {
             validate: None,
             fragments: None,
             options: None,
+            assets: None,
         }];
         use std::fmt::Write as _;
         let mut yaml = String::from("macros:\n");
@@ -1606,6 +1608,7 @@ mod tests {
         // the core has no way to know what its option keys mean — so a fixture
         // without one would test that silence rather than the rule.
         options: Some(fake_recognise),
+        assets: None,
     }];
 
     /// Setting an option in both the block's `[Options]` and its YAML twin
@@ -1818,6 +1821,7 @@ mod tests {
             template_reads: |_| Vec::new(),
         }),
         options: Some(fake_recognise),
+        assets: None,
     }];
 
     /// The stub engine's option vocabulary. Deliberately spelled like hurl's, so
@@ -2298,6 +2302,7 @@ mod diagnostic_code_coverage {
         validate: Some(accept),
         fragments: None,
         options: None,
+        assets: None,
     }];
 
     /// The codes a pack raises when loaded. Errors and warnings alike — a
@@ -2500,6 +2505,7 @@ mod complexity {
         validate: Some(accept),
         fragments: None,
         options: None,
+        assets: None,
     }];
 
     /// A pack of `n` independent macros — no `use:` edges, so the graph passes

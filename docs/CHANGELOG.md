@@ -26,6 +26,34 @@ Regrouping preserved every entry and its order within its kind.
   the formula's own `test do` asserts the man page and completion landed.
   Takes effect on the next tag: a tag runs the workflow from its own commit.
 
+- **`file,` inside a JSON or assertion body is no longer mistaken for a file
+  asset.** The emitter found the files an artifact reads by scanning its text
+  for the literal `file,` and a closing `;`, so a request body containing that
+  substring — `{"note": "see file,notes.txt; for details"}` — produced a
+  phantom asset, and staging then failed the run over a file the request never
+  reads. The claiming engine now reads its own AST, where a body reference and
+  six characters of prose are different things.
+
+### Breaking
+
+- **`proef_core::emit::emit` takes the registered step kinds, and
+  `StepKindSpec` gains an `assets` hook.** Asset recognition was hurl's body
+  grammar living in `proef-core`: `emit::file_refs_in` scanned for the literal
+  `"file,"`, which ADR-0002's amendment forbids and — worse — which the guard
+  pinning that amendment could not see. `engine_grammar_kind` classifies
+  fences, `HTTP`, `[Section]` headers, method lines and `key: value` options; a
+  body constructor is none of those, so the literal was never sanctioned and
+  never reported missing. The ADR's own measurement said thirteen literals; it
+  was fourteen.
+
+  The scan moves behind the seam as `StepKindSpec::assets`, the fourth
+  engine-contributed hook beside `validate`, `fragments` and `options`, and the
+  guard gains a `body` arm so the shape is classifiable whether or not anything
+  currently uses it. `emit()` takes `&[StepKindSpec]` to reach it; `FrontEnd`
+  carries `kinds` beside the `kind_to_engine` table it is built with, which
+  `registry` already documents as a pair that must not be re-derived
+  separately. `emit::file_refs_in` is gone.
+
 ### Internal
 
 - **`--rerun` reads its base record once.** It called `record::read_events` for

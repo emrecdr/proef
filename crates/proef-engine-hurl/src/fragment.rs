@@ -12,8 +12,10 @@ use std::borrow::Cow;
 
 use hurl_core::ast::visit::{self, Visitor};
 use hurl_core::ast::{
-    Comment, Entry, ExprKind, OptionKind, Placeholder, Template, TemplateElement,
+    Comment, Entry, ExprKind, File, FilenameValue, OptionKind, Placeholder, Template,
+    TemplateElement,
 };
+use hurl_core::types::ToSource;
 use proef_core::engine::{FragmentScanError, ScannedFile, ScannedFragment};
 
 /// The annotation marker. It introduces **a name and nothing else, forever** —
@@ -306,6 +308,82 @@ pub(crate) fn template_reads(value: &str) -> Vec<String> {
     collect.placeholders
 }
 
+/// Every file asset one lowered payload sends, as its entries spell them.
+///
+/// The engine half of [`proef_core::engine::AssetScanner`]. The emitter records
+/// what an artifact reads so the CLI can stage each file beside the source that
+/// named it; core used to answer that by scanning for the literal `"file,"` and
+/// a closing `;`, which put hurl's body grammar in `proef-core` where ADR-0002
+/// says it must not live.
+///
+/// Reading the AST also decides a case the text scan got wrong: `file,` inside a
+/// JSON body or an assertion is six ordinary characters, and only the parser can
+/// tell that from a body reference.
+///
+/// **Deliberately not `visit_filename`.** hurl routes the `[Options]` paths
+/// through that same hook — `cacert`, `client-cert`, `client-key`, `netrc-file`,
+/// `output`, `unix-socket` — and none of those is an asset the artifact reads.
+/// `output:` is the sharpest case: it names a file the run *writes*, so staging
+/// it would demand a source file that cannot exist yet. The two hooks overridden
+/// below are the body positions and nothing else: `visit_file` for a `file,…;`
+/// request body, `visit_filename_value` for a multipart file part.
+///
+/// A payload that does not parse yields no assets rather than an error. Every
+/// path that reaches here has already been through pack validation pass 7 or
+/// this module's own scan, so an unparseable payload is not reachable from a
+/// loaded suite; returning empty keeps the emitter total either way.
+pub(crate) fn scan_assets(text: &str) -> Vec<String> {
+    // Same normalization rule as `scan` above and `validate_payload`.
+    let stripped = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let normalized = if stripped.ends_with('\n') {
+        Cow::Borrowed(stripped)
+    } else {
+        Cow::Owned(format!("{stripped}\n"))
+    };
+    let Ok(file) = hurl_core::parser::parse_hurl_file(&normalized) else {
+        return Vec::new();
+    };
+    let mut assets = Assets::default();
+    for entry in &file.entries {
+        visit::walk_entry(&mut assets, entry);
+    }
+    assets.names
+}
+
+/// The file assets of one entry, gathered from hurl's own AST.
+#[derive(Default)]
+struct Assets {
+    names: Vec<String>,
+}
+
+impl Assets {
+    /// Record a filename **as written**. `to_source` rather than `Display`:
+    /// the staging layer resolves the spelling the entry used, and `Display`
+    /// renders a template's decoded value, which is a different string the
+    /// moment a name carries an escape.
+    fn record(&mut self, filename: &Template) {
+        let name = filename.to_source().to_string();
+        let name = name.trim();
+        if !name.is_empty() && !self.names.iter().any(|known| known == name) {
+            self.names.push(name.to_owned());
+        }
+    }
+}
+
+impl Visitor for Assets {
+    /// A `file,<name>;` request body. Not forwarded to `walk_file`, which would
+    /// reach the shared `visit_filename` hook and with it the `[Options]` paths.
+    fn visit_file(&mut self, file: &File) {
+        self.record(&file.filename);
+    }
+
+    /// One multipart `name: file,<name>;` part. Its `content_type` is
+    /// deliberately not visited — a content type is not a file.
+    fn visit_filename_value(&mut self, value: &FilenameValue) {
+        self.record(&value.filename);
+    }
+}
+
 /// Reads and writes of one entry, gathered from hurl's own AST.
 ///
 /// Templates are *leaves* to the visitor — `visit_template`, `visit_url` and
@@ -360,6 +438,68 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    /// The grammar half of the asset seam, which used to live in `proef-core`
+    /// as a scan for the literal `"file,"`.
+    #[test]
+    fn scan_assets_finds_file_bodies_and_multipart_parts() {
+        let text = "POST http://x/upload\n[Multipart]\nphoto: file,fixture.jpg;\nHTTP 201\n\n\
+                    POST http://x/raw\nfile,payload.bin;\nHTTP 200\n";
+        assert_eq!(scan_assets(text), ["fixture.jpg", "payload.bin"]);
+    }
+
+    /// **The case the text scan got wrong.** `file,` inside a JSON body is six
+    /// ordinary characters; only the parser can tell that from a body
+    /// reference, and the old scan staged — or failed to find — a file named
+    /// `notes.txt` that the request never reads.
+    #[test]
+    fn a_file_comma_inside_a_body_is_not_an_asset() {
+        let text = "POST http://x/notes\n\
+                    {\"note\": \"see file,notes.txt; for details\"}\n\
+                    HTTP 200\n";
+        assert_eq!(scan_assets(text), Vec::<String>::new());
+    }
+
+    /// `[Options]` paths travel hurl's shared `visit_filename` hook alongside
+    /// real bodies. None of them is an asset the artifact *reads*, and
+    /// `output:` names a file the run writes — staging it would demand a
+    /// source that cannot exist. Pinned because the convenient override is the
+    /// wrong one.
+    #[test]
+    fn option_file_paths_are_not_assets() {
+        let text = "GET http://x/thing\n\
+                    [Options]\n\
+                    output: out.json\n\
+                    cacert: ca.pem\n\
+                    client-cert: client.pem\n\
+                    client-key: client.key\n\
+                    HTTP 200\n";
+        assert_eq!(scan_assets(text), Vec::<String>::new());
+    }
+
+    /// A name is reported as written: run time fills `{{…}}`, and the staging
+    /// layer resolves the spelling the entry used.
+    #[test]
+    fn a_templated_asset_name_is_reported_as_written() {
+        let text = "POST http://x/upload\nfile,data-{{suffix}}.bin;\nHTTP 200\n";
+        assert_eq!(scan_assets(text), ["data-{{suffix}}.bin"]);
+    }
+
+    /// One name, however many entries repeat it — the emitter stages a file
+    /// once.
+    #[test]
+    fn a_repeated_asset_is_reported_once() {
+        let text = "POST http://x/a\nfile,same.bin;\nHTTP 200\n\n\
+                    POST http://x/b\nfile,same.bin;\nHTTP 200\n";
+        assert_eq!(scan_assets(text), ["same.bin"]);
+    }
+
+    /// Unparseable text yields no assets rather than a panic or an error: the
+    /// emitter is total, and every reachable payload has already parsed once.
+    #[test]
+    fn unparseable_payload_yields_no_assets() {
+        assert_eq!(scan_assets("not hurl at all {{{"), Vec::<String>::new());
+    }
 
     /// One answer to "what does this read", and it is the parser's: functions
     /// are not variables, filters reduce to their subject, junk reads nothing.

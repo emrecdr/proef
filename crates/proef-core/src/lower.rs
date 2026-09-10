@@ -1462,6 +1462,7 @@ mod tests {
         validate: None,
         fragments: None,
         options: None,
+        assets: None,
     }];
 
     const PACK: &str = r#"macros:
@@ -1698,7 +1699,7 @@ mod tests {
         };
         assert_eq!(lines, 0, "the fragment resolved to nothing");
 
-        let artifact = crate::emit::emit(&lowered, "t", &world).unwrap();
+        let artifact = crate::emit::emit(&lowered, "t", &world, KINDS).unwrap();
         for entry in &artifact.map.entries {
             let [start, end] = entry.hurl_lines;
             assert!(
@@ -1718,6 +1719,7 @@ mod tests {
             validate: None,
             fragments: None,
             options: None,
+            assets: None,
         }];
         let packs = pack::load(
             &[PackSource {
@@ -2254,6 +2256,7 @@ mod tests {
             template_reads: frag_template_reads,
         }),
         options: None,
+        assets: None,
     }];
 
     /// Lower a one-step scenario over the given pack and fragment file.
