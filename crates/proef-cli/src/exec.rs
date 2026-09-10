@@ -309,50 +309,53 @@ pub fn execute(
         // run's head (`rerun_of`), and its events carry the outcomes the
         // JUnit merge reconstructs for scenarios not re-run (E2's rerun
         // half — the one JUnit at the end covers the whole suite).
-        rerun_base = crate::record::read_events(&dir).ok().map(|events| {
-            (
-                dir.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                events,
-            )
-        });
-        match crate::record::rerun_candidates(&dir) {
-            // "No failures" is only a safe reading of a record that *finished*.
-            // A truncated base names nothing about the work it never reached,
-            // so this early exit is exactly where a killed run used to report
-            // success over a suite that never ran — the filter decides instead.
-            Ok(candidates)
-                if candidates.scenarios.is_empty() && !candidates.filter.base_truncated() =>
-            {
-                crate::render::outln!("nothing to rerun — the last run has no failed scenarios");
-                return ExitCode::Success;
-            }
-            Ok(candidates) => {
-                // Continuing a partial run is different work than retrying
-                // failures, and the developer should know which one this is —
-                // a silent green over a mostly-unexecuted suite was the bug.
-                if candidates.never_ran > 0 {
-                    crate::render::outln!(
-                        "note: the last run was cancelled before {} scenario(s) ran — \
-                         rerunning them along with the failures",
-                        candidates.never_ran
-                    );
-                }
-                if candidates.filter.base_truncated() {
-                    crate::render::errln!(
-                        "warning: the last run has no run_finished — it was truncated (killed, \
-                         out of memory, out of disk). It cannot say what it never reached, so \
-                         every scenario it did not finish is being rerun."
-                    );
-                }
-                Some(candidates.filter)
-            }
+        // One read, one deserialization. The filter below and the overlay's
+        // base are two projections of the same record, and `read_record`'s own
+        // doc already names the rule this pairing used to break — it read the
+        // file here and again inside `rerun_candidates`, paying twice and
+        // risking two different views of a record another process may still be
+        // writing. The read error is handled once now, too: the old `.ok()`
+        // dropped it silently here and re-discovered it a line later.
+        let events = match crate::record::read_events(&dir) {
+            Ok(events) => events,
             Err(err) => {
                 crate::render::errln!("error: {err}");
                 return ExitCode::UserError;
             }
+        };
+        let candidates = crate::record::rerun_candidates(&events);
+        rerun_base = Some((
+            dir.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            events,
+        ));
+        // "No failures" is only a safe reading of a record that *finished*.
+        // A truncated base names nothing about the work it never reached,
+        // so this early exit is exactly where a killed run used to report
+        // success over a suite that never ran — the filter decides instead.
+        if candidates.scenarios.is_empty() && !candidates.filter.base_truncated() {
+            crate::render::outln!("nothing to rerun — the last run has no failed scenarios");
+            return ExitCode::Success;
         }
+        // Continuing a partial run is different work than retrying failures,
+        // and the developer should know which one this is — a silent green
+        // over a mostly-unexecuted suite was the bug.
+        if candidates.never_ran > 0 {
+            crate::render::outln!(
+                "note: the last run was cancelled before {} scenario(s) ran — \
+                 rerunning them along with the failures",
+                candidates.never_ran
+            );
+        }
+        if candidates.filter.base_truncated() {
+            crate::render::errln!(
+                "warning: the last run has no run_finished — it was truncated (killed, \
+                 out of memory, out of disk). It cannot say what it never reached, so \
+                 every scenario it did not finish is being rerun."
+            );
+        }
+        Some(candidates.filter)
     } else {
         None
     };

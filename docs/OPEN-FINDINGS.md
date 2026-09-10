@@ -370,7 +370,14 @@ now guarded — narrowly, by an allowlist of present-tense docs, because
   never runs in the fast doc-only CI step. Not moved with that one because it
   depends on `collect_markdown` and the `DESCRIBES_TODAY` allowlist, both local
   to `docs.rs` — porting them is a real change, not a relocation, and it earns
-  its own.
+  its own. **Closed 2026-09-10:** ported to `xtask docs-check` as
+  `check_output_path_spelling`, and cheaper than this entry expected —
+  `living_docs()` already collects the ADRs, so `collect_markdown` was deleted
+  rather than ported and "which files are documentation" stays one answer.
+  Only `DESCRIBES_TODAY` moved. The shrink guard was tightened in the move: it
+  had counted ADRs into the same total, so `checked >= DESCRIBES_TODAY.len()`
+  could be satisfied by `docs/adr` alone, masking the one failure it exists to
+  catch.
 
 - **`--rerun` reads the base record's `events.jsonl` twice.** `exec.rs` calls
   `record::read_events(&dir)` for the JUnit overlay, then
@@ -381,6 +388,11 @@ now guarded — narrowly, by an allowlist of present-tense docs, because
   `rerun_candidates` takes `&[Event]` rather than a `&Path`, and the one caller
   passes the events it already has — but it is a signature change on a path
   `--rerun` alone exercises, so it wants its own change, not a ride on this one.
+  **Closed 2026-09-10**, in exactly that shape. `rerun_candidates` also became
+  infallible, which surfaced a second defect this entry had not seen: the
+  caller's first read swallowed its error with `.ok()` and the second
+  rediscovered it a line later, so which call reported a read failure was an
+  accident of ordering. One read now, one error path.
 
 - **Discovery now costs a second `stat` per custom-id run, and that population
   is the one nothing bounds.** `all_runs` stats each directory once for

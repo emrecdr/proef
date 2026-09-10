@@ -26,6 +26,31 @@ Regrouping preserved every entry and its order within its kind.
   the formula's own `test do` asserts the man page and completion landed.
   Takes effect on the next tag: a tag runs the workflow from its own commit.
 
+### Internal
+
+- **`--rerun` reads its base record once.** It called `record::read_events` for
+  the JUnit overlay and then `record::rerun_candidates`, which read and
+  deserialized the same `events.jsonl` a second time — two full passes bounded
+  only by the 256 MiB record ceiling, over a file another process may still be
+  writing. `rerun_candidates` now takes the `&[Event]` its caller already
+  holds, which is the rule `read_record`'s own documentation had already
+  stated for exactly this case. The read error is handled once as well: the
+  first call swallowed it with `.ok()` and the second rediscovered it a line
+  later.
+
+- **The one doc check that reads only files now runs in the half that reads
+  files.** `no_current_behaviour_doc_spells_a_format_as_an_output_path` lived
+  in `tests/docs.rs`, whose stated charter is the checks needing a *built
+  binary* to ask clap — this one only scans markdown, so it never ran in the
+  fast doc-only CI step. It is now `xtask docs-check`'s
+  `check_output_path_spelling`, reusing `living_docs()` instead of carrying a
+  second directory walk. Its allowlist-shrink guard got stricter on the way:
+  it counted ADRs into the same total, so a renamed entry could be masked by
+  `docs/adr` being larger than the shortfall — which is the one failure that
+  guard exists to catch. All three paths were checked by mutation: a stale
+  spelling planted in an allowlisted doc, one planted in an ADR, and an
+  allowlisted doc renamed away.
+
 ### Documentation
 
 - **The worklist stops contradicting what shipped.** Three entries in
