@@ -29,6 +29,66 @@ was re-checked against `main` on **2026-09-08** (after the 0.18 series).
 
 ---
 
+## Noted after the 0.18.0 release (2026-09-10)
+
+### The exit-130 interrupt test asserts a race nothing holds open *(open)*
+
+`a_second_interrupt_hard_exits_with_130` (`crates/proef-cli/tests/execute.rs`)
+failed once on `gates (ubuntu-latest)` and then passed on a re-run of the same
+commit with no change: run `34341778587`, attempt 1 red, attempt 2 green, both
+at `a802bfe`. The diff under test was documentation only, so it cannot have
+been a regression. Filed because a flake that is only ever re-run is a flake
+nobody is counting — and because the test is young, added by #168 as the first
+assertion anywhere on exit 130.
+
+**Verified from the failed attempt, not inferred.** The panic carries the
+child's stderr, and the interrupt notice is in it:
+
+```
+stderr:
+
+interrupt — cancelling after current batches (a second interrupt hard-exits)
+
+  left: Some(1)
+ right: Some(130)
+```
+
+So the sequencing the test is built around worked — the first signal landed and
+the handler announced itself — and the process still exited `1`, the graceful
+cancelled code, rather than `130`. Two further facts bound what can have
+happened. nextest timed the whole test at **57 ms**; the scenario's only
+request is `GET /slow`, which the fixture answers after a deliberate
+`sleep(5s)` (`proef-fixture/src/lib.rs` — the *one* documented exception to
+that server's own "never sleep-raced" rule). A 57 ms test never waited on that
+sleep. And the banner the test synchronizes on, `running N scenario(s)`, is
+written at `exec.rs:661` — **before** `runner::run` is called at `exec.rs:680`.
+
+**The most-supported reading**, to be confirmed by a Linux reproduction rather
+than assumed: the banner proves the run *started*, not that a batch is in
+flight. Cancellation is cooperative at batch boundaries (ADR-0007), so a first
+signal that wins the race against dispatch has nothing to wait for — the pool
+starts already-cancelled, the scenarios record as skipped, the record closes
+and the process exits, all inside the time it takes the test to spawn an
+external `kill(1)` for the second signal. The window the test needs is the
+5-second sleep; on that run the window never opened.
+
+**Why this is not just one red run.** TESTING-STRATEGY §5 already names the
+rule — assert normalized event order, never raw interleaving, and treat wall
+time only as a generous upper bound — but it says *parallel* tests, so a
+signal-delivery test sits outside its letter while squarely inside its intent.
+
+**The fix shape, not applied here.** The assertion is worth keeping (nothing
+else pins exit 130), so the answer is to make the window deterministic rather
+than to weaken it: the test needs a synchronization point proving the request
+*reached the fixture*, not that the run began, so the 5-second sleep is
+genuinely in flight when the first signal arrives. That is a fixture and test
+change on the one path that exercises the second-signal escape hatch; it wants
+its own change, and a Linux reproduction first — macOS has not reproduced it,
+and this is exactly the trap P5's atomic-save half is held away from ("do not
+chase it on a Mac — that is how it gets fixed by coincidence").
+
+---
+
 ## Ingested — the 0.18 survey (2026-09-06), validated then implemented
 
 A check-the-world round over the CI-consumer surfaces — delivery failures,
@@ -383,8 +443,12 @@ its local half, `just cover`, shipped 2026-09-07 in #173); the text-scan
 honesty bundle (capture-name charset / ≤2-char methods / `key_line_spans`
 flag — see the deferred list); P12 (measure first, alone, per the
 complexity-guard lesson). Decision items untouched: E2's split-invocation
-remainder (trigger not fired), E3 (wants an ADR), R1 (wants its own spec),
-the shipped-changelog duplicate headers (maintainer's call).
+remainder (trigger not fired), E3 (wants an ADR), R1 (wants its own spec).
+~~The shipped-changelog duplicate headers (maintainer's call)~~ — **closed
+2026-09-10:** no release carries a repeated kind heading any more, the
+regrouping is recorded in `CHANGELOG.md`'s own preamble, and
+`xtask docs-check`'s `check_changelog_kinds` fails if one returns, so the
+call does not need making twice.
 
 ---
 
@@ -545,15 +609,20 @@ before rendering them, so JSON is a second rendering rather than a second walk.
   `documentation` is still unset: for a binary crate that falls back
   to a docs.rs library page rather than the book, worth setting deliberately.
 
-### External triggers re-tested 2026-08-31 — all four hold
+### External triggers re-tested 2026-08-31 — three hold, one has since fired
 
 - **OpenTelemetry export stays a non-goal.** OTel graduated CNCF (2026-05), so
   the umbrella argument weakened, but the attributes that would carry a test
   run — `test.case.name`, `test.case.result.status`, `test.suite.name`,
   `test.suite.run.status` — are **all still Development** stability. PRD §3's
   stated reason is current as written; only the re-check date moves.
-- **CTRF stays declined.** Still community-adoption phase; Microsoft's test
-  platform has a discussion issue, not an implementation. Trigger unfired.
+- **CTRF was declined here and has since shipped.** As re-tested on
+  2026-08-31 this read "still community-adoption phase; Microsoft's test
+  platform has a discussion issue, not an implementation. Trigger unfired" —
+  accurate for its own date. The 2026-09-02 survey shipped it anyway as
+  `--ctrf` (#160), rendered off the same fold as JUnit. **Corrected
+  2026-09-10**; the two sibling statements of the same deferral, in the RF
+  audit below and at R3-5, were stale with it.
 - **Both sacred pins are correct.** hurl 8.0.1 is the latest release
   (2026-04-29) — no 8.1, no 9.0. Rust 1.97.1 is right under the written
   policy: stable is 1.98.0 (2026-08-18) and `channel-rust-1.98.1.toml` 404s,
@@ -839,12 +908,19 @@ actual principle before filing the next one.
   passes 99.6% of the time under three retries) and proef's
   detect-then-quarantine shape as the consensus architecture; per-step
   `retry:` already covers polling. Document the stance in
-  TESTING-STRATEGY instead — it reads as a gap until stated.
-- **CTRF** — the deferred trigger was checked and has **not** fired: no CI
-  platform ingests it natively (GitLab/CircleCI are JUnit-only, GitHub has
-  no format at all, Buildkite has its own JSON). If a consumer ever
-  materializes, Buildkite JSON is the higher-yield target (its span model
-  maps 1:1 onto step outcomes) — same trigger discipline.
+  TESTING-STRATEGY instead — it reads as a gap until stated. **Done
+  2026-09-10:** stated in TESTING-STRATEGY §5, with the arithmetic, beside
+  the determinism rules it belongs with.
+- **CTRF** — **shipped 2026-09-02 as `--ctrf` (#160)**; the "deferred
+  trigger was checked and has **not** fired" verdict recorded here is
+  superseded. It was right about the ecosystem — no CI platform ingests CTRF
+  natively (GitLab/CircleCI are JUnit-only, GitHub has no format at all,
+  Buildkite has its own JSON) — and that is why the entry is kept rather than
+  deleted: the trigger genuinely never fired, and the format shipped for a
+  different reason, that rendering it off the existing JUnit fold cost a
+  renderer rather than a mechanism. Buildkite JSON remains the higher-yield
+  target if a consumer ever does materialize (its span model maps 1:1 onto
+  step outcomes). **Corrected 2026-09-10.**
 - TAP 14 (unratified branch, zero declared consumers) · Bruno-style
   granular exit codes (ADR-0009 is a contract) · an OS-keychain secret
   backend (second storage mechanism) · a user-level personal config file
@@ -853,11 +929,14 @@ actual principle before filing the next one.
 
 ### Environment note (machine-side, not repo-side)
 
-Homebrew's Rust (1.98.0) shadows rustup on this machine's PATH
+~~Homebrew's Rust (1.98.0) shadows rustup on this machine's PATH
 (`/opt/homebrew/bin/cargo` first), which breaks `cargo +nightly` and the
 public-api gate and silently un-pins builds; Wave 1 gates were re-run
 under the pinned 1.97.1 explicitly. Owner action: `brew uninstall rust`
-or reorder PATH.
+or reorder PATH.~~ **Resolved 2026-09-10:** the PATH is reordered —
+`~/.cargo/bin` precedes `/opt/homebrew/bin`, and a login shell now resolves
+both `cargo` and `rustc` to the pinned 1.97.1. The Homebrew formula is still
+installed and harmless where it now sits; nothing needs uninstalling.
 
 ---
 
@@ -1483,9 +1562,15 @@ one-line summaries with no spec — that fact drives several verdicts below.
 
 **Deferred, with the trigger named:**
 
-- **R3-5 CTRF output** — on the first concrete consumer request. The format
-  has momentum but proef already emits JUnit, TAP, JSONL, a GH summary, SARIF
-  and HTML; a seventh format needs a consumer, not a trend.
+- **R3-5 CTRF output** — **shipped** as `--ctrf` (#160, 2026-09-02). The
+  deferral read "a seventh format needs a consumer, not a trend", against the
+  six proef already emits (JUnit, TAP, JSONL, a GH summary, SARIF, HTML). What
+  it had not weighed is that the seventh shares the JUnit fold, so it cost a
+  renderer rather than a mechanism, and ADR-0019 quarantine parity plus real
+  `retryAttempts` came with the fold. **Corrected 2026-09-10** — it sat under
+  a "deferred, trigger named" heading for the eight days after it shipped.
+  R3-9, four bullets below in this same list, was annotated the moment it
+  shipped — that is the convention this entry missed.
 - **R3-18 generated pack documentation** — when pack-vocabulary discovery becomes a
   reported adoption pain; the LSP currently serves that need interactively.
 - **R3-15 pre-M6 seam refactors** — when a second engine is actually
