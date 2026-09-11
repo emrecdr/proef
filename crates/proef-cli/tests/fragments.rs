@@ -1159,6 +1159,54 @@ fn a_fragment_file_body_resolves_the_same_under_both_runners() {
     );
 }
 
+/// **The gate CI runs before standing an environment up.** A `file,…;` body
+/// naming a file that is not there is statically knowable, and `--dry-run`
+/// reported `dry-run OK` over it — so the failure arrived minutes later, from a
+/// different command, against a live backend (OPEN-FINDINGS H3).
+///
+/// The checker is staging's own (`assets::resolve_assets`), not a second walk
+/// over the same artifacts, so validation and the run cannot disagree about
+/// whether a suite's assets resolve.
+#[test]
+fn dry_run_refuses_a_missing_asset_instead_of_reporting_ok() {
+    let fixture = Fixture::start().unwrap();
+    let dir = upload_project(false);
+
+    let out = proef_in(dir.path(), &fixture)
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(2)
+        .get_output()
+        .clone();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("payload.json"),
+        "the refusal must name the asset: {text}"
+    );
+    assert!(
+        !text.contains("dry-run OK"),
+        "and must not also claim the suite validated: {text}"
+    );
+}
+
+/// The same project with the asset in place still dry-runs clean: the check
+/// refuses a missing file, not a file body. Without this, the test above would
+/// pass just as well if `--dry-run` had started refusing every `file,…;` step.
+#[test]
+fn dry_run_passes_when_the_asset_is_where_its_fragment_says() {
+    let fixture = Fixture::start().unwrap();
+    let dir = upload_project(true);
+
+    proef_in(dir.path(), &fixture)
+        .args(["test", "--dry-run"])
+        .assert()
+        .code(0);
+}
+
 /// An asset that is not where its own source says it is fails *before* the
 /// request, naming the directory it was looked for in. It used to be skipped
 /// in silence, so the run reached hurl with an empty context root and the

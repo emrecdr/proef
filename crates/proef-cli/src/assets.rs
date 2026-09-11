@@ -92,23 +92,30 @@ impl AssetRoots<'_> {
 /// directory, where a symlink has no legitimate author: writing through one
 /// would land bytes outside the asset root, so an existing link is removed
 /// before the copy.
-pub(crate) fn stage_assets(
+/// Resolve every asset to the file it reads, refusing anything that cannot be
+/// staged — **without touching the destination**.
+///
+/// The half of [`stage_assets`] that only *asks questions*, split out so
+/// `--dry-run` can ask them too. Every answer here is statically knowable: the
+/// reference is a safe relative path, its source directory is known, no two
+/// sources claim one staged name, and the file is actually there. `--dry-run`
+/// is the gate CI runs before standing an environment up, and a deleted
+/// asset used to sail through it and fail later against a live backend
+/// (OPEN-FINDINGS H3).
+///
+/// One checker with two callers rather than a second walk over the same
+/// artifacts: staging and validation must not be able to disagree about
+/// whether a suite's assets resolve.
+pub(crate) fn resolve_assets(
     assets: &[AssetRef],
     roots: AssetRoots<'_>,
-    dest_root: &Path,
-) -> Result<(), AssetCopyError> {
+) -> Result<Vec<PathBuf>, AssetCopyError> {
     // One staged name may come from only one place. Two sources claiming it
     // would resolve to whichever was copied last — the silent-wrong-bytes
     // failure the per-scenario root exists to end, so it is refused rather
     // than narrowed.
     let mut claimed: BTreeMap<&str, PathBuf> = BTreeMap::new();
-    // The same refusal for names the *filesystem* will not keep apart:
-    // `Data.json` and `data.json` are two keys above but one file on a
-    // case-insensitive volume (macOS, Windows), and NFC/NFD spellings of one
-    // name likewise converge — so the check is on the canonical path the
-    // copy actually landed on, which is exact on every platform without
-    // guessing the volume's rules.
-    let mut landed: BTreeMap<PathBuf, String> = BTreeMap::new();
+    let mut sources = Vec::with_capacity(assets.len());
     for asset in assets {
         let name = asset.name.as_str();
         let reference = Path::new(name);
@@ -148,6 +155,28 @@ pub(crate) fn stage_assets(
                 }
             )));
         }
+        sources.push(source);
+    }
+    Ok(sources)
+}
+
+pub(crate) fn stage_assets(
+    assets: &[AssetRef],
+    roots: AssetRoots<'_>,
+    dest_root: &Path,
+) -> Result<(), AssetCopyError> {
+    // Every refusal first, in one place both this and `--dry-run` call.
+    let sources = resolve_assets(assets, roots)?;
+    // The refusal that needs a destination, so it cannot live above: names the
+    // *filesystem* will not keep apart. `Data.json` and `data.json` are two
+    // keys to `resolve_assets` but one file on a case-insensitive volume
+    // (macOS, Windows), and NFC/NFD spellings of one name likewise converge —
+    // so the check is on the canonical path the copy actually landed on, which
+    // is exact on every platform without guessing the volume's rules.
+    let mut landed: BTreeMap<PathBuf, String> = BTreeMap::new();
+    for (asset, source) in assets.iter().zip(sources) {
+        let name = asset.name.as_str();
+        let reference = Path::new(name);
         let target = dest_root.join(reference);
         // `fs::copy` truncates the destination first, so copying a file onto
         // itself destroys it.

@@ -306,10 +306,11 @@ set a root: proef stages each asset from its own source into the run's
 
 Two consequences worth knowing. The path must be a plain relative one — no
 leading `/`, no `..` — because it names a file inside your suite, not a
-location on the machine. And a missing file fails the scenario *before* the
-request, naming the directory it was looked for in
-(`proef::run::asset_unstageable`), rather than letting hurl report an
-unreadable body against the artifact. Staging resolves beside the file the
+location on the machine. And a missing file is refused at **`--dry-run`**,
+naming the directory it was looked for in (`proef::run::asset_unstageable`) —
+so the gate CI runs before standing an environment up answers it, rather than
+a failing request minutes later, or hurl reporting an unreadable body against
+the artifact. Staging resolves beside the file the
 parser actually read, so the directory you run from does not matter; a symlink
 already at a staging destination is replaced, never written through; and two
 references that name one file on a case-insensitive filesystem (`Data.json` and

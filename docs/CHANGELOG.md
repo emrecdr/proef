@@ -26,6 +26,15 @@ Regrouping preserved every entry and its order within its kind.
   the formula's own `test do` asserts the man page and completion landed.
   Takes effect on the next tag: a tag runs the workflow from its own commit.
 
+- **`--dry-run` refuses a `file,…;` asset that is not there.** A suite whose
+  asset had been deleted reported `dry-run OK`, and the failure arrived later
+  from a different command, against a live backend — from the one gate CI runs
+  *before* standing an environment up. Whether an asset resolves is statically
+  knowable, so it is answered there now. The checker is staging's own
+  (`assets::resolve_assets`, split out of `stage_assets`) rather than a second
+  walk over the same artifacts, so validation and the run cannot disagree; the
+  message and the diagnostic code are the ones a run already gave.
+
 - **`file,` inside a JSON or assertion body is no longer mistaken for a file
   asset.** The emitter found the files an artifact reads by scanning its text
   for the literal `file,` and a closing `;`, so a request body containing that
