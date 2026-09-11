@@ -41,6 +41,22 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Internal
 
+- **The secret-resolution order is pinned where it is decided.** "An unset
+  `PROEF_SECRET_<NAME>` still reads the store" is load-bearing — every run that
+  keeps its secrets in the committed store depends on it — and was asserted
+  only by an integration test that stands up a fixture server, executes a suite
+  and checks exit 0. That test does catch a regression, indirectly and by way
+  of an exit code. `secretstore::resolve_all` now carries unit tests for both
+  directions of the precedence and for the neither-source error, each verified
+  against a mutation that breaks it.
+
+  One of those tests had to be rewritten first. It claimed to prove the
+  `from_store.is_empty()` early return by pointing at a corrupt store, and
+  deleting that return left it green: `load_store`'s error only reaches the
+  caller through names that needed the store, and there were none. The early
+  return is an IO saving, not an observable behaviour. The corrupt-store case
+  is kept as its own test, saying that.
+
 - **A located-lines undercount can no longer reach a caller looking complete.**
   `locate::key_line_spans` returned a bare `Vec<Span>`, and it sees only
   block-style `key:` lines — a flow-style `- {use: base}` item is valid YAML,
