@@ -2283,5 +2283,18 @@ Found while fixing the above; each was validated and consciously left out of sco
   the exit code~~ *(closed: the console latch shipped in the 2026-09-02 series (#160), to its
   own written design; the record's own writer got the same latch in #168, and both reach
   exit 3 through `escalate_environment_failures`)*.
-- **Absent-secret fallthrough** ("an unset `PROEF_SECRET_<NAME>` still reads the store")
-  is load-bearing and pinned only by an integration test, not a unit test.
+- ~~**Absent-secret fallthrough** ("an unset `PROEF_SECRET_<NAME>` still reads
+  the store") is load-bearing and pinned only by an integration test, not a
+  unit test.~~ **Closed 2026-09-11:** `resolve_all` carries unit tests for the
+  fallthrough, for the override winning over a stored value, and for the
+  neither-source error naming both remedies — each checked against a mutation
+  that breaks it. The `PROEF_KEY` override supplies the key, so nothing touches
+  a key *file*.
+
+  Recorded because it cost a rewrite: the override test first claimed to prove
+  the `from_store.is_empty()` early return by using a corrupt store, and
+  deleting that return left the test green. `load_store`'s error reaches the
+  caller only through names that needed the store, and a fully env-supplied run
+  has none — so the early return is an IO saving, not an observable behaviour,
+  and the test's stated mechanism was not the one making it pass. Kept as a
+  separate test that says so.

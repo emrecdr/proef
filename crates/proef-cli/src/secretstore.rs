@@ -518,9 +518,132 @@ fn permissive_mode_status(path: &Path) -> proef_core::engine::DoctorStatus {
     proef_core::engine::DoctorStatus::Pass
 }
 
+// Edition 2024 made `std::env::set_var`/`remove_var` unsafe fns, and the
+// workspace denies `unsafe_code` — the same exception `envvar`'s own tests
+// carry, for the same reason: nextest runs one test per process, so no other
+// thread can observe the mutation.
 #[cfg(test)]
+#[allow(unsafe_code, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// A store holding `apiToken` encrypted under a key supplied via
+    /// `PROEF_KEY`, so nothing here touches a key *file*.
+    ///
+    /// `PROEF_KEY` is deliberate rather than convenient: it takes priority over
+    /// the key file, so the test cannot accidentally read — or create — the
+    /// developer's real key while asserting about the store.
+    fn store_with_api_token(value: &str) -> (tempfile::TempDir, PathBuf, [u8; 32]) {
+        let key = [7u8; 32];
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(".proef-secrets.json");
+        let store = BTreeMap::from([("apiToken".to_owned(), encrypt(value, &key))]);
+        std::fs::write(&path, serde_json::to_string(&store).expect("serialize")).expect("write");
+        // SAFETY: one process per test under nextest.
+        unsafe {
+            std::env::set_var(
+                "PROEF_KEY",
+                base64::engine::general_purpose::STANDARD.encode(key),
+            );
+        }
+        (dir, path, key)
+    }
+
+    fn names(name: &str) -> std::collections::BTreeSet<String> {
+        std::collections::BTreeSet::from([name.to_owned()])
+    }
+
+    /// **The fallthrough itself.** `PROEF_SECRET_<NAME>` overrides the store;
+    /// *unset*, the store must still supply the value. This was load-bearing —
+    /// every run that keeps its secrets in the committed store depends on it —
+    /// and pinned only by an integration test that stands up a fixture server,
+    /// executes a suite and asserts exit 0. That test would catch a regression,
+    /// eventually and indirectly, by way of an exit code. This catches it here,
+    /// in the function that owns the precedence.
+    #[test]
+    fn an_unset_env_override_falls_through_to_the_store() {
+        let (_dir, path, _key) = store_with_api_token("from-the-store");
+        // SAFETY: as above. Removed explicitly rather than assumed absent —
+        // the assertion is about this variable being unset.
+        unsafe { std::env::remove_var("PROEF_SECRET_APITOKEN") };
+
+        let resolved = resolve_all(&path, &names("apiToken")).expect("the store supplies it");
+        assert_eq!(
+            resolved.get("apiToken").map(String::as_str),
+            Some("from-the-store")
+        );
+    }
+
+    /// The other half of the same rule, asserted so the pair cannot be
+    /// satisfied by always reading one source: the store holds a *different*
+    /// value, so this is about which source wins rather than about there being
+    /// one to win.
+    #[test]
+    fn a_set_env_override_beats_the_stored_value() {
+        let (_dir, path, _key) = store_with_api_token("from-the-store");
+        // SAFETY: one process per test under nextest.
+        unsafe { std::env::set_var("PROEF_SECRET_APITOKEN", "from-the-env") };
+
+        let resolved = resolve_all(&path, &names("apiToken"));
+        // SAFETY: as above. Removed before asserting, so a failure cannot
+        // leave the variable set for whatever runs next in this process.
+        unsafe { std::env::remove_var("PROEF_SECRET_APITOKEN") };
+        let resolved = resolved.expect("the override resolves");
+        assert_eq!(
+            resolved.get("apiToken").map(String::as_str),
+            Some("from-the-env")
+        );
+    }
+
+    /// A corrupt store does not fail a run whose every secret came from the
+    /// environment.
+    ///
+    /// Pinned separately, and worded carefully, because the obvious
+    /// explanation is wrong. It is **not** the `from_store.is_empty()` early
+    /// return that makes this true: delete that return and this still passes,
+    /// because `load_store`'s error only reaches the caller through names that
+    /// needed the store, and here there are none. The early return is an IO
+    /// saving, not an observable behaviour.
+    ///
+    /// That matters because the first version of the test above claimed to
+    /// prove the early return by using a corrupt store — and removing the
+    /// return left it green. A test whose stated mechanism is not the one
+    /// making it pass is indistinguishable from a test that works.
+    #[test]
+    fn a_corrupt_store_does_not_fail_a_fully_env_supplied_run() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(".proef-secrets.json");
+        std::fs::write(&path, "{ not json at all").expect("write");
+        // SAFETY: one process per test under nextest.
+        unsafe { std::env::set_var("PROEF_SECRET_APITOKEN", "from-the-env") };
+
+        let resolved = resolve_all(&path, &names("apiToken"));
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("PROEF_SECRET_APITOKEN") };
+        assert_eq!(
+            resolved
+                .expect("no name needed the store")
+                .get("apiToken")
+                .map(String::as_str),
+            Some("from-the-env")
+        );
+    }
+
+    /// Neither source: one human-ready line naming the secret and *both* ways
+    /// to supply it, rather than a bare "missing".
+    #[test]
+    fn a_name_in_neither_source_names_both_remedies() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join(".proef-secrets.json");
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("PROEF_SECRET_APITOKEN") };
+
+        let errors = resolve_all(&path, &names("apiToken")).expect_err("nothing supplies it");
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("apiToken"), "{errors:?}");
+        assert!(errors[0].contains("proef secret set"), "{errors:?}");
+        assert!(errors[0].contains("PROEF_SECRET_APITOKEN"), "{errors:?}");
+    }
 
     #[test]
     fn round_trip_and_tamper_rejection() {
