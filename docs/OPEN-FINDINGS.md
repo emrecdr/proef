@@ -212,6 +212,22 @@ time needs its own regression pass over those tests before it can be trusted.
 Until then the run-time failure is early (before the request is sent), names
 the file and the directory it was sought in, and cannot be reached silently.
 
+**Closed 2026-09-11, on both of the conditions this entry set.** The check is
+one function with two callers, not a second walker: `stage_assets` split into
+`assets::resolve_assets` — every refusal that is statically knowable, and no
+destination touched — plus the copy, and `--dry-run` calls the first half.
+Staging and validation cannot disagree about whether a suite's assets resolve,
+because they are the same code.
+
+And the regression pass this entry asked for came back clean without needing
+anything: all 712 tests pass, including the reference-corpus suites that run
+from temp working directories with settings passed by environment. The reason
+is the *other* H-item — since the feature-side twin of H5 landed, staging
+resolves against `LoadedFeature::read_from`, the path the parser actually read,
+so a new filesystem requirement at validation time does not inherit a
+cwd-dependency. The concern was correct when it was written and had been
+retired by a change filed under a different number.
+
 **H4. The `file,…;` scan in `proef-core` is hurl grammar the grammar guard
 cannot see.** `emit::file_refs_in` finds asset references by scanning for the
 literal `"file,"` and a closing `;`. That is engine syntax living in core, and

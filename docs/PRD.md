@@ -106,7 +106,8 @@ prose unchanged except agreed wording fixes; `proef test` runs them green agains
 fixture; failures name feature file + line + step text.
 US-2 (P1) I validate without executing. *AC:* `proef test --dry-run` binds every step,
 expands every macro/outline, resolves `${…}`, parses every generated artifact with hurl's
-parser, and exits 2 with labeled diagnostics on any failure — no network I/O.
+parser, checks every `file,…;` asset those artifacts read is present, and exits 2 with
+labeled diagnostics on any failure — no network I/O.
 US-3 (P1) I pass data per step. *AC:* inline `{captures}`, `| key | value |` data tables,
 and Scenario Outline `<placeholders>` all fill macro params; conflicts and missing
 required params are parse-time errors naming the line.

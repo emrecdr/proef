@@ -584,6 +584,10 @@ pub fn dry_run(
 
     // scenarios, selected, steps, batches, artifacts
     let mut totals = (0usize, 0usize, 0usize, 0usize, 0usize);
+    // Every asset that will not resolve, collected rather than raised at the
+    // first: a dry run exists to report what is wrong with a suite, all of it,
+    // in one pass.
+    let mut asset_failures: Vec<(String, crate::assets::AssetCopyError)> = Vec::new();
     for feature in &front.features {
         let steps: usize = feature
             .scenarios
@@ -615,6 +619,32 @@ pub fn dry_run(
             steps,
             batches
         );
+        // A `file,…;` body naming a file that is not there is statically
+        // knowable, and this is the gate CI runs before standing an
+        // environment up — so it is answered here rather than by a failed
+        // request against a live backend minutes later (OPEN-FINDINGS H3).
+        // The checker is staging's own, so validation and the run cannot
+        // disagree about whether a suite's assets resolve.
+        //
+        // Over every feature, not only the selected ones, matching what the
+        // rest of this loop already validates: a filter narrows what would
+        // *run*, never what a dry run checks.
+        let feature_dir = crate::fsutil::parent_dir(&feature.read_from);
+        for processed in &feature.scenarios {
+            let Some(artifact) = &processed.artifact else {
+                continue;
+            };
+            if let Err(err) = crate::assets::resolve_assets(
+                &artifact.assets,
+                crate::assets::AssetRoots {
+                    feature: &feature_dir,
+                    fragments: &front.fragment_dirs,
+                },
+            ) {
+                asset_failures.push((artifact.slug.clone(), err));
+            }
+        }
+
         totals.0 += feature.scenarios.len();
         totals.1 += selected;
         totals.2 += steps;
@@ -623,6 +653,18 @@ pub fn dry_run(
     }
 
     render::print_all(&front.warnings);
+    // Reported before the filter refusal below: an unresolvable asset is a
+    // defect in the suite, true whatever this invocation selected.
+    if !asset_failures.is_empty() {
+        let mut code = ExitCode::UserError;
+        for (slug, err) in &asset_failures {
+            crate::render::errln!("error: {slug}.hurl: {err}");
+            if matches!(err, crate::assets::AssetCopyError::Io(_)) {
+                code = ExitCode::SystemError;
+            }
+        }
+        return code;
+    }
     if (tags.is_some() || scenario.is_some() || scenario_file.is_some()) && totals.1 == 0 {
         return front::no_scenarios_matched(&front, tags, scenario);
     }
