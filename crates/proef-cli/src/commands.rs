@@ -47,7 +47,7 @@ fn config_vars_for(
 /// One helper rather than the same three lines at five call sites: the corpus
 /// is read once per invocation and shared by every load, and a site that built
 /// its own would silently reintroduce the per-load rescan this exists to avoid.
-pub(crate) fn corpus(config: &ProjectConfig) -> Result<proef_core::pack::FragmentCorpus, ExitCode> {
+pub(crate) fn corpus(config: &ProjectConfig) -> Result<front::LoadedCorpus, ExitCode> {
     front::fragment_corpus(config.fragments().as_deref(), &naming(config))
         .map_err(|err| report_front_error(&err))
 }
@@ -85,7 +85,7 @@ fn load_front(
     active_env: Option<&str>,
     run_id: Option<String>,
     config: &ProjectConfig,
-    fragments: &proef_core::pack::FragmentCorpus,
+    fragments: &front::LoadedCorpus,
 ) -> Result<front::FrontEnd, ExitCode> {
     let config_vars = config_vars_for(active_env, config)?;
     // Taken from the caller for the reason `corpus` exists: one read per
@@ -427,7 +427,7 @@ fn probe_runs_dir(runs_dir: &Path) -> (DoctorStatus, String) {
 fn validate_phase_features(
     config: &ProjectConfig,
     config_vars: &Arc<BTreeMap<String, String>>,
-    fragments: &proef_core::pack::FragmentCorpus,
+    fragments: &front::LoadedCorpus,
 ) -> Result<usize, ExitCode> {
     let mut scenarios = 0usize;
     // Taken from the caller, not built here: the corpus depends on neither the
@@ -754,7 +754,7 @@ pub fn macros(
         // diagnostics; list what the packs offer beneath them and keep the
         // failing exit code, so scripts see no change.
         Err(code) => {
-            let Ok(packs) = front::load_packs(path, &fragments, &naming(config)) else {
+            let Ok(packs) = front::load_packs(path, &fragments.corpus, &naming(config)) else {
                 return code;
             };
             crate::render::errln!(
@@ -906,9 +906,9 @@ fn fragment_check(
         Ok(corpus) => corpus,
         Err(err) => return Some((DoctorStatus::Warn, format!("`{shown}`: {err}"))),
     };
-    let named = corpus.fragments().len();
-    let bare: usize = corpus.unannotated().values().map(Vec::len).sum();
-    let broken = corpus.diagnostics().len();
+    let named = corpus.corpus.fragments().len();
+    let bare: usize = corpus.corpus.unannotated().values().map(Vec::len).sum();
+    let broken = corpus.corpus.diagnostics().len();
     let status = if broken > 0 {
         DoctorStatus::Warn
     } else {
@@ -969,7 +969,7 @@ pub fn fragments(
     // Diagnostics first: an unreadable or unparseable file is why a fragment is
     // missing from the listing, and a listing that silently omitted it would
     // read as "you never wrote it".
-    render::print_all(corpus.diagnostics());
+    render::print_all(corpus.corpus.diagnostics());
 
     // The suite is loaded for run counts only. When it does not bind there are
     // no counts to have — the same state `macros` handles by listing anyway and
@@ -1065,12 +1065,13 @@ pub fn fragments(
         return ExitCode::UserError;
     };
     let never_run: Vec<&str> = corpus
+        .corpus
         .fragments()
         .values()
         .filter(|f| !runs.contains_key(&f.qualified()))
         .map(|f| f.name.as_str())
         .collect();
-    let unannotated: usize = corpus.unannotated().values().map(Vec::len).sum();
+    let unannotated: usize = corpus.corpus.unannotated().values().map(Vec::len).sum();
     let mut failed = false;
     if !never_run.is_empty() {
         render::errln!(
@@ -1164,7 +1165,7 @@ fn count_fragment_runs(front: &front::FrontEnd, counts: &mut BTreeMap<String, us
 fn phase_fragment_runs(
     config: &ProjectConfig,
     active_env: Option<&str>,
-    fragments: &proef_core::pack::FragmentCorpus,
+    fragments: &front::LoadedCorpus,
 ) -> Result<BTreeMap<String, usize>, ExitCode> {
     let mut counts = BTreeMap::new();
     let phases = [("setup", config.setup()), ("teardown", config.teardown())];
@@ -1183,13 +1184,13 @@ fn phase_fragment_runs(
 
 /// Render the fragment listing, grouped by file.
 fn render_fragments(
-    corpus: &proef_core::pack::FragmentCorpus,
+    corpus: &front::LoadedCorpus,
     runs: Option<&BTreeMap<String, usize>>,
     referenced_by: &BTreeMap<String, Vec<String>>,
     output_json: bool,
 ) {
-    let fragments = corpus.fragments();
-    let unannotated = corpus.unannotated();
+    let fragments = corpus.corpus.fragments();
+    let unannotated = corpus.corpus.unannotated();
     // Every file that contributed anything, annotated or not — a file of purely
     // unannotated entries is precisely what a porting team needs to see.
     let mut files: Vec<&str> = fragments.values().map(|f| f.file.as_str()).collect();
@@ -1311,7 +1312,6 @@ pub fn artifacts(
         Ok(front) => front,
         Err(code) => return code,
     };
-    let project_root = config.root();
 
     if let Err(err) = std::fs::create_dir_all(out_dir) {
         crate::render::errln!("error: cannot create {}: {err}", out_dir.display());
@@ -1364,7 +1364,7 @@ pub fn artifacts(
                 &artifact.assets,
                 crate::assets::AssetRoots {
                     feature: &root,
-                    project: project_root,
+                    fragments: &front.fragment_dirs,
                 },
                 &asset_dir,
             ) {

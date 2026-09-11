@@ -145,6 +145,11 @@ pub struct FrontEnd {
     /// can disagree with itself about which engine owns a kind. Execution-time
     /// re-lowering needs these to ask an engine what its bodies read.
     pub kinds: Arc<Vec<proef_core::engine::StepKindSpec>>,
+    /// Where each fragment file was read from, for staging the assets a `ref:`
+    /// step's entry sends. Carried for the same reason [`LoadedFeature`] carries
+    /// `read_from`: the name is portable and the path is not, and staging needs
+    /// the path.
+    pub fragment_dirs: CorpusDirs,
     /// The run id used for this front-end pass.
     pub run_id: Arc<str>,
     /// How many pack sources loaded (builtin + project).
@@ -187,13 +192,64 @@ pub fn load_packs(
 pub fn fragment_corpus(
     root: Option<&Path>,
     naming: &SourceNaming,
-) -> Result<FragmentCorpus, FrontError> {
+) -> Result<LoadedCorpus, FrontError> {
     let kinds = registry::step_kinds();
-    let (sources, read_errors) = match root {
+    let (sources, dirs, read_errors) = match root {
         Some(root) => fragment_sources(root, &kinds, naming)?,
-        None => (Vec::new(), Vec::new()),
+        None => (Vec::new(), CorpusDirs::default(), Vec::new()),
     };
-    Ok(FragmentCorpus::new(sources, &kinds).with_read_errors(read_errors))
+    Ok(LoadedCorpus {
+        corpus: FragmentCorpus::new(sources, &kinds).with_read_errors(read_errors),
+        dirs,
+    })
+}
+
+/// The fragment corpus, plus the directory each of its files was read from.
+///
+/// The fragment-side twin of [`LoadedFeature`], and it exists for the same
+/// reason: the core value carries the portable *name*, this carries the IO path
+/// beside it, and only one of the two survives a `cd`.
+pub struct LoadedCorpus {
+    /// The scanned corpus, as `proef-core` sees it.
+    pub corpus: FragmentCorpus,
+    /// Where each of its files was read from.
+    pub dirs: CorpusDirs,
+}
+
+/// Fragment file name → the directory it was read from.
+///
+/// **Why a lookup and not a calculation.** A fragment's recorded name is made
+/// once, at the naming boundary (`read_corpus` → `SourceNaming::name`), and
+/// that boundary is deliberately one-way. `SourceNaming::relative` strips the
+/// project root lexically *and then*, when that fails, compares canonical
+/// forms — a fallback that exists because the lexical-only version already
+/// shipped a bug: a suite reached through a symlink (macOS `/tmp` →
+/// `/private/tmp`) silently failed to match (R11-9).
+///
+/// Asset staging used to invert that by hand — split `file.hurl#name`, join the
+/// file half onto the project root — with no such fallback. The two agreed only
+/// because both were seeded from `config.root()` and discovery walked from that
+/// same root, so only the lexical case was ever exercised, and nothing made
+/// them stay inverses. Recording the path the reader actually used removes the
+/// inverse entirely (OPEN-FINDINGS H5).
+#[derive(Debug, Clone, Default)]
+pub struct CorpusDirs(Arc<BTreeMap<String, PathBuf>>);
+
+impl FromIterator<(String, PathBuf)> for CorpusDirs {
+    fn from_iter<I: IntoIterator<Item = (String, PathBuf)>>(iter: I) -> Self {
+        Self(Arc::new(iter.into_iter().collect()))
+    }
+}
+
+impl CorpusDirs {
+    /// The directory the fragment file recorded as `file` was read from.
+    ///
+    /// `None` for a name no read produced — an unreadable file, or a caller
+    /// asking about a corpus this one did not load.
+    #[must_use]
+    pub fn dir_of(&self, file: &str) -> Option<&Path> {
+        self.0.get(file).map(PathBuf::as_path)
+    }
 }
 
 /// Discover and load a suite's packs — the single place that knows how a
@@ -224,7 +280,7 @@ pub fn run(
     mode: ResolveMode,
     run_id: Option<String>,
     config_vars: Arc<BTreeMap<String, String>>,
-    fragments: &FragmentCorpus,
+    fragments: &LoadedCorpus,
     state_file: &Path,
     naming: &SourceNaming,
 ) -> Result<FrontEnd, FrontError> {
@@ -260,7 +316,7 @@ pub fn run(
     );
     let world = World::new(GlobalStore::load(state_file)?);
 
-    let (packs_loaded, loaded) = load_pack_set(path, fragments, &kinds, naming)?;
+    let (packs_loaded, loaded) = load_pack_set(path, &fragments.corpus, &kinds, naming)?;
     let packs: Arc<PackSet> = Arc::new(loaded);
     let kind_to_engine = Arc::new(kind_to_engine);
 
@@ -358,6 +414,7 @@ pub fn run(
             config_vars,
             kind_to_engine,
             kinds: Arc::new(kinds),
+            fragment_dirs: fragments.dirs.clone(),
             run_id,
             packs_loaded,
             warnings,
@@ -751,7 +808,7 @@ pub fn fragment_sources(
     root: &Path,
     kinds: &[proef_core::engine::StepKindSpec],
     naming: &SourceNaming,
-) -> Result<(Vec<PackSource>, Vec<Diag>), FrontError> {
+) -> Result<(Vec<PackSource>, CorpusDirs, Vec<Diag>), FrontError> {
     if !root.exists() {
         return Err(FrontError::Core(CoreError::user(format!(
             "`[run] fragments` names `{}`, which does not exist",
@@ -812,10 +869,14 @@ fn read_sources(paths: Vec<PathBuf>, naming: &SourceNaming) -> Result<Vec<PackSo
 /// `proef flows` — a command that never looks at a fragment — because the text
 /// is read whole and then copied into an `Arc<str>`. The size is checked from
 /// the directory entry, so an oversized file is never allocated at all.
-fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, Vec<Diag>) {
+fn read_corpus(
+    paths: Vec<PathBuf>,
+    naming: &SourceNaming,
+) -> (Vec<PackSource>, CorpusDirs, Vec<Diag>) {
     use proef_core::pack::{Admit, CorpusBudget};
 
     let mut sources = Vec::with_capacity(paths.len());
+    let mut dirs = BTreeMap::new();
     let mut errors = Vec::new();
     // The decision (skip-without-charging, stop-not-skip on exhaustion) lives
     // in core with the constants it binds; only the *measurement* is ours —
@@ -839,17 +900,23 @@ fn read_corpus(paths: Vec<PathBuf>, naming: &SourceNaming) -> (Vec<PackSource>, 
             Admit::Read => {}
         }
         match std::fs::read_to_string(&path) {
-            Ok(text) => sources.push(PackSource {
-                name,
-                text: Arc::from(text.as_str()),
-            }),
+            Ok(text) => {
+                // The IO path, recorded beside the name at the one moment both
+                // are in hand. This is the naming boundary, and it is one-way
+                // by design — see `CorpusDirs`.
+                dirs.insert(name.clone(), crate::fsutil::parent_dir(&path));
+                sources.push(PackSource {
+                    name,
+                    text: Arc::from(text.as_str()),
+                });
+            }
             Err(err) => errors.push(proef_core::pack::FragmentCorpus::unreadable_file(
                 &name,
                 &err.to_string(),
             )),
         }
     }
-    (sources, errors)
+    (sources, dirs.into_iter().collect(), errors)
 }
 
 /// The shared "filters selected nothing" refusal (exit 2): a typo'd filter
