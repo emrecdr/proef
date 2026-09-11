@@ -1,7 +1,7 @@
 # ADR-0002 — Multi-engine core: factory/session seam, step-kind routing, batching
 
 **Status:** Accepted · **Date:** 2026-07-28 (amended 2026-09-01 — the core's entry
-grammar is a named closed set; see the Amendment below)
+grammar is a named closed set; see the Amendment below, and its 2026-09-10 correction)
 
 ## Context
 
@@ -136,6 +136,50 @@ closed set.
 literal meant "one rule lived at two altitudes." It covers **recognising** options.
 The core still **writes** `retry:`, `retry-interval:`, `delay:` and `variable:` as
 literals, so the same rule still lives at two altitudes, in the other direction.
+
+### Correction (2026-09-10) — the set was fourteen, and the fourteenth was unclassifiable
+
+The measurement above says thirteen literals across four files. It was
+fourteen. The one it missed is `"file,"` in `emit.rs`, where `file_refs_in`
+found the assets an artifact reads by scanning for that literal and a closing
+`;` — hurl's body grammar, in `proef-core`, for the entire life of asset
+staging.
+
+It went unrecorded for the same reason the method line did, and this section
+had already written the rule that predicts it: *a guard is closed only over the
+shapes it can classify.* `engine_grammar_kind` knew fences, `HTTP`, `[Section]`
+headers, method lines and `key: value` options. A body constructor is none of
+those — no colon, no brackets, no uppercase — so the literal was never
+classified, never entered the inventory, and was never reported missing from
+it. The set was not measured and found closed; it was measured through a
+classifier that could not see this member.
+
+That is the third decay of this section's own claim: once by an order of
+magnitude in the count, once by a multi-line literal, and now by a shape.
+Each time the count was wrong in the direction of the guard's blind spot,
+which is the only direction it can be wrong in.
+
+**Resolved by the second remedy, not the first.** Decision 2 below sends the
+author to one of two options: widen the sanctioned set on the record, or put
+the syntax behind the seam. This is the first time the second was taken. The
+scan is now `StepKindSpec::assets`, a fourth engine-contributed hook beside
+`validate`, `fragments` and `options` — so the **recognised** group loses its
+body-reference member entirely rather than gaining a sanctioned row.
+
+Moving it also fixed the reading. A text scan cannot tell a real `file,…;`
+body from the same six characters inside a JSON or assertion body; the engine
+reads its own AST and can. It also has to *avoid* hurl's shared
+`visit_filename` hook, which carries the `[Options]` file paths (`output`,
+`cacert`, `client-cert`, `client-key`, `netrc-file`, `unix-socket`) alongside
+real bodies — `output:` names a file the run writes, and staging it would
+demand a source that cannot exist. Only the two body positions are read. None
+of that distinction is expressible in core, which is the argument for the seam
+stated as a capability rather than as a rule.
+
+The classifier gained a `body` arm in the same change, so the blind spot is
+closed independently of the literal that exposed it: a bare lowercase keyword
+followed by a comma (`file,`, `hex,`, `base64,`) is now classified, and
+reintroducing one into core fails the guard with `body "file," in emit.rs`.
 
 ### Decision
 

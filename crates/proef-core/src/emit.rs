@@ -183,7 +183,12 @@ fn cap_slug(slug: String) -> String {
 
 /// Emit one scenario's artifact set. `None` when the scenario lowers to no
 /// hurl entries (nothing to hand to the engine or the backend team).
-pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Option<Artifact> {
+pub fn emit(
+    scenario: &LoweredScenario,
+    feature_file: &str,
+    world: &World,
+    kinds: &[crate::engine::StepKindSpec],
+) -> Option<Artifact> {
     let slug = artifact_slug(feature_file, &scenario.name);
     let has_vars = !scenario.globals.is_empty() || !scenario.secrets.is_empty();
 
@@ -204,7 +209,7 @@ pub fn emit(scenario: &LoweredScenario, feature_file: &str, world: &World) -> Op
         .iter()
         .find(|(_, _, s)| matches!(s.payload, StepPayload::HurlEntries(_)))?;
 
-    let assets = collect_assets(&steps);
+    let assets = collect_assets(&steps, kinds);
 
     let mut text = String::new();
     let mut line = 0usize;
@@ -473,13 +478,25 @@ fn starts_entry_line(trimmed: &str) -> bool {
 /// entry's text (ADR-0004), so a `file,…;` inside one is attributed to the
 /// request step that owns those lines. That is the step whose body they became
 /// part of, and the only provenance the merged text still has.
-fn collect_assets(steps: &[(usize, usize, &crate::step::LoweredStep)]) -> Vec<AssetRef> {
+fn collect_assets(
+    steps: &[(usize, usize, &crate::step::LoweredStep)],
+    kinds: &[crate::engine::StepKindSpec],
+) -> Vec<AssetRef> {
     let mut assets: Vec<AssetRef> = Vec::new();
     for (_, _, step) in steps {
         let StepPayload::HurlEntries(payload) = &step.payload else {
             continue;
         };
-        for name in file_refs_in(payload) {
+        // The claiming engine reads its own bodies. A kind with no scanner
+        // sends no assets, which is the same answer as an empty scan.
+        let Some(scan) = kinds
+            .iter()
+            .find(|spec| spec.prefix == step.kind.as_str())
+            .and_then(|spec| spec.assets)
+        else {
+            continue;
+        };
+        for name in scan(payload) {
             let asset = AssetRef {
                 name,
                 fragment: step.fragment.clone(),
@@ -508,29 +525,6 @@ fn collect_assets(steps: &[(usize, usize, &crate::step::LoweredStep)]) -> Vec<As
 #[must_use]
 pub fn asset_root(slug: &str) -> String {
     format!("assets/{slug}")
-}
-
-/// Filenames referenced as hurl `file,<name>;` bodies or multipart parts in
-/// one entry's text.
-///
-/// Per entry rather than per artifact: the finished text has lost which
-/// source wrote each reference, and that is what decides the directory it
-/// resolves against ([`AssetRef`]).
-fn file_refs_in(hurl_text: &str) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for line in hurl_text.lines() {
-        let mut rest = line;
-        while let Some(position) = rest.find("file,") {
-            let tail = &rest[position + "file,".len()..];
-            let Some(end) = tail.find(';') else { break };
-            let name = tail[..end].trim();
-            if !name.is_empty() && !names.iter().any(|n| n == name) {
-                names.push(name.to_owned());
-            }
-            rest = &tail[end + 1..];
-        }
-    }
-    names
 }
 
 /// `<slug>.vars`: referenced globals as `name=value` (value from the World at
@@ -603,6 +597,41 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+    use crate::engine::StepKindSpec;
+
+    /// A stub asset scanner: every line reading `send <name>`.
+    ///
+    /// Deliberately **not** hurl syntax. Core no longer knows how a body names
+    /// a file, so a core test that used real `file,…;` text would be asserting
+    /// the engine's grammar from the wrong side of the seam — and would still
+    /// pass if the old text scan came back. A grammar nothing but this stub
+    /// recognises can only be answered by the hook.
+    fn stub_assets(text: &str) -> Vec<String> {
+        text.lines()
+            .filter_map(|line| line.strip_prefix("send "))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The registry as the emitter sees it: one kind, claiming `hurl`.
+    const KINDS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: None,
+        options: None,
+        assets: Some(stub_assets),
+    }];
+
+    /// The same kind with no asset hook — a kind that sends no files.
+    const KINDS_NO_ASSETS: &[StepKindSpec] = &[StepKindSpec {
+        prefix: "hurl",
+        schema: "true",
+        validate: None,
+        fragments: None,
+        options: None,
+        assets: None,
+    }];
 
     /// **Two scenarios must never claim one artifact name.** Same stem, same
     /// scenario, different directories used to slug identically, so the second
@@ -901,13 +930,44 @@ mod tests {
         );
     }
 
+    /// **The emitter asks the claiming engine what an entry reads.**
+    ///
+    /// Core used to answer this itself by scanning for the literal `"file,"`,
+    /// which is hurl's body grammar living in `proef-core` — and grammar the
+    /// ADR-0002 guard could not classify, so it was neither sanctioned nor
+    /// reported missing. The payload below is not hurl and names two files
+    /// anyway, which only the injected hook can know.
     #[test]
-    fn file_refs_in_finds_file_bodies_and_multipart_parts() {
-        let text = "POST http://x/upload\n[Multipart]\nphoto: file,fixture.jpg;\nHTTP 201\n\nPOST http://x/raw\nfile,payload.bin;\nHTTP 200\n";
-        assert_eq!(
-            file_refs_in(text),
-            vec!["fixture.jpg".to_owned(), "payload.bin".to_owned()]
-        );
+    fn assets_come_from_the_claiming_engine_not_from_core() {
+        let mut lowered = scenario();
+        lowered.batches[0].steps[0].payload =
+            StepPayload::HurlEntries("send fixture.jpg\nsend payload.bin\n".to_owned());
+        let artifact = emit(&lowered, "500_demo", &World::default(), KINDS).unwrap();
+        let names: Vec<&str> = artifact.assets.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["fixture.jpg", "payload.bin"]);
+    }
+
+    /// A kind with no asset hook sends no assets — the same answer an empty
+    /// scan gives, so the `Option` costs the emitter no special case.
+    #[test]
+    fn a_kind_with_no_asset_hook_reports_nothing() {
+        let mut lowered = scenario();
+        lowered.batches[0].steps[0].payload =
+            StepPayload::HurlEntries("send fixture.jpg\n".to_owned());
+        let artifact = emit(&lowered, "500_demo", &World::default(), KINDS_NO_ASSETS).unwrap();
+        assert!(artifact.assets.is_empty(), "{:?}", artifact.assets);
+    }
+
+    /// A step whose kind no registered engine claims contributes nothing,
+    /// rather than falling back to some other engine's reading of its body.
+    #[test]
+    fn an_unclaimed_kind_contributes_no_assets() {
+        let mut lowered = scenario();
+        lowered.batches[0].steps[0].kind = crate::step::StepKindId::from("other");
+        lowered.batches[0].steps[0].payload =
+            StepPayload::HurlEntries("send fixture.jpg\n".to_owned());
+        let artifact = emit(&lowered, "500_demo", &World::default(), KINDS).unwrap();
+        assert!(artifact.assets.is_empty(), "{:?}", artifact.assets);
     }
 
     /// The asset root is per scenario, and the slug is what separates them —
@@ -930,7 +990,7 @@ mod tests {
         store.insert("envName", Value::String("staging".into()));
         let world = World::new(store);
 
-        let artifact = emit(&scenario(), "500_demo", &world).unwrap();
+        let artifact = emit(&scenario(), "500_demo", &world, KINDS).unwrap();
         assert_eq!(artifact.slug, "500-demo--search-finds-a-record");
 
         let lines: Vec<&str> = artifact.hurl_text.lines().collect();
@@ -975,7 +1035,7 @@ mod tests {
             globals: BTreeSet::new(),
             warnings: Vec::new(),
         };
-        assert!(emit(&empty, "f", &World::default()).is_none());
+        assert!(emit(&empty, "f", &World::default(), KINDS).is_none());
     }
 
     #[test]
@@ -988,8 +1048,8 @@ mod tests {
     #[test]
     fn emission_is_deterministic() {
         let world = World::default();
-        let a = emit(&scenario(), "500_demo", &world).unwrap();
-        let b = emit(&scenario(), "500_demo", &world).unwrap();
+        let a = emit(&scenario(), "500_demo", &world, KINDS).unwrap();
+        let b = emit(&scenario(), "500_demo", &world, KINDS).unwrap();
         assert_eq!(a.hurl_text, b.hurl_text);
         assert_eq!(
             serde_json::to_string(&a.map).unwrap(),

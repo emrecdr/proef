@@ -14,6 +14,7 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
     validate: None,
     fragments: None,
     options: None,
+    assets: None,
 }];
 
 fuzz_target!(|data: &[u8]| {

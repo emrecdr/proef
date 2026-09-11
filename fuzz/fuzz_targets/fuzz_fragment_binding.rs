@@ -97,6 +97,7 @@ const KINDS: &[StepKindSpec] = &[StepKindSpec {
         template_reads: |_| Vec::new(),
     }),
     options: None,
+    assets: None,
 }];
 
 fuzz_target!(|data: &[u8]| {

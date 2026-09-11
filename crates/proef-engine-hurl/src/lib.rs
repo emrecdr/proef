@@ -28,7 +28,9 @@ const PROBE_HURL: &str = "GET http://localhost/health\nHTTP 200\n";
 /// Step kinds claimed by this engine: the `hurl:` raw block (ADR-0004,
 /// TECH-SPEC §6 — the pack key doubles as the routing kind). The validate hook
 /// is pack validation pass 7's probe parser; the fragment hooks are ADR-0018's
-/// `.hurl` scanner, which reads named entries out of real hurl files.
+/// `.hurl` scanner, which reads named entries out of real hurl files; the asset
+/// hook reads the `file,…;` bodies an entry sends, so the emitter can record
+/// what an artifact reads without core knowing hurl's body grammar.
 const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
     prefix: "hurl",
     schema: r#"{ "type": "string", "description": "Raw hurl entries; ${…} lowered at author time, {{…}} resolved by hurl at run time" }"#,
@@ -39,6 +41,7 @@ const STEP_KINDS: &[StepKindSpec] = &[StepKindSpec {
         template_reads: fragment::template_reads,
     }),
     options: Some(recognise_option),
+    assets: Some(fragment::scan_assets),
 }];
 
 /// hurl's `[Options]` keys, as the core's budget rules see them (ADR-0007).

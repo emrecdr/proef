@@ -35,6 +35,7 @@ mod tests {
             validate: None,
             fragments: None,
             options: None,
+            assets: None,
         }];
         let schema = json_schema(&kinds);
         assert_eq!(

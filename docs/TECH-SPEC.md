@@ -92,7 +92,14 @@ pub struct StepKindSpec { pub prefix: &'static str, pub schema: &'static str /* 
                           pub validate: Option<fn(&str) -> Result<(), PayloadProbeError>>,
                           // fragment files (ADR-0018): one Option, so extension and reader
                           // cannot disagree; discovery asks for the extension, never names one
-                          pub fragments: Option<FragmentSupport> }
+                          pub fragments: Option<FragmentSupport>,
+                          // raw [Options] keys → the core's budget policy, so option spellings
+                          // live only in the engine that owns them (ADR-0007)
+                          pub options: Option<fn(&str) -> Option<RawOption>>,
+                          // which files a lowered payload sends, so the emitter records what an
+                          // artifact reads without knowing the engine's body grammar (ADR-0002
+                          // amendment, 2026-09-10 correction)
+                          pub assets: Option<fn(&str) -> Vec<String>> }
 pub struct FragmentSupport { pub ext: &'static str /* "hurl" */, pub scan: FragmentScanner,
                              // "which variables does one template value read", answered by the
                              // engine's parser — a hurl function ({{newUuid}}) is not a variable

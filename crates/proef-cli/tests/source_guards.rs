@@ -411,6 +411,21 @@ fn engine_grammar_kind(literal: &str) -> Option<&'static str> {
             return Some("method");
         }
     }
+    // A body constructor: hurl introduces its non-JSON bodies with a bare
+    // keyword and a comma — `file,name;`, `hex,…;`, `base64,…;`. No arm above
+    // can see one. It is not a fence, not `HTTP`, not a `[Section]`, not a
+    // method line, and the `key: value` arm needs a colon. That blindness was
+    // real and load-bearing: `emit::file_refs_in` carried `"file,"` in
+    // `proef-core` for the whole life of asset staging, sanctioned by nobody
+    // because the guard never classified it and so never asked. The scan now
+    // lives behind `StepKindSpec::assets`; this arm is what stops the literal
+    // coming back unnoticed.
+    if let Some(word) = literal.strip_suffix(',')
+        && !word.is_empty()
+        && word.chars().all(|c| c.is_ascii_lowercase())
+    {
+        return Some("body");
+    }
     if let Some((key, rest)) = literal.split_once(':') {
         let keyed = key.starts_with(|c: char| c.is_ascii_lowercase())
             && key.chars().all(|c| c.is_ascii_lowercase() || c == '-');

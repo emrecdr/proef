@@ -32,6 +32,7 @@
 //!             validate: None,
 //!             fragments: None,
 //!             options: None,
+//!             assets: None,
 //!         }];
 //!         KINDS
 //!     }
@@ -116,6 +117,11 @@ pub struct StepKindSpec {
     /// Recognise this kind's raw option keys, so the core can apply ADR-0007's
     /// budget rules without knowing how the engine spells them.
     pub options: Option<OptionRecogniser>,
+    /// Read the file assets one lowered payload sends, so the emitter can
+    /// record them without knowing the engine's body grammar.
+    ///
+    /// `None` = the kind sends no file assets.
+    pub assets: Option<AssetScanner>,
 }
 
 /// An engine-contributed static payload validator (pack validation pass 7).
@@ -156,6 +162,30 @@ pub struct RawOption {
 ///
 /// `None` = the kind has no raw options the core bounds.
 pub type OptionRecogniser = fn(&str) -> Option<RawOption>;
+
+/// An engine-contributed reader for the file assets one lowered payload sends:
+/// the names, exactly as the payload spells them.
+///
+/// The last of the four hooks that keep body grammar out of `proef-core`. The
+/// emitter has to know *which files an artifact reads* — it records them so the
+/// CLI can stage each one beside the source that named it — but "which files"
+/// is a question only the engine's own grammar can answer. The core asked it by
+/// scanning for the literal `"file,"` and a closing `;`, which was engine syntax
+/// living in core and, worse, syntax the ADR-0002 guard structurally could not
+/// see: `engine_grammar_kind` classifies fences, `HTTP`, `[Section]` headers,
+/// method lines and `key: value` options, and a body reference is none of those,
+/// so the literal was neither sanctioned nor reported missing.
+///
+/// A text scan also cannot tell a real body reference from the same six
+/// characters inside a JSON or assertion body. An engine reading its own AST
+/// can, which is why this is a fix and not only a move.
+///
+/// Names come back **as written**, not resolved: a name may carry `{{…}}` that
+/// only run time can fill, and the staging layer needs the spelling the entry
+/// used.
+///
+/// `None` = the kind sends no file assets.
+pub type AssetScanner = fn(&str) -> Vec<String>;
 
 /// An engine-contributed reader for one fragment file's whole text (ADR-0018).
 pub type FragmentScanner = fn(&str) -> Result<ScannedFile, FragmentScanError>;

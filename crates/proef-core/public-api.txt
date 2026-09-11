@@ -378,7 +378,7 @@ impl core::panic::unwind_safe::UnwindSafe for proef_core::emit::SidecarMap
 pub const proef_core::emit::MAP_SCHEMA_VERSION: u32
 pub fn proef_core::emit::artifact_slug(&str, &str) -> alloc::string::String
 pub fn proef_core::emit::asset_root(&str) -> alloc::string::String
-pub fn proef_core::emit::emit(&proef_core::lower::LoweredScenario, &str, &proef_core::world::World) -> core::option::Option<proef_core::emit::Artifact>
+pub fn proef_core::emit::emit(&proef_core::lower::LoweredScenario, &str, &proef_core::world::World, &[proef_core::engine::StepKindSpec]) -> core::option::Option<proef_core::emit::Artifact>
 pub fn proef_core::emit::slugify(&str) -> alloc::string::String
 pub mod proef_core::engine
 pub enum proef_core::engine::DoctorStatus
@@ -659,6 +659,7 @@ impl core::marker::UnsafeUnpin for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::RefUnwindSafe for proef_core::engine::ScenarioCtx
 impl core::panic::unwind_safe::UnwindSafe for proef_core::engine::ScenarioCtx
 pub struct proef_core::engine::StepKindSpec
+pub proef_core::engine::StepKindSpec::assets: core::option::Option<proef_core::engine::AssetScanner>
 pub proef_core::engine::StepKindSpec::fragments: core::option::Option<proef_core::engine::FragmentSupport>
 pub proef_core::engine::StepKindSpec::options: core::option::Option<proef_core::engine::OptionRecogniser>
 pub proef_core::engine::StepKindSpec::prefix: &'static str
@@ -687,6 +688,7 @@ pub fn proef_core::engine::EngineSession::batch_budget(&mut self, &proef_core::s
 pub fn proef_core::engine::EngineSession::finish(&mut self) -> core::result::Result<(), proef_core::error::EngineError>
 pub fn proef_core::engine::EngineSession::run_batch(&mut self, &proef_core::step::StepBatch, &mut proef_core::world::World, &proef_core::event::EventSink, &tokio_util::sync::cancellation_token::CancellationToken) -> proef_core::step::BatchResult
 pub fn proef_core::engine::secret_variables<'a>(&'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>, &'a alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>) -> impl core::iter::traits::iterator::Iterator<Item = (&'a str, &'a str)>
+pub type proef_core::engine::AssetScanner = fn(&str) -> alloc::vec::Vec<alloc::string::String>
 pub type proef_core::engine::FragmentScanner = fn(&str) -> core::result::Result<proef_core::engine::ScannedFile, proef_core::engine::FragmentScanError>
 pub type proef_core::engine::OptionRecogniser = fn(&str) -> core::option::Option<proef_core::engine::RawOption>
 pub type proef_core::engine::PayloadValidator = fn(&str) -> core::result::Result<(), proef_core::engine::PayloadProbeError>

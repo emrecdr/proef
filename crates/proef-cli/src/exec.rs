@@ -1825,6 +1825,7 @@ fn build_specs(
             // original.
             let prepare: runner::PrepareFn = {
                 let asset_dir = asset_dir.clone();
+                let kinds = Arc::clone(&front.kinds);
                 Box::new(move |world| {
                     let ctx = LowerCtx {
                         feature: &feature_file,
@@ -1845,6 +1846,7 @@ fn build_specs(
                         &asset_dir,
                         &artifacts_dir,
                         project_root.as_deref(),
+                        &kinds,
                     )?;
                     Ok(Prepared {
                         batches: lowered.batches,
@@ -1901,6 +1903,7 @@ fn stage_and_record(
     asset_dir: &Path,
     artifacts_dir: &Path,
     project_root: Option<&Path>,
+    kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<Option<ArtifactRef>, Vec<proef_core::diag::Diag>> {
     let fault = |detail: String| {
         vec![proef_core::diag::Diag::error(
@@ -1910,7 +1913,7 @@ fn stage_and_record(
     };
     std::fs::create_dir_all(asset_dir)
         .map_err(|err| fault(format!("cannot create {}: {err}", asset_dir.display())))?;
-    let Some(artifact) = emit::emit(lowered, stem, world) else {
+    let Some(artifact) = emit::emit(lowered, stem, world, kinds) else {
         return Ok(None);
     };
     crate::assets::stage_assets(
