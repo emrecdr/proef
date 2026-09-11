@@ -13,6 +13,8 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-11 (the checks that could not see what they claimed to cover)
+
 ### Fixed
 
 - **The Homebrew formula installs the man page and the shell completions.** Its
