@@ -2231,11 +2231,25 @@ Found while fixing the above; each was validated and consciously left out of sco
   reader is now duplicated in `proef-cli` and `proef-harness`. Justified today (a binary
   crate cannot be depended on; these are the only two `env::var` callers in the tree).
   **Tripwire: at a third caller, promote it to a shared crate.**
-- **Capture-name charset** is narrower than hurl's grammar, so an out-of-charset name is
-  silently omitted from `.map.json`.
-- **A `#` comment inside a `[Captures]` run** — fixed in #16; the one/two-letter-method
-  gap it exposed remains (`is_method_line` requires three characters, hurl's grammar does
-  not).
+- ~~**Capture-name charset** is narrower than hurl's grammar, so an
+  out-of-charset name is silently omitted from `.map.json`.~~
+  **Closed 2026-09-11:** aligned with `hurl_core`'s `key_string_text` — any
+  `char::is_alphanumeric` (Unicode, not ASCII) plus `_ - . [ ] @ $`. So
+  `user.id`, `items[0]`, `@type`, `total$` and `précis` all parse as captures
+  in hurl and were all absent from the sidecar.
+  A leading `[` stays refused because hurl refuses it too; `{`/`}` stay out
+  because a templated name has no statically knowable text.
+- **A `#` comment inside a `[Captures]` run** — fixed in #16; ~~the
+  one/two-letter-method gap it exposed remains (`is_method_line` requires three
+  characters, hurl's grammar does not)~~. **Closed 2026-09-11**, and the
+  measurement found a second error in the opposite direction: the predicate
+  also allowed `-`, which `hurl_core`'s `method` (`read_while(is_ascii_alphabetic)`,
+  non-empty, uppercase) does not. Too narrow on length and too wide on charset,
+  each masking the other, which is how both survived from 0.1.0. The failure is
+  a phantom row, not only a missing one: with the run left open across a short
+  method, a header of the next entry reaches `.map.json` as a capture nobody
+  wrote — the first version of the regression test missed exactly this, because
+  a response line closed the run anyway and it passed against the defect.
 - **`key_line_spans`' flow-style undercount** is guarded by convention, not types. Two
   callers guard it independently; a third would have to remember. Cheap hardening: have
   the primitive return a reliability flag.

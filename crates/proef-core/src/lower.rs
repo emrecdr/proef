@@ -1353,18 +1353,35 @@ pub(crate) fn is_response_line(trimmed: &str) -> bool {
     trimmed.starts_with("HTTP ") || trimmed.starts_with("HTTP/")
 }
 
-/// Is this trimmed line an entry-opening method line (`GET http://…`)? Custom
-/// methods are any ≥ 3-char run of ASCII uppercase / `-` — except `HTTP`,
-/// which opens a response.
+/// Is this trimmed line an entry-opening method line (`GET http://…`)?
+///
+/// **The method set is hurl's own**, read off its parser rather than guessed:
+/// `hurl_core::parser::parsers::method` reads `read_while(is_ascii_alphabetic)`
+/// and accepts the result when it is non-empty and equal to its own uppercase.
+/// So a method is one or more ASCII uppercase **letters**, and nothing else —
+/// except `HTTP`, which opens a response ([`is_response_line`]).
+///
+/// This recogniser was wrong in both directions, and the two errors hid each
+/// other. It required **three** characters, so `hurl_core` would parse a one-
+/// or two-letter method that this scan did not see — the emitter's capture scan
+/// then ran past the entry boundary and dropped every capture after it from
+/// `.map.json`, a normative artifact (ADR-0010). And it allowed `-`, which
+/// hurl's grammar does not, so a dashed uppercase word could open an entry here
+/// that hurl would refuse to parse as one. Neither extreme is exercised by a
+/// suite written in the common methods, which is why both survived from 0.1.0.
 ///
 /// Shared with the emitter's capture scan (`emit::capture_names`) — one
 /// canonical method recogniser, not a duplicate.
 pub(crate) fn is_method_line(trimmed: &str) -> bool {
-    trimmed.split_whitespace().next().is_some_and(|word| {
-        word.len() >= 3
-            && word.chars().all(|c| c.is_ascii_uppercase() || c == '-')
-            && word != "HTTP"
-    }) && trimmed.split_whitespace().count() >= 2
+    let mut words = trimmed.split_whitespace();
+    let Some(word) = words.next() else {
+        return false;
+    };
+    // A target must follow: a bare uppercase word is not an entry line.
+    words.next().is_some()
+        && !word.is_empty()
+        && word.chars().all(|c| c.is_ascii_uppercase())
+        && word != "HTTP"
 }
 
 /// Does the *last* entry of `text` have a response (`HTTP …`) line, and an

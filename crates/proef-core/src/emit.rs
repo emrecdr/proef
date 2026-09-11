@@ -432,18 +432,40 @@ pub(crate) fn capture_names(body: &[&str]) -> Vec<String> {
     names
 }
 
-/// Is `trimmed` shaped like a capture definition (`name: query`)? Bare
-/// identifiers only — a JSON body line (`"status": "ok"`) must never read as
-/// the capture `"status"`, and an entry-opening line never has this shape (a
-/// method line's first token carries no colon; a response line has no colon
-/// at all).
+/// Is `trimmed` shaped like a capture definition (`name: query`)?
+///
+/// **The charset is hurl's own**, read off `key_string::key_string_text`: any
+/// `char::is_alphanumeric` — Unicode, not ASCII — plus `_ - . [ ] @ $`. This
+/// scan previously accepted `[A-Za-z0-9_-]` only, so a capture hurl parses
+/// happily (`user.id`, `items[0]`, `@type`, `précis`) was silently absent from
+/// `.map.json` — a normative artifact whose whole contract is that no
+/// legitimate row is dropped (ADR-0010).
+///
+/// A leading `[` is still refused, and that is not a narrowing: hurl's own
+/// `key_string::parse` rejects a key-string whose first element starts with
+/// `[`, because that is a section header. `capture_names` refuses it a line
+/// earlier for the same reason.
+///
+/// Two shapes stay out, deliberately. A JSON body line (`"status": "ok"`)
+/// carries quotes, which are not in the set — the false positive this
+/// predicate exists to refuse. And a name written as a template
+/// (`{{prefix}}Id: …`, which hurl's key-string grammar does admit) has no
+/// statically knowable text, so there is no row the emitter could write for
+/// it; `{` and `}` are therefore absent from the set on purpose.
 fn capture_name(trimmed: &str) -> Option<&str> {
     let (name, _) = trimmed.split_once(':')?;
     let name = name.trim();
     (!name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+        && name.chars().all(|c| {
+            c.is_alphanumeric()
+                || c == '_'
+                || c == '-'
+                || c == '.'
+                || c == '['
+                || c == ']'
+                || c == '@'
+                || c == '$'
+        }))
     .then_some(name)
 }
 
@@ -459,9 +481,8 @@ fn capture_name(trimmed: &str) -> Option<&str> {
 /// authoring, and closing the run on `#` dropped every capture after the
 /// comment from `.map.json` (ADR-0010). Nothing needs it to close: the entry
 /// that follows opens with a method or response line, which closes the run
-/// itself. (One gap: [`is_method_line`] wants three characters, so a one- or
-/// two-letter method — legal hurl, unwritten in practice — opens an entry
-/// this scan does not see, and `#` no longer covers for it.)
+/// itself — for every method hurl accepts, now that [`is_method_line`] carries
+/// hurl's own method set rather than a three-character approximation of it.
 fn starts_entry_line(trimmed: &str) -> bool {
     is_response_line(trimmed) || is_method_line(trimmed)
 }
@@ -838,6 +859,97 @@ mod tests {
             capture_names(&body),
             vec!["HTTPStatus".to_owned(), "plain".to_owned()]
         );
+    }
+
+    /// **hurl's method set, not an approximation of it.** `hurl_core`'s
+    /// `method` parser takes one or more ASCII uppercase letters, so a
+    /// two-letter method parses there while this recogniser demanded three and
+    /// did not see the entry it opens — leaving the previous entry's capture
+    /// run open across the boundary.
+    ///
+    /// The header below is what makes that visible, and the first version of
+    /// this test did not have one: with a response line following the short
+    /// method, the run closed on `HTTP 200` anyway and the test passed against
+    /// the defect it was written for. A header inside the *new* entry, read
+    /// while the *old* run is still open, is a capture row for a capture
+    /// nobody wrote — a phantom in `.map.json`, which ADR-0010 makes
+    /// normative.
+    #[test]
+    fn a_short_method_closes_the_previous_capture_run() {
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "id: jsonpath \"$.id\"",
+            // Two letters: legal hurl, invisible to the old three-char rule.
+            "GO http://x/b",
+            // A header of the new entry. Capture-shaped, and inside the old
+            // run if the line above did not close it.
+            "X-Trace: abc",
+            "HTTP 200",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec!["id".to_owned()],
+            "a header of the next entry reached the sidecar as a capture"
+        );
+    }
+
+    /// The other direction of the same error. hurl's method is
+    /// `read_while(is_ascii_alphabetic)`, so a dash is not part of one; this
+    /// recogniser used to allow `-` and would open an entry on a line hurl
+    /// refuses to parse as a request. Ending a capture run on it silently
+    /// drops the captures beneath.
+    #[test]
+    fn a_dashed_uppercase_word_is_not_a_method_line() {
+        assert!(!crate::lower::is_method_line("X-FOO http://x/a"));
+        assert!(crate::lower::is_method_line("PROPFIND http://x/a"));
+        // A bare method with no target is not an entry line either.
+        assert!(!crate::lower::is_method_line("GET"));
+    }
+
+    /// **The capture charset is hurl's.** `key_string_text` admits any
+    /// `char::is_alphanumeric` plus `_ - . [ ] @ $`, and every one of these
+    /// parses as a capture there while being silently absent from `.map.json`
+    /// here — the sidecar quietly disagreeing with the artifact it describes.
+    #[test]
+    fn capture_names_carry_every_name_hurls_grammar_admits() {
+        let body = [
+            "GET http://x/a",
+            "HTTP 200",
+            "[Captures]",
+            "user.id: jsonpath \"$.user.id\"",
+            "items[0]: jsonpath \"$.items[0]\"",
+            "@type: jsonpath \"$.type\"",
+            "total$: jsonpath \"$.total\"",
+            // is_alphanumeric is Unicode, not ASCII.
+            "précis: jsonpath \"$.p\"",
+        ];
+        assert_eq!(
+            capture_names(&body),
+            vec![
+                "user.id".to_owned(),
+                "items[0]".to_owned(),
+                "@type".to_owned(),
+                "total$".to_owned(),
+                "précis".to_owned(),
+            ]
+        );
+    }
+
+    /// The widening must not swallow a JSON body line — the false positive
+    /// `capture_name` exists to refuse. Quotes are not in hurl's key-string
+    /// set, which is what keeps the two apart.
+    #[test]
+    fn a_quoted_json_key_is_still_not_a_capture() {
+        let body = [
+            "POST http://x/a",
+            "{",
+            "  \"status\": \"ok\"",
+            "}",
+            "HTTP 200",
+        ];
+        assert_eq!(capture_names(&body), Vec::<String>::new());
     }
 
     #[test]
