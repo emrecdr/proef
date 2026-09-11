@@ -22,7 +22,8 @@ tree and then retired into it:
 The review documents themselves were removed once their open items landed here; their
 full text, transcripts and citations are in git history (`git log --diff-filter=D
 -- docs/FIRST-RUN-UX-REVIEW.md docs/NON-TECHNICAL-UX-REVIEW.md`). The shipped/open split
-was re-checked against `main` on **2026-09-08** (after the 0.18 series).
+was re-checked against `main` on **2026-09-11** (after 0.19.0, which closed
+H3, H4 and H5).
 
 **Read the citations as "start reading here", not as addresses.** They were accurate on
 2026-08-06 and files have moved since; locate symbols with `rg`, not line numbers.

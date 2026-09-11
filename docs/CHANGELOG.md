@@ -13,6 +13,15 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Documentation
+
+- **0.19.0 is recorded where the corpus says it should be.** The release
+  History in `RELEASING.md`, the milestone Status in `CLAUDE.md`, the corpus
+  index's "through vX.Y.Z" line, and `OPEN-FINDINGS`' own re-check date. This
+  is the set that drifted after 0.15.0–0.17.0 — three tags with no History
+  entry, concealed by a fourth filed out of order — so it is done in the same
+  session as the tag rather than left for the next reader to discover.
+
 ## [0.19.0] - 2026-09-11 (the checks that could not see what they claimed to cover)
 
 ### Fixed

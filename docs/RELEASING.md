@@ -372,3 +372,23 @@ read it as a failed upload.
   `ResolvedRoot`, `timings::render` takes a `&Redactions`, and `flaky`'s `new`
   verdict is renamed `insufficient-data` with its default sample floor rising
   from 2 to 10
+- `v0.19.0` — the checks that could not see what they claimed to cover
+  (#186–#191). The Homebrew formula installs the man page and the shell
+  completions again — broken since 0.16.0 because the formula is a heredoc in
+  `release.yml` and the archive is staged in another job, so nothing tied the
+  two together; the render step now fails if the archive lacks a file the
+  formula installs, and this tag is the first to carry it. `--dry-run` refuses
+  a `file,…;` asset that is not there, through staging's own checker rather
+  than a second walk, so the gate CI runs before standing an environment up is
+  no longer blind to a defect that is entirely static. The asset scan moved
+  behind the engine seam: it was a scan for the literal `"file,"` in
+  `proef-core` that the ADR-0002 guard structurally could not classify — so it
+  was never sanctioned and never reported missing, and that ADR's "thirteen
+  literals" measurement is corrected to fourteen — while reading hurl's own AST
+  also stops `file,` inside a JSON body counting as an asset. A fragment's
+  assets stage from where its file was read rather than from where its recorded
+  name points, the fragment-side twin of what `LoadedFeature::read_from`
+  already does. `--rerun` reads its base record once instead of twice, and the
+  one doc check that only reads files moved into the half of the gate that only
+  reads files — breaking: `proef_core::emit::emit` takes the registered step
+  kinds and `StepKindSpec` gains an `assets` hook, replacing `emit::file_refs_in`
