@@ -142,16 +142,14 @@ pub(crate) fn normalize_macro(
             // items that carry the key produce one (assert-only macros have
             // no `steps:`, so every `hurl:` line in the block is an expect
             // item's), so the ordinal advances only when `item.hurl` is `Some`.
-            // The line scanner only recognises block-style `key:` lines
-            // (`locate::key_line_spans`), so a flow-style item (`- {hurl: …}`)
-            // parses to `Some` but contributes no line — exactly the hazard
-            // `analyze::index_use_refs` already guards for `use:` lines. Same
-            // fix: when the counts disagree the pairing can't be trusted, so
-            // every item in this macro falls back to the macro's own span
-            // instead of risking an ordinal-shifted wrong line.
-            let hurl_spans = index.expect_hurl_line_spans(name);
+            // `KeyLines::paired_with` is the only way to the spans, and it
+            // hands them over only when the scan and the parser agree on how
+            // many items this macro has. A flow-style item (`- {hurl: …}`)
+            // parses to `Some` and contributes no line, so they can disagree;
+            // `None` then means every item here falls back to the macro's own
+            // span rather than risking an ordinal-shifted wrong line.
             let hurl_key_count = items.iter().filter(|item| item.hurl.is_some()).count();
-            let spans_reliable = hurl_spans.len() == hurl_key_count;
+            let hurl_spans = index.expect_hurl_lines(name).paired_with(hurl_key_count);
             let mut hurl_ordinal = 0usize;
             for (index, item) in items.iter().enumerate() {
                 let has_hurl_key = item.hurl.is_some();
@@ -164,8 +162,12 @@ pub(crate) fn normalize_macro(
                     .as_deref()
                     .is_none_or(|fragment| fragment.trim().is_empty());
                 if item.status.is_none() && fragment_is_blank {
-                    let fragment_span = (spans_reliable && has_hurl_key)
-                        .then(|| hurl_spans.get(hurl_ordinal).copied())
+                    let fragment_span = has_hurl_key
+                        .then(|| {
+                            hurl_spans
+                                .as_ref()
+                                .and_then(|spans| spans.get(hurl_ordinal).copied())
+                        })
                         .flatten();
                     diags.push(
                         at(Diag::error(

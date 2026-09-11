@@ -2250,9 +2250,16 @@ Found while fixing the above; each was validated and consciously left out of sco
   method, a header of the next entry reaches `.map.json` as a capture nobody
   wrote — the first version of the regression test missed exactly this, because
   a response line closed the run anyway and it passed against the defect.
-- **`key_line_spans`' flow-style undercount** is guarded by convention, not types. Two
-  callers guard it independently; a third would have to remember. Cheap hardening: have
-  the primitive return a reliability flag.
+- ~~**`key_line_spans`' flow-style undercount** is guarded by convention, not
+  types. Two callers guard it independently; a third would have to remember.
+  Cheap hardening: have the primitive return a reliability flag.~~ **Closed
+  2026-09-11**, one step past the prescription. A flag can be ignored; the scan
+  is instead private behind a `KeyLines` value whose only accessors are
+  `paired_with(parsed)` — the spans, and only when the counts agree — and
+  `sole()` for a key that occurs at most once. There is no path to a positional
+  list that does not state the count it expects, so the third caller has
+  nothing to remember. Both existing guards became the call itself, and
+  `spans_reliable` is gone.
 - **Cross-scenario `${fake:*}` coincidence** — two scenarios can still draw the same
   value. Documented as a known limitation in AUTHORING/CHANGELOG/TECH-SPEC.
 - **No corpus tier for engineered robustness fixtures.** `tests/` has zero custom-method

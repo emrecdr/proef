@@ -39,6 +39,25 @@ Regrouping preserved every entry and its order within its kind.
   deliberately: a name written as a template has no statically knowable text to
   write a row for.
 
+### Internal
+
+- **A located-lines undercount can no longer reach a caller looking complete.**
+  `locate::key_line_spans` returned a bare `Vec<Span>`, and it sees only
+  block-style `key:` lines — a flow-style `- {use: base}` item is valid YAML,
+  parses to a real step, and contributes no line. So the list can be shorter
+  than the items it describes, and pairing them positionally attributes every
+  span after the gap to the wrong item: a go-to-definition landing on the
+  neighbouring line, a diagnostic pointing at it.
+
+  Both callers already knew, and each had written its own length comparison in
+  its own words from a prose warning. Both were correct; neither was enforced,
+  and a third caller would have had to rediscover the hazard and the remedy
+  together. The scan is now private behind a `KeyLines` value whose only
+  accessors are `paired_with(parsed)` — which yields the spans **only** when
+  the counts agree — and `sole()`, for a key like `match:` that occurs at most
+  once and has no sequence to pair against. No behaviour changes; what changes
+  is that the guard is the only way through.
+
 ### Documentation
 
 - **0.19.0 is recorded where the corpus says it should be.** The release
