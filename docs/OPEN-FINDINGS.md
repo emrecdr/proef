@@ -297,6 +297,30 @@ lookup rather than a re-parse. Not done here because it is a data-model change
 across three crates, and because the record must keep carrying the portable
 *name*: the resolved path would have to travel beside it, never replace it.
 
+**Closed 2026-09-11 — and it was one crate, not three.** The prescription above
+aimed the change at `Fragment`/`ScannedFragment`/`AssetRef`, which would have
+put host paths into `proef-core`. The feature side had already answered this
+differently and better: `FeatureFile.path` (core) carries the portable name and
+`LoadedFeature::read_from` (CLI) carries the IO path beside it. Doing the
+fragment side the same way keeps core untouched and makes the twins symmetric —
+`front::CorpusDirs` records the directory each fragment file was read from, at
+the naming boundary where both the name and the path are in hand, and
+`FrontEnd` carries it beside `kinds`. `AssetRoots::source_dir` is a lookup;
+there is no inverse left to drift.
+
+Two things fell out. `AssetRoots` loses its `project` field and `build_specs`
+its `project_root` argument — with nothing recomputed, the project root was
+staging's business only as the join's left-hand side. And a fragment the corpus
+never read is now a named error rather than a directory guessed from its name;
+it is unreachable from a loaded suite, which is exactly why the old code's
+silent guess would never have been noticed.
+
+Both new tests were checked against the old resolution and fail under it. The
+regression test is deliberately a case the join gets *wrong* rather than a
+symlink reproduction, because this entry is right that the two resolutions
+agree on every path a suite takes today: the defect was that nothing held them
+together, not that they had already come apart.
+
 ---
 
 ## Ingested — validation round 19 (2026-09-02), validated claim-by-claim

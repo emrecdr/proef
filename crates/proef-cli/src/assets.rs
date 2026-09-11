@@ -41,33 +41,38 @@ pub(crate) struct AssetRoots<'a> {
     /// the caller's own typed spelling) is not in the string, so resolving
     /// one against the working directory breaks from any subdirectory.
     pub feature: &'a Path,
-    /// The project root (the directory holding `proef.toml`), which is what
-    /// a fragment's recorded name is relative to. `None` when no config is in
-    /// scope — the state the config-independent reference corpus runs in,
-    /// where names arrive already usable from the working directory.
-    pub project: Option<&'a Path>,
+    /// Where each fragment file was **read from** — the root for a `ref:`
+    /// step's entry, looked up by the name the corpus recorded rather than
+    /// recomputed from it. See [`crate::front::CorpusDirs`] for why the
+    /// inverse is not available to be recomputed.
+    pub fragments: &'a crate::front::CorpusDirs,
 }
 
 impl AssetRoots<'_> {
     /// The directory `asset` resolves against, from the source that wrote it.
     ///
-    /// A fragment is qualified `file.hurl#name`, and the file half carries the
-    /// name the *naming boundary* gave it: project-root relative, or left
-    /// absolute when the corpus lies outside the project. Both are handled by
-    /// one join — `Path::join` lets an absolute right-hand side win — so the
-    /// out-of-project corpus needs no branch of its own.
-    fn source_dir(&self, asset: &AssetRef) -> PathBuf {
+    /// A fragment is qualified `file.hurl#name`; the file half is the name the
+    /// corpus reader recorded, and this asks that reader where it read it. It
+    /// used to *invert* the name instead — split the qualifier, join the file
+    /// half onto the project root — which is the naming boundary run backwards
+    /// without the canonicalize fallback that boundary carries precisely
+    /// because a lexical-only version already shipped a bug (R11-9). The two
+    /// agreed only while both were seeded from `config.root()`, and nothing
+    /// held them there (OPEN-FINDINGS H5).
+    ///
+    /// `None` for a fragment no read produced, which is unreachable from a
+    /// loaded suite — a `ref:` resolves only against fragments the corpus
+    /// holds — and is therefore reported as proef's own fault rather than
+    /// guessed at.
+    fn source_dir(&self, asset: &AssetRef) -> Option<PathBuf> {
         let Some(fragment) = &asset.fragment else {
-            return self.feature.to_path_buf();
+            return Some(self.feature.to_path_buf());
         };
         // The reader that lives beside the writer (`Fragment::qualified`), so
         // the separator stays one decision rather than three.
         let (file, _) = proef_core::pack::split_qualified(fragment);
         let file = file.unwrap_or(fragment);
-        let anchored = self
-            .project
-            .map_or_else(|| PathBuf::from(file), |root| root.join(file));
-        crate::fsutil::parent_dir(&anchored)
+        self.fragments.dir_of(file).map(Path::to_path_buf)
     }
 }
 
@@ -115,7 +120,13 @@ pub(crate) fn stage_assets(
                 "asset reference `{name}` is not a plain relative path — proef stages only files beside the feature or the fragment that names them"
             )));
         }
-        let source = roots.source_dir(asset).join(reference);
+        let Some(source_dir) = roots.source_dir(asset) else {
+            return Err(AssetCopyError::Unsafe(format!(
+                "internal: no fragment corpus entry for `{}`, which `{name}` resolves against",
+                asset.fragment.as_deref().unwrap_or("<none>")
+            )));
+        };
+        let source = source_dir.join(reference);
         if let Some(previous) = claimed.get(name)
             && previous != &source
         {
@@ -213,8 +224,25 @@ mod tests {
         }
     }
 
-    fn roots<'a>(feature: &'a Path, project: Option<&'a Path>) -> AssetRoots<'a> {
-        AssetRoots { feature, project }
+    /// Stand in for the corpus reader: fragment file name → the directory it
+    /// was read from. Written out explicitly, because *that* is the change —
+    /// staging asks the reader where it read a file rather than recomputing
+    /// the answer from the file's recorded name.
+    fn dirs(entries: &[(&str, PathBuf)]) -> crate::front::CorpusDirs {
+        entries
+            .iter()
+            .map(|(name, dir)| ((*name).to_owned(), dir.clone()))
+            .collect()
+    }
+
+    /// A corpus with nothing in it — every inline-only test, where no asset
+    /// carries a fragment and the map is never consulted.
+    fn no_fragments() -> crate::front::CorpusDirs {
+        crate::front::CorpusDirs::default()
+    }
+
+    fn roots<'a>(feature: &'a Path, fragments: &'a crate::front::CorpusDirs) -> AssetRoots<'a> {
+        AssetRoots { feature, fragments }
     }
 
     #[test]
@@ -222,7 +250,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::write(root.join("data.bin"), b"332 bytes stand-in").unwrap();
-        stage_assets(&[inline("data.bin")], roots(root, None), root).unwrap();
+        stage_assets(&[inline("data.bin")], roots(root, &no_fragments()), root).unwrap();
         assert_eq!(
             std::fs::read(root.join("data.bin")).unwrap(),
             b"332 bytes stand-in"
@@ -236,7 +264,12 @@ mod tests {
         std::fs::create_dir(root.join("out")).unwrap();
         std::fs::write(root.join("victim.txt"), b"IMPORTANT-USER-DATA").unwrap();
         let out = root.join("out");
-        let err = stage_assets(&[inline("../victim.txt")], roots(&out, None), &out).unwrap_err();
+        let err = stage_assets(
+            &[inline("../victim.txt")],
+            roots(&out, &no_fragments()),
+            &out,
+        )
+        .unwrap_err();
         assert!(matches!(err, AssetCopyError::Unsafe(_)));
         assert_eq!(
             std::fs::read(root.join("victim.txt")).unwrap(),
@@ -247,8 +280,12 @@ mod tests {
     #[test]
     fn absolute_references_are_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let err =
-            stage_assets(&[inline("/etc/hosts")], roots(dir.path(), None), dir.path()).unwrap_err();
+        let err = stage_assets(
+            &[inline("/etc/hosts")],
+            roots(dir.path(), &no_fragments()),
+            dir.path(),
+        )
+        .unwrap_err();
         assert!(matches!(err, AssetCopyError::Unsafe(_)));
     }
 
@@ -261,7 +298,7 @@ mod tests {
         std::fs::write(root.join("suite/payloads/data.bin"), b"bytes").unwrap();
         stage_assets(
             &[inline("payloads/data.bin")],
-            roots(&root.join("suite"), None),
+            roots(&root.join("suite"), &no_fragments()),
             &root.join("out"),
         )
         .unwrap();
@@ -290,7 +327,10 @@ mod tests {
                 "payload.json",
                 "hurl/admin/upload.hurl#upload",
             )],
-            roots(&root.join("suite"), Some(root)),
+            roots(
+                &root.join("suite"),
+                &dirs(&[("hurl/admin/upload.hurl", root.join("hurl/admin"))]),
+            ),
             &root.join("out"),
         )
         .unwrap();
@@ -300,9 +340,10 @@ mod tests {
         );
     }
 
-    /// A corpus outside the project keeps an absolute recorded name, and the
-    /// same single join has to handle it — `Path::join` letting the absolute
-    /// side win is what makes the branch unnecessary.
+    /// A corpus outside the project keeps an absolute recorded name. It needed
+    /// a note when staging *joined* that name onto the project root; now
+    /// nothing is joined, so inside and outside the project are the same
+    /// lookup. Kept as a regression test that they stayed that way.
     #[test]
     fn a_corpus_outside_the_project_resolves_from_its_absolute_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -316,7 +357,10 @@ mod tests {
                 "payload.json",
                 &format!("{}#upload", absolute.display()),
             )],
-            roots(&root.join("project"), Some(&root.join("project"))),
+            roots(
+                &root.join("project"),
+                &dirs(&[(absolute.to_string_lossy().as_ref(), root.join("elsewhere"))]),
+            ),
             &root.join("out"),
         )
         .unwrap();
@@ -334,7 +378,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = stage_assets(
             &[inline("absent.json")],
-            roots(dir.path(), None),
+            roots(dir.path(), &no_fragments()),
             dir.path(),
         )
         .unwrap_err();
@@ -363,7 +407,7 @@ mod tests {
         std::os::unix::fs::symlink(root.join("victim.json"), root.join("out/data.json")).unwrap();
         stage_assets(
             &[inline("data.json")],
-            roots(&root.join("suite"), None),
+            roots(&root.join("suite"), &no_fragments()),
             &root.join("out"),
         )
         .unwrap();
@@ -401,7 +445,10 @@ mod tests {
                 inline("Data.json"),
                 from_fragment("data.json", "hurl/up.hurl#up"),
             ],
-            roots(&root.join("suite"), Some(root)),
+            roots(
+                &root.join("suite"),
+                &dirs(&[("hurl/up.hurl", root.join("hurl"))]),
+            ),
             &root.join("out"),
         )
         .unwrap_err();
@@ -412,6 +459,64 @@ mod tests {
             message.contains("one file"),
             "the message must say the two spellings converge: {message}"
         );
+    }
+
+    /// **A recorded name is a name, not a path.** The old resolution rebuilt a
+    /// fragment's directory by joining its recorded name onto the project root,
+    /// which is only correct while the name happens to be that join's inverse.
+    /// Here it is not: the corpus reader recorded `shared.hurl` and read it from
+    /// `outside/`, so the join would look beside the project root and miss.
+    /// Staging asks the reader instead.
+    ///
+    /// This is deliberately a case the join gets wrong rather than a symlink
+    /// reproduction. The two resolutions agree on every path a suite takes
+    /// today — both seeded from `config.root()`, discovery walking from that
+    /// same root — so the defect H5 recorded is that nothing *held* them
+    /// together, not that they had already come apart.
+    #[test]
+    fn a_fragment_asset_follows_where_the_file_was_read_not_where_its_name_points() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("suite")).unwrap();
+        std::fs::create_dir_all(root.join("outside")).unwrap();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        // What the join would have found, had anything been there: nothing.
+        std::fs::write(root.join("outside/payload.json"), b"READ-FROM-OUTSIDE").unwrap();
+        stage_assets(
+            &[from_fragment("payload.json", "shared.hurl#upload")],
+            roots(
+                &root.join("suite"),
+                &dirs(&[("shared.hurl", root.join("outside"))]),
+            ),
+            &root.join("out"),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read(root.join("out/payload.json")).unwrap(),
+            b"READ-FROM-OUTSIDE"
+        );
+    }
+
+    /// A fragment the corpus never read cannot have a directory, and guessing
+    /// one is how the old resolution stayed silent. Unreachable from a loaded
+    /// suite — a `ref:` resolves only against fragments the corpus holds — so
+    /// it is reported as proef's own fault, named, rather than resolved against
+    /// whatever the name happens to spell.
+    #[test]
+    fn a_fragment_the_corpus_never_read_is_an_error_not_a_guess() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("out")).unwrap();
+        let err = stage_assets(
+            &[from_fragment("payload.json", "ghost.hurl#upload")],
+            roots(&root.join("suite"), &no_fragments()),
+            &root.join("out"),
+        )
+        .unwrap_err();
+        let AssetCopyError::Unsafe(message) = err else {
+            panic!("a missing corpus entry is not an IO failure");
+        };
+        assert!(message.contains("ghost.hurl#upload"), "{message}");
     }
 
     /// Two sources, one staged name: whichever landed last would win, which
@@ -429,7 +534,10 @@ mod tests {
                 inline("data.json"),
                 from_fragment("data.json", "hurl/up.hurl#up"),
             ],
-            roots(&root.join("suite"), Some(root)),
+            roots(
+                &root.join("suite"),
+                &dirs(&[("hurl/up.hurl", root.join("hurl"))]),
+            ),
             root,
         )
         .unwrap_err();

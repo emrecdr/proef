@@ -56,6 +56,22 @@ Regrouping preserved every entry and its order within its kind.
 
 ### Internal
 
+- **A fragment's assets stage from where its file was read, not from where its
+  name points.** `AssetRoots::source_dir` rebuilt a fragment's directory by
+  splitting `file.hurl#name` and joining the file half onto the project root —
+  the naming boundary run backwards, without the canonicalize fallback that
+  boundary carries precisely because a lexical-only version already shipped a
+  bug (a suite reached through a symlink silently failed to match, R11-9). The
+  two agreed only because both were seeded from `config.root()` and discovery
+  walked from that same root, so only the lexical case was ever exercised, and
+  nothing made them stay inverses. The corpus reader now records the directory
+  it read each file from (`front::CorpusDirs`, carried on `FrontEnd` beside
+  `kinds`), and staging looks it up — the fragment-side twin of what
+  `LoadedFeature::read_from` already does for features, so both halves of the
+  naming boundary are one-way in the same way. `AssetRoots` loses its `project`
+  field and `build_specs` its `project_root` argument: with nothing to
+  recompute, the project root is no longer staging's business.
+
 - **`--rerun` reads its base record once.** It called `record::read_events` for
   the JUnit overlay and then `record::rerun_candidates`, which read and
   deserialized the same `events.jsonl` a second time — two full passes bounded

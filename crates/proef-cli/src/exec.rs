@@ -594,7 +594,6 @@ pub fn execute(
             scenario_file_filter,
             rerun_set.as_ref(),
             &artifacts_dir,
-            config.root(),
         );
         // `--shard I/N` — applied AFTER every other filter, so a shard is always
         // "shard of what you selected" (the pinned filter→shard order): the same
@@ -1390,7 +1389,7 @@ pub(crate) fn load_phase_feature(
     path: &Path,
     run_id: Option<String>,
     config_vars: &Arc<BTreeMap<String, String>>,
-    fragments: &proef_core::pack::FragmentCorpus,
+    fragments: &crate::front::LoadedCorpus,
     config: &ProjectConfig,
 ) -> Result<FrontEnd, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
@@ -1436,7 +1435,7 @@ fn run_phase(
     sink: &EventSink,
     cancel: &CancellationToken,
     artifacts_dir: &Path,
-    fragments: &proef_core::pack::FragmentCorpus,
+    fragments: &crate::front::LoadedCorpus,
     config: &ProjectConfig,
 ) -> Result<runner::RunSummary, ExitCode> {
     // ADR-0014: `[run] setup`/`teardown` names exactly one feature file. A
@@ -1470,16 +1469,7 @@ fn run_phase(
         }
     };
 
-    let specs = build_specs(
-        &front,
-        None,
-        None,
-        None,
-        None,
-        None,
-        artifacts_dir,
-        config.root(),
-    );
+    let specs = build_specs(&front, None, None, None, None, None, artifacts_dir);
     if specs.is_empty() {
         crate::render::errln!(
             "error: {label} feature `{}` has no scenarios",
@@ -1750,9 +1740,11 @@ fn shard_bucket(file: &str, name: &str, count: u32) -> u32 {
 /// artifact, stages its assets, writes it into the run dir, and hands the same
 /// bytes to the engine (ADR-0010).
 ///
-/// `project_root` is what a fragment's recorded `file.hurl#name` resolves
-/// against, and so where a `ref:` step's assets are staged from; `None` when
-/// no config is in scope.
+/// A `ref:` step's assets stage from the directory its fragment file was read
+/// from, looked up in `front.fragment_dirs`. The project root is deliberately
+/// not a parameter here: staging used to rebuild that directory by joining the
+/// fragment's recorded name onto the root, which is the naming boundary run
+/// backwards without the fallback it carries (OPEN-FINDINGS H5).
 #[allow(clippy::too_many_arguments)]
 fn build_specs(
     front: &FrontEnd,
@@ -1762,7 +1754,6 @@ fn build_specs(
     scenario_file_filter: Option<&str>,
     rerun_set: Option<&crate::record::RerunFilter>,
     artifacts_dir: &Path,
-    project_root: Option<&Path>,
 ) -> Vec<ScenarioSpec> {
     let mut specs = Vec::new();
     for feature in &front.features {
@@ -1812,7 +1803,6 @@ fn build_specs(
                 &feature.file.path,
                 &scenario.lowered.name,
             )));
-            let project_root = project_root.map(Path::to_path_buf);
             // The directory the feature was *read from* — staging's anchor.
             // Never derived from `feature.file.path`: that is the portable
             // name, whose anchor (project root, or the caller's own typed
@@ -1826,6 +1816,7 @@ fn build_specs(
             let prepare: runner::PrepareFn = {
                 let asset_dir = asset_dir.clone();
                 let kinds = Arc::clone(&front.kinds);
+                let fragment_dirs = front.fragment_dirs.clone();
                 Box::new(move |world| {
                     let ctx = LowerCtx {
                         feature: &feature_file,
@@ -1845,7 +1836,7 @@ fn build_specs(
                         &feature_dir,
                         &asset_dir,
                         &artifacts_dir,
-                        project_root.as_deref(),
+                        &fragment_dirs,
                         &kinds,
                     )?;
                     Ok(Prepared {
@@ -1902,7 +1893,7 @@ fn stage_and_record(
     feature_dir: &Path,
     asset_dir: &Path,
     artifacts_dir: &Path,
-    project_root: Option<&Path>,
+    fragment_dirs: &crate::front::CorpusDirs,
     kinds: &[proef_core::engine::StepKindSpec],
 ) -> Result<Option<ArtifactRef>, Vec<proef_core::diag::Diag>> {
     let fault = |detail: String| {
@@ -1920,7 +1911,7 @@ fn stage_and_record(
         &artifact.assets,
         crate::assets::AssetRoots {
             feature: feature_dir,
-            project: project_root,
+            fragments: fragment_dirs,
         },
         asset_dir,
     )
