@@ -461,6 +461,30 @@ build requirement).
       (library): `RootResolver` returns `ResolvedRoot`, `timings::render`
       takes `&Redactions`; `flaky`'s `new` verdict is `insufficient-data`
       and the default floor rises 2 → 10
+- [x] 0.19.0 — the checks that could not see what they claimed to cover
+      (#186–#191). Each item is a gate, guard or claim that was correct about
+      what it inspected and silent about its own boundary. The Homebrew formula
+      installs the man page and completions again (broken since 0.16.0: the
+      formula is a heredoc in `release.yml`, the archive is staged in another
+      job, and nothing tied them together — the render step now fails if the
+      archive lacks a file the formula installs). `--dry-run` refuses a
+      `file,…;` asset that is not there, through `assets::resolve_assets` split
+      out of staging rather than a second walk, so validation and the run
+      cannot disagree. The asset scan moved behind `StepKindSpec::assets`: it
+      was a scan for the literal `"file,"` in `proef-core` that
+      `engine_grammar_kind` could not classify — fences, `HTTP`, `[Section]`,
+      method lines and `key: value` options, and a body constructor is none of
+      those — so it was neither sanctioned nor reported missing, and ADR-0002's
+      "thirteen literals" is corrected to fourteen; the guard gained a `body`
+      arm so the shape cannot return unnoticed, and reading hurl's own AST
+      stops `file,` inside a JSON body counting as an asset. A fragment's
+      assets stage from where its file was read (`front::CorpusDirs`), the
+      twin of `LoadedFeature::read_from`, rather than inverting the naming
+      boundary without the canonicalize fallback that boundary carries.
+      `--rerun` reads its base record once, and the one doc check that only
+      reads files moved to the half of the gate that only reads files.
+      Breaking (library): `emit::emit` takes `&[StepKindSpec]`, `StepKindSpec`
+      gains `assets`, `emit::file_refs_in` is gone
 - [ ] M6 — future engines (none scheduled; acceptance: zero `proef-core` diff)
 
 Milestone detail, acceptance criteria, and the definition of done: `docs/IMPLEMENTATION-PLAN.md`.

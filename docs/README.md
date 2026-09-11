@@ -10,7 +10,8 @@ normative technical spec, the milestone plan, and the testing strategy. Written
 2026-07-28 from a validated research round (a working spike ran 5/5 scenarios green
 under both a prototype native runner and stock hurl 8.0.1 on identical generated
 artifacts); implementation has since delivered milestones M0–M5 and everything after
-them — through v0.18.0 (the 0.18 survey waves and their cleanup). Only M6 (a second
+them — through v0.19.0 (the 0.18 survey waves, then the gates that could not see
+what they covered). Only M6 (a second
 engine) is unscheduled. The repo-root `CLAUDE.md` carries the live status. This
 corpus is also published as a website: <https://emrecdr.github.io/proef/>.
 
