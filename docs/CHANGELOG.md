@@ -13,6 +13,32 @@ Regrouping preserved every entry and its order within its kind.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The sidecar's two scanners now use hurl's own grammar rather than an
+  approximation of it.** Both were read off `hurl_core`'s parser and corrected
+  against it, and both errors cost rows in `.map.json` — a normative artifact
+  whose contract is that no legitimate row is dropped and no invented one
+  appears (ADR-0010).
+
+  `is_method_line` demanded **three** characters while `hurl_core`'s `method`
+  parser takes one or more ASCII uppercase letters, so a short method opened an
+  entry proef's capture scan did not see: the previous entry's `[Captures]` run
+  stayed open across the boundary, and a header of the *next* entry
+  (`X-Trace: abc`) was recorded as a capture nobody wrote. The same predicate
+  allowed `-`, which hurl's grammar does not, so a dashed uppercase word could
+  end a capture run on a line hurl would refuse to parse as a request — the two
+  errors pulled in opposite directions and hid each other, which is how both
+  survived from 0.1.0.
+
+  A capture name was matched against `[A-Za-z0-9_-]` while hurl's
+  `key_string_text` admits any `char::is_alphanumeric` — Unicode, not ASCII —
+  plus `_ - . [ ] @ $`. So `user.id`, `items[0]`, `@type`, `total$` and
+  `précis` all parse as captures and were all silently missing from the
+  sidecar. A leading `[` stays refused, matching hurl, and `{`/`}` stay out
+  deliberately: a name written as a template has no statically knowable text to
+  write a row for.
+
 ### Documentation
 
 - **0.19.0 is recorded where the corpus says it should be.** The release
