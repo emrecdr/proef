@@ -97,16 +97,27 @@ impl<'a> MacroIndex<'a> {
 
     /// Content span of a macro's `match:` line (there is at most one), when
     /// locatable — the go-to-definition landing anchor.
+    ///
+    /// [`KeyLines::sole`] rather than a pairing: a macro has at most one
+    /// `match:`, so there is no sequence to line up and nothing to miscount. A
+    /// flow-style macro yields no span, which is the right answer — no anchor —
+    /// rather than a wrong one.
     pub(crate) fn match_span(&self, name: &str) -> Option<Span> {
-        self.key_line_spans(name, "match").into_iter().next()
+        self.key_lines(name, "match").sole()
     }
 
-    /// Content spans of every `hurl:` line in `name`'s `expect:` items, in
-    /// textual order — pairs positionally with items whose `hurl` field is
-    /// `Some(..)` (an assert-only macro has no `steps:`, so every `hurl:` line
-    /// in its block belongs to an `expect:` item).
-    pub(crate) fn expect_hurl_line_spans(&self, name: &str) -> Vec<Span> {
-        self.key_line_spans(name, "hurl")
+    /// Content lines of every `hurl:` key in `name`'s `expect:` items, in
+    /// textual order, for positional pairing with the items whose `hurl` field
+    /// is `Some(..)` (an assert-only macro has no `steps:`, so every `hurl:`
+    /// line in its block belongs to an `expect:` item).
+    pub(crate) fn expect_hurl_lines(&self, name: &str) -> KeyLines {
+        self.key_lines(name, "hurl")
+    }
+
+    /// Located `<key>:` lines in `name`'s block, as a value that does not hand
+    /// them over until the caller states how many it expects.
+    pub(crate) fn key_lines(&self, name: &str, key: &str) -> KeyLines {
+        KeyLines(self.key_line_spans(name, key))
     }
 
     /// Every content span, in textual order, of the lines in `name`'s block
@@ -114,14 +125,13 @@ impl<'a> MacroIndex<'a> {
     /// `<key>:` — each the line's trimmed content, so a cursor anywhere on it
     /// resolves. Empty when the macro or key isn't found.
     ///
-    /// `analyze::index_refs` pairs these positionally with the macro's parsed
-    /// steps of the matching kind. Because this is the same scan that yields
-    /// every locatable `use:`/`ref:` span, comparing its length with the parsed
-    /// step count is a self-consistent guard: a flow-style `- {use: base}` step
-    /// parses to a `Use` but its line does not begin `use:` after the dash
-    /// strip, so the counts diverge and the caller skips that macro rather than
-    /// risk a wrong pairing.
-    pub(crate) fn key_line_spans(&self, name: &str, key: &str) -> Vec<Span> {
+    /// Private: every caller goes through [`Self::key_lines`], which returns a
+    /// [`KeyLines`] rather than a bare `Vec<Span>`. This scan recognises only
+    /// block-style `key:` lines, so a flow-style `- {use: base}` step parses to
+    /// a `Use` and contributes no line — the list is a *lower bound* on the
+    /// parsed items, and handing it out as a plain vector makes an undercount
+    /// indistinguishable from a complete answer.
+    fn key_line_spans(&self, name: &str, key: &str) -> Vec<Span> {
         let Some((begin, end)) = self.region(name) else {
             return Vec::new();
         };
@@ -218,6 +228,50 @@ fn lines_with_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
+/// Located `<key>:` lines in one macro's block, in textual order.
+///
+/// **Why this is a type and not a `Vec<Span>`.** The scan behind it sees only
+/// block-style `key:` lines: a flow-style `- {use: base}` item is valid YAML,
+/// parses to a real step, and contributes no line. So the list can be shorter
+/// than the parsed items it is meant to describe, and pairing them positionally
+/// then attributes every span after the gap to the wrong item — a
+/// go-to-definition that lands on the neighbouring line, or a diagnostic
+/// pointing at it.
+///
+/// Both callers already knew this and each wrote its own count comparison, in
+/// its own words, from a prose warning. That is a convention, and a convention
+/// only holds while everyone who arrives has read it; a third caller would have
+/// had to rediscover both the hazard and the remedy. Here the remedy is the
+/// only way through: there is no accessor that yields the spans without being
+/// told how many the caller expects.
+pub(crate) struct KeyLines(Vec<Span>);
+
+impl KeyLines {
+    /// The spans, in textual order — **only** when there are exactly `parsed`
+    /// of them.
+    ///
+    /// `None` means the scan and the parser disagree about how many items this
+    /// macro has, so no positional pairing between them is trustworthy. The
+    /// caller falls back to a coarser anchor (the macro's own span) rather than
+    /// risking an ordinal-shifted wrong one.
+    pub(crate) fn paired_with(self, parsed: usize) -> Option<Vec<Span>> {
+        (self.0.len() == parsed).then_some(self.0)
+    }
+
+    /// The first span, for a key that can occur at most once in a block
+    /// (`match:`), where there is no sequence to pair against.
+    pub(crate) fn sole(self) -> Option<Span> {
+        self.0.into_iter().next()
+    }
+
+    /// How many lines were located. For tests and diagnostics only — a caller
+    /// that pairs must go through [`Self::paired_with`].
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -279,11 +333,13 @@ mod tests {
         // Three items, only the last two carry `hurl:` — the returned spans
         // skip the status-only item rather than leaving a hole.
         let index = MacroIndex::new(EXPECT_PACK);
-        let spans = index.expect_hurl_line_spans("checkThing");
-        assert_eq!(spans.len(), 2);
+        let spans = index
+            .expect_hurl_lines("checkThing")
+            .paired_with(2)
+            .expect("two hurl-bearing items, two located lines");
         assert_eq!(&EXPECT_PACK[spans[0].start..spans[0].end], "hurl: |");
         assert_eq!(&EXPECT_PACK[spans[1].start..spans[1].end], "hurl: |");
-        assert!(index.expect_hurl_line_spans("absent").is_empty());
+        assert_eq!(index.expect_hurl_lines("absent").len(), 0);
     }
 
     const MIXED_USE_PACK: &str = "macros:\n  base:\n    match: the base\n    steps:\n      - hurl: |\n          GET http://x\n  wrapper:\n    steps:\n      - {use: base}\n      - use: base\n";
@@ -296,13 +352,59 @@ mod tests {
         assert!(index.key_line_spans("absent", "use").is_empty());
         // Flow-style `- {use: base}` is valid YAML and parses to a `Use` step, but
         // its line does not start with `use:` after the dash strip — it is not
-        // seen here, so this undercounts relative to the parsed step count. That
-        // divergence is exactly what `analyze::index_use_refs` guards on.
+        // seen here, so this undercounts relative to the parsed step count.
         assert_eq!(
             MacroIndex::new(MIXED_USE_PACK)
                 .key_line_spans("wrapper", "use")
                 .len(),
             1
+        );
+    }
+
+    /// **The undercount cannot reach a caller as if it were complete.**
+    ///
+    /// `MIXED_USE_PACK`'s `wrapper` has two parsed `use:` steps and one located
+    /// line, because the flow-style item contributes none. Asking for two gets
+    /// `None` — no spans at all — rather than one span that would be paired
+    /// with the wrong step. Asking for the count that is actually there still
+    /// works, which is what keeps this a guard rather than a blanket refusal.
+    ///
+    /// Before `KeyLines`, the primitive returned a bare `Vec<Span>` and each of
+    /// the two callers wrote its own length comparison from a prose warning.
+    /// Both were correct; neither was enforced.
+    #[test]
+    fn located_lines_refuse_to_pair_with_a_count_they_do_not_match() {
+        let index = MacroIndex::new(MIXED_USE_PACK);
+        assert!(
+            index.key_lines("wrapper", "use").paired_with(2).is_none(),
+            "an undercount must not be handed over as a complete pairing"
+        );
+        assert_eq!(
+            index
+                .key_lines("wrapper", "use")
+                .paired_with(1)
+                .expect("one located line pairs with one")
+                .len(),
+            1
+        );
+    }
+
+    /// `match:` occurs at most once, so it has no sequence to pair against and
+    /// takes `sole()`. A flow-style macro yields no span — the right answer (no
+    /// anchor), not a wrong one.
+    #[test]
+    fn a_sole_key_needs_no_pairing() {
+        assert!(
+            MacroIndex::new(USE_PACK)
+                .key_lines("base", "match")
+                .sole()
+                .is_some()
+        );
+        assert!(
+            MacroIndex::new("macros:\n  flow: {match: the thing}\n")
+                .key_lines("flow", "match")
+                .sole()
+                .is_none()
         );
     }
 

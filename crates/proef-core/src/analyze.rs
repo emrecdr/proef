@@ -365,10 +365,13 @@ fn index_refs<T>(
         let index = anchors
             .entry(m.pack.as_str())
             .or_insert_with(|| crate::pack::locate::MacroIndex::new(&m.source));
-        let spans = index.key_line_spans(&m.name, key);
-        if spans.len() != targets.len() {
+        // No pairing without stating the count: `KeyLines` sees only
+        // block-style `key:` lines, so a flow-style item parses to a step and
+        // contributes no span. `None` here means this macro's lines cannot be
+        // trusted to line up with its steps, and no ref is indexed for it.
+        let Some(spans) = index.key_lines(&m.name, key).paired_with(targets.len()) else {
             continue;
-        }
+        };
         out.extend(
             spans
                 .into_iter()
